@@ -1,0 +1,77 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables
+.env
+
+# IDE / Editor specific files
+.vscode/
+.idea/
+.codeoss/
+.bash_history
+.gemini/
+.cache/
+.local/
+.tmtool
+.npm/
+.bash_logout
+.bashrc
+.config/powershell/Microsoft.PowerShell_profile.ps1
+.docker/config.json
+.profile
+.rustup/settings.toml
+.sudo_as_admin_successful
+
+engagement_actions.log
+*.log
+/.ssh/
+
