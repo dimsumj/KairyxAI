@@ -11,7 +11,7 @@ import gzip
 import json
 from typing import List, Dict, Any
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 from event_semantic_normalizer import EventSemanticNormalizer
@@ -22,6 +22,11 @@ from gemini_client import GeminiClient
 from engagement_executor import EngagementExecutor
 from churn_reporter import ChurnReporter
 from fastapi.staticfiles import StaticFiles
+from ingestion_service import IngestionService
+from data_processing_service import DataProcessingService
+from bigquery_service import BigQueryService
+from gcs_service import GcsService
+from amplitude_service import AmplitudeService
 from engagement_feedback import EngagementFeedback
 from pydantic import BaseModel, Field
 
@@ -35,6 +40,15 @@ NORMALIZATION_MAPS = {
 }
 NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
 CACHE_DIR = ".cache"
+
+# Global instances of our new services. In a microservices architecture,
+# these would be independent, deployed services. Here, we instantiate them
+# globally to simulate their persistence.
+BIGQUERY_SERVICE_INSTANCE = BigQueryService()
+GCS_SERVICE_INSTANCE = GcsService()
+
+# In-memory list to track import jobs. In production, this would be a database.
+IMPORT_JOBS = []
 
 def clear_cache_on_startup():
     """Clears the data cache directory."""
@@ -113,6 +127,10 @@ class GoogleApiKey(BaseModel):
     google_api_key: str = Field(..., alias='api_key')
     model_name: str | None = None
 
+class BigQueryCredentials(BaseModel):
+    """Request model for setting BigQuery credentials."""
+    project_id: str
+
 class AdjustApiKey(BaseModel):
     """Request model for setting the Adjust API token."""
     adjust_api_token: str = Field(..., alias='api_token')
@@ -148,72 +166,11 @@ class DataSandboxRequest(BaseModel):
     raw_name: str
     normalized_name: str
 
-
-class AmplitudeService:
-    """
-    A service to connect to the Amplitude API and fetch event data.
-    """
-    API_URL = "https://amplitude.com/api/2/export"
-
-
-    def __init__(self):
-        """
-        Initializes the AmplitudeService, retrieving API keys from environment variables.
-        """
-        self.api_key = os.getenv("AMPLITUDE_API_KEY")
-        self.secret_key = os.getenv("AMPLITUDE_SECRET_KEY")
-
-        if not self.api_key or not self.secret_key:
-            raise ValueError(
-                "AMPLITUDE_API_KEY and AMPLITUDE_SECRET_KEY environment variables must be set."
-            )
-
-    def export_events(self, start_date: str, end_date: str) -> list[dict]:
-        """
-        Fetches event data from Amplitude for a given date range.
-
-        Args:
-            start_date: The start date in 'YYYYMMDD' format (e.g., '20240101').
-            end_date: The end date in 'YYYYMMDD' format (e.g., '20240131').
-
-        Returns:
-            A list of event data dictionaries.
-        """
-        print(f"Requesting data export from {start_date} to {end_date}...")
-
-        # The API expects dates in YYYYMMDDTHH format, we'll use midnight.
-        params = {
-            "start": f"{start_date}T00",
-            "end": f"{end_date}T23",
-        }
-
-        try:
-            response = requests.get(
-                self.API_URL,
-                params=params,
-                auth=(self.api_key, self.secret_key),
-                stream=True
-            )
-            response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
-
-            print("Export successful. Unzipping and processing data...")
-
-            # The data is returned as a zip archive in memory
-            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-                # The archive contains one or more gzipped JSON line files.
-                # We can process them more concisely with a list comprehension.
-                all_events = [json.loads(line) for filename in z.namelist() for line in gzip.open(z.open(filename), 'rt')]
-            
-            print(f"Successfully processed {len(all_events)} events.")
-            return all_events
-
-        except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP error occurred: {http_err}")
-            print(f"Response content: {response.text}")
-            raise
-        except Exception as err:
-            print(f"An other error occurred: {err}")
-            raise
+class IngestionRequest(BaseModel):
+    """Request model for triggering data ingestion."""
+    start_date: str
+    end_date: str
+    source: str
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -259,6 +216,48 @@ async def configure_google_key(key: GoogleApiKey):
         keys_to_cache["GOOGLE_GEMINI_MODEL"] = key.model_name
     save_keys_to_cache(keys_to_cache)
     return {"message": "Google API settings have been configured and cached."}
+
+@app.post("/configure-bigquery")
+async def configure_bigquery(creds: BigQueryCredentials):
+    """
+    An API endpoint to set the Google BigQuery Project ID.
+    """
+    os.environ["BIGQUERY_PROJECT_ID"] = creds.project_id
+    save_keys_to_cache({"BIGQUERY_PROJECT_ID": creds.project_id})
+    # In a real app, you might also initialize the BigQuery client here to verify credentials.
+    return {"message": "BigQuery Project ID has been configured and cached."}
+
+@app.get("/list-imports")
+async def list_imports():
+    """
+    Returns a list of all data import jobs and their statuses.
+    """
+    return {"imports": sorted(IMPORT_JOBS, key=lambda x: x['timestamp'], reverse=True)}
+
+@app.get("/services-health")
+async def get_services_health():
+    """
+    Checks the configuration status of all integrated services.
+    """
+    services_status = {
+        "backend_api": {
+            "status": "ok",
+            "details": "The backend API is running."
+        },
+        "amplitude": {
+            "status": "ok" if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY") else "error",
+            "details": "Configured" if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY") else "Not Configured"
+        },
+        "google_gemini": {
+            "status": "ok" if os.getenv("GOOGLE_API_KEY") else "error",
+            "details": "Configured" if os.getenv("GOOGLE_API_KEY") else "Not Configured"
+        },
+        "google_cloud_services": {
+            "status": "ok" if os.getenv("BIGQUERY_PROJECT_ID") else "warning",
+            "details": "Project ID Configured" if os.getenv("BIGQUERY_PROJECT_ID") else "Project ID Not Configured (required for GCS & BigQuery)"
+        }
+    }
+    return services_status
 
 @app.post("/configure-adjust-credentials")
 async def configure_adjust_credentials(key: AdjustApiKey):
@@ -342,27 +341,10 @@ async def create_cohorts(request: CohortCreationRequest):
     Analyzes player data and groups them into cohorts.
     """
     try:
-        amplitude_client = AmplitudeService()
-        events_data = amplitude_client.export_events(request.start_date, request.end_date)
-        
-        # Check for cached data first
-        cache_filename = os.path.join(CACHE_DIR, f"{request.start_date}_{request.end_date}.json")
-        if os.path.exists(cache_filename):
-            print(f"Loading events from cache file: {cache_filename}")
-            with open(cache_filename, 'r') as f:
-                events_data = json.load(f)
-        else:
-            # Fetch from Amplitude if not cached
-            events_data = amplitude_client.export_events(request.start_date, request.end_date)
-            # Save to cache
-            if events_data:
-                print(f"Saving {len(events_data)} events to cache file: {cache_filename}")
-                with open(cache_filename, 'w') as f:
-                    json.dump(events_data, f)
-
-        
-        if not events_data:
-            raise HTTPException(status_code=404, detail="No events found for the given date range.")
+        # This endpoint now depends on data being in BigQuery.
+        # We will simulate this by ensuring the processing pipeline has run.
+        # For this example, we'll just use the global BQ instance.
+        # A real implementation might trigger a fresh analysis or read from a snapshot.
 
         normalizer = EventSemanticNormalizer(event_name_map=NORMALIZATION_MAPS["event_name_map"], property_key_map=NORMALIZATION_MAPS["property_key_map"])
         normalized_data = normalizer.normalize_events(events_data)
@@ -373,7 +355,6 @@ async def create_cohorts(request: CohortCreationRequest):
 
         cohorts = await cohort_service.create_player_cohorts()
 
-        return {"message": "Cohorts created successfully", "cohorts": cohorts}
         # Extract a sample for the data sandbox glance
         data_glance = events_data[:3] # Get the first 3 events as a sample
         unique_event_names = sorted(list({event.get('event_type', 'N/A') for event in events_data}))
@@ -437,6 +418,67 @@ async def tag_event(request: DataSandboxRequest):
     
     return {"message": f"Rule created: '{request.raw_name}' will now be normalized to '{request.normalized_name}'.", "current_rules": NORMALIZATION_MAPS["event_name_map"]}
 
+async def get_events_with_caching(start_date: str, end_date: str) -> list[dict]:
+    """
+    Fetches events from Amplitude, using a local file cache to avoid redundant API calls.
+    """
+    cache_filename = os.path.join(CACHE_DIR, f"{start_date}_{end_date}.json")
+    
+    if os.path.exists(cache_filename):
+        print(f"Loading events from cache file: {cache_filename}")
+        with open(cache_filename, 'r') as f:
+            return json.load(f)
+
+    # Fetch from Amplitude if not cached
+    print("Fetching events from Amplitude API...")
+    amplitude_client = AmplitudeService()
+    events_data = amplitude_client.export_events(start_date, end_date)
+    
+    # Save to cache
+    if events_data:
+        print(f"Saving {len(events_data)} events to cache file: {cache_filename}")
+        with open(cache_filename, 'w') as f:
+            json.dump(events_data, f)
+            
+    return events_data
+
+def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str):
+    """The actual data processing logic that runs in the background."""
+    try:
+        # Find the job to update its status later
+        job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+
+        # 1. Ingestion: Fetch from source, upload to GCS, and publish notification
+        ingestion_service = IngestionService(gcs_service=GCS_SERVICE_INSTANCE)
+        ingestion_service.fetch_and_publish_events(start_date, end_date)
+
+        # 2. Processing: Consume from queue, normalize, and write to BigQuery
+        processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE)
+        processing_service.run_processing_pipeline(ingestion_service)
+
+        if job:
+            job["status"] = "Ready to Use"
+            print(f"Job '{job_name}' completed successfully.")
+
+    except Exception as e:
+        print(f"Error processing job '{job_name}': {e}")
+        if job:
+            job["status"] = "Failed"
+
+@app.post("/ingest-and-process-data")
+async def ingest_and_process_data(request: IngestionRequest, background_tasks: BackgroundTasks):
+    """
+    Triggers the simulated data pipeline: Ingestion -> Processing -> Storage.
+    The actual processing is run as a background task.
+    """
+    try:
+        job_timestamp = datetime.utcnow()
+        job_name = f"{job_timestamp.strftime('%Y%m%d-%H%M%S')}-{request.source.capitalize()}"
+        IMPORT_JOBS.append({"name": job_name, "status": "Processing", "timestamp": job_timestamp.isoformat()})
+        background_tasks.add_task(run_pipeline_background, request.start_date, request.end_date, job_name, request.source)
+        return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during the pipeline execution: {str(e)}")
 
 @app.post("/analyze-and-engage-player")
 async def analyze_and_engage_player(request: PlayerAnalysisRequest):
@@ -445,28 +487,13 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
     and simulates feedback. This creates a full, closed-loop process.
     """
     try:
-        # For a single player analysis, we might fetch data over a longer period
-        # to build a more robust profile.
-        # Use provided dates or default to a wide range.
-        start_date = request.start_date if request.start_date else "20240101"
-        end_date = request.end_date if request.end_date else datetime.utcnow().strftime('%Y%m%d')
-
         if not request.player_id:
             raise ValueError("Player ID cannot be empty.")
 
-        amplitude_client = AmplitudeService()
-        events_data = amplitude_client.export_events(start_date, end_date)
-
-        if not events_data:
-            raise HTTPException(status_code=404, detail="No events found for the given date range.")
-
-        # 1. Normalize events
-        normalizer = EventSemanticNormalizer(event_name_map=NORMALIZATION_MAPS["event_name_map"], property_key_map=NORMALIZATION_MAPS["property_key_map"])
-        normalized_data = normalizer.normalize_events(events_data)
-
-        # 2. Initialize clients and engines
+        # Initialize clients and engines.
+        # The modeling engine now uses the BigQuery service to get data.
         gemini_client = GeminiClient()
-        modeling_engine = PlayerModelingEngine(normalized_data, gemini_client)
+        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
         decision_engine = GrowthDecisionEngine(gemini_client)
         executor = EngagementExecutor()
         feedback_service = EngagementFeedback()

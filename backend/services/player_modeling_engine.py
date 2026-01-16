@@ -6,35 +6,30 @@ import json
 import pandas as pd
 from gemini_client import GeminiClient
 from json_encoder import NpEncoder
+from bigquery_service import BigQueryService
 
 class PlayerModelingEngine:
     """
     Analyzes player event data to build intelligence profiles, including
     summaries, churn risk, and engagement patterns.
     """
-
-    def __init__(self, normalized_events: List[Dict[str, Any]], gemini_client: GeminiClient):
+    def __init__(self, gemini_client: GeminiClient, bigquery_service: BigQueryService):
         """
-        Initializes the engine with normalized event data.
+        Initializes the engine with AI and data warehouse clients.
 
         Args:
-            normalized_events: A list of cleaned event dictionaries.
+            gemini_client: Client for generative AI models.
+            bigquery_service: Client for querying processed player data.
         """
-        if not normalized_events:
-            self.player_df = pd.DataFrame()
-        else:
-            # Convert to DataFrame for efficient analysis
-            self.player_df = self._preprocess_events(normalized_events)
         self.ai_client = gemini_client
+        self.db_client = bigquery_service
 
-    def _preprocess_events(self, events: List[Dict[str, Any]]) -> pd.DataFrame:
-        """Converts event list to a DataFrame and enriches it."""
-        df = pd.DataFrame(events)
-
-        # Standardize the user identifier column if 'userId' (camelCase) exists
-        if 'userId' in df.columns and 'user_id' not in df.columns:
-            df.rename(columns={'userId': 'user_id'}, inplace=True)
-
+    def _get_and_preprocess_player_data(self, player_id: Any) -> Optional[pd.DataFrame]:
+        """Fetches player data from the warehouse and performs preprocessing."""
+        df = self.db_client.get_events_for_player(player_id)
+        if df is None or df.empty:
+            return None
+        
         # The 'event_time' from Amplitude is a string like '2024-01-01 12:34:56.123456'
         # We need to parse it into a datetime object.
         df['event_time'] = pd.to_datetime(df['event_time'])
@@ -42,17 +37,9 @@ class PlayerModelingEngine:
         # Use 'user_id' as the primary player identifier. Events without a user_id will be dropped.
         df['player_id'] = df['user_id']
         
-        # Drop events where a player identifier could not be found
-        df.dropna(subset=['player_id'], inplace=True)
-        
-        print(f"Preprocessing complete. DataFrame created with {len(df)} events.")
+        print(f"Preprocessing complete for player {player_id}. DataFrame created with {len(df)} events.")
         return df
 
-    def get_all_player_ids(self) -> List[Any]:
-        """Returns a list of all unique player IDs."""
-        if self.player_df.empty:
-            return []
-        return self.player_df['player_id'].unique().tolist()
 
     def build_player_profile(self, player_id: Any) -> Optional[Dict[str, Any]]:
         """
@@ -64,7 +51,7 @@ class PlayerModelingEngine:
         Returns:
             A dictionary containing the player's profile, or None if not found.
         """
-        player_events = self.player_df[self.player_df['player_id'] == player_id]
+        player_events = self._get_and_preprocess_player_data(player_id)
 
         if player_events.empty:
             return None
@@ -111,7 +98,7 @@ class PlayerModelingEngine:
         Returns:
             A dictionary with the player's ID, churn risk, and reason, or None.
         """
-        player_profile = self.build_player_profile(player_id)
+        player_profile = self.build_player_profile(player_id) # This now fetches data
 
         if not player_profile:
             return None
@@ -155,7 +142,7 @@ class PlayerModelingEngine:
         Returns:
             A pandas Series with event counts, or None if player not found.
         """
-        player_events = self.player_df[self.player_df['player_id'] == player_id]
+        player_events = self._get_and_preprocess_player_data(player_id)
         if player_events.empty:
             return None
         

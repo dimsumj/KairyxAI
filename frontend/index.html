@@ -14,6 +14,9 @@
             --primary-color: #4a5568;
             --primary-hover: #2d3748;
             --white: #fff;
+            --green: #48bb78;
+            --red: #f56565;
+            --yellow: #ecc94b;
             --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
 
@@ -176,6 +179,28 @@
             margin-top: 1rem;
         }
 
+        #service-status-list .service-item {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        #service-status-list .service-item:last-child {
+            border-bottom: none;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 1rem;
+        }
+        .status-ok { background-color: var(--green); }
+        .status-error { background-color: var(--red); }
+        .status-warning { background-color: var(--yellow); }
+        .service-name {
+            font-weight: 600;
+        }
+
         th, td {
             text-align: left;
             padding: 0.75rem;
@@ -254,6 +279,7 @@
             <li><a href="#" class="nav-link" data-page="connectors">Connectors</a></li>
             <li><a href="#" class="nav-link" data-page="data-sandbox">Data Sandbox</a></li>
             <li><a href="#" class="nav-link" data-page="safety-rails">Safety Rails</a></li>
+            <li><a href="#" class="nav-link" data-page="service-health">Service Health</a></li>
         </ul>
         <div class="sidebar-footer">
             <div id="health-status">
@@ -304,7 +330,14 @@
         <section id="player-cohorts" class="page">
             <h1>Player Cohorts</h1>
             <div class="card">
-                <p>Analyze raw data for a certain period of time, then create cohorts based on some variables.</p>
+                <p>Import and process data from a connected source. Once imported, the system will analyze the data and automatically generate player cohorts.</p>
+                <div class="form-group">
+                    <label for="cohort-source-select">Import Source</label>
+                    <select id="cohort-source-select">
+                        <option value="amplitude">Amplitude</option>
+                        <!-- Other configured sources could be added here dynamically -->
+                    </select>
+                </div>
                 <div class="form-group">
                     <label for="start-date-cohort">Start Date</label>
                     <input type="date" id="start-date-cohort">
@@ -313,18 +346,13 @@
                     <label for="end-date-cohort">End Date</label>
                     <input type="date" id="end-date-cohort">
                 </div>
-                <button id="create-cohorts-btn">Create Cohorts</button>
-                <div id="cohort-error" style="color: #f56565; margin-top: 1rem; display: none;"></div>
-                <div id="cohort-progress" class="card" style="display: none; margin-top: 1.5rem;">
-                    <p>Fetching and analyzing data... This may take a moment.</p>
-                    <div style="width: 100%; background-color: var(--border-color); border-radius: 4px;">
-                        <div style="width: 100%; height: 10px; background-color: var(--primary-color); border-radius: 4px; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;"></div>
-                    </div>
-                </div>
-                <div id="cohort-results-container" style="margin-top: 1.5rem; display: none;">
-                    <h2>Generated Cohorts</h2>
-                    <div id="cohort-results">
-                    </div>
+                <button id="import-data-btn">Import Data</button>
+            </div>
+            <div class="card">
+                <h2>Imported Data</h2>
+                <p>List of imported and processed datasets available for analysis.</p>
+                <div id="import-list-container">
+                    <!-- Import jobs will be listed here -->
                 </div>
             </div>
         </section>
@@ -373,6 +401,7 @@
                         <option value="amplitude">Amplitude</option>
                         <option value="adjust">Adjust</option>
                         <option value="google">Google Gemini</option>
+                        <option value="bigquery">Google BigQuery</option>
                     </select>
                 </div>
                 <div id="connector-fields">
@@ -419,6 +448,14 @@
                 <button>Save Limits</button>
             </div>
         </section>
+
+        <section id="service-health" class="page">
+            <h1>Service Health</h1>
+            <div class="card">
+                <p>Real-time status of all integrated services.</p>
+                <div id="service-status-list"></div>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -440,6 +477,16 @@
                     // Activate the corresponding page
                     const pageId = this.getAttribute('data-page');
                     document.getElementById(pageId).classList.add('active');
+
+                    if (pageId === 'player-cohorts') {
+                        loadImportedDataList();
+                    }
+                    if (pageId === 'action-history') {
+                        loadActionHistory();
+                    }
+                    if (pageId === 'service-health') {
+                        loadServiceHealthStatus();
+                    }
                 });
             });
 
@@ -454,7 +501,7 @@
             const connectorListDiv = document.getElementById('connector-list');
 
             // Define the backend URL in one place for easy configuration
-            const backendUrl = '';
+            const backendUrl = 'http://localhost:8000';
 
 
             const connectorFields = {
@@ -480,6 +527,14 @@
                      <div class="form-group">
                         <label for="model_name">Gemini Model Name (optional)</label>
                         <input type="text" id="model_name" placeholder="e.g., gemini-1.5-flash">
+                    </div>`,
+                bigquery: `
+                    <div class="form-group">
+                        <label for="bigquery_project_id">Google Cloud Project ID</label>
+                        <input type="text" id="bigquery_project_id" placeholder="Enter your GCP Project ID">
+                    </div>
+                    <div class="form-group">
+                        <p style="font-size: 0.8rem; color: var(--subtle-text);">Note: For authentication, ensure your backend service has Application Default Credentials (ADC) configured (e.g., by running 'gcloud auth application-default login') or that a service account is correctly set up in your server environment.</p>
                     </div>`
             };
 
@@ -529,6 +584,11 @@
                         api_key: document.getElementById('google_api_key').value,
                         model_name: document.getElementById('model_name').value || null
                     };
+                } else if (type === 'bigquery') {
+                    endpoint = `${backendUrl}/configure-bigquery`;
+                    payload = {
+                        project_id: document.getElementById('bigquery_project_id').value
+                    };
                 }
 
                 if (!endpoint) return;
@@ -562,83 +622,110 @@
                 }
             });
 
-            // Cohorts Page Logic
-            const createCohortsBtn = document.getElementById('create-cohorts-btn');
-            const startDateInput = document.getElementById('start-date-cohort');
-            const endDateInput = document.getElementById('end-date-cohort');
-            const cohortErrorDiv = document.getElementById('cohort-error');
-            const cohortProgressDiv = document.getElementById('cohort-progress');
-            const cohortResultsContainer = document.getElementById('cohort-results-container');
-            const cohortResultsDiv = document.getElementById('cohort-results');
+            // Player Cohorts Page Logic
+            const importDataBtn = document.getElementById('import-data-btn');
+            const importListContainer = document.getElementById('import-list-container');
 
-            createCohortsBtn.addEventListener('click', async () => {
-                const startDate = startDateInput.value;
-                const endDate = endDateInput.value;
+            async function loadImportedDataList() {
+                importListContainer.innerHTML = '<p>Loading...</p>';
+                try {
+                    const response = await fetch(`${backendUrl}/list-imports`);
+                    if (!response.ok) throw new Error('Failed to fetch import list.');
+                    const data = await response.json();
 
-                // Reset UI
-                cohortErrorDiv.style.display = 'none';
-                cohortResultsContainer.style.display = 'none';
-                cohortResultsDiv.innerHTML = '';
+                    if (!data.imports || data.imports.length === 0) {
+                        importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        return;
+                    }
 
-                // 1. Validate date range
-                if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
-                    cohortErrorDiv.textContent = "Please select a valid date range!";
-                    cohortErrorDiv.style.display = 'block';
+                    let tableHtml = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Import Name</th>
+                                    <th>Timestamp</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+                    data.imports.forEach(job => {
+                        const statusClass = job.status === 'Ready to Use' ? 'status-ok' : (job.status === 'Processing' ? 'status-warning' : 'status-error');
+                        tableHtml += `
+                            <tr>
+                                <td>${job.name}</td>
+                                <td>${new Date(job.timestamp).toLocaleString()}</td>
+                                <td><span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}</td>
+                            </tr>
+                        `;
+                    });
+                    tableHtml += '</tbody></table>';
+                    importListContainer.innerHTML = tableHtml;
+
+                } catch (error) {
+                    importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
+            importDataBtn.addEventListener('click', async () => {
+                const startDate = document.getElementById('start-date-cohort').value;
+                const endDate = document.getElementById('end-date-cohort').value;
+                const source = document.getElementById('cohort-source-select').value;
+
+                if (!startDate || !endDate) {
+                    alert('Please select a valid start and end date.');
                     return;
                 }
 
-                // Show progress bar
-                cohortProgressDiv.style.display = 'block';
+                const payload = {
+                    start_date: startDate.replace(/-/g, ''),
+                    end_date: endDate.replace(/-/g, ''),
+                    source: source
+                };
 
                 try {
-                    // Format date to YYYYMMDD for the backend
-                    const payload = {
-                        start_date: startDate.replace(/-/g, ''),
-                        end_date: endDate.replace(/-/g, '')
-                    };
-
-                    // 2. Call backend
-                    const response = await fetch(`${backendUrl}/create-cohorts`, {
+                    const response = await fetch(`${backendUrl}/ingest-and-process-data`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Failed to create cohorts.');
-                    }
-
                     const result = await response.json();
-
-                    // 3. Display results
-                    if (result.cohorts && Object.keys(result.cohorts).length > 0) {
-                        for (const [cohortName, players] of Object.entries(result.cohorts)) {
-                            const cohortCard = document.createElement('div');
-                            cohortCard.className = 'card';
-                            let playerList = players.map(p => `<li>${p}</li>`).join('');
-                            cohortCard.innerHTML = `
-                                <h3>${cohortName} (${players.length} players)</h3>
-                                <ul>${playerList}</ul>
-                            `;
-                            cohortResultsDiv.appendChild(cohortCard);
-                        }
-                        cohortResultsContainer.style.display = 'block';
-                    } else {
-                        cohortErrorDiv.textContent = "No cohorts could be generated from the data in this date range.";
-                        cohortErrorDiv.style.display = 'block';
-                    }
-
+                    alert(result.message);
+                    loadImportedDataList(); // Refresh the list
                 } catch (error) {
-                    console.error('Error creating cohorts:', error);
-                    cohortErrorDiv.textContent = `Error: ${error.message}`;
-                    cohortErrorDiv.style.display = 'block';
-                } finally {
-                    // Hide progress bar
-                    cohortProgressDiv.style.display = 'none';
+                    alert(`Error starting import: ${error.message}`);
                 }
             });
 
+            // Service Health Page Logic
+            const serviceStatusListDiv = document.getElementById('service-status-list');
+
+            async function loadServiceHealthStatus() {
+                serviceStatusListDiv.innerHTML = '<p>Checking service status...</p>';
+                try {
+                    const response = await fetch(`${backendUrl}/services-health`);
+                    if (!response.ok) throw new Error('Could not fetch service health.');
+
+                    const statuses = await response.json();
+                    serviceStatusListDiv.innerHTML = ''; // Clear loading message
+
+                    for (const serviceKey in statuses) {
+                        const service = statuses[serviceKey];
+                        const serviceName = serviceKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        
+                        const item = document.createElement('div');
+                        item.className = 'service-item';
+                        item.innerHTML = `
+                            <div class="status-indicator status-${service.status}"></div>
+                            <div class="service-name">${serviceName}</div>
+                            <div style="margin-left: auto; color: var(--subtle-text);">${service.details}</div>
+                        `;
+                        serviceStatusListDiv.appendChild(item);
+                    }
+                } catch (error) {
+                    serviceStatusListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
 
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');
@@ -646,7 +733,7 @@
 
             async function checkBackendStatus() {
                 try {
-                    const response = await fetch(`${backendUrl}/health`);
+                    const response = await fetch(`${backendUrl}/health`); // Assumes backend is at root
                     if (!response.ok) throw new Error('Backend not healthy');
                     
                     healthStatusDiv.classList.add('connected');
