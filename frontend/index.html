@@ -17,6 +17,20 @@
             --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
 
+        body.dark-theme {
+            --bg-color: #121212;
+            --sidebar-bg: #1e1e1e;
+            --main-text: #e0e0e0;
+            --subtle-text: #a0a0a0;
+            --border-color: #333333;
+            --primary-color: #63b3ed;
+            --primary-hover: #4299e1;
+            --white: #1e1e1e; /* Used for card backgrounds */
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+            --button-text-color: #ffffff;
+            --button-bg-color: #63b3ed;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
@@ -176,6 +190,55 @@
             display: flex;
             justify-content: space-between;
         }
+
+        /* Theme Toggle Switch */
+        .theme-switch-wrapper {
+            display: flex;
+            align-items: center;
+            position: absolute;
+            top: 1.5rem;
+            right: 2rem;
+        }
+
+        .theme-switch {
+            display: inline-block;
+            height: 24px;
+            position: relative;
+            width: 48px;
+            margin-left: 10px;
+        }
+
+        .theme-switch input {
+            display:none;
+        }
+
+        .slider {
+            background-color: #ccc;
+            bottom: 0;
+            cursor: pointer;
+            left: 0;
+            position: absolute;
+            right: 0;
+            top: 0;
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            background-color: #fff;
+            bottom: 4px;
+            content: "";
+            height: 16px;
+            left: 4px;
+            position: absolute;
+            transition: .4s;
+            width: 16px;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
     </style>
 </head>
 <body>
@@ -201,6 +264,14 @@
     </nav>
 
     <main class="content">
+        <div class="theme-switch-wrapper">
+            <label for="theme-switch-checkbox" id="theme-label">Dark Mode</label>
+            <div class="theme-switch">
+                <input type="checkbox" id="theme-switch-checkbox" />
+                <span class="slider"></span>
+            </div>
+        </div>
+
         <section id="operator-hub" class="page active">
             <h1>Operator Hub</h1>
             <div class="card">
@@ -500,6 +571,31 @@
             // Check status on page load and then every 5 seconds
             checkBackendStatus();
             setInterval(checkBackendStatus, 5000);
+        });
+
+        // Separate DOMContentLoaded for theme to ensure it runs ASAP and avoids FOUC
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggle = document.getElementById('theme-switch-checkbox');
+            const themeLabel = document.getElementById('theme-label');
+            const currentTheme = localStorage.getItem('theme');
+
+            function setTheme(isDark) {
+                document.body.classList.toggle('dark-theme', isDark);
+                themeToggle.checked = isDark;
+                themeLabel.textContent = isDark ? 'Light Mode' : 'Dark Mode';
+                localStorage.setItem('theme', isDark ? 'dark-theme' : '');
+            }
+
+            // Set initial theme based on localStorage
+            if (currentTheme === 'dark-theme') {
+                setTheme(true);
+            } else {
+                setTheme(false);
+            }
+
+            themeToggle.addEventListener('change', function() {
+                setTheme(this.checked);
+            });
         });
     </script>
 
