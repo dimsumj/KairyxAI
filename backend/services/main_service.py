@@ -3,6 +3,7 @@
 import os
 import re
 import uvicorn
+import shutil
 import requests
 import zipfile
 import io
@@ -33,7 +34,16 @@ NORMALIZATION_MAPS = {
     "property_key_map": {}
 }
 NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
+CACHE_DIR = ".cache"
 
+def clear_cache_on_startup():
+    """Clears the data cache directory."""
+    if os.path.exists(CACHE_DIR):
+        print(f"Clearing cache directory: {CACHE_DIR}")
+        shutil.rmtree(CACHE_DIR)
+    print(f"Creating cache directory: {CACHE_DIR}")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    
 
 def load_keys_from_cache():
     """Load API keys from the cache file into environment variables if the file exists."""
@@ -78,6 +88,7 @@ def save_maps_to_cache():
         json.dump(NORMALIZATION_MAPS, f, indent=2)
 
 # Load any cached API keys on application startup
+# clear_cache_on_startup()
 load_keys_from_cache()
 
 app = FastAPI()
@@ -309,7 +320,8 @@ async def generate_churn_report(request: ChurnReportRequest):
         decision_engine = GrowthDecisionEngine(gemini_client)
 
         # 7. Initialize the churn reporter
-        reporter = ChurnReporter(modeling_engine, decision_engine)
+        reporter = ChurnReporter(modeling_engine, decision_engine) # 8. Generate the final CSV report for all at-risk players
+        report_filename = f"{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
 
         # 8. Generate the final CSV report for all at-risk players
         report_filename = 'churn_predictions_report.csv'
@@ -332,7 +344,23 @@ async def create_cohorts(request: CohortCreationRequest):
     try:
         amplitude_client = AmplitudeService()
         events_data = amplitude_client.export_events(request.start_date, request.end_date)
+        
+        # Check for cached data first
+        cache_filename = os.path.join(CACHE_DIR, f"{request.start_date}_{request.end_date}.json")
+        if os.path.exists(cache_filename):
+            print(f"Loading events from cache file: {cache_filename}")
+            with open(cache_filename, 'r') as f:
+                events_data = json.load(f)
+        else:
+            # Fetch from Amplitude if not cached
+            events_data = amplitude_client.export_events(request.start_date, request.end_date)
+            # Save to cache
+            if events_data:
+                print(f"Saving {len(events_data)} events to cache file: {cache_filename}")
+                with open(cache_filename, 'w') as f:
+                    json.dump(events_data, f)
 
+        
         if not events_data:
             raise HTTPException(status_code=404, detail="No events found for the given date range.")
 
@@ -346,6 +374,16 @@ async def create_cohorts(request: CohortCreationRequest):
         cohorts = await cohort_service.create_player_cohorts()
 
         return {"message": "Cohorts created successfully", "cohorts": cohorts}
+        # Extract a sample for the data sandbox glance
+        data_glance = events_data[:3] # Get the first 3 events as a sample
+        unique_event_names = sorted(list({event.get('event_type', 'N/A') for event in events_data}))
+
+        return {
+            "message": "Cohorts created successfully", 
+            "cohorts": cohorts,
+            "data_glance": data_glance,
+            "event_names": unique_event_names
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

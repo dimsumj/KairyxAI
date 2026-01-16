@@ -313,7 +313,19 @@
                     <label for="end-date-cohort">End Date</label>
                     <input type="date" id="end-date-cohort">
                 </div>
-                <button>Create Cohorts</button>
+                <button id="create-cohorts-btn">Create Cohorts</button>
+                <div id="cohort-error" style="color: #f56565; margin-top: 1rem; display: none;"></div>
+                <div id="cohort-progress" class="card" style="display: none; margin-top: 1.5rem;">
+                    <p>Fetching and analyzing data... This may take a moment.</p>
+                    <div style="width: 100%; background-color: var(--border-color); border-radius: 4px;">
+                        <div style="width: 100%; height: 10px; background-color: var(--primary-color); border-radius: 4px; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;"></div>
+                    </div>
+                </div>
+                <div id="cohort-results-container" style="margin-top: 1.5rem; display: none;">
+                    <h2>Generated Cohorts</h2>
+                    <div id="cohort-results">
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -549,6 +561,84 @@
                     alert(`Error: ${error.message}`);
                 }
             });
+
+            // Cohorts Page Logic
+            const createCohortsBtn = document.getElementById('create-cohorts-btn');
+            const startDateInput = document.getElementById('start-date-cohort');
+            const endDateInput = document.getElementById('end-date-cohort');
+            const cohortErrorDiv = document.getElementById('cohort-error');
+            const cohortProgressDiv = document.getElementById('cohort-progress');
+            const cohortResultsContainer = document.getElementById('cohort-results-container');
+            const cohortResultsDiv = document.getElementById('cohort-results');
+
+            createCohortsBtn.addEventListener('click', async () => {
+                const startDate = startDateInput.value;
+                const endDate = endDateInput.value;
+
+                // Reset UI
+                cohortErrorDiv.style.display = 'none';
+                cohortResultsContainer.style.display = 'none';
+                cohortResultsDiv.innerHTML = '';
+
+                // 1. Validate date range
+                if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
+                    cohortErrorDiv.textContent = "Please select a valid date range!";
+                    cohortErrorDiv.style.display = 'block';
+                    return;
+                }
+
+                // Show progress bar
+                cohortProgressDiv.style.display = 'block';
+
+                try {
+                    // Format date to YYYYMMDD for the backend
+                    const payload = {
+                        start_date: startDate.replace(/-/g, ''),
+                        end_date: endDate.replace(/-/g, '')
+                    };
+
+                    // 2. Call backend
+                    const response = await fetch(`${backendUrl}/create-cohorts`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Failed to create cohorts.');
+                    }
+
+                    const result = await response.json();
+
+                    // 3. Display results
+                    if (result.cohorts && Object.keys(result.cohorts).length > 0) {
+                        for (const [cohortName, players] of Object.entries(result.cohorts)) {
+                            const cohortCard = document.createElement('div');
+                            cohortCard.className = 'card';
+                            let playerList = players.map(p => `<li>${p}</li>`).join('');
+                            cohortCard.innerHTML = `
+                                <h3>${cohortName} (${players.length} players)</h3>
+                                <ul>${playerList}</ul>
+                            `;
+                            cohortResultsDiv.appendChild(cohortCard);
+                        }
+                        cohortResultsContainer.style.display = 'block';
+                    } else {
+                        cohortErrorDiv.textContent = "No cohorts could be generated from the data in this date range.";
+                        cohortErrorDiv.style.display = 'block';
+                    }
+
+                } catch (error) {
+                    console.error('Error creating cohorts:', error);
+                    cohortErrorDiv.textContent = `Error: ${error.message}`;
+                    cohortErrorDiv.style.display = 'block';
+                } finally {
+                    // Hide progress bar
+                    cohortProgressDiv.style.display = 'none';
+                }
+            });
+
 
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');
