@@ -34,6 +34,10 @@
             --button-bg-color: #63b3ed;
         }
 
+        body.dark-theme .slider {
+            background-color: #4a5568; /* A neutral dark theme color */
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
@@ -247,6 +251,10 @@
             top: 0;
             transition: .4s;
             border-radius: 24px;
+        }
+
+        input:checked + .slider {
+            background-color: var(--primary-color);
         }
 
         .slider:before {
@@ -479,6 +487,7 @@
                     document.getElementById(pageId).classList.add('active');
 
                     if (pageId === 'player-cohorts') {
+                        loadConfiguredSources();
                         loadImportedDataList();
                     }
                     if (pageId === 'action-history') {
@@ -626,6 +635,33 @@
             const importDataBtn = document.getElementById('import-data-btn');
             const importListContainer = document.getElementById('import-list-container');
 
+            async function loadConfiguredSources() {
+                const importForm = importDataBtn.parentElement;
+                const sourceSelect = document.getElementById('cohort-source-select');
+
+                try {
+                    // Add a cache-busting query parameter to ensure the latest data is fetched
+                    const url = new URL(`${backendUrl}/list-configured-sources`);
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error('Failed to fetch configured sources.');
+                    const data = await response.json();
+
+                    if (!data.sources || data.sources.length === 0) {
+                        importForm.innerHTML = '<p>Please configure a data source in the Connectors section first.</p>';
+                    } else {
+                        sourceSelect.innerHTML = ''; // Clear existing options
+                        data.sources.forEach(source => {
+                            const option = document.createElement('option');
+                            option.value = source.id;
+                            option.textContent = source.name;
+                            sourceSelect.appendChild(option);
+                        });
+                    }
+                } catch (error) {
+                    importForm.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
             async function loadImportedDataList() {
                 importListContainer.innerHTML = '<p>Loading...</p>';
                 try {
@@ -671,6 +707,11 @@
                 const startDate = document.getElementById('start-date-cohort').value;
                 const endDate = document.getElementById('end-date-cohort').value;
                 const source = document.getElementById('cohort-source-select').value;
+
+                if (!source) {
+                    alert('No data source is available. Please configure one in the Connectors section.');
+                    return;
+                }
 
                 if (!startDate || !endDate) {
                     alert('Please select a valid start and end date.');

@@ -174,13 +174,22 @@ class IngestionRequest(BaseModel):
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
-frontend_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'frontend')
+# Use an absolute path to make serving robust, regardless of the current working directory.
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(backend_dir, '..', '..'))
+frontend_dir = os.path.join(project_root, 'frontend')
+
 app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
 @app.get("/")
 async def serve_index():
     """Serves the main index.html file from the frontend directory."""
-    return FileResponse(os.path.join(frontend_dir, 'index.html'))
+    response = FileResponse(os.path.join(frontend_dir, 'index.html'))
+    # Add headers to prevent caching during development
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/health")
@@ -226,6 +235,26 @@ async def configure_bigquery(creds: BigQueryCredentials):
     save_keys_to_cache({"BIGQUERY_PROJECT_ID": creds.project_id})
     # In a real app, you might also initialize the BigQuery client here to verify credentials.
     return {"message": "BigQuery Project ID has been configured and cached."}
+
+@app.get("/list-configured-sources")
+async def list_configured_sources():
+    """
+    Returns a list of data sources that have been correctly configured.
+    """
+    sources = []
+    # Check for Amplitude
+    if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY"):
+        sources.append({"id": "amplitude", "name": "Amplitude"})
+    
+    # Check for Adjust
+    if os.getenv("ADJUST_API_TOKEN"):
+        sources.append({"id": "adjust", "name": "Adjust"})
+    
+    # Check for BigQuery
+    if os.getenv("BIGQUERY_PROJECT_ID"):
+        sources.append({"id": "bigquery", "name": "Google BigQuery"})
+
+    return {"sources": sources}
 
 @app.get("/list-imports")
 async def list_imports():
