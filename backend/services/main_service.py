@@ -10,7 +10,7 @@ import gzip
 import json
 from typing import List, Dict, Any
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 from event_semantic_normalizer import EventSemanticNormalizer
@@ -20,8 +20,9 @@ from player_cohort_service import PlayerCohortService
 from gemini_client import GeminiClient
 from engagement_executor import EngagementExecutor
 from churn_reporter import ChurnReporter
+from fastapi.staticfiles import StaticFiles
 from engagement_feedback import EngagementFeedback
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
 
@@ -93,17 +94,17 @@ app.add_middleware(
 
 class AmplitudeApiKeys(BaseModel):
     """Request model for setting Amplitude API keys."""
-    amplitude_api_key: str
-    amplitude_secret_key: str
+    amplitude_api_key: str = Field(..., alias='api_key')
+    amplitude_secret_key: str = Field(..., alias='secret_key')
 
 class GoogleApiKey(BaseModel):
     """Request model for setting Google API key."""
-    google_api_key: str
+    google_api_key: str = Field(..., alias='api_key')
     model_name: str | None = None
 
 class AdjustApiKey(BaseModel):
     """Request model for setting the Adjust API token."""
-    adjust_api_token: str
+    adjust_api_token: str = Field(..., alias='api_token')
 
 class ChurnReportRequest(BaseModel):
     """Request model for generating a churn report."""
@@ -202,6 +203,22 @@ class AmplitudeService:
         except Exception as err:
             print(f"An other error occurred: {err}")
             raise
+
+# Serve the frontend application
+# This assumes the 'frontend' directory is two levels up from this script's location.
+frontend_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'frontend')
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
+@app.get("/")
+async def serve_index():
+    """Serves the main index.html file from the frontend directory."""
+    return FileResponse(os.path.join(frontend_dir, 'index.html'))
+
+
+@app.get("/health")
+async def health_check():
+    """A simple health check endpoint that confirms the server is running."""
+    return {"status": "ok"}
 @app.post("/configure-amplitude-keys")
 async def configure_amplitude_keys(keys: AmplitudeApiKeys):
     """

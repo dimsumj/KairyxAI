@@ -74,4 +74,6 @@ wheels/
 engagement_actions.log
 *.log
 /.ssh/
+.api_keys_cache.json
+
 

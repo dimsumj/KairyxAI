@@ -33,6 +33,7 @@
             border-right: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
+            justify-content: space-between;
             flex-shrink: 0;
         }
 
@@ -68,6 +69,30 @@
             font-weight: 600;
             border-left: 3px solid var(--primary-color);
             padding-left: calc(1.5rem - 3px);
+        }
+
+        .sidebar-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        #health-status {
+            display: flex;
+            align-items: center;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        #health-status .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.75rem;
+            background-color: #f56565; /* Red for disconnected */
+        }
+
+        #health-status.connected .status-dot {
+            background-color: #48bb78; /* Green for connected */
         }
 
         .content {
@@ -146,6 +171,11 @@
         th {
             background-color: var(--bg-color);
         }
+
+        #connector-list .card {
+            display: flex;
+            justify-content: space-between;
+        }
     </style>
 </head>
 <body>
@@ -162,6 +192,12 @@
             <li><a href="#" class="nav-link" data-page="data-sandbox">Data Sandbox</a></li>
             <li><a href="#" class="nav-link" data-page="safety-rails">Safety Rails</a></li>
         </ul>
+        <div class="sidebar-footer">
+            <div id="health-status">
+                <span class="status-dot"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </div>
     </nav>
 
     <main class="content">
@@ -238,17 +274,29 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
-            <div class="card">
-                <h2>API Key Connections</h2>
+            <div id="connector-list">
+                <!-- Saved connectors will be dynamically added here -->
+            </div>
+            <div class="card" id="add-connector-card">
+                <button id="add-connector-btn">Add New Connector</button>
+            </div>
+
+            <div id="add-connector-form-container" class="card" style="display: none;">
+                <h2>Add New Connector</h2>
                 <div class="form-group">
-                    <label for="amplitude-key">Amplitude API Key</label>
-                    <input type="password" id="amplitude-key" placeholder="Enter your Amplitude API Key">
+                    <label for="connector-type">Select Connector Source</label>
+                    <select id="connector-type">
+                        <option value="">--Please choose an option--</option>
+                        <option value="amplitude">Amplitude</option>
+                        <option value="adjust">Adjust</option>
+                        <option value="google">Google Gemini</option>
+                    </select>
                 </div>
-                <div class="form-group">
-                    <label for="google-key">Google Gemini API Key</label>
-                    <input type="password" id="google-key" placeholder="Enter your Google API Key">
+                <div id="connector-fields">
+                    <!-- Fields for the selected connector will be injected here -->
                 </div>
-                <button>Save Connections</button>
+                <button id="save-connector-btn" style="display: none;">Save Connector</button>
+                <button id="cancel-add-connector-btn" style="background-color: var(--subtle-text); margin-left: 10px;">Cancel</button>
             </div>
         </section>
 
@@ -311,6 +359,147 @@
                     document.getElementById(pageId).classList.add('active');
                 });
             });
+
+            // Connectors Page Logic
+            const addConnectorBtn = document.getElementById('add-connector-btn');
+            const addConnectorCard = document.getElementById('add-connector-card');
+            const addConnectorFormContainer = document.getElementById('add-connector-form-container');
+            const cancelBtn = document.getElementById('cancel-add-connector-btn');
+            const connectorTypeSelect = document.getElementById('connector-type');
+            const connectorFieldsDiv = document.getElementById('connector-fields');
+            const saveConnectorBtn = document.getElementById('save-connector-btn');
+            const connectorListDiv = document.getElementById('connector-list');
+
+            // Define the backend URL in one place for easy configuration
+            const backendUrl = '';
+
+
+            const connectorFields = {
+                amplitude: `
+                    <div class="form-group">
+                        <label for="amplitude_api_key">Amplitude API Key</label>
+                        <input type="password" id="amplitude_api_key" placeholder="Enter your Amplitude API Key">
+                    </div>
+                    <div class="form-group">
+                        <label for="amplitude_secret_key">Amplitude Secret Key</label>
+                        <input type="password" id="amplitude_secret_key" placeholder="Enter your Amplitude Secret Key">
+                    </div>`,
+                adjust: `
+                    <div class="form-group">
+                        <label for="adjust_api_token">Adjust API Token</label>
+                        <input type="password" id="adjust_api_token" placeholder="Enter your Adjust API Token">
+                    </div>`,
+                google: `
+                    <div class="form-group">
+                        <label for="google_api_key">Google API Key</label>
+                        <input type="password" id="google_api_key" placeholder="Enter your Google API Key">
+                    </div>
+                     <div class="form-group">
+                        <label for="model_name">Gemini Model Name (optional)</label>
+                        <input type="text" id="model_name" placeholder="e.g., gemini-1.5-flash">
+                    </div>`
+            };
+
+            addConnectorBtn.addEventListener('click', () => {
+                addConnectorCard.style.display = 'none';
+                addConnectorFormContainer.style.display = 'block';
+            });
+
+            cancelBtn.addEventListener('click', () => {
+                addConnectorFormContainer.style.display = 'none';
+                addConnectorCard.style.display = 'block';
+                connectorTypeSelect.value = '';
+                connectorFieldsDiv.innerHTML = '';
+                saveConnectorBtn.style.display = 'none';
+            });
+
+            connectorTypeSelect.addEventListener('change', (e) => {
+                const type = e.target.value;
+                if (type && connectorFields[type]) {
+                    connectorFieldsDiv.innerHTML = connectorFields[type];
+                    saveConnectorBtn.style.display = 'inline-block';
+                } else {
+                    connectorFieldsDiv.innerHTML = '';
+                    saveConnectorBtn.style.display = 'none';
+                }
+            });
+
+            saveConnectorBtn.addEventListener('click', async () => {
+                const type = connectorTypeSelect.value;
+                let endpoint = '';
+                let payload = {};
+
+                if (type === 'amplitude') {
+                    endpoint = `${backendUrl}/configure-amplitude-keys`;
+                    payload = {
+                        api_key: document.getElementById('amplitude_api_key').value,
+                        secret_key: document.getElementById('amplitude_secret_key').value
+                    };
+                } else if (type === 'adjust') {
+                    endpoint = `${backendUrl}/configure-adjust-credentials`;
+                    payload = {
+                        api_token: document.getElementById('adjust_api_token').value
+                    };
+                } else if (type === 'google') {
+                    endpoint = `${backendUrl}/configure-google-key`;
+                    payload = {
+                        api_key: document.getElementById('google_api_key').value,
+                        model_name: document.getElementById('model_name').value || null
+                    };
+                }
+
+                if (!endpoint) return;
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Failed to save connector.');
+                    }
+
+                    const result = await response.json();
+                    alert(result.message); // Show success message
+
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+                        <span><strong>${type.charAt(0).toUpperCase() + type.slice(1)}</strong>: Configured</span>
+                        <button style="background-color: var(--subtle-text);">Delete</button>
+                    `;
+                    connectorListDiv.appendChild(card);
+                    cancelBtn.click(); // Reset form
+                } catch (error) {
+                    console.error('Error saving connector:', error);
+                    alert(`Error: ${error.message}`);
+                }
+            });
+
+            // Health Check Logic
+            const healthStatusDiv = document.getElementById('health-status');
+            const statusTextSpan = document.getElementById('status-text');
+
+            async function checkBackendStatus() {
+                try {
+                    const response = await fetch(`${backendUrl}/health`);
+                    if (!response.ok) throw new Error('Backend not healthy');
+                    
+                    healthStatusDiv.classList.add('connected');
+                    statusTextSpan.textContent = 'Backend Connected';
+                } catch (error) {
+                    healthStatusDiv.classList.remove('connected');
+                    statusTextSpan.textContent = 'Backend Disconnected';
+                    console.error('Health check failed:', error);
+                }
+            }
+
+            // Check status on page load and then every 5 seconds
+            checkBackendStatus();
+            setInterval(checkBackendStatus, 5000);
         });
     </script>
 
