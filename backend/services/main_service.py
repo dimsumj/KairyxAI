@@ -58,6 +58,12 @@ def clear_cache_on_startup():
     print(f"Creating cache directory: {CACHE_DIR}")
     os.makedirs(CACHE_DIR, exist_ok=True)
     
+def clear_api_key_cache_on_startup():
+    """Deletes the API key cache file if it exists."""
+    if os.path.exists(KEYS_CACHE_FILE):
+        print(f"Clearing API key cache file: {KEYS_CACHE_FILE}")
+        os.remove(KEYS_CACHE_FILE)
+
 
 def load_keys_from_cache():
     """Load API keys from the cache file into environment variables if the file exists."""
@@ -103,6 +109,7 @@ def save_maps_to_cache():
 
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
+clear_api_key_cache_on_startup()
 load_keys_from_cache()
 
 app = FastAPI()
@@ -276,6 +283,10 @@ async def get_services_health():
         "amplitude": {
             "status": "ok" if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY") else "error",
             "details": "Configured" if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY") else "Not Configured"
+        },
+        "adjust": {
+            "status": "ok" if os.getenv("ADJUST_API_TOKEN") else "error",
+            "details": "Configured" if os.getenv("ADJUST_API_TOKEN") else "Not Configured"
         },
         "google_gemini": {
             "status": "ok" if os.getenv("GOOGLE_API_KEY") else "error",

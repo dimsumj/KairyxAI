@@ -636,8 +636,11 @@
             const importListContainer = document.getElementById('import-list-container');
 
             async function loadConfiguredSources() {
-                const importForm = importDataBtn.parentElement;
+                const importCard = importDataBtn.parentElement;
                 const sourceSelect = document.getElementById('cohort-source-select');
+                const sourceGroup = document.getElementById('cohort-source-select').parentElement;
+                const startDateGroup = document.getElementById('start-date-cohort').parentElement;
+                const endDateGroup = document.getElementById('end-date-cohort').parentElement;
 
                 try {
                     // Add a cache-busting query parameter to ensure the latest data is fetched
@@ -647,7 +650,19 @@
                     const data = await response.json();
 
                     if (!data.sources || data.sources.length === 0) {
-                        importForm.innerHTML = '<p>Please configure a data source in the Connectors section first.</p>';
+                        // Hide form elements and show message
+                        sourceGroup.style.display = 'none';
+                        startDateGroup.style.display = 'none';
+                        endDateGroup.style.display = 'none';
+                        importDataBtn.style.display = 'none';
+                        
+                        let messageEl = importCard.querySelector('.config-message');
+                        if (!messageEl) {
+                            messageEl = document.createElement('p');
+                            messageEl.className = 'config-message';
+                            messageEl.textContent = 'Please configure a data source in the Connectors section first.';
+                            importCard.insertBefore(messageEl, sourceGroup);
+                        }
                     } else {
                         sourceSelect.innerHTML = ''; // Clear existing options
                         data.sources.forEach(source => {
@@ -656,9 +671,20 @@
                             option.textContent = source.name;
                             sourceSelect.appendChild(option);
                         });
+                        // Ensure form elements are visible
+                        sourceGroup.style.display = 'block';
+                        startDateGroup.style.display = 'block';
+                        endDateGroup.style.display = 'block';
+                        importDataBtn.style.display = 'inline-block';
+
+                        let messageEl = importCard.querySelector('.config-message');
+                        if (messageEl) {
+                            messageEl.remove();
+                        }
                     }
                 } catch (error) {
-                    importForm.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                    const importCard = importDataBtn.parentElement;
+                    importCard.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 }
             }
 
