@@ -101,7 +101,7 @@ class PlayerModelingEngine:
         }
         return profile
 
-    def estimate_churn_risk(self, player_id: Any) -> Optional[Dict[str, Any]]:
+    async def estimate_churn_risk(self, player_id: Any) -> Optional[Dict[str, Any]]:
         """
         Estimates the churn risk for a single player based on activity.
 

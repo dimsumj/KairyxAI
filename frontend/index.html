@@ -1,51 +1,318 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kairyx AI - AI Growth Operator</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <title>Kairyx AI - Player Engagement Platform</title>
     <style>
+        :root {
+            --bg-color: #f4f7fa;
+            --sidebar-bg: #ffffff;
+            --main-text: #2d3748;
+            --subtle-text: #718096;
+            --border-color: #e2e8f0;
+            --primary-color: #4a5568;
+            --primary-hover: #2d3748;
+            --white: #fff;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
         body {
-            font-family: 'Inter', sans-serif;
-            background-color: #030712;
-            color: #f3f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--main-text);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
         }
-        .mono {
-            font-family: 'JetBrains Mono', monospace;
+
+        .sidebar {
+            width: 240px;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
         }
-        ::-webkit-scrollbar {
-            width: 8px;
+
+        .sidebar-header {
+            padding: 1.5rem;
+            font-size: 1.25rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
         }
-        ::-webkit-scrollbar-track {
-            background: #111827;
+
+        .sidebar-nav {
+            list-style: none;
+            padding: 1rem 0;
+            margin: 0;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #374151;
+
+        .sidebar-nav li a {
+            display: block;
+            padding: 0.75rem 1.5rem;
+            color: var(--subtle-text);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s ease-in-out;
+        }
+
+        .sidebar-nav li a:hover {
+            color: var(--primary-hover);
+            background-color: var(--bg-color);
+        }
+
+        .sidebar-nav li a.active {
+            color: var(--primary-hover);
+            font-weight: 600;
+            border-left: 3px solid var(--primary-color);
+            padding-left: calc(1.5rem - 3px);
+        }
+
+        .content {
+            flex-grow: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .card {
+            background: var(--white);
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
             border-radius: 4px;
+            box-sizing: border-box;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #4b5563;
+
+        button {
+            background-color: var(--primary-color);
+            color: var(--white);
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: var(--bg-color);
         }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.36.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "recharts": "https://esm.sh/recharts@^3.6.0"
-  }
-}
-</script>
 </head>
 <body>
-    <div id="root"></div>
+
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            Kairyx AI
+        </div>
+        <ul class="sidebar-nav">
+            <li><a href="#" class="nav-link active" data-page="operator-hub">Operator Hub</a></li>
+            <li><a href="#" class="nav-link" data-page="player-cohorts">Player Cohorts</a></li>
+            <li><a href="#" class="nav-link" data-page="action-history">Action History</a></li>
+            <li><a href="#" class="nav-link" data-page="connectors">Connectors</a></li>
+            <li><a href="#" class="nav-link" data-page="data-sandbox">Data Sandbox</a></li>
+            <li><a href="#" class="nav-link" data-page="safety-rails">Safety Rails</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <section id="operator-hub" class="page active">
+            <h1>Operator Hub</h1>
+            <div class="card">
+                <p>Choose a cohort to view its members and their key metrics.</p>
+                <!-- This would be populated dynamically -->
+                <table>
+                    <thead>
+                        <tr>
+                            <th>User ID</th>
+                            <th>LTV</th>
+                            <th>Session Count</th>
+                            <th>Event Count</th>
+                            <th>Predicted Churn Risk</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Example Row -->
+                        <tr>
+                            <td>user_12345</td>
+                            <td>$45.50</td>
+                            <td>12</td>
+                            <td>156</td>
+                            <td>Low</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="player-cohorts" class="page">
+            <h1>Player Cohorts</h1>
+            <div class="card">
+                <p>Analyze raw data for a certain period of time, then create cohorts based on some variables.</p>
+                <div class="form-group">
+                    <label for="start-date-cohort">Start Date</label>
+                    <input type="date" id="start-date-cohort">
+                </div>
+                <div class="form-group">
+                    <label for="end-date-cohort">End Date</label>
+                    <input type="date" id="end-date-cohort">
+                </div>
+                <button>Create Cohorts</button>
+            </div>
+        </section>
+
+        <section id="action-history" class="page">
+            <h1>Action History</h1>
+            <div class="card">
+                <p>A log of actions taken on each cohort, tracked by date and time.</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Player ID</th>
+                            <th>Action</th>
+                            <th>Channel</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                         <!-- Example Row -->
+                        <tr>
+                            <td>2026-01-16 03:48:42</td>
+                            <td>user_abcde</td>
+                            <td>Sent "Welcome Back" bonus</td>
+                            <td>In-App Message</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="connectors" class="page">
+            <h1>Connectors</h1>
+            <div class="card">
+                <h2>API Key Connections</h2>
+                <div class="form-group">
+                    <label for="amplitude-key">Amplitude API Key</label>
+                    <input type="password" id="amplitude-key" placeholder="Enter your Amplitude API Key">
+                </div>
+                <div class="form-group">
+                    <label for="google-key">Google Gemini API Key</label>
+                    <input type="password" id="google-key" placeholder="Enter your Google API Key">
+                </div>
+                <button>Save Connections</button>
+            </div>
+        </section>
+
+        <section id="data-sandbox" class="page">
+            <h1>Data Sandbox</h1>
+            <div class="card">
+                <h2>Raw Data Glance</h2>
+                <p>A sample of raw data from the latest import.</p>
+                <pre><code>{ "event_type": "start_session", "user_id": "user_xyz", ... }</code></pre>
+                
+                <h2 style="margin-top: 2rem;">Tag Events</h2>
+                <p>Correct event names that the cleaning engine didn't process correctly.</p>
+                <div class="form-group">
+                    <label for="raw-event">Raw Event Name</label>
+                    <input type="text" id="raw-event" placeholder="e.g., 'purchase_item'">
+                </div>
+                <div class="form-group">
+                    <label for="normalized-event">Normalized Event Name</label>
+                    <input type="text" id="normalized-event" placeholder="e.g., 'item_purchased'">
+                </div>
+                <button>Create Rule</button>
+            </div>
+        </section>
+
+        <section id="safety-rails" class="page">
+            <h1>Safety Rails</h1>
+            <div class="card">
+                <p>Set limits on AI token usage and budget to control costs.</p>
+                <div class="form-group">
+                    <label for="token-limit">AI Token Limit (per month)</label>
+                    <input type="number" id="token-limit" placeholder="e.g., 1000000">
+                </div>
+                <div class="form-group">
+                    <label for="budget-limit">Budget Limit (USD per month)</label>
+                    <input type="number" id="budget-limit" placeholder="e.g., 500">
+                </div>
+                <button>Save Limits</button>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const navLinks = document.querySelectorAll('.nav-link');
+            const pages = document.querySelectorAll('.page');
+
+            navLinks.forEach(link => {
+                link.addEventListener('click', function (e) {
+                    e.preventDefault();
+
+                    // Deactivate all links and pages
+                    navLinks.forEach(l => l.classList.remove('active'));
+                    pages.forEach(p => p.classList.remove('active'));
+
+                    // Activate the clicked link
+                    this.classList.add('active');
+
+                    // Activate the corresponding page
+                    const pageId = this.getAttribute('data-page');
+                    document.getElementById(pageId).classList.add('active');
+                });
+            });
+        });
+    </script>
+
 </body>
 </html>

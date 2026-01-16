@@ -17,8 +17,11 @@ class GeminiClient:
             raise ValueError("GOOGLE_API_KEY environment variable must be set.")
         
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-        print("GeminiClient initialized successfully.")
+        # Use the model from environment variable, or default to 'gemini-2.5-flash'
+        model_name = os.getenv("GOOGLE_GEMINI_MODEL", 'gemini-2.5-flash')
+        self.model = genai.GenerativeModel(model_name)
+        
+        print(f"GeminiClient initialized successfully with model: {model_name}")
 
     def get_ai_response(self, prompt: str) -> str:
         """
