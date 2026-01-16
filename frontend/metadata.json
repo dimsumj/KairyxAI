@@ -1,0 +1,8 @@
+{
+  "name": "Kairyx AI Growth Operator",
+  "description": "An autonomous AI engine designed to optimize mobile game player retention and long-term value through intelligent data normalization, behavioral modeling, and automated engagement execution.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
