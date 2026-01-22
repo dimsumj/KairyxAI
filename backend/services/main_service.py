@@ -823,12 +823,14 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
             churn_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
 
             churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
+            churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
             predictions.append({
                 "user_id": player_id,
                 "ltv": profile.get("total_revenue", "N/A"),
                 "session_count": profile.get("total_sessions", "N/A"),
                 "event_count": profile.get("total_events", "N/A"),
-                "predicted_churn_risk": churn_risk
+                "predicted_churn_risk": churn_risk,
+                "churn_reason": churn_reason
             })
 
         return {"predictions": predictions}
