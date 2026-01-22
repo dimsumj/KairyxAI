@@ -76,4 +76,5 @@ engagement_actions.log
 /.ssh/
 .api_keys_cache.json
 
-
+.gcs_bucket/
+backend/services/.import_jobs.json

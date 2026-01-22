@@ -6,6 +6,7 @@ import zipfile
 import io
 import gzip
 import json
+from typing import Optional
 
 class AmplitudeService:
     """
@@ -14,12 +15,15 @@ class AmplitudeService:
     API_URL = "https://amplitude.com/api/2/export"
 
 
-    def __init__(self):
+    def __init__(self, api_key: Optional[str] = None, secret_key: Optional[str] = None):
         """
-        Initializes the AmplitudeService, retrieving API keys from environment variables.
+        Initializes the AmplitudeService.
+        Args:
+            api_key: The Amplitude API key. If None, attempts to retrieve from environment.
+            secret_key: The Amplitude Secret key. If None, attempts to retrieve from environment.
         """
-        self.api_key = os.getenv("AMPLITUDE_API_KEY")
-        self.secret_key = os.getenv("AMPLITUDE_SECRET_KEY")
+        self.api_key = api_key or os.getenv("AMPLITUDE_API_KEY")
+        self.secret_key = secret_key or os.getenv("AMPLITUDE_SECRET_KEY")
 
         if not self.api_key or not self.secret_key:
             raise ValueError(

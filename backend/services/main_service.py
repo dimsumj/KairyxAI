@@ -9,8 +9,11 @@ import zipfile
 import io
 import gzip
 import json
-from typing import List, Dict, Any
-from datetime import datetime
+from typing import Any, Optional, Dict
+from datetime import (
+    datetime,
+    timedelta,
+)
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
@@ -39,6 +42,7 @@ NORMALIZATION_MAPS = {
     "property_key_map": {}
 }
 NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
+IMPORT_JOBS_CACHE_FILE = ".import_jobs.json"
 CACHE_DIR = ".cache"
 
 # Global instances of our new services. In a microservices architecture,
@@ -64,18 +68,71 @@ def clear_api_key_cache_on_startup():
         print(f"Clearing API key cache file: {KEYS_CACHE_FILE}")
         os.remove(KEYS_CACHE_FILE)
 
+def save_import_jobs_to_cache():
+    """Saves the current IMPORT_JOBS list to a file."""
+    with open(IMPORT_JOBS_CACHE_FILE, 'w') as f:
+        json.dump(IMPORT_JOBS, f, indent=2)
+
+def load_import_jobs_from_cache():
+    """Loads IMPORT_JOBS from a file if it exists."""
+    if os.path.exists(IMPORT_JOBS_CACHE_FILE):
+        with open(IMPORT_JOBS_CACHE_FILE, 'r') as f:
+            try:
+                jobs = json.load(f)
+                IMPORT_JOBS.extend(jobs)
+            except json.JSONDecodeError:
+                print(f"Warning: Could not decode {IMPORT_JOBS_CACHE_FILE}")
+
+def cleanup_expired_jobs():
+    """
+    Removes expired jobs and jobs stuck in 'Processing' state from the cache
+    on application startup.
+    """
+    global IMPORT_JOBS
+    
+    # Filter out jobs stuck in 'Processing' from a previous run
+    processing_cleared_jobs = [job for job in IMPORT_JOBS if job.get("status") != "Processing"]
+    if len(processing_cleared_jobs) < len(IMPORT_JOBS):
+        print("Clearing jobs stuck in 'Processing' state from previous session.")
+    
+    # From the remaining jobs, filter out the expired ones
+    now = datetime.utcnow()
+    valid_jobs = []
+    for job in processing_cleared_jobs:
+        expiration = datetime.fromisoformat(job.get("expiration_timestamp"))
+        if now < expiration:
+            valid_jobs.append(job)
+        else:
+            print(f"Job '{job['name']}' has expired. Deleting cache.")
+            cache_filename = os.path.join(CACHE_DIR, f"{job['start_date']}_{job['end_date']}.json")
+            if os.path.exists(cache_filename):
+                os.remove(cache_filename)
+    
+    IMPORT_JOBS = valid_jobs
+    save_import_jobs_to_cache()
+
 
 def load_keys_from_cache():
     """Load API keys from the cache file into environment variables if the file exists."""
     if os.path.exists(KEYS_CACHE_FILE):
-        print(f"Loading API keys from cache file: {KEYS_CACHE_FILE}")
+        print(f"Loading connector configurations from cache file: {KEYS_CACHE_FILE}")
         with open(KEYS_CACHE_FILE, 'r') as f:
             try:
-                keys = json.load(f)
-                for key, value in keys.items():
-                    if value:
-                        os.environ[key] = value
-                print("API keys loaded from cache.")
+                cached_data = json.load(f)
+                connectors = cached_data.get("connectors", {})
+                # For services that depend on os.environ, load the *first* available key.
+                # This maintains backward compatibility for core functions while allowing UI to list all.
+                if "amplitude" in connectors and connectors["amplitude"]:
+                    os.environ["AMPLITUDE_API_KEY"] = connectors["amplitude"][0].get("api_key")
+                    os.environ["AMPLITUDE_SECRET_KEY"] = connectors["amplitude"][0].get("secret_key")
+                if "google" in connectors and connectors["google"]:
+                    os.environ["GOOGLE_API_KEY"] = connectors["google"][0].get("api_key")
+                    os.environ["GOOGLE_GEMINI_MODEL"] = connectors["google"][0].get("model_name")
+                if "adjust" in connectors and connectors["adjust"]:
+                    os.environ["ADJUST_API_TOKEN"] = connectors["adjust"][0].get("api_token")
+                if "bigquery" in connectors and connectors["bigquery"]:
+                     os.environ["BIGQUERY_PROJECT_ID"] = connectors["bigquery"][0].get("project_id")
+                print("Primary API keys loaded into environment.")
             except json.JSONDecodeError:
                 print(f"Warning: Could not decode JSON from {KEYS_CACHE_FILE}. File might be corrupt.")
     
@@ -89,19 +146,6 @@ def load_keys_from_cache():
             except json.JSONDecodeError:
                 print(f"Warning: Could not decode JSON from {NORMALIZATION_CACHE_FILE}. File might be corrupt.")
 
-def save_keys_to_cache(new_keys: dict):
-    """Save API keys to the cache file."""
-    keys = {}
-    if os.path.exists(KEYS_CACHE_FILE):
-        with open(KEYS_CACHE_FILE, 'r') as f:
-            try:
-                keys = json.load(f)
-            except json.JSONDecodeError:
-                pass  # Overwrite if corrupt
-    keys.update(new_keys)
-    with open(KEYS_CACHE_FILE, 'w') as f:
-        json.dump(keys, f, indent=2)
-
 def save_maps_to_cache():
     """Save normalization maps to the cache file."""
     with open(NORMALIZATION_CACHE_FILE, 'w') as f:
@@ -109,8 +153,10 @@ def save_maps_to_cache():
 
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
-clear_api_key_cache_on_startup()
+# clear_api_key_cache_on_startup()
+load_import_jobs_from_cache()
 load_keys_from_cache()
+cleanup_expired_jobs()
 
 app = FastAPI()
 
@@ -179,6 +225,10 @@ class IngestionRequest(BaseModel):
     end_date: str
     source: str
 
+class ChurnPredictionRequest(BaseModel):
+    """Request model for running churn prediction on an imported dataset."""
+    job_name: str
+
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
 # Use an absolute path to make serving robust, regardless of the current working directory.
@@ -212,10 +262,13 @@ async def configure_amplitude_keys(keys: AmplitudeApiKeys):
     """
     os.environ["AMPLITUDE_API_KEY"] = keys.amplitude_api_key
     os.environ["AMPLITUDE_SECRET_KEY"] = keys.amplitude_secret_key
-    save_keys_to_cache({
-        "AMPLITUDE_API_KEY": keys.amplitude_api_key,
-        "AMPLITUDE_SECRET_KEY": keys.amplitude_secret_key
-    })
+    
+    new_config = {
+        "api_key": keys.amplitude_api_key,
+        "secret_key": keys.amplitude_secret_key
+    }
+    _add_connector_config("amplitude", "Amplitude", new_config)
+
     return {"message": "Amplitude API keys have been configured and cached."}
 
 @app.post("/configure-google-key")
@@ -224,14 +277,23 @@ async def configure_google_key(key: GoogleApiKey):
     An API endpoint to set the Google API key for the session.
     **Security Warning:** This is insecure for production. API keys should be
     set as environment variables on the server.
+    Note: This now directly configures the google.generativeai library upon being called.
     """
     os.environ["GOOGLE_API_KEY"] = key.google_api_key
-    keys_to_cache = {"GOOGLE_API_KEY": key.google_api_key}
+    new_config = {"api_key": key.google_api_key}
     if key.model_name:
         os.environ["GOOGLE_GEMINI_MODEL"] = key.model_name
-        keys_to_cache["GOOGLE_GEMINI_MODEL"] = key.model_name
-    save_keys_to_cache(keys_to_cache)
-    return {"message": "Google API settings have been configured and cached."}
+        new_config["model_name"] = key.model_name
+    _add_connector_config("google", "Google Gemini", new_config)
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=key.google_api_key)
+        return {"message": "Google API settings have been configured and cached."}
+    except ImportError:
+        raise HTTPException(status_code=500, detail="The 'google-generativeai' library is not installed. Please check requirements.txt.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to configure Google Gemini: {e}")
 
 @app.post("/configure-bigquery")
 async def configure_bigquery(creds: BigQueryCredentials):
@@ -239,7 +301,8 @@ async def configure_bigquery(creds: BigQueryCredentials):
     An API endpoint to set the Google BigQuery Project ID.
     """
     os.environ["BIGQUERY_PROJECT_ID"] = creds.project_id
-    save_keys_to_cache({"BIGQUERY_PROJECT_ID": creds.project_id})
+    new_config = {"project_id": creds.project_id}
+    _add_connector_config("bigquery", "Google BigQuery", new_config)
     # In a real app, you might also initialize the BigQuery client here to verify credentials.
     return {"message": "BigQuery Project ID has been configured and cached."}
 
@@ -249,20 +312,115 @@ async def list_configured_sources():
     Returns a list of data sources that have been correctly configured.
     """
     sources = []
-    # Check for Amplitude
-    if os.getenv("AMPLITUDE_API_KEY") and os.getenv("AMPLITUDE_SECRET_KEY"):
-        sources.append({"id": "amplitude", "name": "Amplitude"})
-    
-    # Check for Adjust
-    if os.getenv("ADJUST_API_TOKEN"):
-        sources.append({"id": "adjust", "name": "Adjust"})
-    
-    # Check for BigQuery
-    if os.getenv("BIGQUERY_PROJECT_ID"):
-        sources.append({"id": "bigquery", "name": "Google BigQuery"})
-
+    if os.path.exists(KEYS_CACHE_FILE):
+        with open(KEYS_CACHE_FILE, 'r') as f:
+            try:
+                cached_data = json.load(f)
+                connectors = cached_data.get("connectors", {})
+                if connectors.get("amplitude"):
+                    for config in connectors["amplitude"]:
+                        sources.append({"id": config["name"], "name": config["name"]})
+                # In the future, you could add other source types here
+                # if connectors.get("some_other_source"):
+                #    ...
+            except json.JSONDecodeError:
+                pass # No sources to return
     return {"sources": sources}
 
+@app.get("/connectors/list")
+async def list_connectors():
+    """
+    Returns a list of all configured connectors with some details.
+    """
+    configured_connectors = []
+    if os.path.exists(KEYS_CACHE_FILE):
+        with open(KEYS_CACHE_FILE, 'r') as f:
+            try:
+                cached_data = json.load(f)
+                connectors_data = cached_data.get("connectors", {})
+                for conn_type, configs in connectors_data.items():
+                    for config in configs:
+                        configured_connectors.append({
+                            "type": conn_type,
+                            "name": config.get("name"),
+                            "details": "Configured"
+                        })
+            except json.JSONDecodeError:
+                pass # Return empty list
+
+    return {"connectors": configured_connectors}
+
+@app.delete("/connector/{connector_name}")
+async def delete_connector(connector_name: str):
+    """
+    Deletes a specific configured connector by its unique name.
+    """
+    if not os.path.exists(KEYS_CACHE_FILE):
+        raise HTTPException(status_code=404, detail="No connectors configured.")
+
+    with open(KEYS_CACHE_FILE, 'r+') as f:
+        cached_data = json.load(f)
+        connectors = cached_data.get("connectors", {})
+        
+        found_and_deleted = False
+        for conn_type, configs in connectors.items():
+            original_count = len(configs)
+            connectors[conn_type] = [c for c in configs if c.get("name") != connector_name]
+            if len(connectors[conn_type]) < original_count:
+                found_and_deleted = True
+                break
+        
+        if not found_and_deleted:
+            raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")
+
+        cached_data["connectors"] = connectors
+        f.seek(0)
+        f.truncate()
+        json.dump(cached_data, f, indent=2)
+
+    # Note: This does not remove keys from os.environ. A restart or re-configuration
+    # would be needed to update the environment-level primary keys.
+    return {"message": f"Connector '{connector_name}' has been deleted successfully."}
+
+def _add_connector_config(conn_type: str, base_name: str, config: dict):
+    """Helper function to add a new connector configuration and save to cache."""
+    cached_data = {"connectors": {}}
+    if os.path.exists(KEYS_CACHE_FILE):
+        with open(KEYS_CACHE_FILE, 'r') as f:
+            try:
+                cached_data = json.load(f)
+                if "connectors" not in cached_data:
+                    cached_data["connectors"] = {}
+            except json.JSONDecodeError:
+                pass # Will create a new file
+
+    if conn_type not in cached_data["connectors"]:
+        cached_data["connectors"][conn_type] = []
+
+    # Determine the next sequence number
+    next_num = len(cached_data["connectors"][conn_type]) + 1
+    config["name"] = f"{base_name} {next_num}"
+    
+    cached_data["connectors"][conn_type].append(config)
+
+    with open(KEYS_CACHE_FILE, 'w') as f:
+        json.dump(cached_data, f, indent=2)
+
+def _get_connector_config(connector_name: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Retrieves a specific connector's configuration by its unique name."""
+    if not os.path.exists(KEYS_CACHE_FILE):
+        return None, None
+    with open(KEYS_CACHE_FILE, 'r') as f:
+        try:
+            cached_data = json.load(f)
+            connectors = cached_data.get("connectors", {})
+            for conn_type, configs in connectors.items():
+                for config in configs:
+                    if config.get("name") == connector_name:
+                        return config, conn_type
+        except json.JSONDecodeError:
+            pass
+    return None, None
 @app.get("/list-imports")
 async def list_imports():
     """
@@ -307,7 +465,8 @@ async def configure_adjust_credentials(key: AdjustApiKey):
     set as environment variables on the server.
     """
     os.environ["ADJUST_API_TOKEN"] = key.adjust_api_token
-    save_keys_to_cache({"ADJUST_API_TOKEN": key.adjust_api_token})
+    new_config = {"api_token": key.adjust_api_token}
+    _add_connector_config("adjust", "Adjust", new_config)
     return {"message": "Adjust API token has been configured and cached."}
 
 @app.post("/configure-safety-rails")
@@ -458,6 +617,43 @@ async def tag_event(request: DataSandboxRequest):
     
     return {"message": f"Rule created: '{request.raw_name}' will now be normalized to '{request.normalized_name}'.", "current_rules": NORMALIZATION_MAPS["event_name_map"]}
 
+@app.get("/data-sandbox/glance")
+async def get_data_sandbox_glance():
+    """
+    Provides a glance of the most recent import for the data sandbox,
+    including a data sample and event counts.
+    """
+    if not IMPORT_JOBS:
+        raise HTTPException(status_code=404, detail="No data has been imported yet.")
+
+    # The list is already sorted by timestamp descending
+    latest_job = IMPORT_JOBS[0]
+    start_date = latest_job.get("start_date")
+    end_date = latest_job.get("end_date")
+
+    if not start_date or not end_date:
+        raise HTTPException(status_code=404, detail="Latest import job is missing date range information.")
+
+    # Fetch the cached raw data for the latest import
+    events_data = await get_events_with_caching(start_date, end_date)
+    if not events_data:
+        raise HTTPException(status_code=404, detail="No raw data found for the latest import.")
+
+    # Calculate event counts
+    event_counts = {}
+    for event in events_data:
+        event_type = event.get("event_type", "N/A")
+        event_counts[event_type] = event_counts.get(event_type, 0) + 1
+
+    # Sort by count and take top 10
+    sorted_event_counts = dict(sorted(event_counts.items(), key=lambda item: item[1], reverse=True)[:10])
+
+    return {
+        "filename": latest_job["name"],
+        "sample": events_data[:1],
+        "event_counts": sorted_event_counts,
+    }
+
 async def get_events_with_caching(start_date: str, end_date: str) -> list[dict]:
     """
     Fetches events from Amplitude, using a local file cache to avoid redundant API calls.
@@ -482,6 +678,31 @@ async def get_events_with_caching(start_date: str, end_date: str) -> list[dict]:
             
     return events_data
 
+@app.delete("/job/{job_name}")
+async def delete_job_cache(job_name: str):
+    """
+    Deletes a job's cache file and updates its status to 'Deleted'.
+    This is called by the frontend when an import's countdown expires.
+    """
+    global IMPORT_JOBS
+    job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
+
+    start_date = job.get("start_date")
+    end_date = job.get("end_date")
+
+    if start_date and end_date:
+        cache_filename = os.path.join(CACHE_DIR, f"{start_date}_{end_date}.json")
+        if os.path.exists(cache_filename):
+            os.remove(cache_filename)
+            print(f"Deleted expired cache file: {cache_filename}")
+
+    job["status"] = "Deleted"
+    save_import_jobs_to_cache()
+    return {"message": f"Job '{job_name}' cache has been deleted."}
+
 def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str):
     """The actual data processing logic that runs in the background."""
     try:
@@ -489,8 +710,14 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
 
         # 1. Ingestion: Fetch from source, upload to GCS, and publish notification
-        ingestion_service = IngestionService(gcs_service=GCS_SERVICE_INSTANCE)
-        ingestion_service.fetch_and_publish_events(start_date, end_date)
+        connector_config, conn_type = _get_connector_config(source) # 'source' is now the connector name
+        if not connector_config:
+            raise ValueError(f"Connector configuration for '{source}' not found.")
+
+        ingestion_service = IngestionService(gcs_service=GCS_SERVICE_INSTANCE, connector_config=connector_config, connector_type=conn_type)
+        # For now, we assume only amplitude is a valid ingestion source.
+        if conn_type == 'amplitude':
+            ingestion_service.fetch_and_publish_events(start_date, end_date)
 
         # 2. Processing: Consume from queue, normalize, and write to BigQuery
         processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE)
@@ -513,12 +740,69 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
     """
     try:
         job_timestamp = datetime.utcnow()
+        expiration_timestamp = job_timestamp + timedelta(days=3)
         job_name = f"{job_timestamp.strftime('%Y%m%d-%H%M%S')}-{request.source.capitalize()}"
-        IMPORT_JOBS.append({"name": job_name, "status": "Processing", "timestamp": job_timestamp.isoformat()})
+        IMPORT_JOBS.append({
+            "name": job_name, 
+            "status": "Processing", 
+            "timestamp": job_timestamp.isoformat(),
+            "creation_timestamp": job_timestamp.isoformat(),
+            "expiration_timestamp": expiration_timestamp.isoformat(),
+            "start_date": request.start_date,
+            "end_date": request.end_date
+        })
         background_tasks.add_task(run_pipeline_background, request.start_date, request.end_date, job_name, request.source)
+        save_import_jobs_to_cache()
         return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during the pipeline execution: {str(e)}")
+
+@app.post("/predict-churn-for-import")
+async def predict_churn_for_import(request: ChurnPredictionRequest):
+    """
+    Runs churn prediction for all players in a specified imported dataset.
+    """
+    job = next((j for j in IMPORT_JOBS if j["name"] == request.job_name), None)
+    if not job or job.get("status") != "Ready to Use":
+        raise HTTPException(status_code=404, detail=f"Job '{request.job_name}' not found or not ready.")
+
+    try:
+        # Check for Gemini API key configuration before proceeding
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise HTTPException(status_code=400, detail="Google Gemini API key is not configured. Please set it in the Connectors section before running predictions.")
+
+        gemini_client = GeminiClient()
+        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+
+        # Get all player IDs from the processed data in BigQuery
+        player_ids = modeling_engine.get_all_player_ids()
+        if not player_ids:
+            return {"predictions": []}
+
+        predictions = []
+        # In a real-world scenario, this loop would be a batch process.
+        # For this demo, we process them sequentially.
+        for player_id in player_ids:
+            profile = modeling_engine.build_player_profile(player_id)
+            if not profile:
+                continue
+
+            churn_estimate = await modeling_engine.estimate_churn_risk(player_id)
+
+            predictions.append({
+                "user_id": player_id,
+                "ltv": profile.get("total_revenue", "N/A"),
+                "session_count": profile.get("total_sessions", "N/A"),
+                "event_count": profile.get("total_events", "N/A"),
+                "predicted_churn_risk": churn_estimate.get("churn_risk", "N/A")
+            })
+
+        return {"predictions": predictions}
+
+    except Exception as e:
+        # Log the full error for debugging
+        print(f"Error during churn prediction for job '{request.job_name}': {e}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during churn prediction: {str(e)}")
 
 @app.post("/analyze-and-engage-player")
 async def analyze_and_engage_player(request: PlayerAnalysisRequest):

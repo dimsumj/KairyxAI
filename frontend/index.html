@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <title>Kairyx AI - Player Engagement Platform</title>
     <style>
         :root {
@@ -299,19 +300,35 @@
 
     <main class="content">
         <div class="theme-switch-wrapper">
-            <label for="theme-switch-checkbox" id="theme-label">Dark Mode</label>
-            <div class="theme-switch">
+            <span id="theme-label">Dark Mode</span>
+            <label class="theme-switch">
                 <input type="checkbox" id="theme-switch-checkbox" />
                 <span class="slider"></span>
-            </div>
+            </label>
         </div>
 
         <section id="operator-hub" class="page active">
             <h1>Operator Hub</h1>
+            <div class="card" id="operator-hub-controls">
+                <p>Select a processed dataset and run churn prediction on its members.</p>
+                <div class="form-group">
+                    <label for="dataset-select">Select Dataset</label>
+                    <select id="dataset-select"></select>
+                </div>
+                <button id="predict-churn-btn">Predict Churn</button>
+            </div>
             <div class="card">
-                <p>Choose a cohort to view its members and their key metrics.</p>
-                <!-- This would be populated dynamically -->
                 <table>
+                    <div id="operator-hub-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
+                            <select id="items-per-page" style="padding: 0.5rem; border-radius: 4px;">
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
                     <thead>
                         <tr>
                             <th>User ID</th>
@@ -321,17 +338,11 @@
                             <th>Predicted Churn Risk</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <!-- Example Row -->
-                        <tr>
-                            <td>user_12345</td>
-                            <td>$45.50</td>
-                            <td>12</td>
-                            <td>156</td>
-                            <td>Low</td>
-                        </tr>
-                    </tbody>
+                    <tbody id="operator-hub-results"></tbody>
                 </table>
+                <div id="pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
+                    <!-- Pagination buttons will be injected here -->
+                </div>
             </div>
         </section>
 
@@ -422,22 +433,22 @@
 
         <section id="data-sandbox" class="page">
             <h1>Data Sandbox</h1>
+            <div id="data-sandbox-content" class="card">
+                <!-- Content will be loaded here dynamically -->
+            </div>
+
             <div class="card">
-                <h2>Raw Data Glance</h2>
-                <p>A sample of raw data from the latest import.</p>
-                <pre><code>{ "event_type": "start_session", "user_id": "user_xyz", ... }</code></pre>
-                
-                <h2 style="margin-top: 2rem;">Tag Events</h2>
-                <p>Correct event names that the cleaning engine didn't process correctly.</p>
-                <div class="form-group">
-                    <label for="raw-event">Raw Event Name</label>
-                    <input type="text" id="raw-event" placeholder="e.g., 'purchase_item'">
-                </div>
-                <div class="form-group">
-                    <label for="normalized-event">Normalized Event Name</label>
-                    <input type="text" id="normalized-event" placeholder="e.g., 'item_purchased'">
-                </div>
-                <button>Create Rule</button>
+                 <h2 style="margin-top: 2rem;">Tag Events</h2>
+                 <p>Correct event names that the cleaning engine didn't process correctly.</p>
+                 <div class="form-group">
+                     <label for="raw-event">Raw Event Name</label>
+                     <input type="text" id="raw-event" placeholder="e.g., 'purchase_item'">
+                 </div>
+                 <div class="form-group">
+                     <label for="normalized-event">Normalized Event Name</label>
+                     <input type="text" id="normalized-event" placeholder="e.g., 'item_purchased'">
+                 </div>
+                 <button>Create Rule</button>
             </div>
         </section>
 
@@ -479,6 +490,12 @@
                     navLinks.forEach(l => l.classList.remove('active'));
                     pages.forEach(p => p.classList.remove('active'));
 
+                    // Clear any page-specific intervals when navigating away
+                    if (importListInterval) {
+                        clearInterval(importListInterval);
+                        importListInterval = null;
+                    }
+
                     // Activate the clicked link
                     this.classList.add('active');
 
@@ -486,9 +503,15 @@
                     const pageId = this.getAttribute('data-page');
                     document.getElementById(pageId).classList.add('active');
 
+                    if (pageId === 'operator-hub') {
+                        loadReadyImportsForOperatorHub();
+                    }
+
                     if (pageId === 'player-cohorts') {
                         loadConfiguredSources();
                         loadImportedDataList();
+                        // Poll for import status updates every 3 seconds
+                        importListInterval = setInterval(loadImportedDataList, 3000);
                     }
                     if (pageId === 'action-history') {
                         loadActionHistory();
@@ -496,8 +519,15 @@
                     if (pageId === 'service-health') {
                         loadServiceHealthStatus();
                     }
+                    if (pageId === 'connectors') {
+                        loadSavedConnectors();
+                    }
+                    if (pageId === 'data-sandbox') {
+                        loadDataSandboxGlance();
+                    }
                 });
             });
+
 
             // Connectors Page Logic
             const addConnectorBtn = document.getElementById('add-connector-btn');
@@ -512,6 +542,47 @@
             // Define the backend URL in one place for easy configuration
             const backendUrl = 'http://localhost:8000';
 
+            async function loadSavedConnectors() {
+                connectorListDiv.innerHTML = ''; // Clear existing list
+                try {
+                    const response = await fetch(`${backendUrl}/connectors/list`);
+                    if (!response.ok) throw new Error('Failed to load connectors.');
+                    const data = await response.json();
+
+                    if (data.connectors && data.connectors.length > 0) {
+                        data.connectors.forEach(connector => {
+                            const card = document.createElement('div');
+                            card.className = 'card';
+                            card.innerHTML = `<span><strong>${connector.name}</strong>: Configured</span>`;
+
+                            const deleteButton = document.createElement('button');
+                            deleteButton.textContent = 'Delete';
+                            deleteButton.style.backgroundColor = 'var(--subtle-text)';
+                            // Pass the unique name to the delete handler
+                            deleteButton.dataset.connectorName = connector.name;
+
+                            deleteButton.addEventListener('click', async (e) => {
+                                const nameToDelete = e.target.dataset.connectorName;
+                                if (!confirm(`Are you sure you want to delete the ${connector.name} connector? This action cannot be undone.`)) {
+                                    return;
+                                }
+                                try {
+                                    const deleteResponse = await fetch(`${backendUrl}/connector/${nameToDelete}`, { method: 'DELETE' });
+                                    if (!deleteResponse.ok) throw new Error(`Failed to delete ${nameToDelete} connector.`);
+                                    loadSavedConnectors(); // Refresh the list
+                                } catch (error) {
+                                    alert(`Error: ${error.message}`);
+                                }
+                            });
+                            connectorListDiv.appendChild(card);
+                            card.appendChild(deleteButton);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error loading saved connectors:', error);
+                    connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
 
             const connectorFields = {
                 amplitude: `
@@ -533,9 +604,12 @@
                         <label for="google_api_key">Google API Key</label>
                         <input type="password" id="google_api_key" placeholder="Enter your Google API Key">
                     </div>
-                     <div class="form-group">
-                        <label for="model_name">Gemini Model Name (optional)</label>
-                        <input type="text" id="model_name" placeholder="e.g., gemini-1.5-flash">
+                    <div class="form-group">
+                        <label for="model_name">Gemini Model Version</label>
+                        <select id="model_name" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px;">
+                            <option value="gemini-flash-latest" selected>gemini-flash-latest (Default)</option>
+                            <option value="gemini-pro-latest">gemini-pro-latest</option>
+                        </select>
                     </div>`,
                 bigquery: `
                     <div class="form-group">
@@ -617,13 +691,7 @@
                     const result = await response.json();
                     alert(result.message); // Show success message
 
-                    const card = document.createElement('div');
-                    card.className = 'card';
-                    card.innerHTML = `
-                        <span><strong>${type.charAt(0).toUpperCase() + type.slice(1)}</strong>: Configured</span>
-                        <button style="background-color: var(--subtle-text);">Delete</button>
-                    `;
-                    connectorListDiv.appendChild(card);
+                    loadSavedConnectors(); // Refresh the list of connectors
                     cancelBtn.click(); // Reset form
                 } catch (error) {
                     console.error('Error saving connector:', error);
@@ -631,10 +699,142 @@
                 }
             });
 
+            // Operator Hub Logic
+            const datasetSelect = document.getElementById('dataset-select');
+            const predictChurnBtn = document.getElementById('predict-churn-btn');
+            const operatorHubResults = document.getElementById('operator-hub-results');
+
+            let allChurnPredictionPlayers = [];
+            let currentPage = 1;
+            let itemsPerPage = 25;
+
+
+            async function loadReadyImportsForOperatorHub() {
+                datasetSelect.innerHTML = '<option>Loading...</option>';
+                try {
+                    const response = await fetch(`${backendUrl}/list-imports`);
+                    if (!response.ok) throw new Error('Failed to fetch import list.');
+                    const data = await response.json();
+
+                    const readyJobs = data.imports.filter(job => job.status === 'Ready to Use');
+                    datasetSelect.innerHTML = ''; // Clear loading message
+
+                    if (readyJobs.length > 0) {
+                        readyJobs.forEach(job => {
+                            const option = document.createElement('option');
+                            option.value = job.name;
+                            option.textContent = job.name;
+                            datasetSelect.appendChild(option);
+                        });
+                        predictChurnBtn.disabled = false;
+                    } else {
+                        datasetSelect.innerHTML = '<option>No processed datasets available</option>';
+                        predictChurnBtn.disabled = true;
+                    }
+                } catch (error) {
+                    datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
+                    predictChurnBtn.disabled = true;
+                    console.error('Error loading datasets for Operator Hub:', error);
+                }
+            }
+
+            function renderChurnTable() {
+                operatorHubResults.innerHTML = '';
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const endIndex = startIndex + itemsPerPage;
+                const paginatedItems = allChurnPredictionPlayers.slice(startIndex, endIndex);
+
+                if (paginatedItems.length > 0) {
+                    paginatedItems.forEach(p => {
+                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${p.ltv.toFixed(2)}</td><td>${p.session_count}</td><td>${p.event_count}</td><td>${p.predicted_churn_risk}</td></tr>`;
+                    });
+                } else {
+                     operatorHubResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">No players found in this dataset.</td></tr>';
+                }
+                renderPaginationControls();
+            }
+
+            function renderPaginationControls() {
+                const paginationContainer = document.getElementById('pagination-controls');
+                paginationContainer.innerHTML = '';
+                const totalPages = Math.ceil(allChurnPredictionPlayers.length / itemsPerPage);
+
+                if (totalPages <= 1) return;
+
+                const prevButton = document.createElement('button');
+                prevButton.textContent = 'Previous';
+                prevButton.disabled = currentPage === 1;
+                prevButton.addEventListener('click', () => {
+                    if (currentPage > 1) {
+                        currentPage--;
+                        renderChurnTable();
+                    }
+                });
+
+                const pageInfo = document.createElement('span');
+                pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+                pageInfo.style.margin = '0 1rem';
+
+                const nextButton = document.createElement('button');
+                nextButton.textContent = 'Next';
+                nextButton.disabled = currentPage === totalPages;
+                nextButton.addEventListener('click', () => {
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        renderChurnTable();
+                    }
+                });
+
+                paginationContainer.appendChild(prevButton);
+                paginationContainer.appendChild(pageInfo);
+                paginationContainer.appendChild(nextButton);
+            }
+
+            predictChurnBtn.addEventListener('click', async () => {
+                const jobName = datasetSelect.value;
+                if (!jobName) {
+                    alert('Please select a dataset.');
+                    return;
+                }
+
+                operatorHubResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">Running predictions...</td></tr>';
+                predictChurnBtn.disabled = true;
+
+                try {
+                    const response = await fetch(`${backendUrl}/predict-churn-for-import`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_name: jobName })
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Prediction failed.');
+                    }
+                    const data = await response.json();
+                    
+                    allChurnPredictionPlayers = data.predictions;
+                    currentPage = 1; // Reset to first page
+                    renderChurnTable();
+
+                } catch (error) {
+                    operatorHubResults.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
+                } finally {
+                    predictChurnBtn.disabled = false;
+                }
+            });
+
+            document.getElementById('items-per-page').addEventListener('change', (e) => {
+                itemsPerPage = parseInt(e.target.value, 10);
+                currentPage = 1; // Reset to the first page
+                renderChurnTable();
+            });
+
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
             const importListContainer = document.getElementById('import-list-container');
+            let importListInterval = null;
 
+    
             async function loadConfiguredSources() {
                 const importCard = importDataBtn.parentElement;
                 const sourceSelect = document.getElementById('cohort-source-select');
@@ -688,45 +888,132 @@
                 }
             }
 
+            let countdownInterval = null;
             async function loadImportedDataList() {
-                importListContainer.innerHTML = '<p>Loading...</p>';
+                // Show loading message only if the container is empty initially
+                if (!importListContainer.innerHTML.trim()) {
+                    importListContainer.innerHTML = '<p>Loading...</p>';
+                }
+
                 try {
                     const response = await fetch(`${backendUrl}/list-imports`);
                     if (!response.ok) throw new Error('Failed to fetch import list.');
                     const data = await response.json();
 
                     if (!data.imports || data.imports.length === 0) {
-                        importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        if (!importListContainer.querySelector('p') || importListContainer.querySelector('p').textContent !== 'No data has been imported yet.') {
+                            importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        }
                         return;
                     }
 
-                    let tableHtml = `
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Import Name</th>
-                                    <th>Timestamp</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    `;
+                    // If table doesn't exist, create it
+                    let table = importListContainer.querySelector('table');
+                    if (!table) {
+                        importListContainer.innerHTML = `
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Import Name</th>
+                                        <th>Timestamp</th>
+                                        <th>Status</th>
+                                        <th>Expires In</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        `;
+                        table = importListContainer.querySelector('table');
+                    }
+                    const tbody = table.querySelector('tbody');
+
+                    // Update rows in place
                     data.imports.forEach(job => {
                         const statusClass = job.status === 'Ready to Use' ? 'status-ok' : (job.status === 'Processing' ? 'status-warning' : 'status-error');
-                        tableHtml += `
-                            <tr>
+                        const expirationId = `expires-in-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        const rowId = `job-row-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        let row = document.getElementById(rowId);
+                        
+                        if (row) {
+                            // If row exists, just update the status if it changed
+                            const newStatusHTML = `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}`;
+                            const statusCell = row.cells[2];
+                            if (statusCell.innerHTML !== newStatusHTML) {
+                                statusCell.innerHTML = newStatusHTML;
+                                // If the status just changed to 'Ready to Use', we need to update the expiration cell
+                                if (job.status === 'Ready to Use') {
+                                    const expirationCell = row.cells[3];
+                                    expirationCell.id = expirationId;
+                                    expirationCell.dataset.expiration = job.expiration_timestamp;
+                                    startCountdownTimers(); // Re-initialize timers to find the new element
+                                }
+                            }
+                        } else {
+                            // If row doesn't exist, create it
+                            const newRow = tbody.insertRow();
+                            newRow.id = rowId;
+                            
+                            const expirationCellHtml = job.status === 'Ready to Use' 
+                                ? `<td id="${expirationId}" data-expiration="${job.expiration_timestamp}">-</td>`
+                                : `<td>-</td>`;
+
+                            newRow.innerHTML = `
                                 <td>${job.name}</td>
                                 <td>${new Date(job.timestamp).toLocaleString()}</td>
                                 <td><span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}</td>
-                            </tr>
-                        `;
+                                ${expirationCellHtml}
+                            `;
+                        }
                     });
-                    tableHtml += '</tbody></table>';
-                    importListContainer.innerHTML = tableHtml;
 
                 } catch (error) {
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                } finally {
+                    startCountdownTimers(); // Ensure timers are always started/restarted after data load
                 }
+            }
+
+            function startCountdownTimers() {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                }
+
+                const countdownElements = document.querySelectorAll('[data-expiration]');
+                if (countdownElements.length === 0) return;
+
+                countdownInterval = setInterval(() => {
+                    countdownElements.forEach(el => {
+                        const expirationTime = new Date(el.dataset.expiration).getTime();
+                        const now = new Date().getTime();
+                        const distance = expirationTime - now;
+
+                        if (distance < 0) {
+                            // Only act if the status is not already 'Deleted'
+                            if (el.textContent !== "Deleted") {
+                                el.textContent = "Deleted";
+                                const row = el.closest('tr');
+                                const jobName = row.cells[0].textContent;
+                                const statusCell = row.cells[2];
+                                
+                                // Update status in UI
+                                statusCell.innerHTML = `<span class="status-indicator status-error" style="display: inline-block; vertical-align: middle;"></span> Deleted`;
+                                
+                                // Call backend to delete the file
+                                fetch(`${backendUrl}/job/${jobName}`, { method: 'DELETE' })
+                                    .then(response => response.json())
+                                    .then(data => console.log(data.message))
+                                    .catch(err => console.error(`Failed to delete job ${jobName}:`, err));
+                            }
+                        }
+
+                        const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                        const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+                        el.textContent = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+                    });
+                }, 1000);
             }
 
             importDataBtn.addEventListener('click', async () => {
@@ -794,6 +1081,70 @@
                 }
             }
 
+            // Data Sandbox Page Logic
+            const dataSandboxContentDiv = document.getElementById('data-sandbox-content');
+            let eventChart = null;
+
+            async function loadDataSandboxGlance() {
+                dataSandboxContentDiv.innerHTML = '<p>Loading data glance...</p>';
+                try {
+                    const response = await fetch(`${backendUrl}/data-sandbox/glance`);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Failed to load data glance.');
+                    }
+                    const data = await response.json();
+
+                    // Build the HTML for the glance
+                    const sampleHtml = JSON.stringify(data.sample, null, 2);
+                    const contentHtml = `
+                        <details>
+                            <summary style="cursor: pointer; font-weight: 600;">
+                                Raw Data Glance: ${data.filename}
+                            </summary>
+                            <pre><code style="font-size: 0.8rem; white-space: pre-wrap;">${sampleHtml}</code></pre>
+                        </details>
+                        <div style="margin-top: 2rem; height: 500px;">
+                            <h2>Event Distribution</h2>
+                            <canvas id="event-chart"></canvas>
+                        </div>
+                    `;
+                    dataSandboxContentDiv.innerHTML = contentHtml;
+
+                    // Render the chart
+                    const ctx = document.getElementById('event-chart').getContext('2d');
+                    if (eventChart) {
+                        eventChart.destroy();
+                    }
+                    eventChart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: Object.keys(data.event_counts),
+                            datasets: [{
+                                label: 'Event Count',
+                                data: Object.values(data.event_counts),
+                                backgroundColor: 'rgba(74, 85, 104, 0.6)',
+                                borderColor: 'rgba(74, 85, 104, 1)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            plugins: {
+                                title: {
+                                    display: true,
+                                    text: 'Top 10 Events by Count'
+                                }
+                            },
+                            scales: { y: { beginAtZero: true, suggestedMax: 10, ticks: { stepSize: 1 } } },
+                            responsive: true,
+                            maintainAspectRatio: false
+                        }
+                    });
+                } catch (error) {
+                    dataSandboxContentDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');
             const statusTextSpan = document.getElementById('status-text');
@@ -815,10 +1166,8 @@
             // Check status on page load and then every 5 seconds
             checkBackendStatus();
             setInterval(checkBackendStatus, 5000);
-        });
 
-        // Separate DOMContentLoaded for theme to ensure it runs ASAP and avoids FOUC
-        document.addEventListener('DOMContentLoaded', function() {
+            // Theme Toggle Logic
             const themeToggle = document.getElementById('theme-switch-checkbox');
             const themeLabel = document.getElementById('theme-label');
             const currentTheme = localStorage.getItem('theme');
@@ -827,7 +1176,7 @@
                 document.body.classList.toggle('dark-theme', isDark);
                 themeToggle.checked = isDark;
                 themeLabel.textContent = isDark ? 'Light Mode' : 'Dark Mode';
-                localStorage.setItem('theme', isDark ? 'dark-theme' : '');
+                localStorage.setItem('theme', isDark ? 'dark-theme' : 'light-theme');
             }
 
             // Set initial theme based on localStorage
@@ -841,6 +1190,7 @@
                 setTheme(this.checked);
             });
         });
+
     </script>
 
 </body>

@@ -34,9 +34,6 @@ class PlayerModelingEngine:
         # We need to parse it into a datetime object.
         df['event_time'] = pd.to_datetime(df['event_time'])
         
-        # Use 'user_id' as the primary player identifier. Events without a user_id will be dropped.
-        df['player_id'] = df['user_id']
-        
         print(f"Preprocessing complete for player {player_id}. DataFrame created with {len(df)} events.")
         return df
 
@@ -53,7 +50,7 @@ class PlayerModelingEngine:
         """
         player_events = self._get_and_preprocess_player_data(player_id)
 
-        if player_events.empty:
+        if player_events is None or player_events.empty:
             return None
 
         # Sort events by time to correctly calculate sessions and identify first/last seen
@@ -148,3 +145,23 @@ class PlayerModelingEngine:
         
         # Return a count of each event type for this player
         return player_events['event_type'].value_counts()
+
+    def get_all_player_ids(self) -> List[Any]:
+        """
+        Retrieves a list of all unique player IDs from the data source.
+
+        Returns:
+            A list of unique player IDs.
+        """
+        print("Fetching all unique player IDs from the data warehouse...")
+        return self.db_client.get_all_player_ids()
+
+    def get_all_player_ids(self) -> List[Any]:
+        """
+        Retrieves a list of all unique player IDs from the data source.
+
+        Returns:
+            A list of unique player IDs.
+        """
+        print("Fetching all unique player IDs from the data warehouse...")
+        return self.db_client.get_all_player_ids()

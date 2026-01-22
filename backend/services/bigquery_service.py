@@ -50,5 +50,29 @@ class BigQueryService:
         if self._table.empty or 'player_id' not in self._table.columns:
             return None
         
-        player_df = self._table[self._table['player_id'] == player_id]
+        player_df = self._table[self._table['player_id'] == player_id].copy()
         return player_df if not player_df.empty else None
+
+    def get_all_player_ids(self) -> List[Any]:
+        """
+        Simulates querying BigQuery for all unique player IDs.
+
+        Returns:
+            A list of unique player IDs.
+        """
+        if self._table.empty or 'player_id' not in self._table.columns:
+            return []
+        
+        return self._table['player_id'].unique().tolist()
+
+    def get_all_player_ids(self) -> List[Any]:
+        """
+        Simulates querying BigQuery for all unique player IDs.
+
+        Returns:
+            A list of unique player IDs.
+        """
+        if self._table.empty or 'player_id' not in self._table.columns:
+            return []
+        
+        return self._table['player_id'].unique().tolist()

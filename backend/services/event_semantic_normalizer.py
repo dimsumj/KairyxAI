@@ -51,10 +51,20 @@ class EventSemanticNormalizer:
         if not events:
             return []
 
+        # Define all possible raw keys for the player identifier.
+        player_id_keys = {"userId", "user_id", "user_Id", "player_id", "player_Id", "PlayerID", "PlayerId"}
+
         normalized_events = []
         for event in events:
             # Create a copy to avoid modifying the original list of dicts
             new_event = event.copy()
+
+            # Standardize the player identifier key.
+            for key in player_id_keys:
+                if key in new_event:
+                    new_event['player_id'] = new_event.pop(key)
+                    break # Stop after finding the first match
+
             new_event['event_type'] = self._normalize_event_name(event['event_type'])
             new_event['event_properties'] = self._normalize_properties(event.get('event_properties', {}))
             new_event['user_properties'] = self._normalize_properties(event.get('user_properties', {}))

@@ -1,7 +1,7 @@
 # ingestion_service.py
 
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from gcs_service import GcsService
 from amplitude_service import AmplitudeService
@@ -12,13 +12,19 @@ class IngestionService:
     and publishes it to a message queue like Google Cloud Pub/Sub.
     """
 
-    def __init__(self, gcs_service: GcsService):
+    def __init__(self, gcs_service: GcsService, connector_config: Dict[str, Any], connector_type: str):
         """
         In a real application, this would initialize a Pub/Sub client.
+        Args:
+            gcs_service: The service for interacting with Google Cloud Storage.
+            connector_config: The specific configuration for the connector to use (e.g., API keys).
+            connector_type: The type of the connector (e.g., 'amplitude').
         """
-        self.amplitude_client = AmplitudeService()
         self.gcs_service = gcs_service
-        # In a real scenario, this would be a Pub/Sub topic of messages.
+        self.amplitude_client = None
+        if connector_type == 'amplitude':
+            self.amplitude_client = AmplitudeService(api_key=connector_config['api_key'], secret_key=connector_config['secret_key'])
+        
         self.message_queue_topic = [] 
         print("IngestionService initialized (simulating Pub/Sub publisher).")
 
@@ -33,6 +39,9 @@ class IngestionService:
         Returns:
             The number of events published.
         """
+        if not self.amplitude_client:
+            raise ValueError("IngestionService is not configured for Amplitude. Cannot fetch events.")
+
         print(f"Fetching events from Amplitude for {start_date} to {end_date}...")
         raw_events = self.amplitude_client.export_events(start_date, end_date)
 

@@ -2,5 +2,5 @@ fastapi
 uvicorn
 gunicorn
 requests
-google-genai
+google-generativeai
 pandas
