@@ -14,18 +14,20 @@ class DataProcessingService:
     to a data warehouse.
     """
 
-    def __init__(self, bigquery_service: BigQueryService, gcs_service: GcsService):
+    def __init__(self, bigquery_service: BigQueryService, gcs_service: GcsService, job_identifier: str):
         """
         Initializes the processing service.
 
         Args:
             bigquery_service: The service for writing to our data warehouse.
             gcs_service: The service for reading from our data lake (GCS).
+            job_identifier: The identifier for the current job (e.g., 'YYYYMMDD_to_YYYYMMDD').
         """
         # In a real system, these maps would come from a persistent config store.
         self.normalizer = EventSemanticNormalizer(event_name_map={}, property_key_map={})
         self.gcs_service = gcs_service
         self.bigquery_service = bigquery_service
+        self.job_identifier = job_identifier
         print("DataProcessingService initialized (simulating Dataflow).")
 
     def run_processing_pipeline(self, ingestion_service: IngestionService):
@@ -50,6 +52,6 @@ class DataProcessingService:
             raw_events = self.gcs_service.download_raw_events(blob_name)
             
             # 2. Normalize and 3. Write to BigQuery
-            normalized_events = self.normalizer.normalize_events(raw_events)
-            self.bigquery_service.write_processed_events(normalized_events)
+            normalized_events = self.normalizer.normalize_events(raw_events) # Normalizer doesn't need job_identifier
+            self.bigquery_service.write_processed_events(normalized_events, self.job_identifier)
         print("Data processing pipeline finished.")

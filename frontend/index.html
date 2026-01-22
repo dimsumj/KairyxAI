@@ -918,6 +918,7 @@
                                         <th>Timestamp</th>
                                         <th>Status</th>
                                         <th>Expires In</th>
+                                        <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody></tbody>
@@ -932,6 +933,7 @@
                         const statusClass = job.status === 'Ready to Use' ? 'status-ok' : (job.status === 'Processing' ? 'status-warning' : 'status-error');
                         const expirationId = `expires-in-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
                         const rowId = `job-row-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        const actionsCellId = `actions-cell-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
                         let row = document.getElementById(rowId);
                         
                         if (row) {
@@ -939,13 +941,17 @@
                             const newStatusHTML = `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}`;
                             const statusCell = row.cells[2];
                             if (statusCell.innerHTML !== newStatusHTML) {
+                                // Update status and actions if status changed
                                 statusCell.innerHTML = newStatusHTML;
-                                // If the status just changed to 'Ready to Use', we need to update the expiration cell
+                                const actionsCell = document.getElementById(actionsCellId);
+                                actionsCell.innerHTML = getActionButtonsHTML(job);
+                                addActionListeners(row, job);
+
                                 if (job.status === 'Ready to Use') {
                                     const expirationCell = row.cells[3];
                                     expirationCell.id = expirationId;
                                     expirationCell.dataset.expiration = job.expiration_timestamp;
-                                    startCountdownTimers(); // Re-initialize timers to find the new element
+                                    startCountdownTimers();
                                 }
                             }
                         } else {
@@ -956,13 +962,17 @@
                             const expirationCellHtml = job.status === 'Ready to Use' 
                                 ? `<td id="${expirationId}" data-expiration="${job.expiration_timestamp}">-</td>`
                                 : `<td>-</td>`;
+                            
+                            const actionsCellHtml = `<td id="${actionsCellId}">${getActionButtonsHTML(job)}</td>`;
 
                             newRow.innerHTML = `
                                 <td>${job.name}</td>
                                 <td>${new Date(job.timestamp).toLocaleString()}</td>
                                 <td><span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}</td>
                                 ${expirationCellHtml}
+                                ${actionsCellHtml}
                             `;
+                            addActionListeners(newRow, job);
                         }
                     });
 
@@ -970,6 +980,47 @@
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 } finally {
                     startCountdownTimers(); // Ensure timers are always started/restarted after data load
+                }
+            }
+
+            function getActionButtonsHTML(job) {
+                if (job.status === 'Processing') {
+                    return `<button class="stop-job-btn" data-job-name="${job.name}" style="background-color: var(--yellow);">Stop</button>`;
+                } else if (['Ready to Use', 'Failed', 'Interrupted'].includes(job.status)) {
+                    return `<button class="delete-job-btn" data-job-name="${job.name}" style="background-color: var(--red);">Delete</button>`;
+                }
+                return ''; // No actions for other states
+            }
+
+            function addActionListeners(rowElement, job) {
+                const stopButton = rowElement.querySelector('.stop-job-btn');
+                if (stopButton) {
+                    stopButton.addEventListener('click', async (e) => {
+                        const jobName = e.target.dataset.jobName;
+                        if (!confirm(`Are you sure you want to stop the import job '${jobName}'?`)) return;
+                        try {
+                            const response = await fetch(`${backendUrl}/job/${jobName}/stop`, { method: 'POST' });
+                            if (!response.ok) throw new Error('Failed to stop job.');
+                            loadImportedDataList(); // Refresh the list to show new status
+                        } catch (error) {
+                            alert(`Error: ${error.message}`);
+                        }
+                    });
+                }
+
+                const deleteButton = rowElement.querySelector('.delete-job-btn');
+                if (deleteButton) {
+                    deleteButton.addEventListener('click', async (e) => {
+                        const jobName = e.target.dataset.jobName;
+                        if (!confirm(`Are you sure you want to permanently delete the import job '${jobName}' and its data? This cannot be undone.`)) return;
+                        try {
+                            const response = await fetch(`${backendUrl}/job/${jobName}`, { method: 'DELETE' });
+                            if (!response.ok) throw new Error('Failed to delete job.');
+                            e.target.closest('tr').remove(); // Immediately remove row from UI
+                        } catch (error) {
+                            alert(`Error: ${error.message}`);
+                        }
+                    });
                 }
             }
 

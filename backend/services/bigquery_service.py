@@ -19,15 +19,19 @@ class BigQueryService:
         self._table = pd.DataFrame()
         print("BigQueryService initialized (simulating in-memory BigQuery).")
 
-    def write_processed_events(self, events: List[Dict[str, Any]]):
+    def write_processed_events(self, events: List[Dict[str, Any]], job_identifier: str):
         """
         Simulates writing a batch of processed events to a BigQuery table.
 
         Args:
             events: A list of processed and normalized event dictionaries.
+            job_identifier: The identifier for the current job (e.g., 'YYYYMMDD_to_YYYYMMDD').
         """
         if not events:
             return
+
+        for event in events:
+            event['job_identifier'] = job_identifier
 
         new_data_df = pd.DataFrame(events)
         if self._table.empty:
@@ -65,14 +69,16 @@ class BigQueryService:
         
         return self._table['player_id'].unique().tolist()
 
-    def get_all_player_ids(self) -> List[Any]:
+    def delete_data_for_job(self, job_identifier: str):
         """
-        Simulates querying BigQuery for all unique player IDs.
+        Simulates deleting rows from the BigQuery table that are associated
+        with a specific job identifier.
+        """
+        if self._table.empty or 'job_identifier' not in self._table.columns:
+            return
 
-        Returns:
-            A list of unique player IDs.
-        """
-        if self._table.empty or 'player_id' not in self._table.columns:
-            return []
-        
-        return self._table['player_id'].unique().tolist()
+        initial_rows = len(self._table)
+        self._table = self._table[self._table['job_identifier'] != job_identifier]
+        rows_deleted = initial_rows - len(self._table)
+        if rows_deleted > 0:
+            print(f"Deleted {rows_deleted} rows from BigQuery for job '{job_identifier}'.")

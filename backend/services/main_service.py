@@ -543,16 +543,19 @@ async def create_cohorts(request: CohortCreationRequest):
         # This endpoint now depends on data being in BigQuery.
         # We will simulate this by ensuring the processing pipeline has run.
         # For this example, we'll just use the global BQ instance.
-        # A real implementation might trigger a fresh analysis or read from a snapshot.
-
-        normalizer = EventSemanticNormalizer(event_name_map=NORMALIZATION_MAPS["event_name_map"], property_key_map=NORMALIZATION_MAPS["property_key_map"])
-        normalized_data = normalizer.normalize_events(events_data)
+        # A real implementation might trigger a fresh analysis or read from a snapshot.        
+        if not IMPORT_JOBS:
+            raise HTTPException(status_code=404, detail="No data has been imported yet. Please import data before creating cohorts.")
+        
+        latest_job = sorted(IMPORT_JOBS, key=lambda x: x['timestamp'], reverse=True)[0]
+        events_data = await get_events_with_caching(latest_job['start_date'], latest_job['end_date'])
 
         gemini_client = GeminiClient()
-        modeling_engine = PlayerModelingEngine(normalized_data, gemini_client)
+        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
         cohort_service = PlayerCohortService(modeling_engine)
 
         cohorts = await cohort_service.create_player_cohorts()
+
 
         # Extract a sample for the data sandbox glance
         data_glance = events_data[:3] # Get the first 3 events as a sample
@@ -681,27 +684,36 @@ async def get_events_with_caching(start_date: str, end_date: str) -> list[dict]:
 @app.delete("/job/{job_name}")
 async def delete_job_cache(job_name: str):
     """
-    Deletes a job's cache file and updates its status to 'Deleted'.
-    This is called by the frontend when an import's countdown expires.
+    Deletes a job from the import list and removes its associated cache file.
     """
     global IMPORT_JOBS
-    job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+    job_to_delete = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
 
-    if not job:
+    if not job_to_delete:
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
 
-    start_date = job.get("start_date")
-    end_date = job.get("end_date")
+    start_date = job_to_delete.get("start_date")
+    end_date = job_to_delete.get("end_date")
 
+    # Construct the base path/identifier for the job's data
+    job_data_identifier = f"{start_date.replace('-', '')}_to_{end_date.replace('-', '')}"
+
+    # 1. Delete raw cache file if it exists
     if start_date and end_date:
         cache_filename = os.path.join(CACHE_DIR, f"{start_date}_{end_date}.json")
         if os.path.exists(cache_filename):
             os.remove(cache_filename)
-            print(f"Deleted expired cache file: {cache_filename}")
+            print(f"Deleted cache file: {cache_filename}")
 
-    job["status"] = "Deleted"
+    # 2. Delete data from simulated GCS
+    GCS_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
+
+    # 3. Delete data from simulated BigQuery
+    BIGQUERY_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
+
+    IMPORT_JOBS = [j for j in IMPORT_JOBS if j["name"] != job_name]
     save_import_jobs_to_cache()
-    return {"message": f"Job '{job_name}' cache has been deleted."}
+    return {"message": f"Job '{job_name}' and its cache have been deleted."}
 
 def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str):
     """The actual data processing logic that runs in the background."""
@@ -710,6 +722,9 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
 
         # 1. Ingestion: Fetch from source, upload to GCS, and publish notification
+        # Construct the job_identifier consistently for GCS and BigQuery
+        job_identifier = f"{start_date.replace('-', '')}_to_{end_date.replace('-', '')}"
+
         connector_config, conn_type = _get_connector_config(source) # 'source' is now the connector name
         if not connector_config:
             raise ValueError(f"Connector configuration for '{source}' not found.")
@@ -720,16 +735,16 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
             ingestion_service.fetch_and_publish_events(start_date, end_date)
 
         # 2. Processing: Consume from queue, normalize, and write to BigQuery
-        processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE)
+        processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE, job_identifier=job_identifier)
         processing_service.run_processing_pipeline(ingestion_service)
 
-        if job:
+        if job and job.get("status") != "Interrupted":
             job["status"] = "Ready to Use"
             print(f"Job '{job_name}' completed successfully.")
 
     except Exception as e:
         print(f"Error processing job '{job_name}': {e}")
-        if job:
+        if job and job.get("status") != "Interrupted":
             job["status"] = "Failed"
 
 @app.post("/ingest-and-process-data")
@@ -756,6 +771,24 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
         return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during the pipeline execution: {str(e)}")
+
+@app.post("/job/{job_name}/stop")
+async def stop_job(job_name: str):
+    """
+    Stops a currently processing job by marking its status as 'Interrupted'.
+    """
+    global IMPORT_JOBS
+    job_to_stop = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+
+    if not job_to_stop:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
+
+    if job_to_stop.get("status") == "Processing":
+        job_to_stop["status"] = "Interrupted"
+        save_import_jobs_to_cache()
+        return {"message": f"Job '{job_name}' has been interrupted."}
+    else:
+        raise HTTPException(status_code=400, detail=f"Job '{job_name}' is not currently processing.")
 
 @app.post("/predict-churn-for-import")
 async def predict_churn_for_import(request: ChurnPredictionRequest):
@@ -787,14 +820,15 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
             if not profile:
                 continue
 
-            churn_estimate = await modeling_engine.estimate_churn_risk(player_id)
+            churn_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
 
+            churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
             predictions.append({
                 "user_id": player_id,
                 "ltv": profile.get("total_revenue", "N/A"),
                 "session_count": profile.get("total_sessions", "N/A"),
                 "event_count": profile.get("total_events", "N/A"),
-                "predicted_churn_risk": churn_estimate.get("churn_risk", "N/A")
+                "predicted_churn_risk": churn_risk
             })
 
         return {"predictions": predictions}
@@ -829,7 +863,7 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         if not player_profile:
             raise HTTPException(status_code=404, detail=f"Player with ID '{player_id}' not found.")
 
-        churn_estimate = await modeling_engine.estimate_churn_risk(player_id)
+        churn_estimate = await modeling_engine.estimate_churn_risk(player_id, player_profile)
 
         # 4. Decide and execute next best action
         next_action = decision_engine.decide_next_action(player_profile, churn_estimate, "reduce_churn")

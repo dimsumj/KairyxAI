@@ -64,15 +64,15 @@ class PlayerModelingEngine:
         # consecutive events is greater than 15 minutes.
         time_diffs = player_events['event_time'].diff()
         is_new_session = time_diffs > pd.Timedelta(minutes=15)
-        # The total number of sessions is 1 (for the very first event) + the number of times a new session was started.
-        total_sessions = 1 + is_new_session.sum()
+        # The total number of sessions is 1 (for the very first event) + the number of times a new session was started.        
+        total_sessions = int(1 + is_new_session.sum()) # Ensure total_sessions is a standard Python int
         
         # Calculate total revenue from 'item_purchased' events
         purchases = player_events[player_events['event_type'] == 'item_purchased']
         total_revenue = 0
         if not purchases.empty:
             # Sum up revenue from the 'revenue_usd' field in event_properties
-            total_revenue = purchases['event_properties'].apply(lambda x: x.get('revenue_usd', 0)).sum()
+            total_revenue = float(purchases['event_properties'].apply(lambda x: x.get('revenue_usd', 0)).sum()) # Ensure total_revenue is a standard Python float
 
         profile = {
             "player_id": player_id,
@@ -80,22 +80,25 @@ class PlayerModelingEngine:
             "last_seen_date": last_seen.isoformat(),
             "total_sessions": total_sessions,
             "total_events": len(player_events),
-            "total_revenue": total_revenue,
+            "total_revenue": total_revenue, # This is now a float
             "days_since_last_seen": (datetime.utcnow() - last_seen.replace(tzinfo=None)).days,
         }
         return profile
 
-    async def estimate_churn_risk(self, player_id: Any) -> Optional[Dict[str, Any]]:
+    async def estimate_churn_risk(self, player_id: Any, player_profile: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
-        Estimates the churn risk for a single player based on activity.
+        Estimates the churn risk for a single player based on their profile.
+        If a player_profile is provided, it reuses that rather than rebuilding it.
 
         Args:
             player_id: The unique identifier for the player.
+            player_profile: (Optional) A pre-built player profile to avoid redundant processing.
 
         Returns:
             A dictionary with the player's ID, churn risk, and reason, or None.
         """
-        player_profile = self.build_player_profile(player_id) # This now fetches data
+        if player_profile is None:
+            player_profile = self.build_player_profile(player_id)
 
         if not player_profile:
             return None
@@ -111,11 +114,8 @@ class PlayerModelingEngine:
         try:
             print("\nAsking Gemini to estimate churn risk...")
             ai_response_text = self.ai_client.get_ai_response(prompt)
-            
-            # Clean the response to ensure it's valid JSON
             cleaned_json_text = ai_response_text.strip().replace("```json", "").replace("```", "")
             ai_analysis = json.loads(cleaned_json_text)
-            
             return {
                 "player_id": player_id,
                 "churn_risk": ai_analysis.get("churn_risk", "unknown"),
@@ -140,21 +140,11 @@ class PlayerModelingEngine:
             A pandas Series with event counts, or None if player not found.
         """
         player_events = self._get_and_preprocess_player_data(player_id)
-        if player_events.empty:
+        if player_events is None or player_events.empty:
             return None
         
         # Return a count of each event type for this player
         return player_events['event_type'].value_counts()
-
-    def get_all_player_ids(self) -> List[Any]:
-        """
-        Retrieves a list of all unique player IDs from the data source.
-
-        Returns:
-            A list of unique player IDs.
-        """
-        print("Fetching all unique player IDs from the data warehouse...")
-        return self.db_client.get_all_player_ids()
 
     def get_all_player_ids(self) -> List[Any]:
         """

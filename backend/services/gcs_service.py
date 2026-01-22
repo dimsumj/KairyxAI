@@ -57,3 +57,17 @@ class GcsService:
         file_path = os.path.join(self._bucket_path, blob_name)
         with open(file_path, 'r') as f:
             return json.load(f)
+
+    def delete_data_for_job(self, job_identifier: str):
+        """
+        Simulates deleting all blobs associated with a specific job identifier.
+        The job_identifier corresponds to the 'YYYYMMDD_to_YYYYMMDD' part of the path.
+        """
+        # The blob names are like 'raw_events/YYYYMMDD_to_YYYYMMDD/timestamp.json'
+        # We need to find all files in the directory matching the job_identifier.
+        job_dir = os.path.join(self._bucket_path, "raw_events", job_identifier)
+        if os.path.isdir(job_dir):
+            for filename in os.listdir(job_dir):
+                file_to_delete = os.path.join(job_dir, filename)
+                os.remove(file_to_delete)
+                print(f"Deleted blob '{os.path.join('raw_events', job_identifier, filename)}' from GCS.")
