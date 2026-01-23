@@ -25,6 +25,7 @@ What they don’t have is a system that:
 
 - Continuously optimizes for retention and monetization outcomes
 
+
 _KairyxAI is built to be that AI decision layer._
 
 
@@ -59,18 +60,30 @@ All without requiring teams to define funnels, segments, or rules upfront.
 
 - Explainable AI – Every decision has a reason
 
+
 **System Architecture (Conceptual)**
 
+
 Data Sources (MMPs / Analytics / Game Events)
+               
                 ↓
+        
         AI Data Normalization
+              
                 ↓
+      
         Player Modeling & Embeddings
+              
                 ↓
+        
          Decision & Optimization Engine
+               
                 ↓
+    
      Execution (Email / Push / In-Game)
+              
                 ↓
+          
             Outcome Feedback Loop
 
 **What This Repository Is**
@@ -116,6 +129,7 @@ KairyxAI is an experimental project.
 Expect rapid iteration, architectural changes, and evolving abstractions.
 
 =========================================
+
 Test locally: 
 
 1. Checkout the project
