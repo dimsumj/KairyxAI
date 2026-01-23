@@ -43,6 +43,7 @@ NORMALIZATION_MAPS = {
 }
 NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
 IMPORT_JOBS_CACHE_FILE = ".import_jobs.json"
+PREDICTION_CACHE_DIR = ".cache/predictions"
 CACHE_DIR = ".cache"
 
 # Global instances of our new services. In a microservices architecture,
@@ -60,6 +61,7 @@ def clear_cache_on_startup():
         print(f"Clearing cache directory: {CACHE_DIR}")
         shutil.rmtree(CACHE_DIR)
     print(f"Creating cache directory: {CACHE_DIR}")
+    os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
     
 def clear_api_key_cache_on_startup():
@@ -97,18 +99,20 @@ def cleanup_expired_jobs():
     
     # From the remaining jobs, filter out the expired ones
     now = datetime.utcnow()
-    valid_jobs = []
+    final_jobs = []
     for job in processing_cleared_jobs:
-        expiration = datetime.fromisoformat(job.get("expiration_timestamp"))
-        if now < expiration:
-            valid_jobs.append(job)
+        # Keep all 'Ready to Use' jobs, regardless of expiration, to ensure they persist across restarts.
+        if job.get("status") == "Ready to Use":
+            final_jobs.append(job)
         else:
-            print(f"Job '{job['name']}' has expired. Deleting cache.")
-            cache_filename = os.path.join(CACHE_DIR, f"{job['start_date']}_{job['end_date']}.json")
-            if os.path.exists(cache_filename):
-                os.remove(cache_filename)
+            # For other statuses, check for expiration.
+            expiration = datetime.fromisoformat(job.get("expiration_timestamp"))
+            if now < expiration:
+                final_jobs.append(job)
+            else:
+                print(f"Job '{job['name']}' has expired and is not 'Ready to Use'. Removing from list.")
     
-    IMPORT_JOBS = valid_jobs
+    IMPORT_JOBS = final_jobs
     save_import_jobs_to_cache()
 
 
@@ -130,6 +134,8 @@ def load_keys_from_cache():
                     os.environ["GOOGLE_GEMINI_MODEL"] = connectors["google"][0].get("model_name")
                 if "adjust" in connectors and connectors["adjust"]:
                     os.environ["ADJUST_API_TOKEN"] = connectors["adjust"][0].get("api_token")
+                if "sendgrid" in connectors and connectors["sendgrid"]:
+                    os.environ["SENDGRID_API_KEY"] = connectors["sendgrid"][0].get("api_key")
                 if "bigquery" in connectors and connectors["bigquery"]:
                      os.environ["BIGQUERY_PROJECT_ID"] = connectors["bigquery"][0].get("project_id")
                 print("Primary API keys loaded into environment.")
@@ -187,6 +193,10 @@ class BigQueryCredentials(BaseModel):
 class AdjustApiKey(BaseModel):
     """Request model for setting the Adjust API token."""
     adjust_api_token: str = Field(..., alias='api_token')
+
+class SendGridApiKey(BaseModel):
+    """Request model for setting the SendGrid API key."""
+    sendgrid_api_key: str = Field(..., alias='api_key')
 
 class ChurnReportRequest(BaseModel):
     """Request model for generating a churn report."""
@@ -305,6 +315,16 @@ async def configure_bigquery(creds: BigQueryCredentials):
     _add_connector_config("bigquery", "Google BigQuery", new_config)
     # In a real app, you might also initialize the BigQuery client here to verify credentials.
     return {"message": "BigQuery Project ID has been configured and cached."}
+
+@app.post("/configure-sendgrid-key")
+async def configure_sendgrid_key(key: SendGridApiKey):
+    """
+    An API endpoint to set the SendGrid API key for the session.
+    """
+    os.environ["SENDGRID_API_KEY"] = key.sendgrid_api_key
+    new_config = {"api_key": key.sendgrid_api_key}
+    _add_connector_config("sendgrid", "SendGrid", new_config)
+    return {"message": "SendGrid API key has been configured and cached."}
 
 @app.get("/list-configured-sources")
 async def list_configured_sources():
@@ -453,6 +473,10 @@ async def get_services_health():
         "google_cloud_services": {
             "status": "ok" if os.getenv("BIGQUERY_PROJECT_ID") else "warning",
             "details": "Project ID Configured" if os.getenv("BIGQUERY_PROJECT_ID") else "Project ID Not Configured (required for GCS & BigQuery)"
+        },
+        "sendgrid": {
+            "status": "ok" if os.getenv("SENDGRID_API_KEY") else "error",
+            "details": "Configured" if os.getenv("SENDGRID_API_KEY") else "Not Configured"
         }
     }
     return services_status
@@ -711,6 +735,12 @@ async def delete_job_cache(job_name: str):
     # 3. Delete data from simulated BigQuery
     BIGQUERY_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
 
+    # 4. Delete prediction cache file if it exists
+    prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}.json")
+    if os.path.exists(prediction_cache_file):
+        os.remove(prediction_cache_file)
+        print(f"Deleted prediction cache file: {prediction_cache_file}")
+
     IMPORT_JOBS = [j for j in IMPORT_JOBS if j["name"] != job_name]
     save_import_jobs_to_cache()
     return {"message": f"Job '{job_name}' and its cache have been deleted."}
@@ -804,8 +834,17 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
         if not os.getenv("GOOGLE_API_KEY"):
             raise HTTPException(status_code=400, detail="Google Gemini API key is not configured. Please set it in the Connectors section before running predictions.")
 
+        # Check for a cached result first
+        os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
+        prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{request.job_name}.json")
+        if os.path.exists(prediction_cache_file):
+            print(f"Loading churn predictions from cache: {prediction_cache_file}")
+            with open(prediction_cache_file, 'r') as f:
+                return {"predictions": json.load(f)}
+
         gemini_client = GeminiClient()
         modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+        decision_engine = GrowthDecisionEngine(gemini_client)
 
         # Get all player IDs from the processed data in BigQuery
         player_ids = modeling_engine.get_all_player_ids()
@@ -822,6 +861,9 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
 
             churn_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
 
+            # Decide the next best action based on the profile and churn risk
+            next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+
             churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
             churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
             predictions.append({
@@ -830,8 +872,14 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
                 "session_count": profile.get("total_sessions", "N/A"),
                 "event_count": profile.get("total_events", "N/A"),
                 "predicted_churn_risk": churn_risk,
-                "churn_reason": churn_reason
+                "churn_reason": churn_reason,
+                "suggested_action": next_action.get("content", "No action suggested.")
             })
+
+        # Save the new predictions to cache
+        print(f"Saving churn predictions to cache: {prediction_cache_file}")
+        with open(prediction_cache_file, 'w') as f:
+            json.dump(predictions, f, indent=2)
 
         return {"predictions": predictions}
 

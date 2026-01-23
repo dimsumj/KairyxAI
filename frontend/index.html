@@ -337,6 +337,7 @@
                             <th>Event Count</th>
                             <th>Predicted Churn Risk</th>
                             <th>Churn Reason</th>
+                            <th>Suggested Action</th>
                         </tr>
                     </thead>
                     <tbody id="operator-hub-results"></tbody>
@@ -422,6 +423,7 @@
                         <option value="adjust">Adjust</option>
                         <option value="google">Google Gemini</option>
                         <option value="bigquery">Google BigQuery</option>
+                        <option value="sendgrid">SendGrid</option>
                     </select>
                 </div>
                 <div id="connector-fields">
@@ -619,6 +621,11 @@
                     </div>
                     <div class="form-group">
                         <p style="font-size: 0.8rem; color: var(--subtle-text);">Note: For authentication, ensure your backend service has Application Default Credentials (ADC) configured (e.g., by running 'gcloud auth application-default login') or that a service account is correctly set up in your server environment.</p>
+                    </div>`,
+                sendgrid: `
+                    <div class="form-group">
+                        <label for="sendgrid_api_key">SendGrid API Key</label>
+                        <input type="password" id="sendgrid_api_key" placeholder="Enter your SendGrid API Key">
                     </div>`
             };
 
@@ -672,6 +679,11 @@
                     endpoint = `${backendUrl}/configure-bigquery`;
                     payload = {
                         project_id: document.getElementById('bigquery_project_id').value
+                    };
+                } else if (type === 'sendgrid') {
+                    endpoint = `${backendUrl}/configure-sendgrid-key`;
+                    payload = {
+                        api_key: document.getElementById('sendgrid_api_key').value
                     };
                 }
 
@@ -727,6 +739,7 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
+                        fetchAndRenderPredictions(readyJobs[0].name); // Automatically load predictions for the first dataset
                         predictChurnBtn.disabled = false;
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
@@ -739,6 +752,38 @@
                 }
             }
 
+            async function fetchAndRenderPredictions(jobName) {
+                if (!jobName) {
+                    allChurnPredictionPlayers = [];
+                    renderChurnTable();
+                    return;
+                }
+
+                operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Loading predictions...</td></tr>';
+                predictChurnBtn.disabled = true;
+
+                try {
+                    const response = await fetch(`${backendUrl}/predict-churn-for-import`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_name: jobName })
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Prediction failed.');
+                    }
+                    const data = await response.json();
+                    
+                    allChurnPredictionPlayers = data.predictions;
+                    currentPage = 1; // Reset to first page
+                    renderChurnTable();
+                } catch (error) {
+                    operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
+                } finally {
+                    predictChurnBtn.disabled = false;
+                }
+            }
+
             function renderChurnTable() {
                 operatorHubResults.innerHTML = '';
                 const startIndex = (currentPage - 1) * itemsPerPage;
@@ -746,11 +791,19 @@
                 const paginatedItems = allChurnPredictionPlayers.slice(startIndex, endIndex);
 
                 if (paginatedItems.length > 0) {
+                    // Helper to apply color classes
+                    const getRiskClass = (risk) => {
+                        if (risk.toLowerCase() === 'high') return 'risk-high';
+                        if (risk.toLowerCase() === 'medium') return 'risk-medium';
+                        if (risk.toLowerCase() === 'low') return 'risk-low';
+                        return '';
+                    };
+
                     paginatedItems.forEach(p => {
-                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${p.ltv.toFixed(2)}</td><td>${p.session_count}</td><td>${p.event_count}</td><td>${p.predicted_churn_risk}</td><td>${p.churn_reason}</td></tr>`;
+                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${p.ltv.toFixed(2)}</td><td>${p.session_count}</td><td>${p.event_count}</td><td class="${getRiskClass(p.predicted_churn_risk)}">${p.predicted_churn_risk}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
                     });
                 } else {
-                     operatorHubResults.innerHTML = '<tr><td colspan="6" style="text-align: center;">No players found in this dataset.</td></tr>';
+                     operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">No players found in this dataset.</td></tr>';
                 }
                 renderPaginationControls();
             }
@@ -791,37 +844,13 @@
                 paginationContainer.appendChild(nextButton);
             }
 
-            predictChurnBtn.addEventListener('click', async () => {
+            datasetSelect.addEventListener('change', (e) => {
+                fetchAndRenderPredictions(e.target.value);
+            });
+
+            predictChurnBtn.addEventListener('click', () => {
                 const jobName = datasetSelect.value;
-                if (!jobName) {
-                    alert('Please select a dataset.');
-                    return;
-                }
-
-                operatorHubResults.innerHTML = '<tr><td colspan="6" style="text-align: center;">Running predictions...</td></tr>';
-                predictChurnBtn.disabled = true;
-
-                try {
-                    const response = await fetch(`${backendUrl}/predict-churn-for-import`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ job_name: jobName })
-                    });
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Prediction failed.');
-                    }
-                    const data = await response.json();
-                    
-                    allChurnPredictionPlayers = data.predictions;
-                    currentPage = 1; // Reset to first page
-                    renderChurnTable();
-
-                } catch (error) {
-                    operatorHubResults.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
-                } finally {
-                    predictChurnBtn.disabled = false;
-                }
+                fetchAndRenderPredictions(jobName);
             });
 
             document.getElementById('items-per-page').addEventListener('change', (e) => {
