@@ -739,7 +739,7 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
-                        fetchAndRenderPredictions(readyJobs[0].name); // Automatically load predictions for the first dataset
+                        fetchAndRenderPredictions(readyJobs[0].name, false); // Automatically load predictions for the first dataset
                         predictChurnBtn.disabled = false;
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
@@ -752,7 +752,7 @@
                 }
             }
 
-            async function fetchAndRenderPredictions(jobName) {
+            async function fetchAndRenderPredictions(jobName, forceRecalculate = false) {
                 if (!jobName) {
                     allChurnPredictionPlayers = [];
                     renderChurnTable();
@@ -766,7 +766,7 @@
                     const response = await fetch(`${backendUrl}/predict-churn-for-import`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ job_name: jobName })
+                        body: JSON.stringify({ job_name: jobName, force_recalculate: forceRecalculate })
                     });
                     if (!response.ok) {
                         const errorData = await response.json();
@@ -845,12 +845,12 @@
             }
 
             datasetSelect.addEventListener('change', (e) => {
-                fetchAndRenderPredictions(e.target.value);
+                fetchAndRenderPredictions(e.target.value, false);
             });
 
             predictChurnBtn.addEventListener('click', () => {
                 const jobName = datasetSelect.value;
-                fetchAndRenderPredictions(jobName);
+                fetchAndRenderPredictions(jobName, true);
             });
 
             document.getElementById('items-per-page').addEventListener('change', (e) => {

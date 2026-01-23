@@ -238,6 +238,7 @@ class IngestionRequest(BaseModel):
 class ChurnPredictionRequest(BaseModel):
     """Request model for running churn prediction on an imported dataset."""
     job_name: str
+    force_recalculate: bool = False
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -837,7 +838,7 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
         # Check for a cached result first
         os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
         prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{request.job_name}.json")
-        if os.path.exists(prediction_cache_file):
+        if not request.force_recalculate and os.path.exists(prediction_cache_file):
             print(f"Loading churn predictions from cache: {prediction_cache_file}")
             with open(prediction_cache_file, 'r') as f:
                 return {"predictions": json.load(f)}
@@ -876,10 +877,11 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
                 "suggested_action": next_action.get("content", "No action suggested.")
             })
 
-        # Save the new predictions to cache
-        print(f"Saving churn predictions to cache: {prediction_cache_file}")
-        with open(prediction_cache_file, 'w') as f:
-            json.dump(predictions, f, indent=2)
+        # Save the new predictions to cache only if we have results
+        if predictions:
+            print(f"Saving churn predictions to cache: {prediction_cache_file}")
+            with open(prediction_cache_file, 'w') as f:
+                json.dump(predictions, f, indent=2)
 
         return {"predictions": predictions}
 

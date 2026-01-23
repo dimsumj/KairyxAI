@@ -1,7 +1,22 @@
 # bigquery_service.py
 
+import os
 import pandas as pd
 from typing import List, Dict, Any, Optional
+
+def _sanitize_for_parquet(data: Any) -> Any:
+    """
+    Recursively traverses data structures (lists, dicts) and replaces
+    empty dictionaries with None, as pyarrow cannot serialize them to Parquet.
+    """
+    if isinstance(data, dict):
+        if not data:  # If dictionary is empty
+            return None
+        return {k: _sanitize_for_parquet(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_sanitize_for_parquet(item) for item in data]
+    return data
+
 
 class BigQueryService:
     """
@@ -16,7 +31,13 @@ class BigQueryService:
         
         For this simulation, we'll use a pandas DataFrame as an in-memory "BigQuery table".
         """
-        self._table = pd.DataFrame()
+        self._cache_path = ".cache/bigquery_table.parquet"
+        if os.path.exists(self._cache_path):
+            print(f"Loading BigQuery cache from {self._cache_path}")
+            self._table = pd.read_parquet(self._cache_path)
+        else:
+            self._table = pd.DataFrame()
+            os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
         print("BigQueryService initialized (simulating in-memory BigQuery).")
 
     def write_processed_events(self, events: List[Dict[str, Any]], job_identifier: str):
@@ -39,7 +60,13 @@ class BigQueryService:
         else:
             self._table = pd.concat([self._table, new_data_df], ignore_index=True)
         
+        # Deep sanitize the entire DataFrame to replace all empty dicts with None.
+        # This is the most robust way to prevent the pyarrow "empty struct" error.
+        print("Sanitizing DataFrame for Parquet compatibility...")
+        self._table = self._table.applymap(_sanitize_for_parquet)
+
         print(f"Wrote {len(new_data_df)} events to BigQuery. Table now has {len(self._table)} total events.")
+        self._table.to_parquet(self._cache_path)
 
     def get_events_for_player(self, player_id: Any) -> Optional[pd.DataFrame]:
         """
@@ -82,3 +109,4 @@ class BigQueryService:
         rows_deleted = initial_rows - len(self._table)
         if rows_deleted > 0:
             print(f"Deleted {rows_deleted} rows from BigQuery for job '{job_identifier}'.")
+            self._table.to_parquet(self._cache_path)
