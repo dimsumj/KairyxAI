@@ -2,7 +2,7 @@
 
 As a Product Manager in the mobile gaming industry for over 7-8 years, I have been feeling the pain regularly regarding the disconnection between data analyze and marketing/retargeting efforts. 
 
-It has been a messy process for each of the team members that they have to do manual process regularly (create rules, visualize data, make the decision, download data from one place, upload data to another place, execute the decisions etc etc). A lot of the time the data get swamped in tasks and not synced up across teams (marketing, live ops, CS folks, PMs, Engs) so the result is on and off. Teams have to do caliberations again and again to make sure the rule is setup correctly, the data is cleaned up properly and uploaded without any issue before do the property marketing effots. It just take TOO MUCH Time!
+It has been a messy process for each of the team members that they have to do manual process regularly (create rules, visualize data, make the decision, download data from one place, upload data to another place, execute the decisions etc etc). A lot of the time the data gets swamped in tasks and not synced up across teams (marketing, live ops, CS folks, PMs, Engs) so the result is on and off. Teams have to do caliberations again and again to make sure the rule is setup correctly, the data is cleaned up properly and uploaded without any issue before do the property marketing efforts. It just take TOO MUCH Time!
 
 I want to stitch the splited data from different sources again with the AI powered decision making system and automate the whole process (at least majority of it for now).
 
