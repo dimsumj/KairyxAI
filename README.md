@@ -64,7 +64,7 @@ All without requiring teams to define funnels, segments, or rules upfront.
 **System Architecture (Conceptual)**
 
 
-Data Sources (MMPs / Analytics / Game Events)
+        Data Sources (MMPs / Analytics / Game Events)
                
                 ↓
         
@@ -76,15 +76,17 @@ Data Sources (MMPs / Analytics / Game Events)
               
                 ↓
         
-         Decision & Optimization Engine
+        Decision & Optimization Engine
                
                 ↓
     
-     Execution (Email / Push / In-Game)
+        Execution (Email / Push / In-Game)
               
                 ↓
           
-            Outcome Feedback Loop
+        Outcome Feedback Loop
+
+        
 
 **What This Repository Is**
 
