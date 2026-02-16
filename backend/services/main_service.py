@@ -654,8 +654,12 @@ async def get_data_sandbox_glance():
     if not IMPORT_JOBS:
         raise HTTPException(status_code=404, detail="No data has been imported yet.")
 
-    # The list is already sorted by timestamp descending
-    latest_job = IMPORT_JOBS[0]
+    # IMPORT_JOBS is append-only and may be loaded from cache in arbitrary order,
+    # so sort explicitly to guarantee we pick the newest job.
+    latest_job = max(
+        IMPORT_JOBS,
+        key=lambda job: datetime.fromisoformat(job.get("timestamp", datetime.min.isoformat())),
+    )
     start_date = latest_job.get("start_date")
     end_date = latest_job.get("end_date")
 
