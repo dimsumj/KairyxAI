@@ -55,6 +55,22 @@ GCS_SERVICE_INSTANCE = GcsService()
 # In-memory list to track import jobs. In production, this would be a database.
 IMPORT_JOBS = []
 
+
+def _normalize_date_for_amplitude(date_str: str) -> str:
+    """
+    Normalizes incoming date strings to Amplitude's expected 'YYYYMMDD' format.
+    Accepts either 'YYYY-MM-DD' or 'YYYYMMDD'.
+    """
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(date_str, fmt).strftime("%Y%m%d")
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid date '{date_str}'. Use 'YYYY-MM-DD' or 'YYYYMMDD'.",
+    )
+
 def clear_cache_on_startup():
     """Clears the data cache directory."""
     if os.path.exists(CACHE_DIR):
@@ -508,10 +524,13 @@ async def generate_churn_report(request: ChurnReportRequest):
     An API endpoint to generate a churn prediction report.
     """
     try:
+        start_date = _normalize_date_for_amplitude(request.start_date)
+        end_date = _normalize_date_for_amplitude(request.end_date)
+
         amplitude_client = AmplitudeService()
 
         # Fetch the events
-        events_data = amplitude_client.export_events(request.start_date, request.end_date)
+        events_data = amplitude_client.export_events(start_date, end_date)
 
         if not events_data:
             raise HTTPException(status_code=404, detail="No events found for the given date range.")
@@ -533,23 +552,24 @@ async def generate_churn_report(request: ChurnReportRequest):
         # 3. Initialize the Gemini client (requires GOOGLE_API_KEY env var)
         gemini_client = GeminiClient()
 
-        # 4. Initialize the modeling engine with the clean data and the AI client
-        modeling_engine = PlayerModelingEngine(normalized_data, gemini_client)
+        # 4. Persist normalized events into the simulated warehouse for profiling.
+        job_identifier = f"{start_date}_to_{end_date}_report"
+        BIGQUERY_SERVICE_INSTANCE.write_processed_events(normalized_data, job_identifier)
 
-        # 5. Get a list of all players
-        player_ids = modeling_engine.get_all_player_ids()
+        # 5. Initialize the modeling engine with the warehouse client and the AI client
+        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
 
-        # 6. Initialize the decision engine
+        # 6. Use only players present in this report payload.
+        player_ids = sorted({event.get("player_id") for event in normalized_data if event.get("player_id") is not None})
+
+        # 7. Initialize the decision engine
         decision_engine = GrowthDecisionEngine(gemini_client)
 
-        # 7. Initialize the churn reporter
-        reporter = ChurnReporter(modeling_engine, decision_engine) # 8. Generate the final CSV report for all at-risk players
-        report_filename = f"{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
-
-        # 8. Generate the final CSV report for all at-risk players
-        report_filename = 'churn_predictions_report.csv'
+        # 8. Initialize reporter and generate final CSV report for at-risk players.
+        reporter = ChurnReporter(modeling_engine, decision_engine)
+        report_filename = f"churn_predictions_report_{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
         if player_ids:
-            reporter.generate_report(player_ids, report_filename)
+            await reporter.generate_report(player_ids, report_filename)
             return {"message": "Churn report generated successfully.", "report_path": report_filename}
         else:
             raise HTTPException(status_code=404, detail="No players found to generate a report for.")
@@ -626,6 +646,8 @@ async def get_raw_events_sample(start_date: str, end_date: str):
     """
     Fetches a small sample of raw events for display in the data sandbox.
     """
+    start_date = _normalize_date_for_amplitude(start_date)
+    end_date = _normalize_date_for_amplitude(end_date)
     amplitude_client = AmplitudeService()
     events_data = amplitude_client.export_events(start_date, end_date)
     # Return a sample of 10 events to keep the response light
@@ -690,6 +712,8 @@ async def get_events_with_caching(start_date: str, end_date: str) -> list[dict]:
     """
     Fetches events from Amplitude, using a local file cache to avoid redundant API calls.
     """
+    start_date = _normalize_date_for_amplitude(start_date)
+    end_date = _normalize_date_for_amplitude(end_date)
     cache_filename = os.path.join(CACHE_DIR, f"{start_date}_{end_date}.json")
     
     if os.path.exists(cache_filename):
@@ -758,7 +782,9 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
 
         # 1. Ingestion: Fetch from source, upload to GCS, and publish notification
         # Construct the job_identifier consistently for GCS and BigQuery
-        job_identifier = f"{start_date.replace('-', '')}_to_{end_date.replace('-', '')}"
+        start_date = _normalize_date_for_amplitude(start_date)
+        end_date = _normalize_date_for_amplitude(end_date)
+        job_identifier = f"{start_date}_to_{end_date}"
 
         connector_config, conn_type = _get_connector_config(source) # 'source' is now the connector name
         if not connector_config:
@@ -789,6 +815,8 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
     The actual processing is run as a background task.
     """
     try:
+        start_date = _normalize_date_for_amplitude(request.start_date)
+        end_date = _normalize_date_for_amplitude(request.end_date)
         job_timestamp = datetime.utcnow()
         expiration_timestamp = job_timestamp + timedelta(days=3)
         job_name = f"{job_timestamp.strftime('%Y%m%d-%H%M%S')}-{request.source.capitalize()}"
@@ -798,10 +826,10 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
             "timestamp": job_timestamp.isoformat(),
             "creation_timestamp": job_timestamp.isoformat(),
             "expiration_timestamp": expiration_timestamp.isoformat(),
-            "start_date": request.start_date,
-            "end_date": request.end_date
+            "start_date": start_date,
+            "end_date": end_date
         })
-        background_tasks.add_task(run_pipeline_background, request.start_date, request.end_date, job_name, request.source)
+        background_tasks.add_task(run_pipeline_background, start_date, end_date, job_name, request.source)
         save_import_jobs_to_cache()
         return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
     except Exception as e:
@@ -878,7 +906,7 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
                 "event_count": profile.get("total_events", "N/A"),
                 "predicted_churn_risk": churn_risk,
                 "churn_reason": churn_reason,
-                "suggested_action": next_action.get("content", "No action suggested.")
+                "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested."
             })
 
         # Save the new predictions to cache only if we have results

@@ -19,7 +19,7 @@ class ChurnReporter:
         self.decision_engine = decision_engine
         print("ChurnReporter initialized.")
 
-    def generate_report(self, player_ids: List[Any], output_filepath: str):
+    async def generate_report(self, player_ids: List[Any], output_filepath: str):
         """
         Analyzes a list of players and generates a CSV report for those at risk of churning.
 
@@ -37,7 +37,7 @@ class ChurnReporter:
                 print("\nDemo limit of 5 players reached for the report. Halting analysis.")
                 break
 
-            churn_estimate = self.modeling_engine.estimate_churn_risk(player_id)
+            churn_estimate = await self.modeling_engine.estimate_churn_risk(player_id)
 
             # Only include players with a medium or high churn risk in the report
             if churn_estimate and churn_estimate.get("churn_risk") in ["medium", "high"]:

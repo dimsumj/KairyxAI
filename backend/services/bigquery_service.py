@@ -4,10 +4,28 @@ import os
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+INT64_MAX = 2**63 - 1
+INT64_MIN = -(2**63)
+
+
+def _is_int_like_scalar(value: Any) -> bool:
+    """Returns True for scalar integers (excluding booleans)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_oversized_int(value: Any) -> bool:
+    """Checks if a scalar integer is outside the signed 64-bit range."""
+    if not _is_int_like_scalar(value):
+        return False
+    return value > INT64_MAX or value < INT64_MIN
+
+
 def _sanitize_for_parquet(data: Any) -> Any:
     """
     Recursively traverses data structures (lists, dicts) and replaces
-    empty dictionaries with None, as pyarrow cannot serialize them to Parquet.
+    unsupported values:
+    - empty dictionaries -> None
+    - oversized integers (outside int64 range) -> str
     """
     if isinstance(data, dict):
         if not data:  # If dictionary is empty
@@ -15,6 +33,8 @@ def _sanitize_for_parquet(data: Any) -> Any:
         return {k: _sanitize_for_parquet(v) for k, v in data.items()}
     if isinstance(data, list):
         return [_sanitize_for_parquet(item) for item in data]
+    if _is_oversized_int(data):
+        return str(data)
     return data
 
 
@@ -40,6 +60,26 @@ class BigQueryService:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
         print("BigQueryService initialized (simulating in-memory BigQuery).")
 
+    def _coerce_oversized_integer_columns(self):
+        """
+        Parquet cannot store integers outside int64 range.
+        If a scalar-integer column contains oversized values, cast the full
+        column to string to keep a consistent, writable schema.
+        """
+        for column in self._table.columns:
+            series = self._table[column]
+            non_null = series[series.notna()]
+            if non_null.empty:
+                continue
+
+            if not non_null.map(_is_int_like_scalar).all():
+                continue
+
+            if non_null.map(_is_oversized_int).any():
+                self._table[column] = series.map(
+                    lambda value: str(value) if _is_int_like_scalar(value) else value
+                )
+
     def write_processed_events(self, events: List[Dict[str, Any]], job_identifier: str):
         """
         Simulates writing a batch of processed events to a BigQuery table.
@@ -64,6 +104,7 @@ class BigQueryService:
         # This is the most robust way to prevent the pyarrow "empty struct" error.
         print("Sanitizing DataFrame for Parquet compatibility...")
         self._table = self._table.applymap(_sanitize_for_parquet)
+        self._coerce_oversized_integer_columns()
 
         print(f"Wrote {len(new_data_df)} events to BigQuery. Table now has {len(self._table)} total events.")
         self._table.to_parquet(self._cache_path)
