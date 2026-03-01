@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard.tsx';
 import PlayerInspector from './components/PlayerInspector.tsx';
 import ActionHistory from './components/ActionHistory.tsx';
 import DataSandbox from './components/DataSandbox.tsx';
+import BackendWorkbench from './components/BackendWorkbench.tsx';
 import { INITIAL_METRICS, DEFAULT_SAFETY_CONSTRAINTS } from './constants.tsx';
 import { ShieldAlert, ShieldCheck, Lock, DollarSign, Clock, UserX } from 'lucide-react';
 import { SafetyConstraints } from './types.ts';
@@ -27,6 +28,8 @@ const App: React.FC = () => {
         return <PlayerInspector onActionTriggered={handleActionTriggered} constraints={constraints} />;
       case 'actions':
         return <ActionHistory actions={executedActions} />;
+      case 'backend':
+        return <BackendWorkbench />;
       case 'sandbox':
         return <DataSandbox />;
       case 'constraints':

@@ -1,0 +1,408 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { backendService, Connector, ImportJob, PredictionRow } from '../services/backend.ts';
+
+type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'sendgrid';
+
+const modelOptions = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'];
+
+const BackendWorkbench: React.FC = () => {
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [sources, setSources] = useState<Array<{ id: string; name: string }>>([]);
+  const [imports, setImports] = useState<ImportJob[]>([]);
+  const [predictions, setPredictions] = useState<PredictionRow[]>([]);
+  const [selectedJob, setSelectedJob] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [healthStatus, setHealthStatus] = useState('checking');
+
+  const [connectorType, setConnectorType] = useState<ConnectorType>('amplitude');
+  const [amplitudeApiKey, setAmplitudeApiKey] = useState('');
+  const [amplitudeSecretKey, setAmplitudeSecretKey] = useState('');
+  const [googleApiKey, setGoogleApiKey] = useState('');
+  const [googleModel, setGoogleModel] = useState(modelOptions[0]);
+  const [bigqueryProjectId, setBigqueryProjectId] = useState('');
+  const [adjustApiToken, setAdjustApiToken] = useState('');
+  const [sendgridApiKey, setSendgridApiKey] = useState('');
+
+  const [importSource, setImportSource] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
+
+  const refreshAll = async () => {
+    setError('');
+    try {
+      const [health, connectorsResp, sourcesResp, importsResp] = await Promise.all([
+        backendService.health(),
+        backendService.listConnectors(),
+        backendService.listConfiguredSources(),
+        backendService.listImports(),
+      ]);
+      setHealthStatus(health.status);
+      setConnectors(connectorsResp.connectors || []);
+      setSources(sourcesResp.sources || []);
+      setImports(importsResp.imports || []);
+      if (!importSource && sourcesResp.sources?.length) {
+        setImportSource(sourcesResp.sources[0].id);
+      }
+      if (!selectedJob && importsResp.imports?.length) {
+        const firstReady = importsResp.imports.find((j) => j.status === 'Ready to Use');
+        if (firstReady) setSelectedJob(firstReady.name);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to refresh backend data.');
+      setHealthStatus('down');
+    }
+  };
+
+  useEffect(() => {
+    refreshAll();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedJob && readyJobs.length) {
+      setSelectedJob(readyJobs[0].name);
+    }
+  }, [readyJobs, selectedJob]);
+
+  const runConnectorSave = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      if (connectorType === 'amplitude') {
+        await backendService.configureAmplitude(amplitudeApiKey, amplitudeSecretKey);
+      } else if (connectorType === 'google') {
+        await backendService.configureGoogle(googleApiKey, googleModel);
+      } else if (connectorType === 'bigquery') {
+        await backendService.configureBigQuery(bigqueryProjectId);
+      } else if (connectorType === 'adjust') {
+        await backendService.configureAdjust(adjustApiToken);
+      } else if (connectorType === 'sendgrid') {
+        await backendService.configureSendgrid(sendgridApiKey);
+      }
+      setMessage('Connector saved successfully.');
+      await refreshAll();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save connector.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runStartImport = async () => {
+    if (!importSource || !startDate || !endDate) {
+      setError('Please select source and date range.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await backendService.startImport(startDate.replaceAll('-', ''), endDate.replaceAll('-', ''), importSource);
+      setMessage('Import job started.');
+      await refreshAll();
+    } catch (err: any) {
+      setError(err.message || 'Failed to start import.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runPredict = async () => {
+    if (!selectedJob) {
+      setError('Please choose a ready import job.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const data = await backendService.predictForImport(selectedJob, true);
+      setPredictions(data.predictions || []);
+      setMessage(`Loaded ${data.predictions?.length || 0} prediction rows.`);
+    } catch (err: any) {
+      setError(err.message || 'Prediction failed.');
+      setPredictions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteConnector = async (name: string) => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await backendService.deleteConnector(name);
+      setMessage(`Deleted connector "${name}".`);
+      await refreshAll();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete connector.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h2 className="text-2xl font-bold">Backend Test Workbench</h2>
+        <p className="text-gray-400">Single React flow for connector setup, ingestion, and churn prediction.</p>
+        <p className="text-gray-500 text-xs mt-2">Backend URL: {backendService.baseUrl}</p>
+      </header>
+
+      <div className="flex gap-3 items-center">
+        <button
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+          onClick={refreshAll}
+          disabled={loading}
+        >
+          Refresh
+        </button>
+        <span className={`text-sm ${healthStatus === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+          Backend: {healthStatus}
+        </span>
+      </div>
+
+      {message ? <div className="text-green-400 text-sm">{message}</div> : null}
+      {error ? <div className="text-red-400 text-sm">{error}</div> : null}
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Configure Connectors</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <select
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={connectorType}
+            onChange={(e) => setConnectorType(e.target.value as ConnectorType)}
+          >
+            <option value="amplitude">Amplitude</option>
+            <option value="google">Google Gemini</option>
+            <option value="bigquery">BigQuery</option>
+            <option value="adjust">Adjust</option>
+            <option value="sendgrid">SendGrid</option>
+          </select>
+          {connectorType === 'google' ? (
+            <select
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={googleModel}
+              onChange={(e) => setGoogleModel(e.target.value)}
+            >
+              {modelOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+
+        {connectorType === 'amplitude' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              type="password"
+              placeholder="Amplitude API Key"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={amplitudeApiKey}
+              onChange={(e) => setAmplitudeApiKey(e.target.value)}
+            />
+            <input
+              type="password"
+              placeholder="Amplitude Secret Key"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={amplitudeSecretKey}
+              onChange={(e) => setAmplitudeSecretKey(e.target.value)}
+            />
+          </div>
+        ) : null}
+
+        {connectorType === 'google' ? (
+          <input
+            type="password"
+            placeholder="Google API Key"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 w-full"
+            value={googleApiKey}
+            onChange={(e) => setGoogleApiKey(e.target.value)}
+          />
+        ) : null}
+
+        {connectorType === 'bigquery' ? (
+          <input
+            type="text"
+            placeholder="BigQuery Project ID"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 w-full"
+            value={bigqueryProjectId}
+            onChange={(e) => setBigqueryProjectId(e.target.value)}
+          />
+        ) : null}
+
+        {connectorType === 'adjust' ? (
+          <input
+            type="password"
+            placeholder="Adjust API Token"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 w-full"
+            value={adjustApiToken}
+            onChange={(e) => setAdjustApiToken(e.target.value)}
+          />
+        ) : null}
+
+        {connectorType === 'sendgrid' ? (
+          <input
+            type="password"
+            placeholder="SendGrid API Key"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 w-full"
+            value={sendgridApiKey}
+            onChange={(e) => setSendgridApiKey(e.target.value)}
+          />
+        ) : null}
+
+        <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runConnectorSave} disabled={loading}>
+          Save Connector
+        </button>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Saved Connectors</h3>
+        {connectors.length === 0 ? <p className="text-gray-500 text-sm">No connectors configured yet.</p> : null}
+        {connectors.map((connector) => (
+          <div key={connector.name} className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+            <div>
+              <div className="font-medium">{connector.name}</div>
+              <div className="text-xs text-gray-400">{connector.type}</div>
+            </div>
+            <button
+              className="bg-red-600/20 border border-red-500/40 text-red-300 rounded px-3 py-1 text-xs"
+              onClick={() => deleteConnector(connector.name)}
+              disabled={loading}
+            >
+              Delete
+            </button>
+          </div>
+        ))}
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Import Data</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <select
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={importSource}
+            onChange={(e) => setImportSource(e.target.value)}
+          >
+            <option value="">Select Source</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+          <input
+            type="date"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+          />
+        </div>
+        <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runStartImport} disabled={loading}>
+          Start Import
+        </button>
+        <div className="max-h-64 overflow-auto border border-gray-800 rounded-lg">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-gray-800">
+              <tr>
+                <th className="px-3 py-2">Job</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Date Range</th>
+                <th className="px-3 py-2">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {imports.map((job) => (
+                <tr key={job.name} className="border-t border-gray-800">
+                  <td className="px-3 py-2">{job.name}</td>
+                  <td className="px-3 py-2">{job.status}</td>
+                  <td className="px-3 py-2">
+                    {job.start_date} to {job.end_date}
+                  </td>
+                  <td className="px-3 py-2">{new Date(job.timestamp).toLocaleString()}</td>
+                </tr>
+              ))}
+              {imports.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-2 text-gray-500" colSpan={4}>
+                    No imports yet.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Predict Churn</h3>
+        <div className="flex gap-3">
+          <select
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 flex-1"
+            value={selectedJob}
+            onChange={(e) => setSelectedJob(e.target.value)}
+          >
+            <option value="">Select Ready Import Job</option>
+            {readyJobs.map((job) => (
+              <option key={job.name} value={job.name}>
+                {job.name}
+              </option>
+            ))}
+          </select>
+          <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runPredict} disabled={loading}>
+            Run Prediction
+          </button>
+        </div>
+        <div className="max-h-72 overflow-auto border border-gray-800 rounded-lg">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-gray-800">
+              <tr>
+                <th className="px-3 py-2">User ID</th>
+                <th className="px-3 py-2">LTV</th>
+                <th className="px-3 py-2">Sessions</th>
+                <th className="px-3 py-2">Events</th>
+                <th className="px-3 py-2">Risk</th>
+                <th className="px-3 py-2">Suggested Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {predictions.map((row, idx) => (
+                <tr key={`${row.user_id}-${idx}`} className="border-t border-gray-800">
+                  <td className="px-3 py-2">{row.user_id}</td>
+                  <td className="px-3 py-2">{row.ltv}</td>
+                  <td className="px-3 py-2">{row.session_count}</td>
+                  <td className="px-3 py-2">{row.event_count}</td>
+                  <td className="px-3 py-2">{row.predicted_churn_risk}</td>
+                  <td className="px-3 py-2">{row.suggested_action}</td>
+                </tr>
+              ))}
+              {predictions.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-2 text-gray-500" colSpan={6}>
+                    No predictions yet.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+export default BackendWorkbench;
+

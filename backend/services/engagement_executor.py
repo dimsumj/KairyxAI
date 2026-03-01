@@ -1,6 +1,6 @@
 # engagement_executor.py
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 import uuid
 
@@ -19,7 +19,7 @@ class EngagementExecutor:
     and logs the actions taken.
     """
 
-    def execute_action(self, action: Dict[str, Any]) -> str | None:
+    def execute_action(self, action: Dict[str, Any]) -> Optional[str]:
         """
         Routes the action to the appropriate channel executor if a decision to act was made.
 

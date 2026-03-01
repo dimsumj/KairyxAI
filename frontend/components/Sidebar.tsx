@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, Users, Activity, Terminal, ShieldAlert, Cpu } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Terminal, ShieldAlert, Cpu, PlugZap } from 'lucide-react';
 
 interface SidebarProps {
   activeTab: string;
@@ -12,6 +12,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'dashboard', label: 'Operator Hub', icon: LayoutDashboard },
     { id: 'players', label: 'Player Cohorts', icon: Users },
     { id: 'actions', label: 'Action History', icon: Activity },
+    { id: 'backend', label: 'Backend Test', icon: PlugZap },
     { id: 'sandbox', label: 'Data Sandbox', icon: Terminal },
     { id: 'constraints', label: 'Safety Rails', icon: ShieldAlert },
   ];

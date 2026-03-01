@@ -1,6 +1,7 @@
 # bigquery_service.py
 
 import os
+import json
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
@@ -55,10 +56,70 @@ class BigQueryService:
         if os.path.exists(self._cache_path):
             print(f"Loading BigQuery cache from {self._cache_path}")
             self._table = pd.read_parquet(self._cache_path)
+            self._restore_complex_columns_from_parquet()
         else:
             self._table = pd.DataFrame()
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
         print("BigQueryService initialized (simulating in-memory BigQuery).")
+
+    def _prepare_for_parquet(self, table: pd.DataFrame) -> pd.DataFrame:
+        """
+        Converts dict/list values in object columns into JSON strings so Parquet
+        can store mixed nested types without schema-conversion failures.
+        """
+        table_to_persist = table.copy()
+        for column in table_to_persist.columns:
+            series = table_to_persist[column]
+            if series.dtype != "object":
+                continue
+
+            non_null = series[series.notna()]
+            if non_null.empty:
+                continue
+
+            has_complex_values = non_null.map(lambda v: isinstance(v, (dict, list))).any()
+            if not has_complex_values:
+                continue
+
+            table_to_persist[column] = series.map(
+                lambda value: json.dumps(value) if isinstance(value, (dict, list)) else value
+            )
+
+        return table_to_persist
+
+    def _restore_complex_columns_from_parquet(self):
+        """
+        Restores JSON-serialized dict/list values after loading Parquet data.
+        """
+        for column in self._table.columns:
+            series = self._table[column]
+            if series.dtype != "object":
+                continue
+
+            non_null = series[series.notna()]
+            if non_null.empty:
+                continue
+
+            sample = non_null.iloc[0]
+            if not isinstance(sample, str):
+                continue
+
+            # Heuristic: only attempt JSON parse for likely serialized objects/arrays.
+            if not (sample.startswith("{") or sample.startswith("[")):
+                continue
+
+            def _maybe_parse_json(value: Any) -> Any:
+                if not isinstance(value, str):
+                    return value
+                if not (value.startswith("{") or value.startswith("[")):
+                    return value
+                try:
+                    parsed = json.loads(value)
+                    return parsed
+                except (json.JSONDecodeError, TypeError):
+                    return value
+
+            self._table[column] = series.map(_maybe_parse_json)
 
     def _coerce_oversized_integer_columns(self):
         """
@@ -103,11 +164,15 @@ class BigQueryService:
         # Deep sanitize the entire DataFrame to replace all empty dicts with None.
         # This is the most robust way to prevent the pyarrow "empty struct" error.
         print("Sanitizing DataFrame for Parquet compatibility...")
-        self._table = self._table.applymap(_sanitize_for_parquet)
+        if hasattr(self._table, "map"):
+            self._table = self._table.map(_sanitize_for_parquet)
+        else:
+            self._table = self._table.applymap(_sanitize_for_parquet)
         self._coerce_oversized_integer_columns()
 
         print(f"Wrote {len(new_data_df)} events to BigQuery. Table now has {len(self._table)} total events.")
-        self._table.to_parquet(self._cache_path)
+        table_to_persist = self._prepare_for_parquet(self._table)
+        table_to_persist.to_parquet(self._cache_path)
 
     def get_events_for_player(self, player_id: Any) -> Optional[pd.DataFrame]:
         """
@@ -150,4 +215,5 @@ class BigQueryService:
         rows_deleted = initial_rows - len(self._table)
         if rows_deleted > 0:
             print(f"Deleted {rows_deleted} rows from BigQuery for job '{job_identifier}'.")
-            self._table.to_parquet(self._cache_path)
+            table_to_persist = self._prepare_for_parquet(self._table)
+            table_to_persist.to_parquet(self._cache_path)

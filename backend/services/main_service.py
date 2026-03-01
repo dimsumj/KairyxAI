@@ -200,7 +200,7 @@ class AmplitudeApiKeys(BaseModel):
 class GoogleApiKey(BaseModel):
     """Request model for setting Google API key."""
     google_api_key: str = Field(..., alias='api_key')
-    model_name: str | None = None
+    model_name: Optional[str] = None
 
 class BigQueryCredentials(BaseModel):
     """Request model for setting BigQuery credentials."""
@@ -226,8 +226,8 @@ class CohortCreationRequest(BaseModel):
 
 class SafetyRailsRequest(BaseModel):
     """Request model for setting safety rails."""
-    ai_token_limit: int | None = None
-    ai_budget_limit: float | None = None
+    ai_token_limit: Optional[int] = None
+    ai_budget_limit: Optional[float] = None
 
 class ChurnReportResponse(BaseModel):
     """Response model for the churn report generation."""
@@ -237,8 +237,8 @@ class ChurnReportResponse(BaseModel):
 class PlayerAnalysisRequest(BaseModel):
     """Request model for analyzing a single player."""
     player_id: str
-    start_date: str | None = None
-    end_date: str | None = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
 
 class DataSandboxRequest(BaseModel):
     """Request model for the data sandbox."""
