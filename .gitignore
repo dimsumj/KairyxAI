@@ -52,6 +52,7 @@ wheels/
 
 # Environment variables
 .env
+.venv/
 
 # IDE / Editor specific files
 .vscode/
