@@ -137,7 +137,13 @@ Test locally:
 1. Checkout the project
 2. browse to /backend/services/
 3. In console, run pip install requirements.txt
-4. after install all the libs, run: _uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend_
-5. Make sure you have gemini AI API key and sample data source (amplitude/adjust for now)
-
+4. choose data backend mode:
+   - Mock mode (dev/qa): `export DATA_BACKEND_MODE=mock`
+   - GCP mode (prod-like): `export DATA_BACKEND_MODE=gcp`
+5. for GCP mode, set:
+   - `export BIGQUERY_PROJECT_ID=<your_project_id>`
+   - `export GCS_BUCKET_NAME=<your_bucket_name>`
+   - configure ADC (Application Default Credentials)
+6. after install all the libs, run: _uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend_
+7. Make sure you have gemini AI API key and sample data source (amplitude/adjust for now)
 

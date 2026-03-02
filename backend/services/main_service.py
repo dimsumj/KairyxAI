@@ -64,6 +64,7 @@ DEFAULT_SAFETY_RAILS = {
     "AI_LLM_CIRCUIT_FAILURE_THRESHOLD": 5,
     "AI_LLM_CIRCUIT_OPEN_SEC": 60,
 }
+DATA_BACKEND_MODE = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
 
 # Global instances of our new services. In a microservices architecture,
 # these would be independent, deployed services. Here, we instantiate them
@@ -282,6 +283,7 @@ load_llm_policy_from_cache()
 load_safety_rails_from_cache()
 apply_default_safety_rails()
 cleanup_expired_jobs()
+print(f"Data backend mode: {DATA_BACKEND_MODE}")
 
 app = FastAPI()
 
@@ -1351,7 +1353,10 @@ if __name__ == '__main__':
     # 1. Make sure you have fastapi and uvicorn installed:
     #    pip install fastapi "uvicorn[standard]"
     # 2. Set your environment variables: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, GOOGLE_API_KEY
-    # 3. Run the server:
+    # 3. Choose data backend mode (optional):
+    #    mock (default): DATA_BACKEND_MODE=mock
+    #    gcp: DATA_BACKEND_MODE=gcp (requires BIGQUERY_PROJECT_ID + ADC + GCS bucket access)
+    # 4. Run the server:
     #    uvicorn main_service:app --reload
     
     print("Starting API server. Run with: uvicorn main_service:app --reload")

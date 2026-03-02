@@ -5,3 +5,5 @@ requests
 google-generativeai
 pandas
 pyarrow
+google-cloud-bigquery
+google-cloud-storage

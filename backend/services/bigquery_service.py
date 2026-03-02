@@ -21,19 +21,18 @@ def _is_oversized_int(value: Any) -> bool:
     return value > INT64_MAX or value < INT64_MIN
 
 
-def _sanitize_for_parquet(data: Any) -> Any:
+def _sanitize_for_storage(data: Any) -> Any:
     """
-    Recursively traverses data structures (lists, dicts) and replaces
-    unsupported values:
+    Recursively traverses nested structures and normalizes values for storage:
     - empty dictionaries -> None
     - oversized integers (outside int64 range) -> str
     """
     if isinstance(data, dict):
-        if not data:  # If dictionary is empty
+        if not data:
             return None
-        return {k: _sanitize_for_parquet(v) for k, v in data.items()}
+        return {k: _sanitize_for_storage(v) for k, v in data.items()}
     if isinstance(data, list):
-        return [_sanitize_for_parquet(item) for item in data]
+        return [_sanitize_for_storage(item) for item in data]
     if _is_oversized_int(data):
         return str(data)
     return data
@@ -41,17 +40,43 @@ def _sanitize_for_parquet(data: Any) -> Any:
 
 class BigQueryService:
     """
-    Simulates a service for interacting with Google BigQuery.
-    In a real-world application, this would use the google-cloud-bigquery library.
+    BigQuery service with dual backend support:
+    - mock: local pandas/parquet cache (dev/qa)
+    - gcp: real Google BigQuery client (prod)
     """
 
     def __init__(self):
-        """
-        Initializes the service. In a real app, this would set up the BigQuery client
-        with credentials and project information.
-        
-        For this simulation, we'll use a pandas DataFrame as an in-memory "BigQuery table".
-        """
+        self.mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+        if self.mode not in {"mock", "gcp"}:
+            raise ValueError("DATA_BACKEND_MODE must be 'mock' or 'gcp'.")
+
+        if self.mode == "gcp":
+            self._init_gcp_backend()
+            print(f"BigQueryService initialized in GCP mode (table: {self._table_id}).")
+        else:
+            self._init_mock_backend()
+            print("BigQueryService initialized in MOCK mode (local parquet cache).")
+
+    def _init_gcp_backend(self):
+        try:
+            from google.cloud import bigquery
+        except ImportError as e:
+            raise RuntimeError(
+                "google-cloud-bigquery is required for DATA_BACKEND_MODE=gcp."
+            ) from e
+
+        project_id = os.getenv("BIGQUERY_PROJECT_ID")
+        if not project_id:
+            raise ValueError("BIGQUERY_PROJECT_ID must be set for DATA_BACKEND_MODE=gcp.")
+
+        dataset_id = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
+        self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
+
+        self._bigquery = bigquery
+        self._client = bigquery.Client(project=project_id)
+
+    def _init_mock_backend(self):
         self._cache_path = ".cache/bigquery_table.parquet"
         if os.path.exists(self._cache_path):
             print(f"Loading BigQuery cache from {self._cache_path}")
@@ -60,7 +85,6 @@ class BigQueryService:
         else:
             self._table = pd.DataFrame()
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
-        print("BigQueryService initialized (simulating in-memory BigQuery).")
 
     def _prepare_for_parquet(self, table: pd.DataFrame) -> pd.DataFrame:
         """
@@ -104,7 +128,6 @@ class BigQueryService:
             if not isinstance(sample, str):
                 continue
 
-            # Heuristic: only attempt JSON parse for likely serialized objects/arrays.
             if not (sample.startswith("{") or sample.startswith("[")):
                 continue
 
@@ -114,8 +137,7 @@ class BigQueryService:
                 if not (value.startswith("{") or value.startswith("[")):
                     return value
                 try:
-                    parsed = json.loads(value)
-                    return parsed
+                    return json.loads(value)
                 except (json.JSONDecodeError, TypeError):
                     return value
 
@@ -142,78 +164,101 @@ class BigQueryService:
                 )
 
     def write_processed_events(self, events: List[Dict[str, Any]], job_identifier: str):
-        """
-        Simulates writing a batch of processed events to a BigQuery table.
-
-        Args:
-            events: A list of processed and normalized event dictionaries.
-            job_identifier: The identifier for the current job (e.g., 'YYYYMMDD_to_YYYYMMDD').
-        """
         if not events:
             return
 
+        prepared_events = []
         for event in events:
-            event['job_identifier'] = job_identifier
+            event_copy = dict(event)
+            event_copy["job_identifier"] = job_identifier
+            prepared_events.append(_sanitize_for_storage(event_copy))
 
-        new_data_df = pd.DataFrame(events)
+        if self.mode == "gcp":
+            job_config = self._bigquery.LoadJobConfig(
+                source_format=self._bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=self._bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=self._bigquery.CreateDisposition.CREATE_IF_NEEDED,
+                autodetect=True,
+                ignore_unknown_values=True,
+            )
+            load_job = self._client.load_table_from_json(prepared_events, self._table_id, job_config=job_config)
+            load_job.result()
+            print(f"Wrote {len(prepared_events)} events to BigQuery table {self._table_id}.")
+            return
+
+        new_data_df = pd.DataFrame(prepared_events)
         if self._table.empty:
             self._table = new_data_df
         else:
             self._table = pd.concat([self._table, new_data_df], ignore_index=True)
-        
-        # Deep sanitize the entire DataFrame to replace all empty dicts with None.
-        # This is the most robust way to prevent the pyarrow "empty struct" error.
+
         print("Sanitizing DataFrame for Parquet compatibility...")
         if hasattr(self._table, "map"):
-            self._table = self._table.map(_sanitize_for_parquet)
+            self._table = self._table.map(_sanitize_for_storage)
         else:
-            self._table = self._table.applymap(_sanitize_for_parquet)
+            self._table = self._table.applymap(_sanitize_for_storage)
         self._coerce_oversized_integer_columns()
 
-        print(f"Wrote {len(new_data_df)} events to BigQuery. Table now has {len(self._table)} total events.")
+        print(f"Wrote {len(new_data_df)} events to local BigQuery mock cache. Table now has {len(self._table)} total events.")
         table_to_persist = self._prepare_for_parquet(self._table)
         table_to_persist.to_parquet(self._cache_path)
 
     def get_events_for_player(self, player_id: Any) -> Optional[pd.DataFrame]:
-        """
-        Simulates querying BigQuery for all events belonging to a specific player.
+        if self.mode == "gcp":
+            query = f"""
+                SELECT *
+                FROM `{self._table_id}`
+                WHERE CAST(player_id AS STRING) = @player_id
+            """
+            job_config = self._bigquery.QueryJobConfig(
+                query_parameters=[
+                    self._bigquery.ScalarQueryParameter("player_id", "STRING", str(player_id))
+                ]
+            )
+            rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
+            if not rows:
+                return None
+            return pd.DataFrame(rows)
 
-        Args:
-            player_id: The ID of the player to retrieve events for.
-
-        Returns:
-            A pandas DataFrame containing the player's events, or None if not found.
-        """
-        if self._table.empty or 'player_id' not in self._table.columns:
+        if self._table.empty or "player_id" not in self._table.columns:
             return None
-        
-        player_df = self._table[self._table['player_id'] == player_id].copy()
+
+        player_df = self._table[self._table["player_id"] == player_id].copy()
         return player_df if not player_df.empty else None
 
     def get_all_player_ids(self) -> List[Any]:
-        """
-        Simulates querying BigQuery for all unique player IDs.
+        if self.mode == "gcp":
+            query = f"SELECT DISTINCT CAST(player_id AS STRING) AS player_id FROM `{self._table_id}`"
+            rows = [row["player_id"] for row in self._client.query(query).result()]
+            return rows
 
-        Returns:
-            A list of unique player IDs.
-        """
-        if self._table.empty or 'player_id' not in self._table.columns:
+        if self._table.empty or "player_id" not in self._table.columns:
             return []
-        
-        return self._table['player_id'].unique().tolist()
+        return self._table["player_id"].unique().tolist()
 
     def delete_data_for_job(self, job_identifier: str):
-        """
-        Simulates deleting rows from the BigQuery table that are associated
-        with a specific job identifier.
-        """
-        if self._table.empty or 'job_identifier' not in self._table.columns:
+        if self.mode == "gcp":
+            query = f"""
+                DELETE FROM `{self._table_id}`
+                WHERE job_identifier = @job_identifier
+            """
+            job_config = self._bigquery.QueryJobConfig(
+                query_parameters=[
+                    self._bigquery.ScalarQueryParameter("job_identifier", "STRING", job_identifier)
+                ]
+            )
+            self._client.query(query, job_config=job_config).result()
+            print(f"Deleted rows from BigQuery for job '{job_identifier}'.")
+            return
+
+        if self._table.empty or "job_identifier" not in self._table.columns:
             return
 
         initial_rows = len(self._table)
-        self._table = self._table[self._table['job_identifier'] != job_identifier]
+        self._table = self._table[self._table["job_identifier"] != job_identifier]
         rows_deleted = initial_rows - len(self._table)
         if rows_deleted > 0:
-            print(f"Deleted {rows_deleted} rows from BigQuery for job '{job_identifier}'.")
+            print(f"Deleted {rows_deleted} rows from local BigQuery mock for job '{job_identifier}'.")
             table_to_persist = self._prepare_for_parquet(self._table)
             table_to_persist.to_parquet(self._cache_path)
+
