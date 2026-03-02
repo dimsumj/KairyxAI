@@ -4,6 +4,7 @@ import os
 import re
 import uvicorn
 import shutil
+import uuid
 import requests
 import zipfile
 import io
@@ -32,6 +33,7 @@ from gcs_service import GcsService
 from amplitude_service import AmplitudeService
 from engagement_feedback import EngagementFeedback
 from policy_engine import LlmPolicyEngine, DEFAULT_LLM_POLICY
+from cloud_churn_service import CloudChurnService
 from pydantic import BaseModel, Field
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
@@ -44,6 +46,7 @@ NORMALIZATION_MAPS = {
 }
 NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
 IMPORT_JOBS_CACHE_FILE = ".import_jobs.json"
+PREDICTION_JOBS_CACHE_FILE = ".prediction_jobs.json"
 PREDICTION_CACHE_DIR = ".cache/predictions"
 CACHE_DIR = ".cache"
 LLM_POLICY_CACHE_FILE = ".llm_policy.json"
@@ -70,6 +73,7 @@ GCS_SERVICE_INSTANCE = GcsService()
 
 # In-memory list to track import jobs. In production, this would be a database.
 IMPORT_JOBS = []
+PREDICTION_JOBS = []
 LLM_POLICY_ENGINE = LlmPolicyEngine()
 LLM_POLICY_CONFIG = DEFAULT_LLM_POLICY.copy()
 
@@ -118,6 +122,23 @@ def load_import_jobs_from_cache():
                 IMPORT_JOBS.extend(jobs)
             except json.JSONDecodeError:
                 print(f"Warning: Could not decode {IMPORT_JOBS_CACHE_FILE}")
+
+
+def save_prediction_jobs_to_cache():
+    """Saves current PREDICTION_JOBS list to a file."""
+    with open(PREDICTION_JOBS_CACHE_FILE, 'w') as f:
+        json.dump(PREDICTION_JOBS, f, indent=2)
+
+
+def load_prediction_jobs_from_cache():
+    """Loads PREDICTION_JOBS from a file if it exists."""
+    if os.path.exists(PREDICTION_JOBS_CACHE_FILE):
+        with open(PREDICTION_JOBS_CACHE_FILE, 'r') as f:
+            try:
+                jobs = json.load(f)
+                PREDICTION_JOBS.extend(jobs)
+            except json.JSONDecodeError:
+                print(f"Warning: Could not decode {PREDICTION_JOBS_CACHE_FILE}")
 
 def cleanup_expired_jobs():
     """
@@ -172,6 +193,10 @@ def load_keys_from_cache():
                     os.environ["SENDGRID_API_KEY"] = connectors["sendgrid"][0].get("api_key")
                 if "bigquery" in connectors and connectors["bigquery"]:
                      os.environ["BIGQUERY_PROJECT_ID"] = connectors["bigquery"][0].get("project_id")
+                if "cloud_churn" in connectors and connectors["cloud_churn"]:
+                    os.environ["CHURN_API_URL"] = connectors["cloud_churn"][0].get("api_url")
+                    if connectors["cloud_churn"][0].get("api_token"):
+                        os.environ["CHURN_API_TOKEN"] = connectors["cloud_churn"][0].get("api_token")
                 print("Primary API keys loaded into environment.")
             except json.JSONDecodeError:
                 print(f"Warning: Could not decode JSON from {KEYS_CACHE_FILE}. File might be corrupt.")
@@ -251,6 +276,7 @@ def apply_default_safety_rails():
 # clear_cache_on_startup()
 # clear_api_key_cache_on_startup()
 load_import_jobs_from_cache()
+load_prediction_jobs_from_cache()
 load_keys_from_cache()
 load_llm_policy_from_cache()
 load_safety_rails_from_cache()
@@ -322,6 +348,7 @@ class PlayerAnalysisRequest(BaseModel):
     player_id: str
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    prediction_mode: Optional[str] = "local"
 
 class DataSandboxRequest(BaseModel):
     """Request model for the data sandbox."""
@@ -338,6 +365,13 @@ class ChurnPredictionRequest(BaseModel):
     """Request model for running churn prediction on an imported dataset."""
     job_name: str
     force_recalculate: bool = False
+    prediction_mode: Optional[str] = "local"
+
+
+class CloudChurnConfig(BaseModel):
+    """Request model for configuring cloud churn prediction provider."""
+    api_url: str
+    api_token: Optional[str] = None
 
 
 class LlmPolicyUpdateRequest(BaseModel):
@@ -430,6 +464,20 @@ async def configure_sendgrid_key(key: SendGridApiKey):
     new_config = {"api_key": key.sendgrid_api_key}
     _add_connector_config("sendgrid", "SendGrid", new_config)
     return {"message": "SendGrid API key has been configured and cached."}
+
+
+@app.post("/configure-cloud-churn")
+async def configure_cloud_churn(config: CloudChurnConfig):
+    """
+    Configures cloud churn prediction provider endpoint/token.
+    """
+    os.environ["CHURN_API_URL"] = config.api_url
+    new_config = {"api_url": config.api_url}
+    if config.api_token:
+        os.environ["CHURN_API_TOKEN"] = config.api_token
+        new_config["api_token"] = config.api_token
+    _add_connector_config("cloud_churn", "Cloud Churn", new_config)
+    return {"message": "Cloud churn provider configured and cached."}
 
 @app.get("/list-configured-sources")
 async def list_configured_sources():
@@ -574,6 +622,10 @@ async def get_services_health():
         "google_gemini": {
             "status": "ok" if os.getenv("GOOGLE_API_KEY") else "error",
             "details": "Configured" if os.getenv("GOOGLE_API_KEY") else "Not Configured"
+        },
+        "cloud_churn_prediction": {
+            "status": "ok" if os.getenv("CHURN_API_URL") else "warning",
+            "details": "Configured" if os.getenv("CHURN_API_URL") else "Not Configured (optional)"
         },
         "google_cloud_services": {
             "status": "ok" if os.getenv("BIGQUERY_PROJECT_ID") else "warning",
@@ -1012,93 +1064,209 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
     """
     Runs churn prediction for all players in a specified imported dataset.
     """
-    job = next((j for j in IMPORT_JOBS if j["name"] == request.job_name), None)
-    if not job or job.get("status") != "Ready to Use":
-        raise HTTPException(status_code=404, detail=f"Job '{request.job_name}' not found or not ready.")
-
     try:
-        # Check for Gemini API key configuration before proceeding
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise HTTPException(status_code=400, detail="Google Gemini API key is not configured. Please set it in the Connectors section before running predictions.")
-
-        # Check for a cached result first
-        os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
-        prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{request.job_name}.json")
-        if not request.force_recalculate and os.path.exists(prediction_cache_file):
-            print(f"Loading churn predictions from cache: {prediction_cache_file}")
-            with open(prediction_cache_file, 'r') as f:
-                return {"predictions": json.load(f)}
-
-        gemini_client = GeminiClient()
-        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
-        decision_engine = GrowthDecisionEngine(gemini_client)
-
-        # Get all player IDs from the processed data in BigQuery
-        player_ids = modeling_engine.get_all_player_ids()
-        if not player_ids:
-            return {"predictions": []}
-
-        predictions = []
-        # In a real-world scenario, this loop would be a batch process.
-        # For this demo, we process them sequentially.
-        for player_id in player_ids:
-            profile = modeling_engine.build_player_profile(player_id)
-            if not profile:
-                continue
-
-            churn_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
-
-            churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
-            recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
-            policy_eval = LLM_POLICY_ENGINE.evaluate(
-                LLM_POLICY_CONFIG,
-                {
-                    "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
-                    "churn_risk": churn_risk,
-                    "confidence_gap": 50.0,  # Placeholder until deterministic model confidence is available
-                    "recency_risk": recency_risk,
-                    "weekly_actions_count": 0,
-                    "blacklisted": False,
-                    "daily_budget_exceeded": False,
-                    "cache_hit": False,
-                },
-            )
-
-            if policy_eval.get("route") == "NO_LLM":
-                next_action = {
-                    "player_id": player_id,
-                    "decision": "NO_ACTION",
-                    "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
-                }
-            else:
-                # Decide the next best action based on the profile and churn risk
-                next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
-
-            churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
-            predictions.append({
-                "user_id": player_id,
-                "ltv": profile.get("total_revenue", "N/A"),
-                "session_count": profile.get("total_sessions", "N/A"),
-                "event_count": profile.get("total_events", "N/A"),
-                "predicted_churn_risk": churn_risk,
-                "churn_reason": churn_reason,
-                "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
-                "llm_route": policy_eval.get("route"),
-                "policy_reason": policy_eval.get("reason"),
-            })
-
-        # Save the new predictions to cache only if we have results
-        if predictions:
-            print(f"Saving churn predictions to cache: {prediction_cache_file}")
-            with open(prediction_cache_file, 'w') as f:
-                json.dump(predictions, f, indent=2)
-
+        predictions = await _compute_predictions_for_job(request.job_name, request.force_recalculate, request.prediction_mode or "local")
         return {"predictions": predictions}
-
+    except HTTPException:
+        raise
     except Exception as e:
-        # Log the full error for debugging
         print(f"Error during churn prediction for job '{request.job_name}': {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during churn prediction: {str(e)}")
+
+
+def _create_prediction_job(job_name: str, force_recalculate: bool) -> dict:
+    prediction_job = {
+        "id": str(uuid.uuid4()),
+        "import_job_name": job_name,
+        "status": "Processing",
+        "force_recalculate": force_recalculate,
+        "timestamp": datetime.utcnow().isoformat(),
+        "result_count": 0,
+        "error": None,
+    }
+    PREDICTION_JOBS.append(prediction_job)
+    save_prediction_jobs_to_cache()
+    return prediction_job
+
+
+def _get_prediction_job(prediction_job_id: str) -> Optional[Dict[str, Any]]:
+    return next((j for j in PREDICTION_JOBS if j.get("id") == prediction_job_id), None)
+
+
+async def _estimate_churn_with_mode(
+    modeling_engine: PlayerModelingEngine,
+    player_id: Any,
+    profile: Dict[str, Any],
+    prediction_mode: str,
+):
+    mode = (prediction_mode or "local").lower()
+    local_estimate = None
+    cloud_estimate = None
+    cloud_error = None
+
+    if mode not in {"local", "cloud", "parallel"}:
+        raise HTTPException(status_code=400, detail="prediction_mode must be one of: local, cloud, parallel.")
+
+    if mode in {"local", "parallel"}:
+        local_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
+
+    if mode in {"cloud", "parallel"}:
+        try:
+            cloud_service = CloudChurnService()
+            cloud_estimate = cloud_service.estimate_churn_risk(player_id, profile)
+        except Exception as e:
+            cloud_error = str(e)
+
+    if mode == "cloud":
+        if cloud_estimate:
+            return cloud_estimate, {"mode": mode, "local_estimate": None, "cloud_estimate": cloud_estimate, "cloud_error": None}
+        # Cloud-only mode with failure should fail fast.
+        raise HTTPException(status_code=502, detail=f"Cloud churn prediction failed: {cloud_error or 'unknown error'}")
+
+    if mode == "parallel":
+        # Prefer cloud estimate when available, otherwise local fallback.
+        selected = cloud_estimate or local_estimate
+        return selected, {
+            "mode": mode,
+            "selected_source": "cloud" if cloud_estimate else "local",
+            "local_estimate": local_estimate,
+            "cloud_estimate": cloud_estimate,
+            "cloud_error": cloud_error,
+        }
+
+    return local_estimate, {"mode": mode, "local_estimate": local_estimate, "cloud_estimate": None, "cloud_error": None}
+
+
+async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, prediction_mode: str = "local") -> list[dict]:
+    job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+    if not job or job.get("status") != "Ready to Use":
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found or not ready.")
+
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise HTTPException(status_code=400, detail="Google Gemini API key is not configured. Please set it in the Connectors section before running predictions.")
+
+    os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
+    mode_key = (prediction_mode or "local").lower()
+    prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}_{mode_key}.json")
+    if not force_recalculate and os.path.exists(prediction_cache_file):
+        print(f"Loading churn predictions from cache: {prediction_cache_file}")
+        with open(prediction_cache_file, 'r') as f:
+            return json.load(f)
+
+    gemini_client = GeminiClient()
+    modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+    decision_engine = GrowthDecisionEngine(gemini_client)
+
+    player_ids = modeling_engine.get_all_player_ids()
+    if not player_ids:
+        return []
+
+    predictions = []
+    for player_id in player_ids:
+        profile = modeling_engine.build_player_profile(player_id)
+        if not profile:
+            continue
+
+        churn_estimate, churn_details = await _estimate_churn_with_mode(
+            modeling_engine=modeling_engine,
+            player_id=player_id,
+            profile=profile,
+            prediction_mode=prediction_mode,
+        )
+        churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
+        recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
+        policy_eval = LLM_POLICY_ENGINE.evaluate(
+            LLM_POLICY_CONFIG,
+            {
+                "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
+                "churn_risk": churn_risk,
+                "confidence_gap": 50.0,
+                "recency_risk": recency_risk,
+                "weekly_actions_count": 0,
+                "blacklisted": False,
+                "daily_budget_exceeded": False,
+                "cache_hit": False,
+            },
+        )
+
+        if policy_eval.get("route") == "NO_LLM":
+            next_action = {
+                "player_id": player_id,
+                "decision": "NO_ACTION",
+                "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
+            }
+        else:
+            next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+
+        churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
+        predictions.append({
+            "user_id": player_id,
+            "ltv": profile.get("total_revenue", "N/A"),
+            "session_count": profile.get("total_sessions", "N/A"),
+            "event_count": profile.get("total_events", "N/A"),
+            "predicted_churn_risk": churn_risk,
+            "churn_reason": churn_reason,
+            "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
+            "llm_route": policy_eval.get("route"),
+            "policy_reason": policy_eval.get("reason"),
+            "prediction_mode": prediction_mode,
+            "prediction_details": churn_details,
+        })
+
+    if predictions:
+        print(f"Saving churn predictions to cache: {prediction_cache_file}")
+        with open(prediction_cache_file, 'w') as f:
+            json.dump(predictions, f, indent=2)
+
+    return predictions
+
+
+async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recalculate: bool):
+    prediction_job = _get_prediction_job(prediction_job_id)
+    if not prediction_job:
+        return
+    try:
+        prediction_mode = prediction_job.get("prediction_mode", "local")
+        predictions = await _compute_predictions_for_job(job_name, force_recalculate, prediction_mode)
+        prediction_job["status"] = "Ready"
+        prediction_job["result_count"] = len(predictions)
+        prediction_job["error"] = None
+    except Exception as e:
+        prediction_job["status"] = "Failed"
+        prediction_job["error"] = str(e)
+    finally:
+        save_prediction_jobs_to_cache()
+
+
+@app.post("/predict-churn-for-import-async")
+async def predict_churn_for_import_async(request: ChurnPredictionRequest, background_tasks: BackgroundTasks):
+    """
+    Starts churn prediction in the background and returns a prediction job id.
+    """
+    prediction_job = _create_prediction_job(request.job_name, request.force_recalculate)
+    prediction_job["prediction_mode"] = request.prediction_mode or "local"
+    save_prediction_jobs_to_cache()
+    background_tasks.add_task(_run_prediction_job, prediction_job["id"], request.job_name, request.force_recalculate)
+    return {
+        "message": "Prediction job started.",
+        "prediction_job_id": prediction_job["id"],
+        "import_job_name": request.job_name,
+    }
+
+
+@app.get("/prediction-jobs")
+async def list_prediction_jobs():
+    """Lists all background prediction jobs."""
+    return {"prediction_jobs": sorted(PREDICTION_JOBS, key=lambda x: x.get("timestamp", ""), reverse=True)}
+
+
+@app.get("/prediction-job/{prediction_job_id}")
+async def get_prediction_job(prediction_job_id: str):
+    """Returns a specific prediction job status."""
+    prediction_job = _get_prediction_job(prediction_job_id)
+    if not prediction_job:
+        raise HTTPException(status_code=404, detail=f"Prediction job '{prediction_job_id}' not found.")
+    return {"prediction_job": prediction_job}
 
 @app.post("/analyze-and-engage-player")
 async def analyze_and_engage_player(request: PlayerAnalysisRequest):
@@ -1125,7 +1293,12 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         if not player_profile:
             raise HTTPException(status_code=404, detail=f"Player with ID '{player_id}' not found.")
 
-        churn_estimate = await modeling_engine.estimate_churn_risk(player_id, player_profile)
+        churn_estimate, churn_details = await _estimate_churn_with_mode(
+            modeling_engine=modeling_engine,
+            player_id=player_id,
+            profile=player_profile,
+            prediction_mode=request.prediction_mode or "local",
+        )
 
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
         recency_risk = min(max(float(player_profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
@@ -1162,6 +1335,7 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         return {
             "player_profile": player_profile,
             "churn_estimate": churn_estimate,
+            "churn_prediction_details": churn_details,
             "policy_eval": policy_eval,
             "action_taken": next_action,
             "feedback": feedback,
