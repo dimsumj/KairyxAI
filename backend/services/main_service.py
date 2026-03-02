@@ -31,6 +31,7 @@ from bigquery_service import BigQueryService
 from gcs_service import GcsService
 from amplitude_service import AmplitudeService
 from engagement_feedback import EngagementFeedback
+from policy_engine import LlmPolicyEngine, DEFAULT_LLM_POLICY
 from pydantic import BaseModel, Field
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
@@ -45,6 +46,8 @@ NORMALIZATION_CACHE_FILE = ".normalization_maps.json"
 IMPORT_JOBS_CACHE_FILE = ".import_jobs.json"
 PREDICTION_CACHE_DIR = ".cache/predictions"
 CACHE_DIR = ".cache"
+LLM_POLICY_CACHE_FILE = ".llm_policy.json"
+SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
 
 # Global instances of our new services. In a microservices architecture,
 # these would be independent, deployed services. Here, we instantiate them
@@ -54,6 +57,8 @@ GCS_SERVICE_INSTANCE = GcsService()
 
 # In-memory list to track import jobs. In production, this would be a database.
 IMPORT_JOBS = []
+LLM_POLICY_ENGINE = LlmPolicyEngine()
+LLM_POLICY_CONFIG = DEFAULT_LLM_POLICY.copy()
 
 
 def _normalize_date_for_amplitude(date_str: str) -> str:
@@ -173,11 +178,55 @@ def save_maps_to_cache():
     with open(NORMALIZATION_CACHE_FILE, 'w') as f:
         json.dump(NORMALIZATION_MAPS, f, indent=2)
 
+
+def load_llm_policy_from_cache():
+    """Loads LLM routing policy from cache if it exists."""
+    global LLM_POLICY_CONFIG
+    if not os.path.exists(LLM_POLICY_CACHE_FILE):
+        return
+    with open(LLM_POLICY_CACHE_FILE, 'r') as f:
+        try:
+            cached_policy = json.load(f)
+            LLM_POLICY_CONFIG = LLM_POLICY_ENGINE.normalize_policy(cached_policy)
+            print(f"Loaded LLM policy from {LLM_POLICY_CACHE_FILE}.")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Warning: Could not load LLM policy cache. Using defaults. Reason: {e}")
+
+
+def save_llm_policy_to_cache():
+    """Saves current LLM routing policy to cache file."""
+    with open(LLM_POLICY_CACHE_FILE, 'w') as f:
+        json.dump(LLM_POLICY_CONFIG, f, indent=2)
+
+
+def load_safety_rails_from_cache():
+    """Loads AI safety-rail limits from cache into environment variables."""
+    if not os.path.exists(SAFETY_RAILS_CACHE_FILE):
+        return
+    with open(SAFETY_RAILS_CACHE_FILE, 'r') as f:
+        try:
+            data = json.load(f)
+            for key, value in data.items():
+                if value is None:
+                    continue
+                os.environ[key] = str(value)
+            print(f"Loaded safety rails from {SAFETY_RAILS_CACHE_FILE}.")
+        except json.JSONDecodeError as e:
+            print(f"Warning: Could not decode safety rails cache. Reason: {e}")
+
+
+def save_safety_rails_to_cache(settings: Dict[str, Any]):
+    """Persists AI safety-rail limits to local cache."""
+    with open(SAFETY_RAILS_CACHE_FILE, 'w') as f:
+        json.dump(settings, f, indent=2)
+
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
 # clear_api_key_cache_on_startup()
 load_import_jobs_from_cache()
 load_keys_from_cache()
+load_llm_policy_from_cache()
+load_safety_rails_from_cache()
 cleanup_expired_jobs()
 
 app = FastAPI()
@@ -228,6 +277,12 @@ class SafetyRailsRequest(BaseModel):
     """Request model for setting safety rails."""
     ai_token_limit: Optional[int] = None
     ai_budget_limit: Optional[float] = None
+    ai_daily_token_limit: Optional[int] = None
+    ai_monthly_token_limit: Optional[int] = None
+    ai_daily_budget_limit_usd: Optional[float] = None
+    ai_monthly_budget_limit_usd: Optional[float] = None
+    ai_response_cache_ttl_sec: Optional[int] = None
+    ai_cost_per_1k_tokens_usd: Optional[float] = None
 
 class ChurnReportResponse(BaseModel):
     """Response model for the churn report generation."""
@@ -255,6 +310,11 @@ class ChurnPredictionRequest(BaseModel):
     """Request model for running churn prediction on an imported dataset."""
     job_name: str
     force_recalculate: bool = False
+
+
+class LlmPolicyUpdateRequest(BaseModel):
+    """Request model for updating the LLM routing policy."""
+    policy: Dict[str, Any]
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -513,10 +573,66 @@ async def configure_adjust_credentials(key: AdjustApiKey):
 @app.post("/configure-safety-rails")
 async def configure_safety_rails(request: SafetyRailsRequest):
     """
-    An API endpoint to set safety limits for AI usage.
-    This is a placeholder and doesn't enforce limits yet.
+    Configures AI token/budget/cache limits used by GeminiClient.
     """
-    return {"message": "Safety rails configured.", "settings": request.dict()}
+    payload = request.dict(exclude_none=True)
+    env_updates: Dict[str, Any] = {}
+
+    # Backward-compatible aliases (treated as daily limits).
+    if "ai_token_limit" in payload:
+        env_updates["AI_DAILY_TOKEN_LIMIT"] = int(payload["ai_token_limit"])
+    if "ai_budget_limit" in payload:
+        env_updates["AI_DAILY_BUDGET_LIMIT_USD"] = float(payload["ai_budget_limit"])
+
+    if "ai_daily_token_limit" in payload:
+        env_updates["AI_DAILY_TOKEN_LIMIT"] = int(payload["ai_daily_token_limit"])
+    if "ai_monthly_token_limit" in payload:
+        env_updates["AI_MONTHLY_TOKEN_LIMIT"] = int(payload["ai_monthly_token_limit"])
+    if "ai_daily_budget_limit_usd" in payload:
+        env_updates["AI_DAILY_BUDGET_LIMIT_USD"] = float(payload["ai_daily_budget_limit_usd"])
+    if "ai_monthly_budget_limit_usd" in payload:
+        env_updates["AI_MONTHLY_BUDGET_LIMIT_USD"] = float(payload["ai_monthly_budget_limit_usd"])
+    if "ai_response_cache_ttl_sec" in payload:
+        env_updates["AI_RESPONSE_CACHE_TTL_SEC"] = int(payload["ai_response_cache_ttl_sec"])
+    if "ai_cost_per_1k_tokens_usd" in payload:
+        env_updates["AI_COST_PER_1K_TOKENS_USD"] = float(payload["ai_cost_per_1k_tokens_usd"])
+
+    for key, value in env_updates.items():
+        os.environ[key] = str(value)
+
+    if env_updates:
+        save_safety_rails_to_cache(env_updates)
+
+    return {"message": "Safety rails configured.", "settings": env_updates}
+
+
+@app.get("/ai-usage")
+async def get_ai_usage():
+    """Returns current AI usage counters and active limits."""
+    try:
+        gemini_client = GeminiClient()
+        return {"usage": gemini_client.get_usage_snapshot()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/llm-policy")
+async def get_llm_policy():
+    """Returns current LLM routing policy."""
+    return {"policy": LLM_POLICY_CONFIG}
+
+
+@app.post("/configure-llm-policy")
+async def configure_llm_policy(request: LlmPolicyUpdateRequest):
+    """Merges and validates incoming LLM policy patch, then persists it."""
+    global LLM_POLICY_CONFIG
+    try:
+        updated_policy = LLM_POLICY_ENGINE.normalize_policy(request.policy, LLM_POLICY_CONFIG)
+        LLM_POLICY_CONFIG = updated_policy
+        save_llm_policy_to_cache()
+        return {"message": "LLM policy updated.", "policy": LLM_POLICY_CONFIG}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/generate-churn-report", response_model=ChurnReportResponse)
 async def generate_churn_report(request: ChurnReportRequest):
@@ -894,10 +1010,32 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
 
             churn_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
 
-            # Decide the next best action based on the profile and churn risk
-            next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
-
             churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
+            recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
+            policy_eval = LLM_POLICY_ENGINE.evaluate(
+                LLM_POLICY_CONFIG,
+                {
+                    "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
+                    "churn_risk": churn_risk,
+                    "confidence_gap": 50.0,  # Placeholder until deterministic model confidence is available
+                    "recency_risk": recency_risk,
+                    "weekly_actions_count": 0,
+                    "blacklisted": False,
+                    "daily_budget_exceeded": False,
+                    "cache_hit": False,
+                },
+            )
+
+            if policy_eval.get("route") == "NO_LLM":
+                next_action = {
+                    "player_id": player_id,
+                    "decision": "NO_ACTION",
+                    "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
+                }
+            else:
+                # Decide the next best action based on the profile and churn risk
+                next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+
             churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
             predictions.append({
                 "user_id": player_id,
@@ -906,7 +1044,9 @@ async def predict_churn_for_import(request: ChurnPredictionRequest):
                 "event_count": profile.get("total_events", "N/A"),
                 "predicted_churn_risk": churn_risk,
                 "churn_reason": churn_reason,
-                "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested."
+                "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
+                "llm_route": policy_eval.get("route"),
+                "policy_reason": policy_eval.get("reason"),
             })
 
         # Save the new predictions to cache only if we have results
@@ -949,8 +1089,31 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
 
         churn_estimate = await modeling_engine.estimate_churn_risk(player_id, player_profile)
 
+        churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
+        recency_risk = min(max(float(player_profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
+        policy_eval = LLM_POLICY_ENGINE.evaluate(
+            LLM_POLICY_CONFIG,
+            {
+                "ltv": float(player_profile.get("total_revenue", 0.0) or 0.0),
+                "churn_risk": churn_risk,
+                "confidence_gap": 50.0,
+                "recency_risk": recency_risk,
+                "weekly_actions_count": 0,
+                "blacklisted": False,
+                "daily_budget_exceeded": False,
+                "cache_hit": False,
+            },
+        )
+
         # 4. Decide and execute next best action
-        next_action = decision_engine.decide_next_action(player_profile, churn_estimate, "reduce_churn")
+        if policy_eval.get("route") == "NO_LLM":
+            next_action = {
+                "player_id": player_id,
+                "decision": "NO_ACTION",
+                "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
+            }
+        else:
+            next_action = decision_engine.decide_next_action(player_profile, churn_estimate, "reduce_churn")
         action_id = executor.execute_action(next_action)
 
         # 5. Simulate and record feedback
@@ -958,7 +1121,13 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         if action_id:
             feedback = feedback_service.get_engagement_result(player_id, action_id)
 
-        return {"player_profile": player_profile, "churn_estimate": churn_estimate, "action_taken": next_action, "feedback": feedback}
+        return {
+            "player_profile": player_profile,
+            "churn_estimate": churn_estimate,
+            "policy_eval": policy_eval,
+            "action_taken": next_action,
+            "feedback": feedback,
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
