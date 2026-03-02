@@ -3,6 +3,8 @@
 import os
 import json
 import hashlib
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 import google.generativeai as genai
 
@@ -26,11 +28,17 @@ class GeminiClient:
         self.model = genai.GenerativeModel(model_name)
         self._cache_path = ".cache/llm_response_cache.json"
         self._usage_path = ".cache/llm_usage.json"
+        self._circuit_path = ".cache/llm_circuit_breaker.json"
         self._cache_ttl_seconds = int(os.getenv("AI_RESPONSE_CACHE_TTL_SEC", "21600"))
         self._daily_token_limit = self._read_int_env("AI_DAILY_TOKEN_LIMIT")
         self._monthly_token_limit = self._read_int_env("AI_MONTHLY_TOKEN_LIMIT")
         self._daily_budget_limit = self._read_float_env("AI_DAILY_BUDGET_LIMIT_USD")
         self._monthly_budget_limit = self._read_float_env("AI_MONTHLY_BUDGET_LIMIT_USD")
+        self._request_timeout_sec = float(os.getenv("AI_LLM_TIMEOUT_SEC", "20"))
+        self._max_retries = int(os.getenv("AI_LLM_MAX_RETRIES", "2"))
+        self._retry_backoff_sec = float(os.getenv("AI_LLM_RETRY_BACKOFF_SEC", "1.0"))
+        self._circuit_failure_threshold = int(os.getenv("AI_LLM_CIRCUIT_FAILURE_THRESHOLD", "5"))
+        self._circuit_open_sec = int(os.getenv("AI_LLM_CIRCUIT_OPEN_SEC", "60"))
         # Approximate cost per 1K total tokens (input + output) for budget enforcement.
         self._usd_per_1k_tokens = float(os.getenv("AI_COST_PER_1K_TOKENS_USD", "0.002"))
         
@@ -54,7 +62,8 @@ class GeminiClient:
         estimated_input_tokens = self._estimate_tokens(prompt)
         self._enforce_limits(estimated_input_tokens)
 
-        response = self.model.generate_content(prompt)
+        self._raise_if_circuit_open()
+        response = self._generate_with_retry(prompt)
         response_text = response.text or ""
         estimated_output_tokens = self._estimate_tokens(response_text)
         total_tokens = estimated_input_tokens + estimated_output_tokens
@@ -81,6 +90,12 @@ class GeminiClient:
                 "monthly_budget_limit_usd": self._monthly_budget_limit,
             },
             "cache_ttl_seconds": self._cache_ttl_seconds,
+            "runtime_controls": {
+                "request_timeout_sec": self._request_timeout_sec,
+                "max_retries": self._max_retries,
+                "retry_backoff_sec": self._retry_backoff_sec,
+            },
+            "circuit_breaker": self._get_circuit_snapshot(),
         }
 
     def _read_int_env(self, key: str):
@@ -229,3 +244,94 @@ class GeminiClient:
         usage["daily_budget_used_usd"] = float(usage.get("daily_budget_used_usd", 0.0) + estimated_cost)
         usage["monthly_budget_used_usd"] = float(usage.get("monthly_budget_used_usd", 0.0) + estimated_cost)
         self._save_usage(usage)
+
+    def _generate_with_retry(self, prompt: str):
+        attempts = max(1, self._max_retries + 1)
+        last_error = None
+
+        for attempt in range(attempts):
+            try:
+                self._raise_if_circuit_open()
+                response = self._generate_with_timeout(prompt)
+                self._record_circuit_success()
+                return response
+            except Exception as e:
+                last_error = e
+                self._record_circuit_failure(str(e))
+                if attempt < attempts - 1:
+                    backoff = self._retry_backoff_sec * (2 ** attempt)
+                    time.sleep(max(0.0, backoff))
+
+        raise RuntimeError(f"Gemini request failed after retries: {last_error}")
+
+    def _generate_with_timeout(self, prompt: str):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.model.generate_content, prompt)
+            try:
+                return future.result(timeout=self._request_timeout_sec)
+            except FuturesTimeoutError:
+                future.cancel()
+                raise RuntimeError("Gemini request timed out.")
+
+    def _load_circuit_state(self) -> dict:
+        if not os.path.exists(self._circuit_path):
+            return {"failure_count": 0, "open_until": None, "last_error": None}
+        try:
+            with open(self._circuit_path, "r") as f:
+                data = json.load(f)
+                return {
+                    "failure_count": int(data.get("failure_count", 0)),
+                    "open_until": data.get("open_until"),
+                    "last_error": data.get("last_error"),
+                }
+        except (json.JSONDecodeError, OSError, ValueError):
+            return {"failure_count": 0, "open_until": None, "last_error": None}
+
+    def _save_circuit_state(self, state: dict):
+        os.makedirs(os.path.dirname(self._circuit_path), exist_ok=True)
+        with open(self._circuit_path, "w") as f:
+            json.dump(state, f, indent=2)
+
+    def _get_circuit_snapshot(self) -> dict:
+        state = self._load_circuit_state()
+        open_until = state.get("open_until")
+        is_open = False
+        if open_until:
+            try:
+                is_open = datetime.utcnow() < datetime.fromisoformat(open_until)
+            except ValueError:
+                is_open = False
+        return {
+            "is_open": is_open,
+            "failure_count": int(state.get("failure_count", 0)),
+            "open_until": open_until,
+            "last_error": state.get("last_error"),
+            "failure_threshold": self._circuit_failure_threshold,
+            "open_seconds": self._circuit_open_sec,
+        }
+
+    def _raise_if_circuit_open(self):
+        snapshot = self._get_circuit_snapshot()
+        if snapshot.get("is_open"):
+            raise RuntimeError(
+                f"Gemini circuit breaker is open until {snapshot.get('open_until')}. Last error: {snapshot.get('last_error')}"
+            )
+
+    def _record_circuit_success(self):
+        state = self._load_circuit_state()
+        state["failure_count"] = 0
+        state["open_until"] = None
+        state["last_error"] = None
+        self._save_circuit_state(state)
+
+    def _record_circuit_failure(self, error_message: str):
+        state = self._load_circuit_state()
+        failure_count = int(state.get("failure_count", 0)) + 1
+        state["failure_count"] = failure_count
+        state["last_error"] = error_message
+
+        if failure_count >= max(1, self._circuit_failure_threshold):
+            open_until = datetime.utcnow().timestamp() + max(1, self._circuit_open_sec)
+            state["open_until"] = datetime.utcfromtimestamp(open_until).isoformat()
+
+        self._save_circuit_state(state)

@@ -48,6 +48,19 @@ PREDICTION_CACHE_DIR = ".cache/predictions"
 CACHE_DIR = ".cache"
 LLM_POLICY_CACHE_FILE = ".llm_policy.json"
 SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
+DEFAULT_SAFETY_RAILS = {
+    "AI_DAILY_TOKEN_LIMIT": 500000,
+    "AI_MONTHLY_TOKEN_LIMIT": 10000000,
+    "AI_DAILY_BUDGET_LIMIT_USD": 25.0,
+    "AI_MONTHLY_BUDGET_LIMIT_USD": 500.0,
+    "AI_RESPONSE_CACHE_TTL_SEC": 21600,
+    "AI_COST_PER_1K_TOKENS_USD": 0.002,
+    "AI_LLM_TIMEOUT_SEC": 20,
+    "AI_LLM_MAX_RETRIES": 2,
+    "AI_LLM_RETRY_BACKOFF_SEC": 1.0,
+    "AI_LLM_CIRCUIT_FAILURE_THRESHOLD": 5,
+    "AI_LLM_CIRCUIT_OPEN_SEC": 60,
+}
 
 # Global instances of our new services. In a microservices architecture,
 # these would be independent, deployed services. Here, we instantiate them
@@ -217,8 +230,22 @@ def load_safety_rails_from_cache():
 
 def save_safety_rails_to_cache(settings: Dict[str, Any]):
     """Persists AI safety-rail limits to local cache."""
+    merged = {}
+    if os.path.exists(SAFETY_RAILS_CACHE_FILE):
+        with open(SAFETY_RAILS_CACHE_FILE, 'r') as f:
+            try:
+                merged = json.load(f)
+            except json.JSONDecodeError:
+                merged = {}
+    merged.update(settings)
     with open(SAFETY_RAILS_CACHE_FILE, 'w') as f:
-        json.dump(settings, f, indent=2)
+        json.dump(merged, f, indent=2)
+
+
+def apply_default_safety_rails():
+    """Applies default LLM safety settings when env vars are not already set."""
+    for key, value in DEFAULT_SAFETY_RAILS.items():
+        os.environ.setdefault(key, str(value))
 
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
@@ -227,6 +254,7 @@ load_import_jobs_from_cache()
 load_keys_from_cache()
 load_llm_policy_from_cache()
 load_safety_rails_from_cache()
+apply_default_safety_rails()
 cleanup_expired_jobs()
 
 app = FastAPI()
@@ -604,6 +632,16 @@ async def configure_safety_rails(request: SafetyRailsRequest):
         save_safety_rails_to_cache(env_updates)
 
     return {"message": "Safety rails configured.", "settings": env_updates}
+
+
+@app.get("/safety-rails")
+async def get_safety_rails():
+    """Returns active LLM safety settings (env-backed with defaults)."""
+    settings = {}
+    for key, default_value in DEFAULT_SAFETY_RAILS.items():
+        raw_value = os.getenv(key, str(default_value))
+        settings[key] = raw_value
+    return {"settings": settings}
 
 
 @app.get("/ai-usage")
