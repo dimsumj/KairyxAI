@@ -1242,6 +1242,17 @@ def _filter_export_rows(rows: list[dict], include_churned: bool, include_risks: 
     return out
 
 
+def _default_action_suggestion(churn_state: str, churn_risk: str) -> Dict[str, Any]:
+    risk = (churn_risk or "").lower()
+    if churn_state == "churned" or risk in {"already_churned", "low", "unknown", "n/a"}:
+        return {"decision": "NO_ACTION", "content": "No action suggested."}
+    if risk == "high":
+        return {"decision": "ACT", "content": "We miss you! Come back today for a special reward 🎁"}
+    if risk == "medium":
+        return {"decision": "ACT", "content": "Your squad is waiting—jump back in and keep your streak alive ⚡"}
+    return {"decision": "NO_ACTION", "content": "No action suggested."}
+
+
 @app.get("/churn/export/estimate")
 async def estimate_churn_export(job_name: str, prediction_mode: str = "local", include_churned: bool = True, include_risks: Optional[str] = "high,medium,low"):
     rows = await _compute_predictions_for_job(job_name, force_recalculate=False, prediction_mode=prediction_mode)
@@ -2018,7 +2029,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
 
     os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
     effective_mode = (prediction_mode or "local").lower()
-    if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local":
+    if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local" and os.getenv("CHURN_API_URL"):
         effective_mode = "parallel"
     mode_key = effective_mode
     prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}_{mode_key}.json")
@@ -2108,9 +2119,11 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
                     "reason": "Already churned by inactivity threshold.",
                 }
             elif policy_eval.get("route") == "NO_LLM":
+                fallback = _default_action_suggestion(churn_state, churn_risk)
                 next_action = {
                     "player_id": player_id,
-                    "decision": "NO_ACTION",
+                    "decision": fallback.get("decision", "NO_ACTION"),
+                    "content": fallback.get("content"),
                     "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
                 }
             else:
@@ -2280,7 +2293,7 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
             raise HTTPException(status_code=404, detail=f"Player with ID '{player_id}' not found.")
 
         effective_mode = (request.prediction_mode or "local").lower()
-        if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local":
+        if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local" and os.getenv("CHURN_API_URL"):
             effective_mode = "parallel"
 
         churn_estimate, churn_details = await _estimate_churn_with_mode(
@@ -2332,9 +2345,11 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
                 "reason": "Already churned by inactivity threshold.",
             }
         elif policy_eval.get("route") == "NO_LLM":
+            fallback = _default_action_suggestion(churn_state, churn_risk)
             next_action = {
                 "player_id": player_id,
-                "decision": "NO_ACTION",
+                "decision": fallback.get("decision", "NO_ACTION"),
+                "content": fallback.get("content"),
                 "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
             }
         else:
