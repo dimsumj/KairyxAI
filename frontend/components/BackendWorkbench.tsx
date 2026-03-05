@@ -17,6 +17,10 @@ const BackendWorkbench: React.FC = () => {
   const [mappingPreviewResult, setMappingPreviewResult] = useState<any>(null);
   const [mappingCoverageResult, setMappingCoverageResult] = useState<any>(null);
   const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
+  const [rejectedEvents, setRejectedEvents] = useState<any[]>([]);
+  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [cleanupJobFilter, setCleanupJobFilter] = useState('');
+  const [cleanupSourceFilter, setCleanupSourceFilter] = useState('');
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -58,7 +62,7 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp, identityResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp, identityResp, rejectedResp, conflictsResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
@@ -66,6 +70,8 @@ const BackendWorkbench: React.FC = () => {
         backendService.getExperimentConfig(),
         backendService.connectorFreshness(),
         backendService.listIdentityLinks(100),
+        backendService.cleanupRejectedEvents({ limit: 50 }),
+        backendService.cleanupConflicts({ limit: 50 }),
       ]);
       setHealthStatus(health.status);
       setConnectors(connectorsResp.connectors || []);
@@ -74,6 +80,8 @@ const BackendWorkbench: React.FC = () => {
       setExperimentConfig(expConfigResp.experiment);
       setFreshness(freshnessResp.connectors || {});
       setIdentityLinks(identityResp.identity_links || []);
+      setRejectedEvents(rejectedResp.rejected_events || []);
+      setConflicts(conflictsResp.conflicts || []);
       if (!selectedMappingConnector && connectorsResp.connectors?.length) {
         setSelectedMappingConnector(connectorsResp.connectors[0].name);
       }
@@ -284,6 +292,32 @@ const BackendWorkbench: React.FC = () => {
       setMessage('Mapping preview generated.');
     } catch (err: any) {
       setError(err.message || 'Failed to preview mapping (check sample JSON).');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshCleanupObservability = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [rejectedResp, conflictsResp] = await Promise.all([
+        backendService.cleanupRejectedEvents({
+          limit: 100,
+          jobIdentifier: cleanupJobFilter || undefined,
+          source: cleanupSourceFilter || undefined,
+        }),
+        backendService.cleanupConflicts({
+          limit: 100,
+          jobIdentifier: cleanupJobFilter || undefined,
+          source: cleanupSourceFilter || undefined,
+        }),
+      ]);
+      setRejectedEvents(rejectedResp.rejected_events || []);
+      setConflicts(conflictsResp.conflicts || []);
+      setMessage('Cleanup observability refreshed.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to refresh cleanup observability.');
     } finally {
       setLoading(false);
     }
@@ -618,6 +652,77 @@ const BackendWorkbench: React.FC = () => {
               ) : null}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Cleanup Observability (P2.5)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            type="text"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            placeholder="Filter by job_identifier"
+            value={cleanupJobFilter}
+            onChange={(e) => setCleanupJobFilter(e.target.value)}
+          />
+          <input
+            type="text"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            placeholder="Filter by source"
+            value={cleanupSourceFilter}
+            onChange={(e) => setCleanupSourceFilter(e.target.value)}
+          />
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={refreshCleanupObservability} disabled={loading}>
+            Refresh Cleanup Logs
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="border border-gray-800 rounded-lg overflow-auto max-h-64">
+            <div className="bg-gray-800 px-3 py-2 text-sm font-semibold">Rejected Events ({rejectedEvents.length})</div>
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-900/60">
+                <tr>
+                  <th className="px-3 py-2">Job</th>
+                  <th className="px-3 py-2">Source</th>
+                  <th className="px-3 py-2">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rejectedEvents.map((r, idx) => (
+                  <tr key={`rej-${idx}`} className="border-t border-gray-800">
+                    <td className="px-3 py-2">{r.job_identifier}</td>
+                    <td className="px-3 py-2">{r.event?.source || '-'}</td>
+                    <td className="px-3 py-2">{r.event?.rejection_reason || '-'}</td>
+                  </tr>
+                ))}
+                {rejectedEvents.length === 0 ? <tr><td className="px-3 py-2 text-gray-500" colSpan={3}>No rejected events.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border border-gray-800 rounded-lg overflow-auto max-h-64">
+            <div className="bg-gray-800 px-3 py-2 text-sm font-semibold">Conflicts ({conflicts.length})</div>
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-900/60">
+                <tr>
+                  <th className="px-3 py-2">Job</th>
+                  <th className="px-3 py-2">Field</th>
+                  <th className="px-3 py-2">A→B</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conflicts.map((c, idx) => (
+                  <tr key={`conf-${idx}`} className="border-t border-gray-800">
+                    <td className="px-3 py-2">{c.job_identifier}</td>
+                    <td className="px-3 py-2">{c.field}</td>
+                    <td className="px-3 py-2">{c.source_a}:{String(c.value_a)} → {c.source_b}:{String(c.value_b)}</td>
+                  </tr>
+                ))}
+                {conflicts.length === 0 ? <tr><td className="px-3 py-2 text-gray-500" colSpan={3}>No conflicts.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 

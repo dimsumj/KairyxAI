@@ -149,6 +149,22 @@ export const backendService = {
     return request<{ identity_links: IdentityLink[] }>(`/identity-links?limit=${limit}`);
   },
 
+  async cleanupRejectedEvents(params?: { limit?: number; jobIdentifier?: string; source?: string }) {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set('limit', String(params.limit));
+    if (params?.jobIdentifier) q.set('job_identifier', params.jobIdentifier);
+    if (params?.source) q.set('source', params.source);
+    return request<{ rejected_events: any[] }>(`/cleanup/rejected-events${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+
+  async cleanupConflicts(params?: { limit?: number; jobIdentifier?: string; source?: string }) {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set('limit', String(params.limit));
+    if (params?.jobIdentifier) q.set('job_identifier', params.jobIdentifier);
+    if (params?.source) q.set('source', params.source);
+    return request<{ conflicts: any[] }>(`/cleanup/conflicts${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+
   async deleteConnector(connectorName: string) {
     return request<{ message: string }>(`/connector/${encodeURIComponent(connectorName)}`, "DELETE");
   },

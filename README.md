@@ -342,8 +342,13 @@ Cleanup P2 adds:
 - job stats include `rejected_events` and `conflicts_logged`
 
 APIs:
-- `GET /cleanup/rejected-events`
-- `GET /cleanup/conflicts`
+- `GET /cleanup/rejected-events` (supports `limit`, `job_identifier`, `source`)
+- `GET /cleanup/conflicts` (supports `limit`, `job_identifier`, `source`)
+
+P2.5 frontend observability:
+- Workbench includes a Cleanup Observability panel
+- Filter rejected/conflict logs by job/source
+- Table views for quick triage
 
 ### Manual field mapping (canonical override)
 Use this when sources use different field names (e.g., `PID`, `uid`, `user_id`).

@@ -992,31 +992,42 @@ async def get_local_observability_events(limit: int = 200):
 
 
 @app.get("/cleanup/rejected-events")
-async def get_rejected_events(limit: int = 200):
+async def get_rejected_events(limit: int = 200, job_identifier: Optional[str] = None, source: Optional[str] = None):
     path = ".cache/rejected_events.jsonl"
     out = []
     if os.path.exists(path):
         with open(path, "r") as f:
-            for line in f.readlines()[-limit:]:
+            for line in f.readlines()[-max(limit * 5, limit) :]:
                 try:
-                    out.append(json.loads(line))
+                    rec = json.loads(line)
+                    if job_identifier and rec.get("job_identifier") != job_identifier:
+                        continue
+                    rec_source = ((rec.get("event") or {}).get("source"))
+                    if source and rec_source != source:
+                        continue
+                    out.append(rec)
                 except json.JSONDecodeError:
                     continue
-    return {"rejected_events": out}
+    return {"rejected_events": out[-limit:]}
 
 
 @app.get("/cleanup/conflicts")
-async def get_cleanup_conflicts(limit: int = 200):
+async def get_cleanup_conflicts(limit: int = 200, job_identifier: Optional[str] = None, source: Optional[str] = None):
     path = ".cache/conflict_log.jsonl"
     out = []
     if os.path.exists(path):
         with open(path, "r") as f:
-            for line in f.readlines()[-limit:]:
+            for line in f.readlines()[-max(limit * 5, limit) :]:
                 try:
-                    out.append(json.loads(line))
+                    rec = json.loads(line)
+                    if job_identifier and rec.get("job_identifier") != job_identifier:
+                        continue
+                    if source and rec.get("source_a") != source and rec.get("source_b") != source:
+                        continue
+                    out.append(rec)
                 except json.JSONDecodeError:
                     continue
-    return {"conflicts": out}
+    return {"conflicts": out[-limit:]}
 
 
 @app.post("/configure-adjust-credentials")
