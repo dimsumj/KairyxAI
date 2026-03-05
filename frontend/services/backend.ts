@@ -43,6 +43,27 @@ export interface PredictionRow {
   suggested_action: string;
 }
 
+export interface ExperimentConfig {
+  experiment_id: string;
+  enabled: boolean;
+  holdout_pct: number;
+  b_variant_pct: number;
+}
+
+export interface ExperimentGroupSummary {
+  n: number;
+  engaged: number;
+  returned: number;
+  engagement_rate: number;
+  return_rate: number;
+  uplift_vs_holdout_return_rate?: number;
+}
+
+export interface ExperimentSummary {
+  experiment_id: string;
+  groups: Record<string, ExperimentGroupSummary>;
+}
+
 export const backendService = {
   baseUrl: backendBaseUrl,
 
@@ -86,6 +107,23 @@ export const backendService = {
 
   async configureSendgrid(apiKey: string) {
     return request<{ message: string }>("/configure-sendgrid-key", "POST", { api_key: apiKey });
+  },
+
+  async configureBraze(apiKey: string, restEndpoint: string) {
+    return request<{ message: string }>("/configure-braze", "POST", { api_key: apiKey, rest_endpoint: restEndpoint });
+  },
+
+  async getExperimentConfig() {
+    return request<{ experiment: ExperimentConfig }>("/experiments/config");
+  },
+
+  async updateExperimentConfig(payload: Partial<ExperimentConfig>) {
+    return request<{ experiment: ExperimentConfig }>("/experiments/config", "POST", payload);
+  },
+
+  async getExperimentSummary(experimentId?: string) {
+    const q = experimentId ? `?experiment_id=${encodeURIComponent(experimentId)}` : '';
+    return request<ExperimentSummary>(`/experiments/summary${q}`);
   },
 
   async listImports() {

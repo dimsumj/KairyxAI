@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { backendService, Connector, ImportJob, PredictionRow } from '../services/backend.ts';
+import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary } from '../services/backend.ts';
 
-type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'sendgrid';
+type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'sendgrid' | 'braze';
 
 const modelOptions = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'];
 
@@ -24,6 +24,16 @@ const BackendWorkbench: React.FC = () => {
   const [bigqueryProjectId, setBigqueryProjectId] = useState('');
   const [adjustApiToken, setAdjustApiToken] = useState('');
   const [sendgridApiKey, setSendgridApiKey] = useState('');
+  const [brazeApiKey, setBrazeApiKey] = useState('');
+  const [brazeEndpoint, setBrazeEndpoint] = useState('');
+
+  const [experimentConfig, setExperimentConfig] = useState<ExperimentConfig>({
+    experiment_id: 'churn_engagement_v1',
+    enabled: true,
+    holdout_pct: 0.1,
+    b_variant_pct: 0.5,
+  });
+  const [experimentSummary, setExperimentSummary] = useState<ExperimentSummary | null>(null);
 
   const [importSource, setImportSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -34,16 +44,18 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
         backendService.listImports(),
+        backendService.getExperimentConfig(),
       ]);
       setHealthStatus(health.status);
       setConnectors(connectorsResp.connectors || []);
       setSources(sourcesResp.sources || []);
       setImports(importsResp.imports || []);
+      setExperimentConfig(expConfigResp.experiment);
       if (!importSource && sourcesResp.sources?.length) {
         setImportSource(sourcesResp.sources[0].id);
       }
@@ -82,6 +94,8 @@ const BackendWorkbench: React.FC = () => {
         await backendService.configureAdjust(adjustApiToken);
       } else if (connectorType === 'sendgrid') {
         await backendService.configureSendgrid(sendgridApiKey);
+      } else if (connectorType === 'braze') {
+        await backendService.configureBraze(brazeApiKey, brazeEndpoint);
       }
       setMessage('Connector saved successfully.');
       await refreshAll();
@@ -146,6 +160,34 @@ const BackendWorkbench: React.FC = () => {
     }
   };
 
+  const saveExperimentConfig = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const resp = await backendService.updateExperimentConfig(experimentConfig);
+      setExperimentConfig(resp.experiment);
+      setMessage('Experiment config saved.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save experiment config.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshExperimentSummary = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const resp = await backendService.getExperimentSummary(experimentConfig.experiment_id);
+      setExperimentSummary(resp);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load experiment summary.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -183,6 +225,7 @@ const BackendWorkbench: React.FC = () => {
             <option value="bigquery">BigQuery</option>
             <option value="adjust">Adjust</option>
             <option value="sendgrid">SendGrid</option>
+            <option value="braze">Braze</option>
           </select>
           {connectorType === 'google' ? (
             <select
@@ -256,6 +299,25 @@ const BackendWorkbench: React.FC = () => {
             value={sendgridApiKey}
             onChange={(e) => setSendgridApiKey(e.target.value)}
           />
+        ) : null}
+
+        {connectorType === 'braze' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              type="password"
+              placeholder="Braze API Key"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={brazeApiKey}
+              onChange={(e) => setBrazeApiKey(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Braze REST Endpoint (https://rest.iad-01.braze.com)"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={brazeEndpoint}
+              onChange={(e) => setBrazeEndpoint(e.target.value)}
+            />
+          </div>
         ) : null}
 
         <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runConnectorSave} disabled={loading}>
@@ -345,6 +407,84 @@ const BackendWorkbench: React.FC = () => {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Experiment Control (A/B + Holdout)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            type="text"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={experimentConfig.experiment_id}
+            onChange={(e) => setExperimentConfig((prev) => ({ ...prev, experiment_id: e.target.value }))}
+            placeholder="experiment_id"
+          />
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="0.9"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={experimentConfig.holdout_pct}
+            onChange={(e) => setExperimentConfig((prev) => ({ ...prev, holdout_pct: Number(e.target.value) }))}
+            placeholder="holdout_pct"
+          />
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="1"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={experimentConfig.b_variant_pct}
+            onChange={(e) => setExperimentConfig((prev) => ({ ...prev, b_variant_pct: Number(e.target.value) }))}
+            placeholder="b_variant_pct"
+          />
+          <label className="flex items-center gap-2 text-sm bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+            <input
+              type="checkbox"
+              checked={experimentConfig.enabled}
+              onChange={(e) => setExperimentConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="flex gap-3">
+          <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={saveExperimentConfig} disabled={loading}>
+            Save Experiment Config
+          </button>
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm" onClick={refreshExperimentSummary} disabled={loading}>
+            Refresh Summary
+          </button>
+        </div>
+
+        {experimentSummary ? (
+          <div className="overflow-auto border border-gray-800 rounded-lg">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-gray-800">
+                <tr>
+                  <th className="px-3 py-2">Group</th>
+                  <th className="px-3 py-2">N</th>
+                  <th className="px-3 py-2">Engagement Rate</th>
+                  <th className="px-3 py-2">Return Rate</th>
+                  <th className="px-3 py-2">Uplift vs Holdout</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(experimentSummary.groups || {}).map(([group, stats]) => (
+                  <tr key={group} className="border-t border-gray-800">
+                    <td className="px-3 py-2">{group}</td>
+                    <td className="px-3 py-2">{stats.n}</td>
+                    <td className="px-3 py-2">{(stats.engagement_rate * 100).toFixed(2)}%</td>
+                    <td className="px-3 py-2">{(stats.return_rate * 100).toFixed(2)}%</td>
+                    <td className="px-3 py-2">{stats.uplift_vs_holdout_return_rate != null ? `${(stats.uplift_vs_holdout_return_rate * 100).toFixed(2)}%` : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-gray-500 text-sm">No experiment summary loaded yet.</p>
+        )}
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
