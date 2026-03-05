@@ -227,6 +227,9 @@ def load_keys_from_cache():
                     os.environ["GOOGLE_GEMINI_MODEL"] = connectors["google"][0].get("model_name")
                 if "adjust" in connectors and connectors["adjust"]:
                     os.environ["ADJUST_API_TOKEN"] = connectors["adjust"][0].get("api_token")
+                if "appsflyer" in connectors and connectors["appsflyer"]:
+                    os.environ["APPSFLYER_API_TOKEN"] = connectors["appsflyer"][0].get("api_token")
+                    os.environ["APPSFLYER_APP_ID"] = connectors["appsflyer"][0].get("app_id")
                 if "sendgrid" in connectors and connectors["sendgrid"]:
                     os.environ["SENDGRID_API_KEY"] = connectors["sendgrid"][0].get("api_key")
                 if "bigquery" in connectors and connectors["bigquery"]:
@@ -391,6 +394,12 @@ class BigQueryCredentials(BaseModel):
 class AdjustApiKey(BaseModel):
     """Request model for setting the Adjust API token."""
     adjust_api_token: str = Field(..., alias='api_token')
+
+
+class AppsFlyerCredentials(BaseModel):
+    """Request model for AppsFlyer pull API credentials."""
+    api_token: str
+    app_id: str
 
 class SendGridApiKey(BaseModel):
     """Request model for setting the SendGrid API key."""
@@ -597,12 +606,10 @@ async def list_configured_sources():
             try:
                 cached_data = json.load(f)
                 connectors = cached_data.get("connectors", {})
-                if connectors.get("amplitude"):
-                    for config in connectors["amplitude"]:
-                        sources.append({"id": config["name"], "name": config["name"]})
-                # In the future, you could add other source types here
-                # if connectors.get("some_other_source"):
-                #    ...
+                for ctype in ["amplitude", "adjust", "appsflyer"]:
+                    if connectors.get(ctype):
+                        for config in connectors[ctype]:
+                            sources.append({"id": config["name"], "name": config["name"]})
             except json.JSONDecodeError:
                 pass # No sources to return
     return {"sources": sources}
@@ -727,6 +734,10 @@ async def get_services_health():
             "status": "ok" if os.getenv("ADJUST_API_TOKEN") else "error",
             "details": "Configured" if os.getenv("ADJUST_API_TOKEN") else "Not Configured"
         },
+        "appsflyer": {
+            "status": "ok" if os.getenv("APPSFLYER_API_TOKEN") and os.getenv("APPSFLYER_APP_ID") else "warning",
+            "details": "Configured" if os.getenv("APPSFLYER_API_TOKEN") and os.getenv("APPSFLYER_APP_ID") else "Not Configured"
+        },
         "google_gemini": {
             "status": "ok" if os.getenv("GOOGLE_API_KEY") else "error",
             "details": "Configured" if os.getenv("GOOGLE_API_KEY") else "Not Configured"
@@ -780,14 +791,23 @@ async def get_local_observability_events(limit: int = 200):
 async def configure_adjust_credentials(key: AdjustApiKey):
     """
     An API endpoint to set the Adjust API token for the session.
-    **Security Warning:** This is insecure for production. API keys should be
-    set as environment variables on the server.
     """
     os.environ["ADJUST_API_TOKEN"] = key.adjust_api_token
     new_config = {"api_token": key.adjust_api_token}
     _add_connector_config("adjust", "Adjust", new_config)
     append_audit_log("connector_configured", {"type": "adjust", "name": "Adjust"})
     return {"message": "Adjust API token has been configured and cached."}
+
+
+@app.post("/configure-appsflyer")
+async def configure_appsflyer(creds: AppsFlyerCredentials):
+    """Configure AppsFlyer pull API credentials for connector ingestion."""
+    os.environ["APPSFLYER_API_TOKEN"] = creds.api_token
+    os.environ["APPSFLYER_APP_ID"] = creds.app_id
+    new_config = {"api_token": creds.api_token, "app_id": creds.app_id}
+    _add_connector_config("appsflyer", "AppsFlyer", new_config)
+    append_audit_log("connector_configured", {"type": "appsflyer", "name": "AppsFlyer"})
+    return {"message": "AppsFlyer credentials configured and cached."}
 
 @app.post("/configure-safety-rails")
 async def configure_safety_rails(request: SafetyRailsRequest):
@@ -1159,9 +1179,7 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
             raise ValueError(f"Connector configuration for '{source}' not found.")
 
         ingestion_service = IngestionService(gcs_service=GCS_SERVICE_INSTANCE, connector_config=connector_config, connector_type=conn_type)
-        # For now, we assume only amplitude is a valid ingestion source.
-        if conn_type == 'amplitude':
-            ingestion_service.fetch_and_publish_events(start_date, end_date)
+        ingestion_service.fetch_and_publish_events(start_date, end_date)
 
         # 2. Processing: Consume from queue, normalize, and write to BigQuery
         processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE, job_identifier=job_identifier)

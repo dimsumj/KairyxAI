@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary } from '../services/backend.ts';
 
-type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'sendgrid' | 'braze';
+type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'appsflyer' | 'sendgrid' | 'braze';
 
 const modelOptions = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-flash-latest', 'gemini-pro-latest'];
 
@@ -23,6 +23,8 @@ const BackendWorkbench: React.FC = () => {
   const [googleModel, setGoogleModel] = useState(modelOptions[0]);
   const [bigqueryProjectId, setBigqueryProjectId] = useState('');
   const [adjustApiToken, setAdjustApiToken] = useState('');
+  const [appsflyerApiToken, setAppsflyerApiToken] = useState('');
+  const [appsflyerAppId, setAppsflyerAppId] = useState('');
   const [sendgridApiKey, setSendgridApiKey] = useState('');
   const [brazeApiKey, setBrazeApiKey] = useState('');
   const [brazeEndpoint, setBrazeEndpoint] = useState('');
@@ -92,6 +94,8 @@ const BackendWorkbench: React.FC = () => {
         await backendService.configureBigQuery(bigqueryProjectId);
       } else if (connectorType === 'adjust') {
         await backendService.configureAdjust(adjustApiToken);
+      } else if (connectorType === 'appsflyer') {
+        await backendService.configureAppsflyer(appsflyerApiToken, appsflyerAppId);
       } else if (connectorType === 'sendgrid') {
         await backendService.configureSendgrid(sendgridApiKey);
       } else if (connectorType === 'braze') {
@@ -224,6 +228,7 @@ const BackendWorkbench: React.FC = () => {
             <option value="google">Google Gemini</option>
             <option value="bigquery">BigQuery</option>
             <option value="adjust">Adjust</option>
+            <option value="appsflyer">AppsFlyer</option>
             <option value="sendgrid">SendGrid</option>
             <option value="braze">Braze</option>
           </select>
@@ -289,6 +294,25 @@ const BackendWorkbench: React.FC = () => {
             value={adjustApiToken}
             onChange={(e) => setAdjustApiToken(e.target.value)}
           />
+        ) : null}
+
+        {connectorType === 'appsflyer' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              type="password"
+              placeholder="AppsFlyer API Token"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={appsflyerApiToken}
+              onChange={(e) => setAppsflyerApiToken(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="AppsFlyer App ID"
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+              value={appsflyerAppId}
+              onChange={(e) => setAppsflyerAppId(e.target.value)}
+            />
+          </div>
         ) : null}
 
         {connectorType === 'sendgrid' ? (

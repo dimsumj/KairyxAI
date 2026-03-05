@@ -105,6 +105,10 @@ export const backendService = {
     return request<{ message: string }>("/configure-adjust-credentials", "POST", { api_token: apiToken });
   },
 
+  async configureAppsflyer(apiToken: string, appId: string) {
+    return request<{ message: string }>("/configure-appsflyer", "POST", { api_token: apiToken, app_id: appId });
+  },
+
   async configureSendgrid(apiKey: string) {
     return request<{ message: string }>("/configure-sendgrid-key", "POST", { api_key: apiKey });
   },

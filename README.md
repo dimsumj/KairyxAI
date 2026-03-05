@@ -247,3 +247,31 @@ Summary includes per-group:
 - Assignment is stable for a given `(experiment_id, player_id)`.
 - For clean reruns, change `experiment_id` or archive/remove local experiment log files.
 
+## Multi-Source Connector Layer (Adjust / AppsFlyer / Amplitude)
+
+KairyxAI now uses a connector registry under `backend/services/connectors/`:
+- `amplitude_connector.py`
+- `adjust_connector.py`
+- `appsflyer_connector.py`
+- `registry.py` (connector routing)
+
+Ingestion pipeline uses the selected connector automatically via connector type.
+
+### Configure connectors
+- Amplitude: `POST /configure-amplitude-keys`
+- Adjust: `POST /configure-adjust-credentials`
+- AppsFlyer: `POST /configure-appsflyer`
+
+AppsFlyer configure example:
+```bash
+curl -X POST http://localhost:8000/configure-appsflyer \
+  -H "Content-Type: application/json" \
+  -d '{"api_token":"YOUR_TOKEN","app_id":"com.your.game"}'
+```
+
+### Import from connector sources
+Once configured, sources appear in the workbench import source dropdown (Amplitude/Adjust/AppsFlyer).
+
+### Local demo behavior
+In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.
+
