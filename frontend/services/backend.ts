@@ -221,12 +221,13 @@ export const backendService = {
   },
 
   async getChurnConfig() {
-    return request<{ churn: { churn_inactive_days: number } }>("/churn/config");
+    return request<{ churn: { churn_inactive_days: number; third_party_for_active: boolean } }>("/churn/config");
   },
 
-  async updateChurnConfig(churnInactiveDays: number) {
-    return request<{ churn: { churn_inactive_days: number } }>("/churn/config", "POST", {
+  async updateChurnConfig(churnInactiveDays: number, thirdPartyForActive: boolean) {
+    return request<{ churn: { churn_inactive_days: number; third_party_for_active: boolean } }>("/churn/config", "POST", {
       churn_inactive_days: churnInactiveDays,
+      third_party_for_active: thirdPartyForActive,
     });
   },
 

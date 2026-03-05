@@ -387,5 +387,9 @@ Churn is now evaluated in 2 layers:
 
 API:
 - `GET /churn/config`
-- `POST /churn/config` with `{ "churn_inactive_days": 14 }`
+- `POST /churn/config` with `{ "churn_inactive_days": 14, "third_party_for_active": true }`
+
+Notes:
+- `third_party_for_active=true` makes active-user churn prediction use local+cloud (parallel) mode by default.
+- Already-churned users still use rule-based result only (no third-party call).
 

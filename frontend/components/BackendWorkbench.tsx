@@ -50,6 +50,7 @@ const BackendWorkbench: React.FC = () => {
   });
   const [experimentSummary, setExperimentSummary] = useState<ExperimentSummary | null>(null);
   const [churnInactiveDays, setChurnInactiveDays] = useState(14);
+  const [thirdPartyForActive, setThirdPartyForActive] = useState(true);
 
   const [importSource, setImportSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -81,6 +82,7 @@ const BackendWorkbench: React.FC = () => {
       setImports(importsResp.imports || []);
       setExperimentConfig(expConfigResp.experiment);
       setChurnInactiveDays(churnConfigResp.churn?.churn_inactive_days || 14);
+      setThirdPartyForActive(churnConfigResp.churn?.third_party_for_active ?? true);
       setFreshness(freshnessResp.connectors || {});
       setIdentityLinks(identityResp.identity_links || []);
       setRejectedEvents(rejectedResp.rejected_events || []);
@@ -259,8 +261,9 @@ const BackendWorkbench: React.FC = () => {
     setError('');
     setMessage('');
     try {
-      const resp = await backendService.updateChurnConfig(churnInactiveDays);
+      const resp = await backendService.updateChurnConfig(churnInactiveDays, thirdPartyForActive);
       setChurnInactiveDays(resp.churn.churn_inactive_days);
+      setThirdPartyForActive(resp.churn.third_party_for_active);
       setMessage('Churn config saved.');
     } catch (err: any) {
       setError(err.message || 'Failed to save churn config.');
@@ -946,7 +949,7 @@ const BackendWorkbench: React.FC = () => {
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Churn Configuration</h3>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <label className="text-sm text-gray-300">Inactive days threshold for "already churned"</label>
           <input
             type="number"
@@ -955,6 +958,14 @@ const BackendWorkbench: React.FC = () => {
             value={churnInactiveDays}
             onChange={(e) => setChurnInactiveDays(Number(e.target.value))}
           />
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={thirdPartyForActive}
+              onChange={(e) => setThirdPartyForActive(e.target.checked)}
+            />
+            Enable third-party churn prediction for active users
+          </label>
           <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={saveChurnConfig} disabled={loading}>
             Save
           </button>

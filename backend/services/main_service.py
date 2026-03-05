@@ -104,6 +104,7 @@ EXPERIMENT_CONFIG = {
 }
 CHURN_CONFIG = {
     "churn_inactive_days": 14,
+    "third_party_for_active": True,
 }
 
 
@@ -548,6 +549,7 @@ class ExperimentConfigRequest(BaseModel):
 
 class ChurnConfigRequest(BaseModel):
     churn_inactive_days: Optional[int] = None
+    third_party_for_active: Optional[bool] = None
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -1657,6 +1659,17 @@ async def _estimate_churn_with_mode(
     if mode not in {"local", "cloud", "parallel"}:
         raise HTTPException(status_code=400, detail="prediction_mode must be one of: local, cloud, parallel.")
 
+    # Already-churned users are resolved by inactivity rule only.
+    if profile.get("churn_state") == "churned":
+        local_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
+        return local_estimate, {
+            "mode": mode,
+            "selected_source": "rule",
+            "local_estimate": local_estimate,
+            "cloud_estimate": None,
+            "cloud_error": None,
+        }
+
     if mode in {"local", "parallel"}:
         local_estimate = await modeling_engine.estimate_churn_risk(player_id, profile)
 
@@ -1693,7 +1706,10 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found or not ready.")
 
     os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
-    mode_key = (prediction_mode or "local").lower()
+    effective_mode = (prediction_mode or "local").lower()
+    if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local":
+        effective_mode = "parallel"
+    mode_key = effective_mode
     prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}_{mode_key}.json")
     if not force_recalculate and os.path.exists(prediction_cache_file):
         print(f"Loading churn predictions from cache: {prediction_cache_file}")
@@ -1728,7 +1744,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             modeling_engine=modeling_engine,
             player_id=player_id,
             profile=profile,
-            prediction_mode=prediction_mode,
+            prediction_mode=effective_mode,
         )
         churn_state = churn_estimate.get("churn_state", profile.get("churn_state", "active")) if churn_estimate else profile.get("churn_state", "active")
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
@@ -1781,7 +1797,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
             "llm_route": policy_eval.get("route"),
             "policy_reason": policy_eval.get("reason"),
-            "prediction_mode": prediction_mode,
+            "prediction_mode": effective_mode,
             "prediction_details": churn_details,
         })
 
@@ -1875,11 +1891,15 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         if not player_profile:
             raise HTTPException(status_code=404, detail=f"Player with ID '{player_id}' not found.")
 
+        effective_mode = (request.prediction_mode or "local").lower()
+        if CHURN_CONFIG.get("third_party_for_active", True) and effective_mode == "local":
+            effective_mode = "parallel"
+
         churn_estimate, churn_details = await _estimate_churn_with_mode(
             modeling_engine=modeling_engine,
             player_id=player_id,
             profile=player_profile,
-            prediction_mode=request.prediction_mode or "local",
+            prediction_mode=effective_mode,
         )
 
         churn_state = churn_estimate.get("churn_state", player_profile.get("churn_state", "active")) if churn_estimate else player_profile.get("churn_state", "active")
