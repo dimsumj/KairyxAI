@@ -6,6 +6,7 @@ from event_semantic_normalizer import EventSemanticNormalizer
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
 from ingestion_service import IngestionService
+from local_job_store import resolve_or_create_canonical_user_id
 
 class DataProcessingService:
     """
@@ -53,11 +54,22 @@ class DataProcessingService:
 
         dedupe_map: Dict[tuple, Dict[str, Any]] = {}
         for e in all_normalized:
+            source = str(e.get("source", "unknown"))
+            player_id = str(e.get("player_id", "unknown_user"))
+            canonical_user_id = resolve_or_create_canonical_user_id(source, player_id)
+            e["canonical_user_id"] = canonical_user_id
+
+            source_event_id = e.get("source_event_id")
             key = (
-                str(e.get("player_id")),
+                "srcid",
+                str(source),
+                str(source_event_id),
+            ) if source_event_id else (
+                "fallback",
+                str(canonical_user_id),
                 str(e.get("event_type")),
                 str(e.get("event_time")),
-                str(e.get("source", "")),
+                str(source),
             )
             dedupe_map[key] = e
 

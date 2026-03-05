@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 
 def to_iso(ts: Any) -> str:
@@ -18,15 +18,39 @@ def to_iso(ts: Any) -> str:
         return datetime.utcnow().isoformat()
 
 
-def canonical_attribution_event(source: str, raw: Dict[str, Any]) -> Dict[str, Any]:
-    player_id = raw.get("player_id") or raw.get("customer_user_id") or raw.get("appsflyer_id") or raw.get("idfa") or raw.get("adid") or "unknown_user"
-    event_type = raw.get("event_type") or raw.get("event_name") or raw.get("name") or "attribution_event"
-    event_time = to_iso(raw.get("event_time") or raw.get("timestamp") or raw.get("install_time") or raw.get("time"))
+def _get_path(raw: Dict[str, Any], path: str) -> Any:
+    cur: Any = raw
+    for part in (path or "").split('.'):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _pick(raw: Dict[str, Any], keys: List[str], override_path: Optional[str] = None) -> Any:
+    if override_path:
+        v = _get_path(raw, override_path)
+        if v is not None:
+            return v
+    for k in keys:
+        v = raw.get(k)
+        if v is not None:
+            return v
+    return None
+
+
+def canonical_attribution_event(source: str, raw: Dict[str, Any], field_mapping: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    mapping = field_mapping or {}
+
+    player_id = _pick(raw, ["player_id", "user_id", "uid", "PID", "customer_user_id", "appsflyer_id", "idfa", "adid"], mapping.get("canonical_user_id")) or "unknown_user"
+    event_type = _pick(raw, ["event_type", "event_name", "name"], mapping.get("event_name")) or "attribution_event"
+    event_time = to_iso(_pick(raw, ["event_time", "timestamp", "install_time", "time"], mapping.get("event_time")))
+    source_event_id = _pick(raw, ["event_id", "id", "insert_id", "uuid"], mapping.get("source_event_id"))
 
     props = {
-        "campaign": raw.get("campaign") or raw.get("campaign_name"),
-        "adset": raw.get("adset") or raw.get("adset_name") or raw.get("adgroup"),
-        "media_source": raw.get("media_source") or raw.get("network") or raw.get("channel"),
+        "campaign": _pick(raw, ["campaign", "campaign_name"], mapping.get("campaign")),
+        "adset": _pick(raw, ["adset", "adset_name", "adgroup"], mapping.get("adset")),
+        "media_source": _pick(raw, ["media_source", "network", "channel"], mapping.get("media_source")),
         "raw": raw,
     }
 
@@ -35,5 +59,6 @@ def canonical_attribution_event(source: str, raw: Dict[str, Any]) -> Dict[str, A
         "event_type": str(event_type),
         "event_time": event_time,
         "source": source,
+        "source_event_id": str(source_event_id) if source_event_id is not None else None,
         "event_properties": props,
     }

@@ -16,6 +16,7 @@ class AdjustConnector:
     def __init__(self, config: Dict[str, Any]):
         self.api_token = config.get("api_token")
         self.api_url = (config.get("api_url") or os.getenv("ADJUST_API_URL") or "").strip()
+        self.field_mapping = config.get("field_mapping") or {}
 
     def health_check(self) -> Dict[str, Any]:
         ok = bool(self.api_token)
@@ -36,7 +37,7 @@ class AdjustConnector:
             "start_date": start_date,
             "end_date": end_date,
         }
-        return [canonical_attribution_event("adjust", raw)]
+        return [canonical_attribution_event("adjust", raw, self.field_mapping)]
 
     def fetch_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         if os.getenv("DATA_BACKEND_MODE", "mock").lower() == "mock":
@@ -56,4 +57,4 @@ class AdjustConnector:
         resp.raise_for_status()
         data = resp.json()
         rows = extract_rows(data)
-        return [canonical_attribution_event("adjust", r) for r in rows]
+        return [canonical_attribution_event("adjust", r, self.field_mapping) for r in rows]

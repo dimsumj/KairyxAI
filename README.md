@@ -302,12 +302,45 @@ Returns per-connector:
 In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.
 
 ### Merge + dedupe strategy (current)
-During processing, events from all selected sources are normalized and merged, then deduplicated using:
-`(player_id, event_type, event_time, source)`.
+During processing, events from all selected sources are normalized and merged.
+
+Identity resolution (phase 1-2):
+- build deterministic identity links by `(source, source_user_id) -> canonical_user_id`
+- if same `source_user_id` appears across sources, it links to the same canonical id
+- inspect with: `GET /identity-links`
+
+Dedupe priority:
+1. `source_event_id` if present
+2. fallback key: `(canonical_user_id, event_type, event_time, source)`
 
 Connector API response parsing supports common wrappers (`data`, `results`, `items`, `rows`, `events`, nested `data.records`) to reduce integration friction.
 
 Per-job import output now includes:
 - `source_stats`: ingested event counts per source
 - `processing_stats`: normalized count, deduped count, duplicates removed
+
+### Manual field mapping (canonical override)
+Use this when sources use different field names (e.g., `PID`, `uid`, `user_id`).
+
+API:
+- `GET /field-mapping/{connector_name}`
+- `POST /field-mapping/{connector_name}` with `{ "mapping": { ... } }`
+- `POST /field-mapping/preview` with a sample raw record
+
+Example mapping:
+```json
+{
+  "canonical_user_id": "event_properties.PID",
+  "event_name": "event_type",
+  "event_time": "timestamp",
+  "source_event_id": "insert_id",
+  "campaign": "campaign_name",
+  "adset": "adgroup",
+  "media_source": "network"
+}
+```
+
+Frontend workbench now includes:
+- Manual Field Mapping section (load/save/preview)
+- Identity Links table for cross-source user matching visibility
 

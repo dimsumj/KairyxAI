@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from ingestion_service import IngestionService
 from data_processing_service import DataProcessingService
 from connectors import create_connector
+from connectors.normalizer import canonical_attribution_event
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
 from amplitude_service import AmplitudeService
@@ -43,6 +44,11 @@ from local_job_store import (
     load_import_jobs as load_import_jobs_db,
     save_prediction_jobs as save_prediction_jobs_db,
     load_prediction_jobs as load_prediction_jobs_db,
+    resolve_or_create_canonical_user_id,
+    list_identity_links,
+    save_field_mapping,
+    get_field_mapping,
+    list_field_mappings,
 )
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
@@ -443,6 +449,15 @@ class AppsFlyerCredentials(BaseModel):
     app_id: str
     pull_api_url: Optional[str] = None
 
+
+class FieldMappingRequest(BaseModel):
+    mapping: Dict[str, str]
+
+
+class MappingPreviewRequest(BaseModel):
+    connector_name: str
+    sample_record: Dict[str, Any]
+
 class SendGridApiKey(BaseModel):
     """Request model for setting the SendGrid API key."""
     sendgrid_api_key: str = Field(..., alias='api_key')
@@ -656,6 +671,44 @@ async def connector_health(connector_name: str):
 async def connector_freshness():
     """Returns connector freshness metadata (last attempt/success/error)."""
     return {"connectors": CONNECTOR_STATUS}
+
+
+@app.get("/identity-links")
+async def get_identity_links(limit: int = 200):
+    return {"identity_links": list_identity_links(limit=limit)}
+
+
+@app.get("/field-mappings")
+async def get_all_field_mappings():
+    return {"mappings": list_field_mappings()}
+
+
+@app.get("/field-mapping/{connector_name}")
+async def get_connector_field_mapping(connector_name: str):
+    return {"connector": connector_name, "mapping": get_field_mapping(connector_name)}
+
+
+@app.post("/field-mapping/{connector_name}")
+async def save_connector_field_mapping(connector_name: str, request: FieldMappingRequest):
+    save_field_mapping(connector_name, request.mapping or {})
+    append_audit_log("field_mapping_updated", {"connector": connector_name, "keys": list((request.mapping or {}).keys())})
+    return {"message": "Field mapping saved.", "connector": connector_name, "mapping": request.mapping}
+
+
+@app.post("/field-mapping/preview")
+async def preview_field_mapping(request: MappingPreviewRequest):
+    mapping = get_field_mapping(request.connector_name)
+    # Infer type from connector name prefix; fallback to 'custom'
+    conn_type = "custom"
+    if request.connector_name.lower().startswith("appsflyer"):
+        conn_type = "appsflyer"
+    elif request.connector_name.lower().startswith("adjust"):
+        conn_type = "adjust"
+    elif request.connector_name.lower().startswith("amplitude"):
+        conn_type = "amplitude"
+
+    preview = canonical_attribution_event(conn_type, request.sample_record, mapping)
+    return {"connector": request.connector_name, "mapping": mapping, "preview": preview}
 
 
 @app.get("/list-configured-sources")
@@ -1252,6 +1305,9 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                 connector_config, conn_type = _get_connector_config(source_name)
                 if not connector_config:
                     raise ValueError(f"Connector configuration for '{source_name}' not found.")
+
+                connector_config = dict(connector_config)
+                connector_config["field_mapping"] = get_field_mapping(source_name)
 
                 ingestion_service = IngestionService(
                     gcs_service=GCS_SERVICE_INSTANCE,

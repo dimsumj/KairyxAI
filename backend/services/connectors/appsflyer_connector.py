@@ -17,6 +17,7 @@ class AppsFlyerConnector:
         self.api_token = config.get("api_token")
         self.app_id = config.get("app_id")
         self.pull_api_url = (config.get("pull_api_url") or os.getenv("APPSFLYER_PULL_API_URL") or "").strip()
+        self.field_mapping = config.get("field_mapping") or {}
 
     def health_check(self) -> Dict[str, Any]:
         ok = bool(self.api_token and self.app_id)
@@ -38,7 +39,7 @@ class AppsFlyerConnector:
             "start_date": start_date,
             "end_date": end_date,
         }
-        return [canonical_attribution_event("appsflyer", raw)]
+        return [canonical_attribution_event("appsflyer", raw, self.field_mapping)]
 
     def fetch_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         if os.getenv("DATA_BACKEND_MODE", "mock").lower() == "mock":
@@ -58,4 +59,4 @@ class AppsFlyerConnector:
         resp.raise_for_status()
         data = resp.json()
         rows = extract_rows(data)
-        return [canonical_attribution_event("appsflyer", r) for r in rows]
+        return [canonical_attribution_event("appsflyer", r, self.field_mapping) for r in rows]

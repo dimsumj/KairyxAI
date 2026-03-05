@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary, ConnectorFreshness } from '../services/backend.ts';
+import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary, ConnectorFreshness, IdentityLink } from '../services/backend.ts';
 
 type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'appsflyer' | 'sendgrid' | 'braze';
 
@@ -11,6 +11,11 @@ const BackendWorkbench: React.FC = () => {
   const [imports, setImports] = useState<ImportJob[]>([]);
   const [predictions, setPredictions] = useState<PredictionRow[]>([]);
   const [freshness, setFreshness] = useState<Record<string, ConnectorFreshness>>({});
+  const [selectedMappingConnector, setSelectedMappingConnector] = useState('');
+  const [mappingJson, setMappingJson] = useState('{}');
+  const [previewJson, setPreviewJson] = useState('{"PID":"user_123","event_name":"install","timestamp":"2026-03-05T01:00:00Z"}');
+  const [mappingPreviewResult, setMappingPreviewResult] = useState<any>(null);
+  const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -50,13 +55,14 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp, identityResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
         backendService.listImports(),
         backendService.getExperimentConfig(),
         backendService.connectorFreshness(),
+        backendService.listIdentityLinks(100),
       ]);
       setHealthStatus(health.status);
       setConnectors(connectorsResp.connectors || []);
@@ -64,6 +70,10 @@ const BackendWorkbench: React.FC = () => {
       setImports(importsResp.imports || []);
       setExperimentConfig(expConfigResp.experiment);
       setFreshness(freshnessResp.connectors || {});
+      setIdentityLinks(identityResp.identity_links || []);
+      if (!selectedMappingConnector && connectorsResp.connectors?.length) {
+        setSelectedMappingConnector(connectorsResp.connectors[0].name);
+      }
       if (!importSource && sourcesResp.sources?.length) {
         setImportSource(sourcesResp.sources[0].id);
       }
@@ -198,6 +208,52 @@ const BackendWorkbench: React.FC = () => {
       setExperimentSummary(resp);
     } catch (err: any) {
       setError(err.message || 'Failed to load experiment summary.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadFieldMapping = async () => {
+    if (!selectedMappingConnector) return;
+    setLoading(true);
+    setError('');
+    try {
+      const resp = await backendService.getFieldMapping(selectedMappingConnector);
+      setMappingJson(JSON.stringify(resp.mapping || {}, null, 2));
+      setMessage('Field mapping loaded.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to load field mapping.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveFieldMapping = async () => {
+    if (!selectedMappingConnector) return;
+    setLoading(true);
+    setError('');
+    try {
+      const mappingObj = JSON.parse(mappingJson || '{}');
+      await backendService.saveFieldMapping(selectedMappingConnector, mappingObj);
+      setMessage('Field mapping saved.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save field mapping (check JSON format).');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewFieldMapping = async () => {
+    if (!selectedMappingConnector) return;
+    setLoading(true);
+    setError('');
+    try {
+      const sample = JSON.parse(previewJson || '{}');
+      const resp = await backendService.previewFieldMapping(selectedMappingConnector, sample);
+      setMappingPreviewResult(resp.preview);
+      setMessage('Mapping preview generated.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to preview mapping (check sample JSON).');
     } finally {
       setLoading(false);
     }
@@ -405,6 +461,74 @@ const BackendWorkbench: React.FC = () => {
             </div>
           );
         })}
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Manual Field Mapping (Canonical Override)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <select
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={selectedMappingConnector}
+            onChange={(e) => setSelectedMappingConnector(e.target.value)}
+          >
+            <option value="">Select Connector</option>
+            {connectors.map((c) => (
+              <option key={c.name} value={c.name}>{c.name}</option>
+            ))}
+          </select>
+          <div className="flex gap-2">
+            <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={loadFieldMapping} disabled={loading}>Load</button>
+            <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-3 py-2 text-sm" onClick={saveFieldMapping} disabled={loading}>Save</button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400">Example mapping keys: canonical_user_id, event_name, event_time, source_event_id, campaign, adset, media_source. Values are raw key paths like <code>event_properties.PID</code>.</p>
+        <textarea
+          className="w-full h-36 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 font-mono text-xs"
+          value={mappingJson}
+          onChange={(e) => setMappingJson(e.target.value)}
+        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <textarea
+            className="w-full h-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 font-mono text-xs"
+            value={previewJson}
+            onChange={(e) => setPreviewJson(e.target.value)}
+          />
+          <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 text-xs font-mono overflow-auto">
+            {mappingPreviewResult ? JSON.stringify(mappingPreviewResult, null, 2) : 'Preview result will appear here.'}
+          </div>
+        </div>
+        <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={previewFieldMapping} disabled={loading}>Preview Mapping</button>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Identity Links (Cross-Source User Matching)</h3>
+        <div className="max-h-56 overflow-auto border border-gray-800 rounded-lg">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-gray-800">
+              <tr>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Source User ID</th>
+                <th className="px-3 py-2">Canonical User ID</th>
+                <th className="px-3 py-2">Method</th>
+                <th className="px-3 py-2">Last Seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {identityLinks.map((row, idx) => (
+                <tr key={`${row.source}-${row.source_user_id}-${idx}`} className="border-t border-gray-800">
+                  <td className="px-3 py-2">{row.source}</td>
+                  <td className="px-3 py-2">{row.source_user_id}</td>
+                  <td className="px-3 py-2">{row.canonical_user_id}</td>
+                  <td className="px-3 py-2">{row.method}</td>
+                  <td className="px-3 py-2">{new Date(row.last_seen_at).toLocaleString()}</td>
+                </tr>
+              ))}
+              {identityLinks.length === 0 ? (
+                <tr><td className="px-3 py-2 text-gray-500" colSpan={5}>No identity links yet.</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

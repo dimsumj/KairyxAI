@@ -34,6 +34,16 @@ export interface ConnectorFreshness {
   last_error?: string | null;
 }
 
+export interface IdentityLink {
+  source: string;
+  source_user_id: string;
+  canonical_user_id: string;
+  confidence: number;
+  method: string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
 export interface ImportJob {
   name: string;
   status: string;
@@ -96,6 +106,25 @@ export const backendService = {
 
   async connectorFreshness() {
     return request<{ connectors: Record<string, ConnectorFreshness> }>("/connector-freshness");
+  },
+
+  async getFieldMapping(connectorName: string) {
+    return request<{ connector: string; mapping: Record<string, string> }>(`/field-mapping/${encodeURIComponent(connectorName)}`);
+  },
+
+  async saveFieldMapping(connectorName: string, mapping: Record<string, string>) {
+    return request<{ message: string; connector: string; mapping: Record<string, string> }>(`/field-mapping/${encodeURIComponent(connectorName)}`, "POST", { mapping });
+  },
+
+  async previewFieldMapping(connectorName: string, sampleRecord: Record<string, any>) {
+    return request<{ connector: string; mapping: Record<string, string>; preview: Record<string, any> }>("/field-mapping/preview", "POST", {
+      connector_name: connectorName,
+      sample_record: sampleRecord,
+    });
+  },
+
+  async listIdentityLinks(limit = 200) {
+    return request<{ identity_links: IdentityLink[] }>(`/identity-links?limit=${limit}`);
   },
 
   async deleteConnector(connectorName: string) {
