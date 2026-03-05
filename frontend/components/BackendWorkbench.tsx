@@ -65,6 +65,7 @@ const BackendWorkbench: React.FC = () => {
   const [exportIncludeRisks, setExportIncludeRisks] = useState('high,medium,low');
   const [exportWebhookUrl, setExportWebhookUrl] = useState('');
   const [exportWebhookToken, setExportWebhookToken] = useState('');
+  const [exportEstimate, setExportEstimate] = useState<any>(null);
 
   const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
   const awaitingMappingJobs = useMemo(() => imports.filter((job) => job.status === 'Awaiting Mapping'), [imports]);
@@ -302,6 +303,30 @@ const BackendWorkbench: React.FC = () => {
       includeRisks: exportIncludeRisks.split(',').map((x) => x.trim()).filter(Boolean),
     });
     window.open(url, '_blank');
+  };
+
+  const estimateExport = async () => {
+    if (!exportJobName) {
+      setError('Please choose an import job for export.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const resp = await backendService.estimateChurnExport({
+        job_name: exportJobName,
+        prediction_mode: 'local',
+        include_churned: exportIncludeChurned,
+        include_risks: exportIncludeRisks.split(',').map((x) => x.trim()).filter(Boolean),
+      });
+      setExportEstimate(resp);
+      setMessage(`Estimated export size: ${resp.count} rows.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to estimate export size.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const exportThirdParty = async () => {
@@ -1153,7 +1178,10 @@ const BackendWorkbench: React.FC = () => {
             placeholder="Third-party webhook token (optional override)"
           />
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm" onClick={estimateExport} disabled={loading}>
+            Estimate Rows
+          </button>
           <button className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm" onClick={exportCsv}>
             Export CSV
           </button>
@@ -1161,6 +1189,11 @@ const BackendWorkbench: React.FC = () => {
             Export to 3rd Party
           </button>
         </div>
+        {exportEstimate ? (
+          <div className="text-xs text-gray-300 bg-gray-800/50 border border-gray-700 rounded-lg p-3">
+            estimate: count={exportEstimate.count} · churned={exportEstimate.breakdown?.churned || 0} · high={exportEstimate.breakdown?.high || 0} · medium={exportEstimate.breakdown?.medium || 0} · low={exportEstimate.breakdown?.low || 0}
+          </div>
+        ) : null}
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

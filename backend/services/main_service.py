@@ -1241,6 +1241,39 @@ def _filter_export_rows(rows: list[dict], include_churned: bool, include_risks: 
     return out
 
 
+@app.get("/churn/export/estimate")
+async def estimate_churn_export(job_name: str, prediction_mode: str = "local", include_churned: bool = True, include_risks: Optional[str] = "high,medium,low"):
+    rows = await _compute_predictions_for_job(job_name, force_recalculate=False, prediction_mode=prediction_mode)
+    risk_list = [x.strip().lower() for x in (include_risks or "").split(",") if x.strip()]
+    filtered = _filter_export_rows(rows, include_churned=include_churned, include_risks=risk_list)
+
+    breakdown = {
+        "churned": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "other": 0,
+    }
+    for r in filtered:
+        if str(r.get("churn_state", "")) == "churned":
+            breakdown["churned"] += 1
+        else:
+            risk = str(r.get("predicted_churn_risk", "")).lower()
+            if risk in {"high", "medium", "low"}:
+                breakdown[risk] += 1
+            else:
+                breakdown["other"] += 1
+
+    return {
+        "job_name": job_name,
+        "prediction_mode": prediction_mode,
+        "include_churned": include_churned,
+        "include_risks": risk_list,
+        "count": len(filtered),
+        "breakdown": breakdown,
+    }
+
+
 @app.get("/churn/export/csv")
 async def export_churn_csv(job_name: str, prediction_mode: str = "local", include_churned: bool = True, include_risks: Optional[str] = "high,medium,low"):
     rows = await _compute_predictions_for_job(job_name, force_recalculate=False, prediction_mode=prediction_mode)

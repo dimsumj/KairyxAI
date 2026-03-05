@@ -191,6 +191,15 @@ export const backendService = {
     return `${this.baseUrl}/churn/export/csv?${q.toString()}`;
   },
 
+  async estimateChurnExport(params: { job_name: string; prediction_mode?: string; include_churned?: boolean; include_risks?: string[] }) {
+    const q = new URLSearchParams();
+    q.set('job_name', params.job_name);
+    q.set('prediction_mode', params.prediction_mode || 'local');
+    q.set('include_churned', String(params.include_churned ?? true));
+    q.set('include_risks', (params.include_risks || ['high', 'medium', 'low']).join(','));
+    return request<any>(`/churn/export/estimate?${q.toString()}`);
+  },
+
   async exportChurnToThirdParty(payload: { job_name: string; prediction_mode?: string; include_churned?: boolean; include_risks?: string[]; webhook_url?: string; webhook_token?: string }) {
     return request<any>("/churn/export/third-party", "POST", payload);
   },

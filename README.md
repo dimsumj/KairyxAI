@@ -412,6 +412,7 @@ Workbench now includes an **External Churn Updates** panel to paste/upload JSON 
 It also supports pre-upload validation (`/churn/external-updates/validate`) with preview + row-level errors.
 
 Export churn audience lists:
+- Export estimate: `GET /churn/export/estimate?job_name=<job>&prediction_mode=local&include_churned=true&include_risks=high,medium,low`
 - CSV download: `GET /churn/export/csv?job_name=<job>&prediction_mode=local&include_churned=true&include_risks=high,medium,low`
 - Third-party push: `POST /churn/export/third-party`
   - Supports webhook URL/token from request or `/churn/config`
