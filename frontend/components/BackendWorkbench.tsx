@@ -23,6 +23,7 @@ const BackendWorkbench: React.FC = () => {
   const [cleanupSourceFilter, setCleanupSourceFilter] = useState('');
   const [externalChurnJson, setExternalChurnJson] = useState('[\n  {"user_id":"u_123","churn_risk":"high","reason":"CRM score","source":"crm_model_v2"}\n]');
   const [externalChurnStats, setExternalChurnStats] = useState<any>(null);
+  const [externalChurnValidation, setExternalChurnValidation] = useState<any>(null);
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -347,6 +348,26 @@ const BackendWorkbench: React.FC = () => {
       setMessage('Cleanup observability refreshed.');
     } catch (err: any) {
       setError(err.message || 'Failed to refresh cleanup observability.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const validateExternalChurn = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const parsed = JSON.parse(externalChurnJson || '[]');
+      const items = Array.isArray(parsed) ? parsed : parsed.items;
+      if (!Array.isArray(items)) {
+        throw new Error('Input must be an array or { items: [] }');
+      }
+      const resp = await backendService.validateExternalChurnUpdates(items);
+      setExternalChurnValidation(resp);
+      setMessage(`Validation done: total=${resp.total}, valid=${resp.valid}, invalid=${resp.invalid}`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to validate external churn updates.');
     } finally {
       setLoading(false);
     }
@@ -984,6 +1005,9 @@ const BackendWorkbench: React.FC = () => {
           onChange={(e) => setExternalChurnJson(e.target.value)}
         />
         <div className="flex items-center gap-3 flex-wrap">
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm" onClick={validateExternalChurn} disabled={loading}>
+            Validate First
+          </button>
           <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={uploadExternalChurn} disabled={loading}>
             Upload External Churn List
           </button>
@@ -993,6 +1017,22 @@ const BackendWorkbench: React.FC = () => {
             </span>
           ) : null}
         </div>
+
+        {externalChurnValidation ? (
+          <div className="border border-gray-700 rounded-lg p-3 text-xs space-y-2 bg-gray-800/50">
+            <div className="text-gray-200">Validation: total={externalChurnValidation.total}, valid={externalChurnValidation.valid}, invalid={externalChurnValidation.invalid}</div>
+            <div>
+              <div className="text-gray-300 mb-1">Preview (first {externalChurnValidation.preview?.length || 0})</div>
+              <pre className="bg-gray-900 border border-gray-700 rounded p-2 overflow-auto max-h-32">{JSON.stringify(externalChurnValidation.preview || [], null, 2)}</pre>
+            </div>
+            {(externalChurnValidation.errors || []).length > 0 ? (
+              <div>
+                <div className="text-red-300 mb-1">Errors (first {(externalChurnValidation.errors || []).length})</div>
+                <pre className="bg-gray-900 border border-red-900 rounded p-2 overflow-auto max-h-40">{JSON.stringify(externalChurnValidation.errors || [], null, 2)}</pre>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

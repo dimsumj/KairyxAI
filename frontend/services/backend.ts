@@ -174,6 +174,10 @@ export const backendService = {
     return request<any>(`/churn/external-updates?limit=${limit}`);
   },
 
+  async validateExternalChurnUpdates(items: Array<Record<string, any>>) {
+    return request<any>("/churn/external-updates/validate", "POST", { items });
+  },
+
   async upsertExternalChurnUpdates(items: Array<{ user_id?: string; email?: string; churn_risk: string; reason?: string; source?: string }>) {
     return request<any>("/churn/external-updates", "POST", { items });
   },

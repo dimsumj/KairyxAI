@@ -583,6 +583,10 @@ class ExternalChurnItem(BaseModel):
 
 class ExternalChurnUpsertRequest(BaseModel):
     items: list[ExternalChurnItem]
+
+
+class ExternalChurnValidateRequest(BaseModel):
+    items: list[Dict[str, Any]]
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
 # Use an absolute path to make serving robust, regardless of the current working directory.
@@ -1217,6 +1221,48 @@ async def get_external_churn_updates(limit: int = 200):
         "updated_at": EXTERNAL_CHURN_UPDATES.get("updated_at"),
         "by_user_id": by_user[:limit],
         "by_email": by_email[:limit],
+    }
+
+
+@app.post("/churn/external-updates/validate")
+async def validate_external_churn_updates(request: ExternalChurnValidateRequest):
+    items = request.items or []
+    valid = 0
+    invalid = 0
+    errors = []
+    preview = []
+
+    for idx, row in enumerate(items):
+        uid = str(row.get("user_id", "") or "").strip()
+        email = str(row.get("email", "") or "").strip().lower()
+        risk = str(row.get("churn_risk", "") or "").strip().lower()
+
+        row_errors = []
+        if not uid and not email:
+            row_errors.append("missing user_id/email")
+        if risk not in {"low", "medium", "high", "already_churned", "unknown"}:
+            row_errors.append("invalid churn_risk")
+
+        if row_errors:
+            invalid += 1
+            errors.append({"index": idx, "errors": row_errors, "row": row})
+        else:
+            valid += 1
+            if len(preview) < 10:
+                preview.append({
+                    "user_id": uid or None,
+                    "email": email or None,
+                    "churn_risk": risk,
+                    "reason": row.get("reason"),
+                    "source": row.get("source", "external"),
+                })
+
+    return {
+        "total": len(items),
+        "valid": valid,
+        "invalid": invalid,
+        "preview": preview,
+        "errors": errors[:50],
     }
 
 
