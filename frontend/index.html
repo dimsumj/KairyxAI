@@ -443,17 +443,46 @@
             </div>
 
             <div class="card">
-                 <h2 style="margin-top: 2rem;">Tag Events</h2>
-                 <p>Correct event names that the cleaning engine didn't process correctly.</p>
+                 <h2 style="margin-top: 2rem;">Manual Field Mapping</h2>
+                 <p>Override raw field paths when a connector payload uses mismatched or duplicate field names before normalization.</p>
+                 <div id="data-sandbox-mapping-status" style="font-size: 0.9rem; min-height: 1.25rem; margin-bottom: 0.75rem;"></div>
                  <div class="form-group">
-                     <label for="raw-event">Raw Event Name</label>
-                     <input type="text" id="raw-event" placeholder="e.g., 'purchase_item'">
+                     <label for="data-sandbox-mapping-connector">Connector</label>
+                     <select id="data-sandbox-mapping-connector">
+                         <option value="">Loading connectors...</option>
+                     </select>
                  </div>
                  <div class="form-group">
-                     <label for="normalized-event">Normalized Event Name</label>
-                     <input type="text" id="normalized-event" placeholder="e.g., 'item_purchased'">
+                     <label for="data-sandbox-awaiting-job">Awaiting Mapping Job</label>
+                     <select id="data-sandbox-awaiting-job">
+                         <option value="">No paused import job</option>
+                     </select>
                  </div>
-                 <button>Create Rule</button>
+                 <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                     <button id="data-sandbox-load-mapping-btn">Load Mapping</button>
+                     <button id="data-sandbox-save-mapping-btn">Save Mapping</button>
+                     <button id="data-sandbox-preview-mapping-btn">Preview Mapping</button>
+                     <button id="data-sandbox-coverage-btn">Coverage</button>
+                     <button id="data-sandbox-process-mapping-btn">Process After Mapping</button>
+                 </div>
+                 <p style="font-size: 0.85rem; color: var(--text-secondary);">
+                    Example mapping keys: <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, <code>source_event_id</code>, <code>campaign</code>, <code>adset</code>, <code>media_source</code>. Values are raw JSON paths like <code>event_properties.PID</code>.
+                 </p>
+                 <div class="form-group">
+                     <label for="data-sandbox-mapping-json">Mapping JSON</label>
+                     <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
+                 </div>
+                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+                     <div class="form-group" style="margin-bottom: 0;">
+                         <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                         <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
+                     </div>
+                     <div class="form-group" style="margin-bottom: 0;">
+                         <label for="data-sandbox-preview-result">Preview Result</label>
+                         <pre id="data-sandbox-preview-result" style="margin: 0; min-height: 10rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;">Preview result will appear here.</pre>
+                     </div>
+                 </div>
+                 <div id="data-sandbox-coverage-result" style="margin-top: 1rem;"></div>
             </div>
         </section>
 
@@ -529,6 +558,7 @@
                     }
                     if (pageId === 'data-sandbox') {
                         loadDataSandboxGlance();
+                        loadDataSandboxMappingControls();
                     }
                 });
             });
@@ -1246,7 +1276,294 @@
 
             // Data Sandbox Page Logic
             const dataSandboxContentDiv = document.getElementById('data-sandbox-content');
+            const dataSandboxMappingStatusDiv = document.getElementById('data-sandbox-mapping-status');
+            const dataSandboxMappingConnectorSelect = document.getElementById('data-sandbox-mapping-connector');
+            const dataSandboxAwaitingJobSelect = document.getElementById('data-sandbox-awaiting-job');
+            const dataSandboxMappingJson = document.getElementById('data-sandbox-mapping-json');
+            const dataSandboxSampleJson = document.getElementById('data-sandbox-sample-json');
+            const dataSandboxPreviewResult = document.getElementById('data-sandbox-preview-result');
+            const dataSandboxCoverageResult = document.getElementById('data-sandbox-coverage-result');
+            const dataSandboxLoadMappingBtn = document.getElementById('data-sandbox-load-mapping-btn');
+            const dataSandboxSaveMappingBtn = document.getElementById('data-sandbox-save-mapping-btn');
+            const dataSandboxPreviewMappingBtn = document.getElementById('data-sandbox-preview-mapping-btn');
+            const dataSandboxCoverageBtn = document.getElementById('data-sandbox-coverage-btn');
+            const dataSandboxProcessMappingBtn = document.getElementById('data-sandbox-process-mapping-btn');
             let eventChart = null;
+            let dataSandboxAwaitingJobs = [];
+
+            function setDataSandboxMappingStatus(message = '', isError = false) {
+                if (!dataSandboxMappingStatusDiv) return;
+                dataSandboxMappingStatusDiv.textContent = message;
+                dataSandboxMappingStatusDiv.style.color = isError ? 'var(--red)' : 'var(--green)';
+            }
+
+            function setDataSandboxAutoSample(sampleRecord) {
+                if (!dataSandboxSampleJson) return;
+                const nextValue = JSON.stringify(sampleRecord || {}, null, 2);
+                const currentValue = (dataSandboxSampleJson.value || '').trim();
+                const priorAutoValue = dataSandboxSampleJson.dataset.autoValue || '';
+                if (!currentValue || currentValue === priorAutoValue) {
+                    dataSandboxSampleJson.value = nextValue;
+                    dataSandboxSampleJson.dataset.autoValue = nextValue;
+                }
+            }
+
+            function renderDataSandboxCoverage(result = null) {
+                if (!dataSandboxCoverageResult) return;
+
+                if (!result || !result.coverage || !Object.keys(result.coverage).length) {
+                    dataSandboxCoverageResult.innerHTML = '';
+                    return;
+                }
+
+                const score = Math.max(0, Math.min(100, Number(result.required_coverage_score || 0) * 100));
+                const scoreColor = score >= 90 ? 'var(--green)' : (score >= 70 ? 'var(--yellow)' : 'var(--red)');
+                const cardsHtml = Object.entries(result.coverage || {}).map(([field, stat]) => `
+                    <div style="border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 0.75rem; background: rgba(15, 23, 42, 0.45);">
+                        <div style="font-weight: 600; margin-bottom: 0.25rem;">${field}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary);">path: ${stat.path || '-'}</div>
+                        <div style="font-size: 0.85rem; margin-top: 0.25rem;">hit: ${(Number(stat.hit_rate || 0) * 100).toFixed(1)}% (${stat.hits || 0}/${stat.total || 0})</div>
+                    </div>
+                `).join('');
+
+                dataSandboxCoverageResult.innerHTML = `
+                    <div style="border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 10px; padding: 1rem; background: rgba(15, 23, 42, 0.6);">
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 0.5rem;">
+                            <strong>Coverage</strong>
+                            <span style="font-size: 0.85rem; color: var(--text-secondary);">Required score: ${score.toFixed(1)}%</span>
+                        </div>
+                        <div style="width: 100%; height: 10px; background: rgba(71, 85, 105, 0.5); border-radius: 999px; overflow: hidden; margin-bottom: 1rem;">
+                            <div style="width: ${score}%; height: 100%; background: ${scoreColor};"></div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
+                            ${cardsHtml}
+                        </div>
+                    </div>
+                `;
+            }
+
+            function getSelectedAwaitingJob() {
+                const selectedName = dataSandboxAwaitingJobSelect.value;
+                return dataSandboxAwaitingJobs.find((job) => job.name === selectedName) || null;
+            }
+
+            async function loadDataSandboxMappingControls() {
+                try {
+                    const [sourcesResponse, importsResponse] = await Promise.all([
+                        fetch(`${backendUrl}/list-configured-sources`),
+                        fetch(`${backendUrl}/list-imports`),
+                    ]);
+                    if (!sourcesResponse.ok) throw new Error('Failed to fetch connectors for field mapping.');
+                    if (!importsResponse.ok) throw new Error('Failed to fetch import jobs for field mapping.');
+
+                    const sourcesData = await sourcesResponse.json();
+                    const importsData = await importsResponse.json();
+                    const sources = sourcesData.sources || [];
+                    dataSandboxAwaitingJobs = (importsData.imports || []).filter((job) => job.status === 'Awaiting Mapping');
+
+                    const previousConnector = dataSandboxMappingConnectorSelect.value;
+                    dataSandboxMappingConnectorSelect.innerHTML = '';
+                    if (sources.length > 0) {
+                        sources.forEach((source) => {
+                            const option = document.createElement('option');
+                            option.value = source.id;
+                            option.textContent = source.name;
+                            dataSandboxMappingConnectorSelect.appendChild(option);
+                        });
+                        const suggestedConnector = dataSandboxAwaitingJobs[0]?.source_stats?.[0]?.source;
+                        const selectedConnector = sources.some((source) => source.id === previousConnector)
+                            ? previousConnector
+                            : (sources.some((source) => source.id === suggestedConnector) ? suggestedConnector : sources[0].id);
+                        dataSandboxMappingConnectorSelect.value = selectedConnector;
+                    } else {
+                        dataSandboxMappingConnectorSelect.innerHTML = '<option value="">No configured connectors</option>';
+                    }
+                    const hasConnectors = sources.length > 0;
+                    dataSandboxLoadMappingBtn.disabled = !hasConnectors;
+                    dataSandboxSaveMappingBtn.disabled = !hasConnectors;
+                    dataSandboxPreviewMappingBtn.disabled = !hasConnectors;
+                    dataSandboxCoverageBtn.disabled = !hasConnectors;
+
+                    const previousJob = dataSandboxAwaitingJobSelect.value;
+                    dataSandboxAwaitingJobSelect.innerHTML = '';
+                    if (dataSandboxAwaitingJobs.length > 0) {
+                        const emptyOption = document.createElement('option');
+                        emptyOption.value = '';
+                        emptyOption.textContent = 'Select paused import job';
+                        dataSandboxAwaitingJobSelect.appendChild(emptyOption);
+
+                        dataSandboxAwaitingJobs.forEach((job) => {
+                            const option = document.createElement('option');
+                            option.value = job.name;
+                            option.textContent = `${job.name} (${job.current_step || job.status})`;
+                            option.dataset.source = job.source_stats?.[0]?.source || '';
+                            dataSandboxAwaitingJobSelect.appendChild(option);
+                        });
+
+                        if (dataSandboxAwaitingJobs.some((job) => job.name === previousJob)) {
+                            dataSandboxAwaitingJobSelect.value = previousJob;
+                        } else {
+                            dataSandboxAwaitingJobSelect.value = dataSandboxAwaitingJobs[0].name;
+                        }
+                    } else {
+                        dataSandboxAwaitingJobSelect.innerHTML = '<option value="">No paused import job</option>';
+                    }
+                    dataSandboxProcessMappingBtn.disabled = dataSandboxAwaitingJobs.length === 0;
+
+                    const selectedJob = getSelectedAwaitingJob();
+                    const selectedJobSource = selectedJob?.source_stats?.[0]?.source;
+                    if (
+                        selectedJobSource &&
+                        Array.from(dataSandboxMappingConnectorSelect.options).some((option) => option.value === selectedJobSource)
+                    ) {
+                        dataSandboxMappingConnectorSelect.value = selectedJobSource;
+                    }
+
+                    if ((dataSandboxMappingJson.value || '').trim() === '{}' && dataSandboxMappingConnectorSelect.value) {
+                        await loadDataSandboxFieldMapping(true);
+                    }
+
+                    if (dataSandboxAwaitingJobs.length > 0) {
+                        setDataSandboxMappingStatus(`Paused import job detected: ${dataSandboxAwaitingJobs[0].name}. Review the mapping, then click "Process After Mapping".`);
+                    } else {
+                        setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings.');
+                    }
+                } catch (error) {
+                    setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
+                }
+            }
+
+            async function loadDataSandboxFieldMapping(silent = false) {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    setDataSandboxMappingStatus('Select a connector first.', true);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${backendUrl}/field-mapping/${encodeURIComponent(connectorName)}`);
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to load field mapping.');
+                    }
+                    const data = await response.json();
+                    dataSandboxMappingJson.value = JSON.stringify(data.mapping || {}, null, 2);
+                    if (!silent) {
+                        setDataSandboxMappingStatus(`Loaded field mapping for ${connectorName}.`);
+                    }
+                } catch (error) {
+                    setDataSandboxMappingStatus(error.message || 'Failed to load field mapping.', true);
+                }
+            }
+
+            async function saveDataSandboxFieldMapping() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    setDataSandboxMappingStatus('Select a connector first.', true);
+                    return;
+                }
+
+                try {
+                    const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
+                    const response = await fetch(`${backendUrl}/field-mapping/${encodeURIComponent(connectorName)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mapping }),
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to save field mapping.');
+                    }
+                    await response.json();
+                    setDataSandboxMappingStatus(`Saved field mapping for ${connectorName}.`);
+                } catch (error) {
+                    setDataSandboxMappingStatus(error.message || 'Failed to save field mapping.', true);
+                }
+            }
+
+            async function previewDataSandboxFieldMapping() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    setDataSandboxMappingStatus('Select a connector first.', true);
+                    return;
+                }
+
+                try {
+                    const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
+                    const response = await fetch(`${backendUrl}/field-mapping/preview`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ connector_name: connectorName, sample_record: sampleRecord }),
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to preview field mapping.');
+                    }
+                    const data = await response.json();
+                    dataSandboxPreviewResult.textContent = JSON.stringify(data.preview || {}, null, 2);
+                    setDataSandboxMappingStatus(`Preview generated for ${connectorName}.`);
+                } catch (error) {
+                    dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
+                    setDataSandboxMappingStatus(error.message || 'Failed to preview field mapping.', true);
+                }
+            }
+
+            async function loadDataSandboxMappingCoverage() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    setDataSandboxMappingStatus('Select a connector first.', true);
+                    return;
+                }
+
+                try {
+                    const selectedJob = getSelectedAwaitingJob();
+                    let response;
+                    if (selectedJob) {
+                        response = await fetch(`${backendUrl}/job/${encodeURIComponent(selectedJob.name)}/mapping-coverage?connector_name=${encodeURIComponent(connectorName)}`);
+                    } else {
+                        const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
+                        response = await fetch(`${backendUrl}/field-mapping/coverage`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ connector_name: connectorName, sample_records: [sampleRecord] }),
+                        });
+                    }
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to calculate mapping coverage.');
+                    }
+                    const data = await response.json();
+                    renderDataSandboxCoverage(data);
+                    setDataSandboxMappingStatus(`Coverage calculated for ${connectorName}.`);
+                } catch (error) {
+                    renderDataSandboxCoverage(null);
+                    setDataSandboxMappingStatus(error.message || 'Failed to calculate mapping coverage.', true);
+                }
+            }
+
+            async function processDataSandboxAwaitingJob() {
+                const selectedJob = getSelectedAwaitingJob();
+                if (!selectedJob) {
+                    setDataSandboxMappingStatus('Select a paused import job first.', true);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${backendUrl}/job/${encodeURIComponent(selectedJob.name)}/process-after-mapping`, {
+                        method: 'POST',
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to process paused import job.');
+                    }
+                    const data = await response.json();
+                    setDataSandboxMappingStatus(data.message || `Processed ${selectedJob.name} after manual mapping.`);
+                    await loadDataSandboxMappingControls();
+                    await loadReadyImportsForOperatorHub();
+                } catch (error) {
+                    setDataSandboxMappingStatus(error.message || 'Failed to process paused import job.', true);
+                }
+            }
 
             async function loadDataSandboxGlance() {
                 dataSandboxContentDiv.innerHTML = '<p>Loading data glance...</p>';
@@ -1273,6 +1590,9 @@
                         </div>
                     `;
                     dataSandboxContentDiv.innerHTML = contentHtml;
+                    if (data.sample && data.sample[0]) {
+                        setDataSandboxAutoSample(data.sample[0]);
+                    }
 
                     // Render the chart
                     const ctx = document.getElementById('event-chart').getContext('2d');
@@ -1307,6 +1627,31 @@
                     dataSandboxContentDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 }
             }
+
+            dataSandboxMappingConnectorSelect.addEventListener('change', async () => {
+                renderDataSandboxCoverage(null);
+                dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
+                await loadDataSandboxFieldMapping(true);
+            });
+
+            dataSandboxAwaitingJobSelect.addEventListener('change', async () => {
+                const selectedJob = getSelectedAwaitingJob();
+                const selectedJobSource = selectedJob?.source_stats?.[0]?.source;
+                if (
+                    selectedJobSource &&
+                    Array.from(dataSandboxMappingConnectorSelect.options).some((option) => option.value === selectedJobSource)
+                ) {
+                    dataSandboxMappingConnectorSelect.value = selectedJobSource;
+                    await loadDataSandboxFieldMapping(true);
+                }
+                renderDataSandboxCoverage(null);
+            });
+
+            dataSandboxLoadMappingBtn.addEventListener('click', () => loadDataSandboxFieldMapping(false));
+            dataSandboxSaveMappingBtn.addEventListener('click', saveDataSandboxFieldMapping);
+            dataSandboxPreviewMappingBtn.addEventListener('click', previewDataSandboxFieldMapping);
+            dataSandboxCoverageBtn.addEventListener('click', loadDataSandboxMappingCoverage);
+            dataSandboxProcessMappingBtn.addEventListener('click', processDataSandboxAwaitingJob);
 
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');
