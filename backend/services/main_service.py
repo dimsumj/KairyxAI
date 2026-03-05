@@ -68,6 +68,7 @@ LLM_POLICY_CACHE_FILE = ".llm_policy.json"
 SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
 AUDIT_LOG_FILE = ".audit.log.jsonl"
 CONNECTOR_STATUS_CACHE_FILE = ".connector_status.json"
+EXTERNAL_CHURN_CACHE_FILE = ".external_churn_updates.json"
 DEFAULT_SAFETY_RAILS = {
     "AI_DAILY_TOKEN_LIMIT": 500000,
     "AI_MONTHLY_TOKEN_LIMIT": 10000000,
@@ -106,7 +107,11 @@ CHURN_CONFIG = {
     "churn_inactive_days": 14,
     "third_party_for_active": True,
 }
-
+EXTERNAL_CHURN_UPDATES = {
+    "by_user_id": {},
+    "by_email": {},
+    "updated_at": None,
+}
 
 def _normalize_date_for_amplitude(date_str: str) -> str:
     """
@@ -357,6 +362,21 @@ def save_connector_status_to_cache():
         json.dump(CONNECTOR_STATUS, f, indent=2)
 
 
+def load_external_churn_from_cache():
+    global EXTERNAL_CHURN_UPDATES
+    if os.path.exists(EXTERNAL_CHURN_CACHE_FILE):
+        try:
+            with open(EXTERNAL_CHURN_CACHE_FILE, "r") as f:
+                EXTERNAL_CHURN_UPDATES = json.load(f)
+        except json.JSONDecodeError:
+            EXTERNAL_CHURN_UPDATES = {"by_user_id": {}, "by_email": {}, "updated_at": None}
+
+
+def save_external_churn_to_cache():
+    with open(EXTERNAL_CHURN_CACHE_FILE, "w") as f:
+        json.dump(EXTERNAL_CHURN_UPDATES, f, indent=2)
+
+
 def update_connector_status(connector_name: str, connector_type: str, success: bool, ingested_events: int = 0, error: Optional[str] = None):
     now = datetime.utcnow().isoformat()
     existing = CONNECTOR_STATUS.get(connector_name, {})
@@ -410,6 +430,7 @@ load_import_jobs_from_cache()
 load_prediction_jobs_from_cache()
 load_keys_from_cache()
 load_connector_status_from_cache()
+load_external_churn_from_cache()
 load_llm_policy_from_cache()
 load_safety_rails_from_cache()
 apply_default_safety_rails()
@@ -551,6 +572,17 @@ class ChurnConfigRequest(BaseModel):
     churn_inactive_days: Optional[int] = None
     third_party_for_active: Optional[bool] = None
 
+
+class ExternalChurnItem(BaseModel):
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    churn_risk: str
+    reason: Optional[str] = None
+    source: str = "external"
+
+
+class ExternalChurnUpsertRequest(BaseModel):
+    items: list[ExternalChurnItem]
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
 # Use an absolute path to make serving robust, regardless of the current working directory.
@@ -1157,6 +1189,16 @@ async def get_churn_config():
     return {"churn": CHURN_CONFIG}
 
 
+def _find_external_churn_match(player_profile: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    user_id = str(player_profile.get("player_id", "")).strip()
+    email = str(player_profile.get("email", "")).strip().lower()
+    if user_id and user_id in EXTERNAL_CHURN_UPDATES.get("by_user_id", {}):
+        return EXTERNAL_CHURN_UPDATES["by_user_id"][user_id]
+    if email and email in EXTERNAL_CHURN_UPDATES.get("by_email", {}):
+        return EXTERNAL_CHURN_UPDATES["by_email"][email]
+    return None
+
+
 @app.post("/churn/config")
 async def update_churn_config(request: ChurnConfigRequest):
     payload = request.dict(exclude_none=True)
@@ -1165,6 +1207,53 @@ async def update_churn_config(request: ChurnConfigRequest):
     CHURN_CONFIG.update(payload)
     append_audit_log("churn_config_updated", CHURN_CONFIG)
     return {"churn": CHURN_CONFIG}
+
+
+@app.get("/churn/external-updates")
+async def get_external_churn_updates(limit: int = 200):
+    by_user = list(EXTERNAL_CHURN_UPDATES.get("by_user_id", {}).values())
+    by_email = list(EXTERNAL_CHURN_UPDATES.get("by_email", {}).values())
+    return {
+        "updated_at": EXTERNAL_CHURN_UPDATES.get("updated_at"),
+        "by_user_id": by_user[:limit],
+        "by_email": by_email[:limit],
+    }
+
+
+@app.post("/churn/external-updates")
+async def upsert_external_churn_updates(request: ExternalChurnUpsertRequest):
+    items = request.items or []
+    if not items:
+        raise HTTPException(status_code=400, detail="items cannot be empty")
+
+    matched_user_id = 0
+    matched_email = 0
+    for i in items:
+        rec = {
+            "user_id": i.user_id,
+            "email": i.email,
+            "churn_risk": i.churn_risk,
+            "reason": i.reason or "Third-party churn update",
+            "source": i.source,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        if i.user_id:
+            EXTERNAL_CHURN_UPDATES.setdefault("by_user_id", {})[str(i.user_id)] = rec
+            matched_user_id += 1
+        if i.email:
+            EXTERNAL_CHURN_UPDATES.setdefault("by_email", {})[str(i.email).lower()] = rec
+            matched_email += 1
+
+    EXTERNAL_CHURN_UPDATES["updated_at"] = datetime.utcnow().isoformat()
+    save_external_churn_to_cache()
+    append_audit_log("external_churn_updates_upserted", {"count": len(items), "matched_user_id": matched_user_id, "matched_email": matched_email})
+    return {
+        "message": "External churn updates ingested.",
+        "count": len(items),
+        "matched_user_id": matched_user_id,
+        "matched_email": matched_email,
+        "updated_at": EXTERNAL_CHURN_UPDATES.get("updated_at"),
+    }
 
 
 @app.post("/configure-llm-policy")
@@ -1747,6 +1836,19 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             prediction_mode=effective_mode,
         )
         churn_state = churn_estimate.get("churn_state", profile.get("churn_state", "active")) if churn_estimate else profile.get("churn_state", "active")
+
+        external_match = None
+        if churn_state == "active":
+            external_match = _find_external_churn_match(profile)
+            if external_match:
+                churn_estimate = {
+                    "player_id": player_id,
+                    "churn_state": "active",
+                    "churn_risk": external_match.get("churn_risk", "unknown"),
+                    "reason": external_match.get("reason", "Third-party churn update"),
+                    "top_signals": [{"signal": "external_update", "value": external_match.get("source", "external")}],
+                }
+
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
         recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
 
@@ -1786,6 +1888,8 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
         prediction_source = "unknown"
         if churn_state == "churned":
             prediction_source = "rule"
+        elif external_match:
+            prediction_source = f"external:{external_match.get('source', 'external')}"
         else:
             prediction_source = (churn_details or {}).get("selected_source") or (effective_mode if effective_mode != "parallel" else "parallel-selected")
 
@@ -1910,6 +2014,19 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         )
 
         churn_state = churn_estimate.get("churn_state", player_profile.get("churn_state", "active")) if churn_estimate else player_profile.get("churn_state", "active")
+
+        external_match = None
+        if churn_state == "active":
+            external_match = _find_external_churn_match(player_profile)
+            if external_match:
+                churn_estimate = {
+                    "player_id": player_id,
+                    "churn_state": "active",
+                    "churn_risk": external_match.get("churn_risk", "unknown"),
+                    "reason": external_match.get("reason", "Third-party churn update"),
+                    "top_signals": [{"signal": "external_update", "value": external_match.get("source", "external")}],
+                }
+
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
         recency_risk = min(max(float(player_profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
 
@@ -1990,10 +2107,13 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
                     "simulated_response": feedback.get("simulated_response"),
                 })
 
+        prediction_source = "rule" if churn_state == "churned" else (f"external:{external_match.get('source', 'external')}" if external_match else ((churn_details or {}).get("selected_source") or (effective_mode if effective_mode != "parallel" else "parallel-selected")))
+
         return {
             "player_profile": player_profile,
             "churn_estimate": churn_estimate,
             "churn_prediction_details": churn_details,
+            "prediction_source": prediction_source,
             "policy_eval": policy_eval,
             "experiment_assignment": assignment,
             "action_taken": next_action,

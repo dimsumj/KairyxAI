@@ -170,6 +170,14 @@ export const backendService = {
     return request<{ conflicts: any[] }>(`/cleanup/conflicts${q.toString() ? `?${q.toString()}` : ''}`);
   },
 
+  async getExternalChurnUpdates(limit = 200) {
+    return request<any>(`/churn/external-updates?limit=${limit}`);
+  },
+
+  async upsertExternalChurnUpdates(items: Array<{ user_id?: string; email?: string; churn_risk: string; reason?: string; source?: string }>) {
+    return request<any>("/churn/external-updates", "POST", { items });
+  },
+
   async deleteConnector(connectorName: string) {
     return request<{ message: string }>(`/connector/${encodeURIComponent(connectorName)}`, "DELETE");
   },

@@ -393,3 +393,18 @@ Notes:
 - `third_party_for_active=true` makes active-user churn prediction use local+cloud (parallel) mode by default.
 - Already-churned users still use rule-based result only (no third-party call).
 
+External churn risk list ingestion (match by user_id or email):
+- `POST /churn/external-updates`
+- `GET /churn/external-updates`
+
+Example:
+```json
+{
+  "items": [
+    {"user_id": "u_123", "churn_risk": "high", "reason": "CRM model score", "source": "crm_model_v2"},
+    {"email": "a@b.com", "churn_risk": "medium", "source": "warehouse_batch"}
+  ]
+}
+```
+When matched, predictions are auto-overridden for active users and `prediction_source` is marked as `external:<source>`.
+

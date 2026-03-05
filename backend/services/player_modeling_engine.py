@@ -78,8 +78,20 @@ class PlayerModelingEngine:
         days_since_last_seen = (datetime.utcnow() - last_seen.replace(tzinfo=None)).days
         churn_state = "churned" if days_since_last_seen >= self.churn_inactive_days else "active"
 
+        email = None
+        try:
+            for _, row in player_events.iterrows():
+                up = row.get('user_properties') if isinstance(row.get('user_properties'), dict) else {}
+                ep = row.get('event_properties') if isinstance(row.get('event_properties'), dict) else {}
+                email = up.get('email') or ep.get('email') or ep.get('user_email')
+                if email:
+                    break
+        except Exception:
+            email = None
+
         profile = {
             "player_id": player_id,
+            "email": email,
             "first_seen_date": first_seen.isoformat(),
             "last_seen_date": last_seen.isoformat(),
             "total_sessions": total_sessions,
