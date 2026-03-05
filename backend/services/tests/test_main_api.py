@@ -308,19 +308,19 @@ def test_action_history_only_includes_human_triggered_actions(client, monkeypatc
     assert len(items) == 3
 
     assert items[0]["category"] == "campaign"
-    assert items[0]["summary"] == "Audience exported to campaign provider"
+    assert items[0]["summary"] == "Push Audience to Braze"
     assert items[0]["status"] == "completed"
-    assert "provider=braze" in items[0]["details"]
+    assert "channel=push_notification" in items[0]["details"]
     assert "count=42" in items[0]["details"]
 
     assert items[1]["category"] == "mapping"
-    assert items[1]["summary"] == "Field mapping updated for Amplitude 1"
+    assert items[1]["summary"] == "Update Field Mapping for Amplitude 1"
     assert items[1]["status"] == "saved"
 
     assert items[2]["category"] == "import"
-    assert items[2]["summary"] == "Import requested for 20260305-100000-Amplitude"
+    assert items[2]["summary"] == "Start Import from Amplitude 1"
     assert items[2]["status"] == "started"
-    assert "source=Amplitude 1" in items[2]["details"]
+    assert "range=20260301 to 20260304" in items[2]["details"]
 
 
 def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):

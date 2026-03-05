@@ -451,15 +451,13 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
         current_job = _current_import_job(detail.get("job_name"))
         source = detail.get("source")
         date_range = _join_history_details(
-            f"source={source}" if source else None,
             f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
             "manual mapping enabled" if detail.get("auto_mapping") else None,
-            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
         )
         return _make_history_item(
             timestamp=ts,
             category="import",
-            summary=f"Import requested for {detail.get('job_name')}",
+            summary=f"Start Import from {source or detail.get('job_name')}",
             status=_normalize_status_label(current_job.get("status")) if current_job else "started",
             details=date_range,
             kind=action,
@@ -471,12 +469,11 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
         return _make_history_item(
             timestamp=ts,
             category="mapping",
-            summary=f"Process-after-mapping requested for {detail.get('job_name')}",
+            summary=f"Resume Import After Mapping for {detail.get('job_name')}",
             status=_normalize_status_label(current_job.get("status")) if current_job else "processing",
             details=_join_history_details(
                 f"source={detail.get('source')}" if detail.get("source") else None,
                 f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
-                f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
             ),
             kind=action,
             metadata=detail,
@@ -488,18 +485,16 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
             "import_job_stop_requested": "stopped",
         }
         summary_map = {
-            "import_job_stop_requested": "Import stop requested",
+            "import_job_stop_requested": "Stop Import",
         }
         details = _join_history_details(
-            f"job={detail.get('job_name')}" if detail.get("job_name") else None,
             f"source={detail.get('source')}" if detail.get("source") else None,
             f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
-            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
         )
         return _make_history_item(
             timestamp=ts,
             category="import",
-            summary=f"{summary_map[action]}: {detail.get('job_name')}",
+            summary=f"{summary_map[action]} for {detail.get('job_name')}",
             status=_normalize_status_label(current_job.get("status")) if current_job else status_map[action],
             details=details,
             kind=action,
@@ -513,18 +508,17 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
             "prediction_job_stop_requested": "stopping",
         }
         summary_map = {
-            "prediction_job_started": "Prediction requested",
-            "prediction_job_stop_requested": "Prediction stop requested",
+            "prediction_job_started": "Start Churn Prediction",
+            "prediction_job_stop_requested": "Stop Churn Prediction",
         }
         details = _join_history_details(
             f"job={detail.get('import_job_name')}" if detail.get("import_job_name") else None,
             f"mode={detail.get('prediction_mode')}" if detail.get("prediction_mode") else None,
-            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
         )
         return _make_history_item(
             timestamp=ts,
             category="prediction",
-            summary=f"{summary_map[action]}: {detail.get('import_job_name') or detail.get('prediction_job_id')}",
+            summary=f"{summary_map[action]} for {detail.get('import_job_name') or detail.get('prediction_job_id')}",
             status=_normalize_status_label(current_job.get("status")) if current_job else status_map[action],
             details=details,
             kind=action,
@@ -535,16 +529,14 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
         provider = detail.get("provider") or "webhook"
         details = _join_history_details(
             f"job={detail.get('job_name')}" if detail.get("job_name") else None,
-            f"provider={provider}",
             f"channel={detail.get('channel')}" if detail.get("channel") else None,
             f"audience={detail.get('audience_name')}" if detail.get("audience_name") else None,
             f"count={detail.get('count')}" if detail.get("count") is not None else None,
-            f"status_code={detail.get('status_code')}" if detail.get("status_code") is not None else None,
         )
         return _make_history_item(
             timestamp=ts,
             category="campaign",
-            summary="Audience exported to campaign provider" if action == "campaign_audience_exported" else "Churn list exported to third-party",
+            summary=f"Push Audience to {provider.title()}" if action == "campaign_audience_exported" else "Export Churn List to Webhook",
             status="completed" if detail.get("ok", True) else "failed",
             details=details,
             kind=action,
@@ -555,10 +547,9 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
         return _make_history_item(
             timestamp=ts,
             category="mapping",
-            summary=f"Field mapping updated for {detail.get('connector')}",
+            summary=f"Update Field Mapping for {detail.get('connector')}",
             status="saved",
             details=_join_history_details(
-                f"connector={detail.get('connector')}" if detail.get("connector") else None,
                 f"keys={len(detail.get('keys') or [])}" if detail.get("keys") is not None else None,
             ),
             kind=action,
@@ -567,10 +558,10 @@ def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optio
 
     if action in {"connector_configured", "connector_deleted", "experiment_config_updated", "churn_config_updated"}:
         summary_map = {
-            "connector_configured": f"Connector configured: {detail.get('name') or detail.get('type')}",
-            "connector_deleted": f"Connector deleted: {detail.get('name')}",
-            "experiment_config_updated": "Experiment configuration updated",
-            "churn_config_updated": "Churn configuration updated",
+            "connector_configured": f"Configure Connector: {detail.get('name') or detail.get('type')}",
+            "connector_deleted": f"Delete Connector: {detail.get('name')}",
+            "experiment_config_updated": "Update Experiment Configuration",
+            "churn_config_updated": "Update Churn Configuration",
         }
         return _make_history_item(
             timestamp=ts,

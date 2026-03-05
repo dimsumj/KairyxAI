@@ -443,8 +443,7 @@
                     <thead>
                         <tr>
                             <th>Timestamp</th>
-                            <th>Category</th>
-                            <th>Summary</th>
+                            <th>Action</th>
                             <th>Status</th>
                             <th>Details</th>
                         </tr>
@@ -1286,7 +1285,7 @@
 
             async function loadActionHistory() {
                 if (!actionHistoryResults) return;
-                actionHistoryResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">Loading action history...</td></tr>';
+                actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">Loading action history...</td></tr>';
                 try {
                     const response = await fetch(`${backendUrl}/action-history?limit=150`);
                     if (!response.ok) {
@@ -1297,7 +1296,7 @@
                     const history = data.action_history || [];
 
                     if (history.length === 0) {
-                        actionHistoryResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">No recorded actions yet.</td></tr>';
+                        actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">No recorded actions yet.</td></tr>';
                         return;
                     }
 
@@ -1305,7 +1304,6 @@
                     history.forEach((item) => {
                         const row = document.createElement('tr');
                         const timestamp = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
-                        const category = item.category || '-';
                         const summary = item.summary || '-';
                         const status = item.status || '-';
                         const details = item.details || '-';
@@ -1313,7 +1311,6 @@
 
                         row.innerHTML = `
                             <td>${escapeHtml(timestamp)}</td>
-                            <td style="text-transform: capitalize;">${escapeHtml(category)}</td>
                             <td>${escapeHtml(summary)}</td>
                             <td><span style="display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; color: ${statusColor}; border: 1px solid ${statusColor}; text-transform: capitalize;">${escapeHtml(status)}</span></td>
                             <td style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(details)}</td>
@@ -1321,7 +1318,7 @@
                         actionHistoryResults.appendChild(row);
                     });
                 } catch (error) {
-                    actionHistoryResults.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
+                    actionHistoryResults.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 }
             }
 
