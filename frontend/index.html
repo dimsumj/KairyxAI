@@ -749,6 +749,7 @@
                     const data = await response.json();
 
                     const readyJobs = data.imports.filter(job => job.status === 'Ready to Use');
+                    const previousSelection = datasetSelect.value;
                     datasetSelect.innerHTML = ''; // Clear loading message
 
                     if (readyJobs.length > 0) {
@@ -758,6 +759,10 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
+                        const selectedDataset = readyJobs.some(job => job.name === previousSelection)
+                            ? previousSelection
+                            : readyJobs[0].name;
+                        datasetSelect.value = selectedDataset;
                         // Do not auto-run predictions on tab switch/load.
                         // User must explicitly click Predict Churn.
                         allChurnPredictionPlayers = [];
@@ -1324,6 +1329,7 @@
             // Check status on page load and then every 5 seconds
             checkBackendStatus();
             setInterval(checkBackendStatus, 5000);
+            loadReadyImportsForOperatorHub();
 
             // Theme Toggle Logic
             const themeToggle = document.getElementById('theme-switch-checkbox');
