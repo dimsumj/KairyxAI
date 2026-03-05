@@ -70,8 +70,12 @@ export interface PredictionRow {
   ltv: number | string;
   session_count: number | string;
   event_count: number | string;
+  days_since_last_seen?: number | string;
+  churn_state?: string;
+  churn_inactive_days?: number;
   predicted_churn_risk: string;
   churn_reason: string;
+  top_signals?: Array<{ signal: string; value: any }>;
   suggested_action: string;
 }
 
@@ -214,6 +218,16 @@ export const backendService = {
   async getExperimentSummary(experimentId?: string) {
     const q = experimentId ? `?experiment_id=${encodeURIComponent(experimentId)}` : '';
     return request<ExperimentSummary>(`/experiments/summary${q}`);
+  },
+
+  async getChurnConfig() {
+    return request<{ churn: { churn_inactive_days: number } }>("/churn/config");
+  },
+
+  async updateChurnConfig(churnInactiveDays: number) {
+    return request<{ churn: { churn_inactive_days: number } }>("/churn/config", "POST", {
+      churn_inactive_days: churnInactiveDays,
+    });
   },
 
   async listImports() {

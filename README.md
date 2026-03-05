@@ -375,3 +375,17 @@ Frontend workbench now includes:
 - Manual Field Mapping section (load/save/preview)
 - Identity Links table for cross-source user matching visibility
 
+## Churn prediction model split (active vs already churned)
+
+Churn is now evaluated in 2 layers:
+1. **Already churned** (rule-based):
+   - configurable `churn_inactive_days` (default 14)
+   - if `days_since_last_seen >= churn_inactive_days` => `churn_state = churned`
+2. **Likely to churn** (risk scoring):
+   - only evaluated for `churn_state = active`
+   - returns `churn_risk`, `reason`, and `top_signals`
+
+API:
+- `GET /churn/config`
+- `POST /churn/config` with `{ "churn_inactive_days": 14 }`
+

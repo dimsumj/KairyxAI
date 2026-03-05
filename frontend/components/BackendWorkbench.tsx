@@ -49,6 +49,7 @@ const BackendWorkbench: React.FC = () => {
     b_variant_pct: 0.5,
   });
   const [experimentSummary, setExperimentSummary] = useState<ExperimentSummary | null>(null);
+  const [churnInactiveDays, setChurnInactiveDays] = useState(14);
 
   const [importSource, setImportSource] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -62,12 +63,13 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp, identityResp, rejectedResp, conflictsResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, churnConfigResp, freshnessResp, identityResp, rejectedResp, conflictsResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
         backendService.listImports(),
         backendService.getExperimentConfig(),
+        backendService.getChurnConfig(),
         backendService.connectorFreshness(),
         backendService.listIdentityLinks(100),
         backendService.cleanupRejectedEvents({ limit: 50 }),
@@ -78,6 +80,7 @@ const BackendWorkbench: React.FC = () => {
       setSources(sourcesResp.sources || []);
       setImports(importsResp.imports || []);
       setExperimentConfig(expConfigResp.experiment);
+      setChurnInactiveDays(churnConfigResp.churn?.churn_inactive_days || 14);
       setFreshness(freshnessResp.connectors || {});
       setIdentityLinks(identityResp.identity_links || []);
       setRejectedEvents(rejectedResp.rejected_events || []);
@@ -246,6 +249,21 @@ const BackendWorkbench: React.FC = () => {
       setExperimentSummary(resp);
     } catch (err: any) {
       setError(err.message || 'Failed to load experiment summary.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveChurnConfig = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const resp = await backendService.updateChurnConfig(churnInactiveDays);
+      setChurnInactiveDays(resp.churn.churn_inactive_days);
+      setMessage('Churn config saved.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save churn config.');
     } finally {
       setLoading(false);
     }
@@ -927,6 +945,23 @@ const BackendWorkbench: React.FC = () => {
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Churn Configuration</h3>
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-gray-300">Inactive days threshold for "already churned"</label>
+          <input
+            type="number"
+            min={1}
+            className="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={churnInactiveDays}
+            onChange={(e) => setChurnInactiveDays(Number(e.target.value))}
+          />
+          <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={saveChurnConfig} disabled={loading}>
+            Save
+          </button>
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Predict Churn</h3>
         <div className="flex gap-3">
           <select
@@ -950,27 +985,40 @@ const BackendWorkbench: React.FC = () => {
             <thead className="bg-gray-800">
               <tr>
                 <th className="px-3 py-2">User ID</th>
+                <th className="px-3 py-2">State</th>
+                <th className="px-3 py-2">Inactive Days</th>
                 <th className="px-3 py-2">LTV</th>
                 <th className="px-3 py-2">Sessions</th>
                 <th className="px-3 py-2">Events</th>
                 <th className="px-3 py-2">Risk</th>
+                <th className="px-3 py-2">Reason</th>
                 <th className="px-3 py-2">Suggested Action</th>
               </tr>
             </thead>
             <tbody>
               {predictions.map((row, idx) => (
-                <tr key={`${row.user_id}-${idx}`} className="border-t border-gray-800">
+                <tr key={`${row.user_id}-${idx}`} className="border-t border-gray-800 align-top">
                   <td className="px-3 py-2">{row.user_id}</td>
+                  <td className="px-3 py-2">{row.churn_state || '-'}</td>
+                  <td className="px-3 py-2">{row.days_since_last_seen ?? '-'}</td>
                   <td className="px-3 py-2">{row.ltv}</td>
                   <td className="px-3 py-2">{row.session_count}</td>
                   <td className="px-3 py-2">{row.event_count}</td>
                   <td className="px-3 py-2">{row.predicted_churn_risk}</td>
+                  <td className="px-3 py-2 text-xs text-gray-300">
+                    <div>{row.churn_reason}</div>
+                    {row.top_signals?.length ? (
+                      <div className="text-[11px] text-gray-400 mt-1">
+                        {row.top_signals.map((s) => `${s.signal}:${String(s.value)}`).join(' · ')}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2">{row.suggested_action}</td>
                 </tr>
               ))}
               {predictions.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-2 text-gray-500" colSpan={6}>
+                  <td className="px-3 py-2 text-gray-500" colSpan={9}>
                     No predictions yet.
                   </td>
                 </tr>

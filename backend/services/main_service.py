@@ -102,6 +102,9 @@ EXPERIMENT_CONFIG = {
     "holdout_pct": 0.10,
     "b_variant_pct": 0.50,
 }
+CHURN_CONFIG = {
+    "churn_inactive_days": 14,
+}
 
 
 def _normalize_date_for_amplitude(date_str: str) -> str:
@@ -541,6 +544,10 @@ class ExperimentConfigRequest(BaseModel):
     enabled: Optional[bool] = None
     holdout_pct: Optional[float] = None
     b_variant_pct: Optional[float] = None
+
+
+class ChurnConfigRequest(BaseModel):
+    churn_inactive_days: Optional[int] = None
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -1143,6 +1150,21 @@ async def get_experiment_summary(experiment_id: Optional[str] = None):
     return EXPERIMENT_SERVICE.summary(exp_id)
 
 
+@app.get("/churn/config")
+async def get_churn_config():
+    return {"churn": CHURN_CONFIG}
+
+
+@app.post("/churn/config")
+async def update_churn_config(request: ChurnConfigRequest):
+    payload = request.dict(exclude_none=True)
+    if "churn_inactive_days" in payload and payload["churn_inactive_days"] < 1:
+        raise HTTPException(status_code=400, detail="churn_inactive_days must be >= 1")
+    CHURN_CONFIG.update(payload)
+    append_audit_log("churn_config_updated", CHURN_CONFIG)
+    return {"churn": CHURN_CONFIG}
+
+
 @app.post("/configure-llm-policy")
 async def configure_llm_policy(request: LlmPolicyUpdateRequest):
     """Merges and validates incoming LLM policy patch, then persists it."""
@@ -1194,7 +1216,11 @@ async def generate_churn_report(request: ChurnReportRequest):
         BIGQUERY_SERVICE_INSTANCE.write_processed_events(normalized_data, job_identifier)
 
         # 5. Initialize the modeling engine with the warehouse client and the AI client
-        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+        modeling_engine = PlayerModelingEngine(
+            gemini_client=gemini_client,
+            bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+            churn_inactive_days=int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+        )
 
         # 6. Use only players present in this report payload.
         player_ids = sorted({event.get("player_id") for event in normalized_data if event.get("player_id") is not None})
@@ -1233,7 +1259,11 @@ async def create_cohorts(request: CohortCreationRequest):
         events_data = await get_events_with_caching(latest_job['start_date'], latest_job['end_date'])
 
         gemini_client = GeminiClient()
-        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+        modeling_engine = PlayerModelingEngine(
+            gemini_client=gemini_client,
+            bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+            churn_inactive_days=int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+        )
         cohort_service = PlayerCohortService(modeling_engine)
 
         cohorts = await cohort_service.create_player_cohorts()
@@ -1677,7 +1707,11 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
     except Exception as e:
         print(f"Warning: Gemini unavailable, falling back to heuristic mode: {e}")
 
-    modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+    modeling_engine = PlayerModelingEngine(
+            gemini_client=gemini_client,
+            bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+            churn_inactive_days=int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+        )
     decision_engine = GrowthDecisionEngine(gemini_client)
 
     player_ids = modeling_engine.get_all_player_ids()
@@ -1696,23 +1730,34 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             profile=profile,
             prediction_mode=prediction_mode,
         )
+        churn_state = churn_estimate.get("churn_state", profile.get("churn_state", "active")) if churn_estimate else profile.get("churn_state", "active")
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
         recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
-        policy_eval = LLM_POLICY_ENGINE.evaluate(
-            LLM_POLICY_CONFIG,
-            {
-                "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
-                "churn_risk": churn_risk,
-                "confidence_gap": 50.0,
-                "recency_risk": recency_risk,
-                "weekly_actions_count": 0,
-                "blacklisted": False,
-                "daily_budget_exceeded": False,
-                "cache_hit": False,
-            },
-        )
 
-        if policy_eval.get("route") == "NO_LLM":
+        if churn_state == "churned":
+            policy_eval = {"route": "NO_ACTION", "reason": "Player already churned by inactivity threshold."}
+        else:
+            policy_eval = LLM_POLICY_ENGINE.evaluate(
+                LLM_POLICY_CONFIG,
+                {
+                    "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
+                    "churn_risk": churn_risk,
+                    "confidence_gap": 50.0,
+                    "recency_risk": recency_risk,
+                    "weekly_actions_count": 0,
+                    "blacklisted": False,
+                    "daily_budget_exceeded": False,
+                    "cache_hit": False,
+                },
+            )
+
+        if churn_state == "churned":
+            next_action = {
+                "player_id": player_id,
+                "decision": "NO_ACTION",
+                "reason": "Already churned by inactivity threshold.",
+            }
+        elif policy_eval.get("route") == "NO_LLM":
             next_action = {
                 "player_id": player_id,
                 "decision": "NO_ACTION",
@@ -1727,8 +1772,12 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             "ltv": profile.get("total_revenue", "N/A"),
             "session_count": profile.get("total_sessions", "N/A"),
             "event_count": profile.get("total_events", "N/A"),
+            "days_since_last_seen": profile.get("days_since_last_seen", "N/A"),
+            "churn_state": churn_state,
+            "churn_inactive_days": int(CHURN_CONFIG.get("churn_inactive_days", 14)),
             "predicted_churn_risk": churn_risk,
             "churn_reason": churn_reason,
+            "top_signals": churn_estimate.get("top_signals", []) if churn_estimate else [],
             "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
             "llm_route": policy_eval.get("route"),
             "policy_reason": policy_eval.get("reason"),
@@ -1810,7 +1859,11 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
         except Exception as e:
             print(f"Warning: Gemini unavailable, falling back to heuristic mode: {e}")
 
-        modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
+        modeling_engine = PlayerModelingEngine(
+            gemini_client=gemini_client,
+            bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+            churn_inactive_days=int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+        )
         decision_engine = GrowthDecisionEngine(gemini_client)
         executor = EngagementExecutor()
         feedback_service = EngagementFeedback()
@@ -1829,24 +1882,35 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
             prediction_mode=request.prediction_mode or "local",
         )
 
+        churn_state = churn_estimate.get("churn_state", player_profile.get("churn_state", "active")) if churn_estimate else player_profile.get("churn_state", "active")
         churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
         recency_risk = min(max(float(player_profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
-        policy_eval = LLM_POLICY_ENGINE.evaluate(
-            LLM_POLICY_CONFIG,
-            {
-                "ltv": float(player_profile.get("total_revenue", 0.0) or 0.0),
-                "churn_risk": churn_risk,
-                "confidence_gap": 50.0,
-                "recency_risk": recency_risk,
-                "weekly_actions_count": 0,
-                "blacklisted": False,
-                "daily_budget_exceeded": False,
-                "cache_hit": False,
-            },
-        )
+
+        if churn_state == "churned":
+            policy_eval = {"route": "NO_ACTION", "reason": "Player already churned by inactivity threshold."}
+        else:
+            policy_eval = LLM_POLICY_ENGINE.evaluate(
+                LLM_POLICY_CONFIG,
+                {
+                    "ltv": float(player_profile.get("total_revenue", 0.0) or 0.0),
+                    "churn_risk": churn_risk,
+                    "confidence_gap": 50.0,
+                    "recency_risk": recency_risk,
+                    "weekly_actions_count": 0,
+                    "blacklisted": False,
+                    "daily_budget_exceeded": False,
+                    "cache_hit": False,
+                },
+            )
 
         # 4. Decide and execute next best action
-        if policy_eval.get("route") == "NO_LLM":
+        if churn_state == "churned":
+            next_action = {
+                "player_id": player_id,
+                "decision": "NO_ACTION",
+                "reason": "Already churned by inactivity threshold.",
+            }
+        elif policy_eval.get("route") == "NO_LLM":
             next_action = {
                 "player_id": player_id,
                 "decision": "NO_ACTION",

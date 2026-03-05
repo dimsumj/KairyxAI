@@ -11,9 +11,9 @@ from bigquery_service import BigQueryService
 class PlayerModelingEngine:
     """
     Analyzes player event data to build intelligence profiles, including
-    summaries, churn risk, and engagement patterns.
+    summaries, churn state, and churn risk.
     """
-    def __init__(self, gemini_client: Optional[GeminiClient], bigquery_service: BigQueryService):
+    def __init__(self, gemini_client: Optional[GeminiClient], bigquery_service: BigQueryService, churn_inactive_days: int = 14):
         """
         Initializes the engine with AI and data warehouse clients.
 
@@ -23,6 +23,7 @@ class PlayerModelingEngine:
         """
         self.ai_client = gemini_client
         self.db_client = bigquery_service
+        self.churn_inactive_days = max(1, int(churn_inactive_days))
 
     def _get_and_preprocess_player_data(self, player_id: Any) -> Optional[pd.DataFrame]:
         """Fetches player data from the warehouse and performs preprocessing."""
@@ -74,14 +75,19 @@ class PlayerModelingEngine:
             # Sum up revenue from the 'revenue_usd' field in event_properties
             total_revenue = float(purchases['event_properties'].apply(lambda x: x.get('revenue_usd', 0)).sum()) # Ensure total_revenue is a standard Python float
 
+        days_since_last_seen = (datetime.utcnow() - last_seen.replace(tzinfo=None)).days
+        churn_state = "churned" if days_since_last_seen >= self.churn_inactive_days else "active"
+
         profile = {
             "player_id": player_id,
             "first_seen_date": first_seen.isoformat(),
             "last_seen_date": last_seen.isoformat(),
             "total_sessions": total_sessions,
             "total_events": len(player_events),
-            "total_revenue": total_revenue, # This is now a float
-            "days_since_last_seen": (datetime.utcnow() - last_seen.replace(tzinfo=None)).days,
+            "total_revenue": total_revenue,
+            "days_since_last_seen": days_since_last_seen,
+            "churn_state": churn_state,
+            "churn_inactive_days": self.churn_inactive_days,
         }
         return profile
 
@@ -90,25 +96,39 @@ class PlayerModelingEngine:
         days_since_last_seen = float(player_profile.get("days_since_last_seen", 0) or 0)
         total_sessions = float(player_profile.get("total_sessions", 0) or 0)
         total_revenue = float(player_profile.get("total_revenue", 0.0) or 0.0)
+        churn_state = player_profile.get("churn_state", "active")
+
+        if churn_state == "churned":
+            return {
+                "player_id": player_id,
+                "churn_state": "churned",
+                "churn_risk": "already_churned",
+                "reason": f"No activity for {int(days_since_last_seen)} days (threshold={self.churn_inactive_days}).",
+                "top_signals": [
+                    {"signal": "inactive_days", "value": days_since_last_seen},
+                    {"signal": "threshold_days", "value": self.churn_inactive_days},
+                ],
+            }
 
         score = 0.0
-        # Recency dominates for churn
-        if days_since_last_seen >= 14:
-            score += 70
-        elif days_since_last_seen >= 7:
+        signals = []
+        if days_since_last_seen >= 7:
             score += 45
+            signals.append({"signal": "inactive_7d_plus", "value": days_since_last_seen})
         elif days_since_last_seen >= 3:
             score += 20
+            signals.append({"signal": "inactive_3d_plus", "value": days_since_last_seen})
 
-        # Low historical engagement increases risk
         if total_sessions <= 2:
             score += 20
+            signals.append({"signal": "very_low_sessions", "value": total_sessions})
         elif total_sessions <= 5:
             score += 10
+            signals.append({"signal": "low_sessions", "value": total_sessions})
 
-        # High spenders get slightly reduced churn score
         if total_revenue >= 100:
             score -= 10
+            signals.append({"signal": "high_value_user", "value": total_revenue})
 
         if score >= 70:
             churn_risk = "high"
@@ -119,11 +139,13 @@ class PlayerModelingEngine:
 
         return {
             "player_id": player_id,
+            "churn_state": "active",
             "churn_risk": churn_risk,
             "reason": (
-                f"Heuristic fallback (no LLM): days_since_last_seen={days_since_last_seen}, "
+                f"Heuristic fallback: days_since_last_seen={days_since_last_seen}, "
                 f"sessions={total_sessions}, revenue={total_revenue}."
-            )
+            ),
+            "top_signals": signals,
         }
 
     async def estimate_churn_risk(self, player_id: Any, player_profile: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -144,12 +166,18 @@ class PlayerModelingEngine:
         if not player_profile:
             return None
 
+        if player_profile.get("churn_state") == "churned":
+            return self._estimate_churn_risk_heuristic(player_id, player_profile)
+
         if self.ai_client is None:
             return self._estimate_churn_risk_heuristic(player_id, player_profile)
 
         prompt = f"""
-        As a world-class mobile game analyst, analyze the following player profile and estimate their churn risk.
-        Provide your response as a JSON object with two keys: "churn_risk" (string: "low", "medium", or "high") and "reason" (string: a brief justification for your analysis).
+        As a world-class mobile game analyst, analyze the following ACTIVE player profile and estimate churn risk.
+        Provide JSON with keys:
+        - churn_risk: "low" | "medium" | "high"
+        - reason: short plain explanation
+        - top_signals: array of up to 3 objects {"signal": string, "value": number|string}
 
         Player Profile:
         {json.dumps(player_profile, indent=2, cls=NpEncoder)}
@@ -162,8 +190,10 @@ class PlayerModelingEngine:
             ai_analysis = json.loads(cleaned_json_text)
             return {
                 "player_id": player_id,
+                "churn_state": "active",
                 "churn_risk": ai_analysis.get("churn_risk", "unknown"),
-                "reason": ai_analysis.get("reason", "AI analysis failed.")
+                "reason": ai_analysis.get("reason", "AI analysis failed."),
+                "top_signals": ai_analysis.get("top_signals", []),
             }
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error processing AI response for churn risk: {e}")
