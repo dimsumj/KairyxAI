@@ -79,3 +79,10 @@ engagement_actions.log
 
 .gcs_bucket/
 backend/services/.import_jobs.json
+backend/services/.audit.log.jsonl
+backend/services/.connector_status.json
+backend/services/.external_churn_updates.json
+backend/services/.prediction_jobs.json
+backend/services/.kairyx_local.db
+backend/services/.kairyx_local.db-shm
+backend/services/.kairyx_local.db-wal
