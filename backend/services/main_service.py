@@ -459,6 +459,11 @@ class MappingPreviewRequest(BaseModel):
     connector_name: str
     sample_record: Dict[str, Any]
 
+
+class MappingCoverageRequest(BaseModel):
+    connector_name: str
+    sample_records: list[Dict[str, Any]]
+
 class SendGridApiKey(BaseModel):
     """Request model for setting the SendGrid API key."""
     sendgrid_api_key: str = Field(..., alias='api_key')
@@ -710,6 +715,88 @@ async def preview_field_mapping(request: MappingPreviewRequest):
 
     preview = canonical_attribution_event(conn_type, request.sample_record, mapping)
     return {"connector": request.connector_name, "mapping": mapping, "preview": preview}
+
+
+@app.post("/field-mapping/coverage")
+async def mapping_coverage(request: MappingCoverageRequest):
+    mapping = get_field_mapping(request.connector_name)
+
+    required_fields = ["canonical_user_id", "event_name", "event_time"]
+    optional_fields = ["source_event_id", "campaign", "adset", "media_source"]
+
+    def _get_path(raw: Dict[str, Any], path: str):
+        cur: Any = raw
+        for part in (path or "").split('.'):
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+        return cur
+
+    records = request.sample_records or []
+    total = len(records)
+    coverage = {}
+
+    for field in required_fields + optional_fields:
+        path = mapping.get(field)
+        if not path:
+            coverage[field] = {"mapped": False, "path": None, "hit_rate": 0.0, "hits": 0, "total": total}
+            continue
+        hits = 0
+        for r in records:
+            if _get_path(r, path) is not None:
+                hits += 1
+        coverage[field] = {
+            "mapped": True,
+            "path": path,
+            "hits": hits,
+            "total": total,
+            "hit_rate": (hits / total) if total > 0 else 0.0,
+        }
+
+    required_avg = 0.0
+    if required_fields:
+        required_avg = sum(coverage[f]["hit_rate"] for f in required_fields) / len(required_fields)
+
+    return {
+        "connector": request.connector_name,
+        "required_fields": required_fields,
+        "optional_fields": optional_fields,
+        "coverage": coverage,
+        "required_coverage_score": required_avg,
+    }
+
+
+@app.get("/job/{job_name}/mapping-coverage")
+async def job_mapping_coverage(job_name: str, connector_name: str):
+    job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
+
+    pending_notifications = job.get("pending_notifications") or []
+    if not pending_notifications:
+        return {"connector": connector_name, "required_coverage_score": 0.0, "coverage": {}}
+
+    mapping = get_field_mapping(connector_name)
+    _, connector_type = _get_connector_config(connector_name)
+
+    sample_records = []
+    for msg in pending_notifications[:20]:
+        try:
+            n = json.loads(msg)
+            gcs_path = n.get("gcs_path")
+            source = n.get("source")
+            if connector_type and source and source != connector_type:
+                continue
+            if not gcs_path:
+                continue
+            blob_name = gcs_path.replace(f"gs://{GCS_SERVICE_INSTANCE.bucket_name}/", "")
+            raw_events = GCS_SERVICE_INSTANCE.download_raw_events(blob_name)
+            sample_records.extend(raw_events[:20])
+        except Exception:
+            continue
+
+    req = MappingCoverageRequest(connector_name=connector_name, sample_records=sample_records[:100])
+    return await mapping_coverage(req)
 
 
 @app.get("/list-configured-sources")

@@ -15,6 +15,7 @@ const BackendWorkbench: React.FC = () => {
   const [mappingJson, setMappingJson] = useState('{}');
   const [previewJson, setPreviewJson] = useState('{"PID":"user_123","event_name":"install","timestamp":"2026-03-05T01:00:00Z"}');
   const [mappingPreviewResult, setMappingPreviewResult] = useState<any>(null);
+  const [mappingCoverageResult, setMappingCoverageResult] = useState<any>(null);
   const [identityLinks, setIdentityLinks] = useState<IdentityLink[]>([]);
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
@@ -288,6 +289,28 @@ const BackendWorkbench: React.FC = () => {
     }
   };
 
+  const loadMappingCoverage = async () => {
+    if (!selectedMappingConnector) return;
+    setLoading(true);
+    setError('');
+    try {
+      const awaitingJob = awaitingMappingJobs[0];
+      if (awaitingJob) {
+        const resp = await backendService.jobMappingCoverage(awaitingJob.name, selectedMappingConnector);
+        setMappingCoverageResult(resp);
+      } else {
+        const sample = JSON.parse(previewJson || '{}');
+        const resp = await backendService.mappingCoverage(selectedMappingConnector, [sample]);
+        setMappingCoverageResult(resp);
+      }
+      setMessage('Mapping coverage calculated.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to calculate mapping coverage.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -540,7 +563,31 @@ const BackendWorkbench: React.FC = () => {
             {mappingPreviewResult ? JSON.stringify(mappingPreviewResult, null, 2) : 'Preview result will appear here.'}
           </div>
         </div>
-        <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={previewFieldMapping} disabled={loading}>Preview Mapping</button>
+        <div className="flex gap-2">
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={previewFieldMapping} disabled={loading}>Preview Mapping</button>
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" onClick={loadMappingCoverage} disabled={loading}>Coverage</button>
+        </div>
+
+        {mappingCoverageResult ? (
+          <div className="space-y-3 bg-gray-800/60 border border-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-300">Required Coverage Score: {(Number(mappingCoverageResult.required_coverage_score || 0) * 100).toFixed(1)}%</div>
+            <div className="w-full bg-gray-700 rounded-full h-2.5">
+              <div
+                className={`h-2.5 rounded-full ${(Number(mappingCoverageResult.required_coverage_score || 0) >= 0.9) ? 'bg-green-500' : (Number(mappingCoverageResult.required_coverage_score || 0) >= 0.7) ? 'bg-amber-500' : 'bg-red-500'}`}
+                style={{ width: `${Math.max(0, Math.min(100, Number(mappingCoverageResult.required_coverage_score || 0) * 100))}%` }}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+              {Object.entries(mappingCoverageResult.coverage || {}).map(([field, stat]: any) => (
+                <div key={field} className="border border-gray-700 rounded px-2 py-1">
+                  <div className="font-semibold text-gray-200">{field}</div>
+                  <div className="text-gray-400">path: {stat.path || '-'}</div>
+                  <div className="text-gray-300">hit: {(Number(stat.hit_rate || 0) * 100).toFixed(1)}% ({stat.hits || 0}/{stat.total || 0})</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

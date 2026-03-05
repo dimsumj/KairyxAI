@@ -123,6 +123,17 @@ export const backendService = {
     });
   },
 
+  async mappingCoverage(connectorName: string, sampleRecords: Record<string, any>[]) {
+    return request<any>("/field-mapping/coverage", "POST", {
+      connector_name: connectorName,
+      sample_records: sampleRecords,
+    });
+  },
+
+  async jobMappingCoverage(jobName: string, connectorName: string) {
+    return request<any>(`/job/${encodeURIComponent(jobName)}/mapping-coverage?connector_name=${encodeURIComponent(connectorName)}`);
+  },
+
   async listIdentityLinks(limit = 200) {
     return request<{ identity_links: IdentityLink[] }>(`/identity-links?limit=${limit}`);
   },
