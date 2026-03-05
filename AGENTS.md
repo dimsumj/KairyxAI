@@ -10,7 +10,8 @@ These instructions apply to the entire repository.
 
 ## Validation
 
-- After making code changes, run the smallest relevant verification you can for the affected area.
+- After making code changes, run the relevant local tests for the affected area before handoff.
+- If no dedicated tests exist for the changed area, run the closest meaningful local validation instead.
 - If verification cannot be run, say so clearly in the final response.
 
 ## Git Workflow
@@ -19,7 +20,9 @@ These instructions apply to the entire repository.
 - Only commit when the changes for the request are complete enough to hand off.
 - Do not include unrelated modified files in the commit.
 - Do not create empty commits unless the user explicitly asks for one.
-- Do not push, merge, rebase, or rewrite history unless the user explicitly asks.
+- Unless the user explicitly says not to push, the agent may push the completed commit after relevant local verification passes.
+- Do not push if tests or validation fail, or if the working tree still contains unrelated changes that should not be published.
+- Do not merge, rebase, or rewrite history unless the user explicitly asks.
 
 ## Commit Messages
 
@@ -30,4 +33,4 @@ These instructions apply to the entire repository.
 
 ## Communication
 
-- In the final response, briefly state what changed, what was verified, and whether a commit was created.
+- In the final response, briefly state what changed, what was verified, and whether a commit and push were performed.
