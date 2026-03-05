@@ -21,6 +21,8 @@ const BackendWorkbench: React.FC = () => {
   const [conflicts, setConflicts] = useState<any[]>([]);
   const [cleanupJobFilter, setCleanupJobFilter] = useState('');
   const [cleanupSourceFilter, setCleanupSourceFilter] = useState('');
+  const [externalChurnJson, setExternalChurnJson] = useState('[\n  {"user_id":"u_123","churn_risk":"high","reason":"CRM score","source":"crm_model_v2"}\n]');
+  const [externalChurnStats, setExternalChurnStats] = useState<any>(null);
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -64,7 +66,7 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, churnConfigResp, freshnessResp, identityResp, rejectedResp, conflictsResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, churnConfigResp, freshnessResp, identityResp, rejectedResp, conflictsResp, externalResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
@@ -75,6 +77,7 @@ const BackendWorkbench: React.FC = () => {
         backendService.listIdentityLinks(100),
         backendService.cleanupRejectedEvents({ limit: 50 }),
         backendService.cleanupConflicts({ limit: 50 }),
+        backendService.getExternalChurnUpdates(10),
       ]);
       setHealthStatus(health.status);
       setConnectors(connectorsResp.connectors || []);
@@ -87,6 +90,11 @@ const BackendWorkbench: React.FC = () => {
       setIdentityLinks(identityResp.identity_links || []);
       setRejectedEvents(rejectedResp.rejected_events || []);
       setConflicts(conflictsResp.conflicts || []);
+      setExternalChurnStats({
+        updated_at: externalResp.updated_at,
+        by_user_id: (externalResp.by_user_id || []).length,
+        by_email: (externalResp.by_email || []).length,
+      });
       if (!selectedMappingConnector && connectorsResp.connectors?.length) {
         setSelectedMappingConnector(connectorsResp.connectors[0].name);
       }
@@ -339,6 +347,26 @@ const BackendWorkbench: React.FC = () => {
       setMessage('Cleanup observability refreshed.');
     } catch (err: any) {
       setError(err.message || 'Failed to refresh cleanup observability.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const uploadExternalChurn = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const parsed = JSON.parse(externalChurnJson || '[]');
+      const items = Array.isArray(parsed) ? parsed : parsed.items;
+      if (!Array.isArray(items)) {
+        throw new Error('Input must be an array or { items: [] }');
+      }
+      const resp = await backendService.upsertExternalChurnUpdates(items);
+      setExternalChurnStats(resp);
+      setMessage(`External churn updates uploaded: ${resp.count}. user_id=${resp.matched_user_id}, email=${resp.matched_email}, skipped=${resp.skipped}`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload external churn updates.');
     } finally {
       setLoading(false);
     }
@@ -945,6 +973,26 @@ const BackendWorkbench: React.FC = () => {
         ) : (
           <p className="text-gray-500 text-sm">No experiment summary loaded yet.</p>
         )}
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">External Churn Updates</h3>
+        <p className="text-xs text-gray-400">Paste JSON array (or {'{ items: [...] }'}) with keys: user_id or email, churn_risk, reason, source.</p>
+        <textarea
+          className="w-full h-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 font-mono text-xs"
+          value={externalChurnJson}
+          onChange={(e) => setExternalChurnJson(e.target.value)}
+        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={uploadExternalChurn} disabled={loading}>
+            Upload External Churn List
+          </button>
+          {externalChurnStats ? (
+            <span className="text-xs text-gray-300">
+              updated_at: {externalChurnStats.updated_at ? new Date(externalChurnStats.updated_at).toLocaleString() : 'N/A'} · by_user_id: {externalChurnStats.by_user_id ?? externalChurnStats.matched_user_id ?? 0} · by_email: {externalChurnStats.by_email ?? externalChurnStats.matched_email ?? 0}
+            </span>
+          ) : null}
+        </div>
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

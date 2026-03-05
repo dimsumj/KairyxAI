@@ -408,3 +408,5 @@ Example:
 ```
 When matched, predictions are auto-overridden for active users and `prediction_source` is marked as `external:<source>`.
 
+Workbench now includes an **External Churn Updates** panel to paste/upload JSON lists and view ingest stats.
+

@@ -1228,7 +1228,13 @@ async def upsert_external_churn_updates(request: ExternalChurnUpsertRequest):
 
     matched_user_id = 0
     matched_email = 0
+    skipped = 0
+
     for i in items:
+        if not i.user_id and not i.email:
+            skipped += 1
+            continue
+
         rec = {
             "user_id": i.user_id,
             "email": i.email,
@@ -1246,12 +1252,20 @@ async def upsert_external_churn_updates(request: ExternalChurnUpsertRequest):
 
     EXTERNAL_CHURN_UPDATES["updated_at"] = datetime.utcnow().isoformat()
     save_external_churn_to_cache()
-    append_audit_log("external_churn_updates_upserted", {"count": len(items), "matched_user_id": matched_user_id, "matched_email": matched_email})
+    append_audit_log("external_churn_updates_upserted", {
+        "count": len(items),
+        "matched_user_id": matched_user_id,
+        "matched_email": matched_email,
+        "skipped": skipped,
+    })
+
     return {
         "message": "External churn updates ingested.",
         "count": len(items),
         "matched_user_id": matched_user_id,
         "matched_email": matched_email,
+        "unmatched": max(0, len(items) - matched_user_id - matched_email + skipped),
+        "skipped": skipped,
         "updated_at": EXTERNAL_CHURN_UPDATES.get("updated_at"),
     }
 
