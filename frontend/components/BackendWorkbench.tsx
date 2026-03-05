@@ -52,6 +52,7 @@ const BackendWorkbench: React.FC = () => {
   const [autoMapping, setAutoMapping] = useState(false);
 
   const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
+  const awaitingMappingJobs = useMemo(() => imports.filter((job) => job.status === 'Awaiting Mapping'), [imports]);
 
   const refreshAll = async () => {
     setError('');
@@ -97,6 +98,17 @@ const BackendWorkbench: React.FC = () => {
       setSelectedJob(readyJobs[0].name);
     }
   }, [readyJobs, selectedJob]);
+
+  useEffect(() => {
+    if (!awaitingMappingJobs.length) return;
+
+    const topAwaiting = awaitingMappingJobs[0];
+    const firstSource = topAwaiting.source_stats?.[0]?.source;
+    if (firstSource && firstSource !== selectedMappingConnector) {
+      setSelectedMappingConnector(firstSource);
+      setMessage(`Job "${topAwaiting.name}" is awaiting mapping. Switched mapping panel to ${firstSource}.`);
+    }
+  }, [awaitingMappingJobs, selectedMappingConnector]);
 
   const runConnectorSave = async () => {
     setLoading(true);
@@ -299,6 +311,20 @@ const BackendWorkbench: React.FC = () => {
 
       {message ? <div className="text-green-400 text-sm">{message}</div> : null}
       {error ? <div className="text-red-400 text-sm">{error}</div> : null}
+
+      {awaitingMappingJobs.length > 0 ? (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-sm space-y-2">
+          <div className="font-semibold text-amber-300">Manual mapping required</div>
+          <div className="text-amber-100/90">
+            {awaitingMappingJobs.length} import job(s) are paused at <code>Awaiting Mapping</code>. Suggested flow: Load mapping → Preview → Save → Process After Mapping.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs" onClick={loadFieldMapping} disabled={loading || !selectedMappingConnector}>Load Mapping</button>
+            <button className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs" onClick={previewFieldMapping} disabled={loading || !selectedMappingConnector}>Preview Mapping</button>
+            <button className="bg-indigo-600 hover:bg-indigo-500 rounded px-2 py-1 text-xs" onClick={() => processAfterMapping(awaitingMappingJobs[0].name)} disabled={loading}>Process First Awaiting Job</button>
+          </div>
+        </div>
+      ) : null}
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Configure Connectors</h3>

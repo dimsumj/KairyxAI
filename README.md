@@ -282,6 +282,7 @@ curl -X POST http://localhost:8000/ingest-and-process-data \
 `auto_mapping` behavior:
 - default: `false` (unchecked)
 - when `true`: job pulls data then pauses at `Awaiting Mapping` status
+- Workbench now shows a guided banner for paused jobs and auto-focuses mapping panel to the first pending source
 - after you complete manual mapping, call:
 
 ```bash
