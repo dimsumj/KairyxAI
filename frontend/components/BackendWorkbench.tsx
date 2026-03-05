@@ -49,6 +49,7 @@ const BackendWorkbench: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [continueOnSourceError, setContinueOnSourceError] = useState(true);
+  const [autoMapping, setAutoMapping] = useState(false);
 
   const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
 
@@ -140,6 +141,7 @@ const BackendWorkbench: React.FC = () => {
         endDate.replaceAll('-', ''),
         importSource,
         continueOnSourceError,
+        autoMapping,
       );
       setMessage('Import job started.');
       await refreshAll();
@@ -180,6 +182,21 @@ const BackendWorkbench: React.FC = () => {
       await refreshAll();
     } catch (err: any) {
       setError(err.message || 'Failed to delete connector.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const processAfterMapping = async (jobName: string) => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await backendService.processAfterMapping(jobName);
+      setMessage(`Job "${jobName}" processed after manual mapping.`);
+      await refreshAll();
+    } catch (err: any) {
+      setError(err.message || 'Failed to process after mapping.');
     } finally {
       setLoading(false);
     }
@@ -568,6 +585,14 @@ const BackendWorkbench: React.FC = () => {
           />
           Continue if one source fails
         </label>
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input
+            type="checkbox"
+            checked={autoMapping}
+            onChange={(e) => setAutoMapping(e.target.checked)}
+          />
+          Auto mapping (pause after pull for manual mapping)
+        </label>
         <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runStartImport} disabled={loading}>
           Start Import
         </button>
@@ -586,7 +611,20 @@ const BackendWorkbench: React.FC = () => {
               {imports.map((job) => (
                 <tr key={job.name} className="border-t border-gray-800 align-top">
                   <td className="px-3 py-2">{job.name}</td>
-                  <td className="px-3 py-2">{job.status}</td>
+                  <td className="px-3 py-2">
+                    <div className="space-y-1">
+                      <div>{job.status}</div>
+                      {job.status === 'Awaiting Mapping' ? (
+                        <button
+                          className="text-xs bg-indigo-600 hover:bg-indigo-500 rounded px-2 py-1"
+                          onClick={() => processAfterMapping(job.name)}
+                          disabled={loading}
+                        >
+                          Process After Mapping
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
                   <td className="px-3 py-2">
                     {job.start_date} to {job.end_date}
                   </td>

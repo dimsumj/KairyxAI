@@ -385,7 +385,8 @@ def _transition_job_status(job: Dict[str, Any], next_status: str, allowed: Dict[
 
 
 IMPORT_JOB_ALLOWED_TRANSITIONS = {
-    "Processing": {"Ready to Use", "Failed", "Interrupted"},
+    "Processing": {"Awaiting Mapping", "Ready to Use", "Failed", "Interrupted"},
+    "Awaiting Mapping": {"Processing", "Ready to Use", "Failed", "Interrupted"},
     "Failed": set(),
     "Interrupted": set(),
     "Ready to Use": set(),
@@ -511,7 +512,7 @@ class IngestionRequest(BaseModel):
     end_date: str
     source: str
     continue_on_source_error: bool = True
-
+    auto_mapping: bool = False
 class ChurnPredictionRequest(BaseModel):
     """Request model for running churn prediction on an imported dataset."""
     job_name: str
@@ -1284,7 +1285,7 @@ async def delete_job_cache(job_name: str):
     save_import_jobs_to_cache()
     return {"message": f"Job '{job_name}' and its cache have been deleted."}
 
-def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str, continue_on_source_error: bool = True):
+def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str, continue_on_source_error: bool = True, auto_mapping: bool = False):
     """The actual data processing logic that runs in the background."""
     try:
         job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
@@ -1332,6 +1333,15 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
 
         if not aggregate_ingestion.message_queue_topic:
             raise ValueError("No source produced data for this import window.")
+
+        if auto_mapping:
+            if job and job.get("status") != "Interrupted":
+                job["source_stats"] = source_stats
+                job["pending_notifications"] = list(aggregate_ingestion.message_queue_topic)
+                _transition_job_status(job, "Awaiting Mapping", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
+                save_import_jobs_to_cache()
+                print(f"Job '{job_name}' is awaiting manual mapping.")
+            return
 
         processing_service = DataProcessingService(
             bigquery_service=BIGQUERY_SERVICE_INSTANCE,
@@ -1382,6 +1392,7 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
             job_name,
             request.source,
             request.continue_on_source_error,
+            request.auto_mapping,
         )
         save_import_jobs_to_cache()
         return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
@@ -1405,6 +1416,42 @@ async def stop_job(job_name: str):
         return {"message": f"Job '{job_name}' has been interrupted."}
     else:
         raise HTTPException(status_code=400, detail=f"Job '{job_name}' is not currently processing.")
+
+@app.post("/job/{job_name}/process-after-mapping")
+async def process_after_mapping(job_name: str):
+    """Continue processing for a job paused at 'Awaiting Mapping'."""
+    job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
+    if job.get("status") != "Awaiting Mapping":
+        raise HTTPException(status_code=400, detail=f"Job '{job_name}' is not awaiting mapping.")
+
+    pending_notifications = job.get("pending_notifications") or []
+    if not pending_notifications:
+        raise HTTPException(status_code=400, detail="No pending notifications to process.")
+
+    start_date = job.get("start_date")
+    end_date = job.get("end_date")
+    if not start_date or not end_date:
+        raise HTTPException(status_code=400, detail="Job date range metadata missing.")
+
+    job_identifier = f"{start_date}_to_{end_date}"
+    aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": pending_notifications})()
+
+    processing_service = DataProcessingService(
+        bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+        gcs_service=GCS_SERVICE_INSTANCE,
+        job_identifier=job_identifier,
+    )
+    processing_stats = processing_service.run_processing_pipeline(aggregate_ingestion)
+
+    job["processing_stats"] = processing_stats
+    job.pop("pending_notifications", None)
+    _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
+    save_import_jobs_to_cache()
+
+    return {"message": f"Job '{job_name}' processed after mapping.", "processing_stats": processing_stats}
+
 
 @app.post("/predict-churn-for-import")
 async def predict_churn_for_import(request: ChurnPredictionRequest):

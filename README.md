@@ -276,7 +276,16 @@ You can import from multiple sources in one job by passing comma-separated conne
 ```bash
 curl -X POST http://localhost:8000/ingest-and-process-data \
   -H "Content-Type: application/json" \
-  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1","continue_on_source_error":true}'
+  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1","continue_on_source_error":true,"auto_mapping":false}'
+```
+
+`auto_mapping` behavior:
+- default: `false` (unchecked)
+- when `true`: job pulls data then pauses at `Awaiting Mapping` status
+- after you complete manual mapping, call:
+
+```bash
+curl -X POST http://localhost:8000/job/<job_name>/process-after-mapping
 ```
 
 ### Connector health check

@@ -182,13 +182,18 @@ export const backendService = {
     return request<{ imports: ImportJob[] }>("/list-imports");
   },
 
-  async startImport(startDate: string, endDate: string, source: string, continueOnSourceError = true) {
+  async startImport(startDate: string, endDate: string, source: string, continueOnSourceError = true, autoMapping = false) {
     return request<{ message: string }>("/ingest-and-process-data", "POST", {
       start_date: startDate,
       end_date: endDate,
       source,
       continue_on_source_error: continueOnSourceError,
+      auto_mapping: autoMapping,
     });
+  },
+
+  async processAfterMapping(jobName: string) {
+    return request<{ message: string; processing_stats: any }>(`/job/${encodeURIComponent(jobName)}/process-after-mapping`, "POST");
   },
 
   async predictForImport(jobName: string, forceRecalculate = true) {
