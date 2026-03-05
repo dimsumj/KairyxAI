@@ -739,7 +739,10 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
-                        fetchAndRenderPredictions(readyJobs[0].name, false); // Automatically load predictions for the first dataset
+                        // Do not auto-run predictions on tab switch/load.
+                        // User must explicitly click Predict Churn.
+                        allChurnPredictionPlayers = [];
+                        renderChurnTable();
                         predictChurnBtn.disabled = false;
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
@@ -844,8 +847,10 @@
                 paginationContainer.appendChild(nextButton);
             }
 
-            datasetSelect.addEventListener('change', (e) => {
-                fetchAndRenderPredictions(e.target.value, false);
+            datasetSelect.addEventListener('change', () => {
+                // Selection alone should not trigger prediction.
+                allChurnPredictionPlayers = [];
+                renderChurnTable();
             });
 
             predictChurnBtn.addEventListener('click', () => {
