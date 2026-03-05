@@ -1783,6 +1783,12 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
 
         churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
+        prediction_source = "unknown"
+        if churn_state == "churned":
+            prediction_source = "rule"
+        else:
+            prediction_source = (churn_details or {}).get("selected_source") or (effective_mode if effective_mode != "parallel" else "parallel-selected")
+
         predictions.append({
             "user_id": player_id,
             "ltv": profile.get("total_revenue", "N/A"),
@@ -1794,6 +1800,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             "predicted_churn_risk": churn_risk,
             "churn_reason": churn_reason,
             "top_signals": churn_estimate.get("top_signals", []) if churn_estimate else [],
+            "prediction_source": prediction_source,
             "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
             "llm_route": policy_eval.get("route"),
             "policy_reason": policy_eval.get("reason"),

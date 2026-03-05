@@ -1002,6 +1002,7 @@ const BackendWorkbench: React.FC = () => {
                 <th className="px-3 py-2">Sessions</th>
                 <th className="px-3 py-2">Events</th>
                 <th className="px-3 py-2">Risk</th>
+                <th className="px-3 py-2">Source</th>
                 <th className="px-3 py-2">Reason</th>
                 <th className="px-3 py-2">Suggested Action</th>
               </tr>
@@ -1016,6 +1017,7 @@ const BackendWorkbench: React.FC = () => {
                   <td className="px-3 py-2">{row.session_count}</td>
                   <td className="px-3 py-2">{row.event_count}</td>
                   <td className="px-3 py-2">{row.predicted_churn_risk}</td>
+                  <td className="px-3 py-2">{row.prediction_source || '-'}</td>
                   <td className="px-3 py-2 text-xs text-gray-300">
                     <div>{row.churn_reason}</div>
                     {row.top_signals?.length ? (
@@ -1029,7 +1031,7 @@ const BackendWorkbench: React.FC = () => {
               ))}
               {predictions.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-2 text-gray-500" colSpan={9}>
+                  <td className="px-3 py-2 text-gray-500" colSpan={10}>
                     No predictions yet.
                   </td>
                 </tr>

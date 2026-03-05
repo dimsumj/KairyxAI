@@ -76,6 +76,7 @@ export interface PredictionRow {
   predicted_churn_risk: string;
   churn_reason: string;
   top_signals?: Array<{ signal: string; value: any }>;
+  prediction_source?: string;
   suggested_action: string;
 }
 
