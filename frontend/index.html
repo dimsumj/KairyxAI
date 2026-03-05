@@ -725,6 +725,20 @@
             let currentPage = 1;
             let itemsPerPage = 25;
             let activePredictionJobId = null;
+            let predictionStopRequested = false;
+
+            function renderPredictionProgress(job = {}) {
+                const processed = job.processed_count || 0;
+                const total = job.total_count || 0;
+                const pct = job.progress_pct || 0;
+                const rawStatus = job.status || 'Processing';
+                const displayStatus = rawStatus === 'Stopped'
+                    ? 'Stopped'
+                    : ((job.stop_requested || predictionStopRequested) && rawStatus === 'Processing'
+                        ? 'Stopping'
+                        : rawStatus);
+                predictionProgressInfo.textContent = `Prediction job: ${displayStatus} · ${processed}/${total} (${pct}%)`;
+            }
 
 
             async function loadReadyImportsForOperatorHub() {
@@ -750,6 +764,7 @@
                         renderChurnTable();
                         predictChurnBtn.disabled = false;
                         stopPredictBtn.disabled = true;
+                        predictionStopRequested = false;
                         predictionProgressInfo.textContent = '';
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
@@ -772,6 +787,7 @@
                 operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
                 predictChurnBtn.disabled = true;
                 stopPredictBtn.disabled = false;
+                predictionStopRequested = false;
                 predictionProgressInfo.textContent = 'Prediction job: starting...';
                 allChurnPredictionPlayers = [];
                 renderChurnTable();
@@ -802,12 +818,10 @@
                         allChurnPredictionPlayers = job.predictions || [];
                         renderChurnTable();
 
-                        const processed = job.processed_count || 0;
-                        const total = job.total_count || 0;
-                        const pct = job.progress_pct || 0;
-                        predictionProgressInfo.textContent = `Prediction job: ${job.status || 'Processing'} · ${processed}/${total} (${pct}%)`;
+                        renderPredictionProgress(job);
 
                         if (job.status === 'Ready' || job.status === 'Failed' || job.status === 'Stopped') {
+                            predictionStopRequested = false;
                             done = true;
                             if (job.status === 'Failed') {
                                 throw new Error(job.error || 'Prediction failed.');
@@ -887,6 +901,7 @@
                 // Selection alone should not trigger prediction.
                 allChurnPredictionPlayers = [];
                 renderChurnTable();
+                predictionStopRequested = false;
                 predictionProgressInfo.textContent = '';
             });
 
@@ -898,9 +913,19 @@
             stopPredictBtn.addEventListener('click', async () => {
                 if (!activePredictionJobId) return;
                 try {
+                    predictionStopRequested = true;
+                    stopPredictBtn.disabled = true;
                     predictionProgressInfo.textContent = 'Prediction job: stopping...';
-                    await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
+                    const stopResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
+                    if (!stopResp.ok) {
+                        throw new Error('Failed to stop prediction job.');
+                    }
+                    const stopData = await stopResp.json().catch(() => ({}));
+                    if (stopData.prediction_job) {
+                        renderPredictionProgress(stopData.prediction_job);
+                    }
                 } catch (e) {
+                    stopPredictBtn.disabled = false;
                     console.error('Failed to stop prediction job', e);
                 }
             });
