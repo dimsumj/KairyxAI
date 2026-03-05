@@ -171,3 +171,10 @@ P1 execution adapters (local-friendly):
 - `braze` channel routes via Braze REST when configured, otherwise push simulation
 - Configure Braze via `POST /configure-braze` with `{ api_key, rest_endpoint }`
 
+P1 experimentation (A/B + holdout, local):
+- Experiment config endpoint: `GET/POST /experiments/config`
+- Summary endpoint: `GET /experiments/summary?experiment_id=...`
+- Exposure log: `.experiments_exposure.jsonl`
+- Outcome log: `.experiments_outcome.jsonl`
+- Default setup: 10% holdout, remaining users split A/B 50:50
+

@@ -34,6 +34,7 @@ from amplitude_service import AmplitudeService
 from engagement_feedback import EngagementFeedback
 from policy_engine import LlmPolicyEngine, DEFAULT_LLM_POLICY
 from cloud_churn_service import CloudChurnService
+from experiment_service import ExperimentService
 from pydantic import BaseModel, Field
 from local_job_store import (
     init_db as init_local_job_db,
@@ -85,6 +86,13 @@ IMPORT_JOBS = []
 PREDICTION_JOBS = []
 LLM_POLICY_ENGINE = LlmPolicyEngine()
 LLM_POLICY_CONFIG = DEFAULT_LLM_POLICY.copy()
+EXPERIMENT_SERVICE = ExperimentService(base_dir=".")
+EXPERIMENT_CONFIG = {
+    "experiment_id": "churn_engagement_v1",
+    "enabled": True,
+    "holdout_pct": 0.10,
+    "b_variant_pct": 0.50,
+}
 
 
 def _normalize_date_for_amplitude(date_str: str) -> str:
@@ -453,6 +461,13 @@ class CloudChurnConfig(BaseModel):
 class LlmPolicyUpdateRequest(BaseModel):
     """Request model for updating the LLM routing policy."""
     policy: Dict[str, Any]
+
+
+class ExperimentConfigRequest(BaseModel):
+    experiment_id: Optional[str] = None
+    enabled: Optional[bool] = None
+    holdout_pct: Optional[float] = None
+    b_variant_pct: Optional[float] = None
 
 # Serve the frontend application
 # This assumes the 'frontend' directory is two levels up from this script's location.
@@ -834,6 +849,29 @@ async def get_ai_usage():
 async def get_llm_policy():
     """Returns current LLM routing policy."""
     return {"policy": LLM_POLICY_CONFIG}
+
+
+@app.get("/experiments/config")
+async def get_experiment_config():
+    return {"experiment": EXPERIMENT_CONFIG}
+
+
+@app.post("/experiments/config")
+async def update_experiment_config(request: ExperimentConfigRequest):
+    payload = request.dict(exclude_none=True)
+    if "holdout_pct" in payload and not (0.0 <= payload["holdout_pct"] <= 0.9):
+        raise HTTPException(status_code=400, detail="holdout_pct must be between 0.0 and 0.9")
+    if "b_variant_pct" in payload and not (0.0 <= payload["b_variant_pct"] <= 1.0):
+        raise HTTPException(status_code=400, detail="b_variant_pct must be between 0.0 and 1.0")
+    EXPERIMENT_CONFIG.update(payload)
+    append_audit_log("experiment_config_updated", EXPERIMENT_CONFIG)
+    return {"experiment": EXPERIMENT_CONFIG}
+
+
+@app.get("/experiments/summary")
+async def get_experiment_summary(experiment_id: Optional[str] = None):
+    exp_id = experiment_id or EXPERIMENT_CONFIG.get("experiment_id", "churn_engagement_v1")
+    return EXPERIMENT_SERVICE.summary(exp_id)
 
 
 @app.post("/configure-llm-policy")
@@ -1461,18 +1499,57 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
             }
         else:
             next_action = decision_engine.decide_next_action(player_profile, churn_estimate, "reduce_churn")
+
+        assignment = None
+        if EXPERIMENT_CONFIG.get("enabled", True):
+            assignment = EXPERIMENT_SERVICE.assign(
+                experiment_id=EXPERIMENT_CONFIG.get("experiment_id", "churn_engagement_v1"),
+                player_id=player_id,
+                holdout_pct=float(EXPERIMENT_CONFIG.get("holdout_pct", 0.10)),
+                b_variant_pct=float(EXPERIMENT_CONFIG.get("b_variant_pct", 0.50)),
+            )
+            if assignment["group"] == "holdout":
+                next_action = {
+                    "player_id": player_id,
+                    "decision": "NO_ACTION",
+                    "reason": "Experiment holdout group",
+                }
+            elif assignment["group"] == "treatment_b" and next_action and next_action.get("decision") == "ACT":
+                # Simple variant tweak for local experimenting
+                next_action["content"] = f"{next_action.get('content', '')} [Variant B]"
+
         action_id = executor.execute_action(next_action)
+
+        exposure = {
+            "ts": datetime.utcnow().isoformat(),
+            "experiment_id": EXPERIMENT_CONFIG.get("experiment_id", "churn_engagement_v1"),
+            "player_id": str(player_id),
+            "group": assignment.get("group") if assignment else "disabled",
+            "decision": next_action.get("decision") if next_action else "NONE",
+            "action_id": action_id,
+        }
+        EXPERIMENT_SERVICE.record_exposure(exposure)
 
         # 5. Simulate and record feedback
         feedback = None
         if action_id:
             feedback = feedback_service.get_engagement_result(player_id, action_id)
+            if assignment:
+                EXPERIMENT_SERVICE.record_outcome({
+                    "ts": datetime.utcnow().isoformat(),
+                    "experiment_id": EXPERIMENT_CONFIG.get("experiment_id", "churn_engagement_v1"),
+                    "player_id": str(player_id),
+                    "group": assignment.get("group"),
+                    "action_id": action_id,
+                    "simulated_response": feedback.get("simulated_response"),
+                })
 
         return {
             "player_profile": player_profile,
             "churn_estimate": churn_estimate,
             "churn_prediction_details": churn_details,
             "policy_eval": policy_eval,
+            "experiment_assignment": assignment,
             "action_taken": next_action,
             "feedback": feedback,
         }
