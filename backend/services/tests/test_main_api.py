@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -97,3 +100,88 @@ def test_export_estimate_csv_and_third_party(client, monkeypatch):
     rtp = client.post('/churn/export/third-party', json={'job_name': 'j1', 'webhook_url': 'https://example.com/hook'})
     assert rtp.status_code == 200
     assert rtp.json()['count'] == 2
+
+
+def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):
+    original_jobs = list(main_service.PREDICTION_JOBS)
+    with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+        original_runners = dict(main_service.PREDICTION_JOB_RUNNERS)
+        main_service.PREDICTION_JOB_RUNNERS.clear()
+    main_service.PREDICTION_JOBS.clear()
+
+    async def _fake_compute(
+        job_name,
+        force_recalculate,
+        prediction_mode='local',
+        progress_callback=None,
+        stop_requested=None,
+    ):
+        predictions = []
+        total_players = 50
+        if callable(progress_callback):
+            progress_callback(predictions, 0, total_players)
+
+        for idx in range(1, total_players + 1):
+            if callable(stop_requested) and stop_requested():
+                return predictions
+
+            predictions.append(
+                {
+                    'user_id': f'u_{idx}',
+                    'email': f'u_{idx}@example.com',
+                    'churn_state': 'active',
+                    'predicted_churn_risk': 'medium',
+                    'prediction_source': prediction_mode,
+                    'churn_reason': 'stop-test',
+                    'session_count': 5,
+                    'event_count': 20,
+                    'ltv': 12.3,
+                    'suggested_action': 'none',
+                }
+            )
+            if callable(progress_callback):
+                progress_callback(predictions, idx, total_players)
+            await asyncio.sleep(0.01)
+
+        return predictions
+
+    monkeypatch.setattr(main_service, '_compute_predictions_for_job', _fake_compute)
+
+    try:
+        start = client.post(
+            '/predict-churn-for-import-async',
+            json={'job_name': 'stop-job', 'force_recalculate': True, 'prediction_mode': 'local'},
+        )
+        assert start.status_code == 200
+        prediction_job_id = start.json()['prediction_job_id']
+
+        time.sleep(0.05)
+
+        stop = client.post(f'/prediction-job/{prediction_job_id}/stop')
+        assert stop.status_code == 200
+        assert stop.json()['prediction_job']['stop_requested'] is True
+
+        deadline = time.time() + 3.0
+        latest_job = None
+        while time.time() < deadline:
+            status = client.get(f'/prediction-job/{prediction_job_id}')
+            assert status.status_code == 200
+            latest_job = status.json()['prediction_job']
+            if latest_job.get('status') == 'Stopped':
+                break
+            time.sleep(0.02)
+
+        assert latest_job is not None
+        assert latest_job['status'] == 'Stopped'
+        assert latest_job['processed_count'] < latest_job['total_count']
+    finally:
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            runner = main_service._get_prediction_job_runner(prediction_job_id) if 'prediction_job_id' in locals() else None
+            if not runner:
+                break
+            time.sleep(0.01)
+        main_service.PREDICTION_JOBS[:] = original_jobs
+        with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+            main_service.PREDICTION_JOB_RUNNERS.clear()
+            main_service.PREDICTION_JOB_RUNNERS.update(original_runners)

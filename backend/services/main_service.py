@@ -1,5 +1,6 @@
 # main_service.py
 
+import asyncio
 import os
 import re
 import csv
@@ -11,6 +12,7 @@ import zipfile
 import io
 import gzip
 import json
+import threading
 from typing import Any, Optional, Dict
 from datetime import (
     datetime,
@@ -96,6 +98,8 @@ GCS_SERVICE_INSTANCE = GcsService()
 # In-memory list to track import jobs. In production, this would be a database.
 IMPORT_JOBS = []
 PREDICTION_JOBS = []
+PREDICTION_JOB_RUNNERS: Dict[str, threading.Thread] = {}
+PREDICTION_JOB_RUNNERS_LOCK = threading.Lock()
 LLM_POLICY_ENGINE = LlmPolicyEngine()
 LLM_POLICY_CONFIG = DEFAULT_LLM_POLICY.copy()
 CONNECTOR_STATUS: Dict[str, Any] = {}
@@ -1993,6 +1997,21 @@ def _get_prediction_job(prediction_job_id: str) -> Optional[Dict[str, Any]]:
     return next((j for j in PREDICTION_JOBS if j.get("id") == prediction_job_id), None)
 
 
+def _register_prediction_job_runner(prediction_job_id: str, runner: threading.Thread) -> None:
+    with PREDICTION_JOB_RUNNERS_LOCK:
+        PREDICTION_JOB_RUNNERS[prediction_job_id] = runner
+
+
+def _get_prediction_job_runner(prediction_job_id: str) -> Optional[threading.Thread]:
+    with PREDICTION_JOB_RUNNERS_LOCK:
+        return PREDICTION_JOB_RUNNERS.get(prediction_job_id)
+
+
+def _clear_prediction_job_runner(prediction_job_id: str) -> None:
+    with PREDICTION_JOB_RUNNERS_LOCK:
+        PREDICTION_JOB_RUNNERS.pop(prediction_job_id, None)
+
+
 async def _estimate_churn_with_mode(
     modeling_engine: PlayerModelingEngine,
     player_id: Any,
@@ -2090,6 +2109,8 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
         progress_callback(predictions, 0, total_players)
 
     for idx, player_id in enumerate(player_ids, start=1):
+        # Yield between players so stop requests can be observed promptly.
+        await asyncio.sleep(0)
         if callable(stop_requested) and stop_requested():
             print("Prediction stop requested. Exiting early.")
             break
@@ -2233,11 +2254,21 @@ async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recal
         prediction_job["predictions"] = predictions
         prediction_job["result_count"] = len(predictions)
         prediction_job["error"] = None
+    except asyncio.CancelledError:
+        prediction_job["stop_requested"] = True
+        if prediction_job.get("status") == "Processing":
+            _transition_job_status(prediction_job, "Stopped", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        prediction_job["error"] = None
     except Exception as e:
         prediction_job["error"] = str(e)
         _transition_job_status(prediction_job, "Failed", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
     finally:
+        _clear_prediction_job_runner(prediction_job_id)
         save_prediction_jobs_to_cache()
+
+
+def _run_prediction_job_in_thread(prediction_job_id: str, job_name: str, force_recalculate: bool) -> None:
+    asyncio.run(_run_prediction_job(prediction_job_id, job_name, force_recalculate))
 
 
 @app.post("/predict-churn-for-import-async")
@@ -2248,7 +2279,14 @@ async def predict_churn_for_import_async(request: ChurnPredictionRequest, backgr
     prediction_job = _create_prediction_job(request.job_name, request.force_recalculate)
     prediction_job["prediction_mode"] = request.prediction_mode or "local"
     save_prediction_jobs_to_cache()
-    background_tasks.add_task(_run_prediction_job, prediction_job["id"], request.job_name, request.force_recalculate)
+    runner = threading.Thread(
+        target=_run_prediction_job_in_thread,
+        args=(prediction_job["id"], request.job_name, request.force_recalculate),
+        name=f"prediction-job-{prediction_job['id'][:8]}",
+        daemon=True,
+    )
+    _register_prediction_job_runner(prediction_job["id"], runner)
+    runner.start()
     return {
         "message": "Prediction job started.",
         "prediction_job_id": prediction_job["id"],
@@ -2281,6 +2319,10 @@ async def stop_prediction_job(prediction_job_id: str):
 
     prediction_job["stop_requested"] = True
     save_prediction_jobs_to_cache()
+    runner = _get_prediction_job_runner(prediction_job_id)
+    if (not runner or not runner.is_alive()) and prediction_job.get("status") == "Processing":
+        _transition_job_status(prediction_job, "Stopped", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        save_prediction_jobs_to_cache()
     return {"message": "Stop requested.", "prediction_job": prediction_job}
 
 @app.post("/analyze-and-engage-player")
