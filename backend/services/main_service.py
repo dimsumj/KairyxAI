@@ -420,7 +420,8 @@ IMPORT_JOB_ALLOWED_TRANSITIONS = {
 }
 
 PREDICTION_JOB_ALLOWED_TRANSITIONS = {
-    "Processing": {"Ready", "Failed"},
+    "Processing": {"Ready", "Failed", "Stopped"},
+    "Stopped": set(),
     "Failed": set(),
     "Ready": set(),
 }
@@ -1940,6 +1941,10 @@ def _create_prediction_job(job_name: str, force_recalculate: bool) -> dict:
         "force_recalculate": force_recalculate,
         "timestamp": datetime.utcnow().isoformat(),
         "result_count": 0,
+        "processed_count": 0,
+        "total_count": 0,
+        "stop_requested": False,
+        "predictions": [],
         "error": None,
     }
     PREDICTION_JOBS.append(prediction_job)
@@ -2006,7 +2011,7 @@ async def _estimate_churn_with_mode(
     return local_estimate, {"mode": mode, "local_estimate": local_estimate, "cloud_estimate": None, "cloud_error": None}
 
 
-async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, prediction_mode: str = "local") -> list[dict]:
+async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, prediction_mode: str = "local", progress_callback=None, stop_requested=None) -> list[dict]:
     job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
     if not job or job.get("status") != "Ready to Use":
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found or not ready.")
@@ -2040,9 +2045,17 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
     if not player_ids:
         return []
 
+    total_players = len(player_ids)
     predictions = []
     skipped_players = 0
-    for player_id in player_ids:
+
+    if callable(progress_callback):
+        progress_callback(predictions, 0, total_players)
+
+    for idx, player_id in enumerate(player_ids, start=1):
+        if callable(stop_requested) and stop_requested():
+            print("Prediction stop requested. Exiting early.")
+            break
         try:
             profile = modeling_engine.build_player_profile(player_id)
             if not profile:
@@ -2131,9 +2144,14 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
                 "prediction_mode": effective_mode,
                 "prediction_details": churn_details,
             })
+
+            if callable(progress_callback):
+                progress_callback(predictions, idx, total_players)
         except Exception as per_player_error:
             skipped_players += 1
             print(f"Skipping player {player_id} due to prediction error: {per_player_error}")
+            if callable(progress_callback):
+                progress_callback(predictions, idx, total_players)
             continue
 
     if predictions:
@@ -2148,10 +2166,32 @@ async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recal
     prediction_job = _get_prediction_job(prediction_job_id)
     if not prediction_job:
         return
+
+    def _progress_callback(preds, processed, total):
+        prediction_job["predictions"] = preds
+        prediction_job["processed_count"] = processed
+        prediction_job["total_count"] = total
+        prediction_job["result_count"] = len(preds)
+        prediction_job["progress_pct"] = int((processed / total) * 100) if total else 0
+        save_prediction_jobs_to_cache()
+
+    def _stop_requested():
+        return bool(prediction_job.get("stop_requested"))
+
     try:
         prediction_mode = prediction_job.get("prediction_mode", "local")
-        predictions = await _compute_predictions_for_job(job_name, force_recalculate, prediction_mode)
-        _transition_job_status(prediction_job, "Ready", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        predictions = await _compute_predictions_for_job(
+            job_name,
+            force_recalculate,
+            prediction_mode,
+            progress_callback=_progress_callback,
+            stop_requested=_stop_requested,
+        )
+        if prediction_job.get("stop_requested"):
+            _transition_job_status(prediction_job, "Stopped", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        else:
+            _transition_job_status(prediction_job, "Ready", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        prediction_job["predictions"] = predictions
         prediction_job["result_count"] = len(predictions)
         prediction_job["error"] = None
     except Exception as e:
@@ -2190,6 +2230,19 @@ async def get_prediction_job(prediction_job_id: str):
     if not prediction_job:
         raise HTTPException(status_code=404, detail=f"Prediction job '{prediction_job_id}' not found.")
     return {"prediction_job": prediction_job}
+
+
+@app.post("/prediction-job/{prediction_job_id}/stop")
+async def stop_prediction_job(prediction_job_id: str):
+    prediction_job = _get_prediction_job(prediction_job_id)
+    if not prediction_job:
+        raise HTTPException(status_code=404, detail=f"Prediction job '{prediction_job_id}' not found.")
+    if prediction_job.get("status") != "Processing":
+        return {"message": "Prediction job is not running.", "prediction_job": prediction_job}
+
+    prediction_job["stop_requested"] = True
+    save_prediction_jobs_to_cache()
+    return {"message": "Stop requested.", "prediction_job": prediction_job}
 
 @app.post("/analyze-and-engage-player")
 async def analyze_and_engage_player(request: PlayerAnalysisRequest):

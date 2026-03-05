@@ -316,6 +316,8 @@
                     <select id="dataset-select"></select>
                 </div>
                 <button id="predict-churn-btn">Predict Churn</button>
+                <button id="stop-predict-btn" style="background: var(--red);" disabled>Stop</button>
+                <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
             </div>
             <div class="card">
                 <table>
@@ -715,11 +717,13 @@
             // Operator Hub Logic
             const datasetSelect = document.getElementById('dataset-select');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
+            const stopPredictBtn = document.getElementById('stop-predict-btn');
             const operatorHubResults = document.getElementById('operator-hub-results');
 
             let allChurnPredictionPlayers = [];
             let currentPage = 1;
             let itemsPerPage = 25;
+            let activePredictionJobId = null;
 
 
             async function loadReadyImportsForOperatorHub() {
@@ -744,6 +748,7 @@
                         allChurnPredictionPlayers = [];
                         renderChurnTable();
                         predictChurnBtn.disabled = false;
+                        stopPredictBtn.disabled = true;
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
                         predictChurnBtn.disabled = true;
@@ -762,28 +767,60 @@
                     return;
                 }
 
-                operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Loading predictions...</td></tr>';
+                operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
                 predictChurnBtn.disabled = true;
+                stopPredictBtn.disabled = false;
+                allChurnPredictionPlayers = [];
+                renderChurnTable();
 
                 try {
-                    const response = await fetch(`${backendUrl}/predict-churn-for-import`, {
+                    const startResp = await fetch(`${backendUrl}/predict-churn-for-import-async`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ job_name: jobName, force_recalculate: forceRecalculate })
+                        body: JSON.stringify({ job_name: jobName, force_recalculate: forceRecalculate, prediction_mode: 'local' })
                     });
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Prediction failed.');
+                    if (!startResp.ok) {
+                        const errorData = await startResp.json();
+                        throw new Error(errorData.detail || 'Prediction start failed.');
                     }
-                    const data = await response.json();
-                    
-                    allChurnPredictionPlayers = data.predictions;
-                    currentPage = 1; // Reset to first page
-                    renderChurnTable();
+                    const startData = await startResp.json();
+                    activePredictionJobId = startData.prediction_job_id;
+
+                    let done = false;
+                    while (!done && activePredictionJobId) {
+                        await new Promise(r => setTimeout(r, 800));
+                        const statusResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}`);
+                        if (!statusResp.ok) {
+                            throw new Error('Failed to fetch prediction job status.');
+                        }
+                        const statusData = await statusResp.json();
+                        const job = statusData.prediction_job || {};
+
+                        allChurnPredictionPlayers = job.predictions || [];
+                        renderChurnTable();
+
+                        const processed = job.processed_count || 0;
+                        const total = job.total_count || 0;
+                        const pct = job.progress_pct || 0;
+                        operatorHubResults.innerHTML = operatorHubResults.innerHTML || '';
+                        const info = document.getElementById('prediction-progress-info');
+                        if (info) {
+                            info.textContent = `Prediction job: ${job.status || 'Processing'} · ${processed}/${total} (${pct}%)`;
+                        }
+
+                        if (job.status === 'Ready' || job.status === 'Failed' || job.status === 'Stopped') {
+                            done = true;
+                            if (job.status === 'Failed') {
+                                throw new Error(job.error || 'Prediction failed.');
+                            }
+                        }
+                    }
                 } catch (error) {
                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 } finally {
+                    activePredictionJobId = null;
                     predictChurnBtn.disabled = false;
+                    stopPredictBtn.disabled = true;
                 }
             }
 
@@ -856,6 +893,15 @@
             predictChurnBtn.addEventListener('click', () => {
                 const jobName = datasetSelect.value;
                 fetchAndRenderPredictions(jobName, true);
+            });
+
+            stopPredictBtn.addEventListener('click', async () => {
+                if (!activePredictionJobId) return;
+                try {
+                    await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
+                } catch (e) {
+                    console.error('Failed to stop prediction job', e);
+                }
             });
 
             document.getElementById('items-per-page').addEventListener('change', (e) => {
