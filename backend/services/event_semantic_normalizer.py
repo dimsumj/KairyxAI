@@ -1,36 +1,31 @@
 # event_semantic_normalizer.py
 
+from __future__ import annotations
+
+from datetime import datetime
 from typing import List, Dict, Any
+
 
 class EventSemanticNormalizer:
     """
     Cleans and normalizes raw event data from analytics platforms.
 
-    This component standardizes event names and property keys based on
-    pre-defined mapping rules to ensure data consistency.
+    This component standardizes event names/property keys and performs
+    basic cleanup/type coercion with quality flags.
     """
 
     def __init__(self, event_name_map: Dict[str, str], property_key_map: Dict[str, str]):
-        """
-        Initializes the normalizer with mapping rules.
-
-        Args:
-            event_name_map: A dictionary to map raw event names to standardized names.
-                           (e.g., {"level_start": "level_started"})
-            property_key_map: A dictionary to map raw property keys to standardized keys.
-                              (e.g., {"user_id": "player_id"})
-        """
         self.event_name_map = event_name_map
         self.property_key_map = property_key_map
 
     def _normalize_event_name(self, event_name: str) -> str:
-        """Normalizes a single event name using the mapping."""
-        return self.event_name_map.get(event_name, event_name)
+        if not event_name:
+            return "unknown_event"
+        return self.event_name_map.get(str(event_name), str(event_name))
 
     def _normalize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalizes the keys within an event's properties dictionary."""
         if not isinstance(properties, dict):
-            return properties  # Return as-is if not a dictionary
+            return {}
 
         normalized_props = {}
         for key, value in properties.items():
@@ -38,38 +33,86 @@ class EventSemanticNormalizer:
             normalized_props[new_key] = value
         return normalized_props
 
+    def _to_iso(self, ts: Any) -> tuple[str, bool]:
+        if ts is None:
+            return datetime.utcnow().isoformat(), False
+        if isinstance(ts, (int, float)):
+            try:
+                # support unix seconds and ms
+                val = float(ts)
+                if val > 1e12:
+                    val = val / 1000.0
+                return datetime.utcfromtimestamp(val).isoformat(), True
+            except Exception:
+                return datetime.utcnow().isoformat(), False
+        s = str(ts)
+        if s.endswith("Z"):
+            s = s[:-1]
+        try:
+            return datetime.fromisoformat(s).isoformat(), True
+        except Exception:
+            return datetime.utcnow().isoformat(), False
+
+    def _to_float(self, value: Any) -> tuple[float | None, bool]:
+        if value is None:
+            return None, False
+        try:
+            return float(value), True
+        except Exception:
+            return None, False
+
     def normalize_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Processes a list of raw event dictionaries to normalize them.
-
-        Args:
-            events: A list of raw event dictionaries from Amplitude.
-
-        Returns:
-            A list of cleaned and normalized event dictionaries.
-        """
         if not events:
             return []
 
-        # Define all possible raw keys for the player identifier.
-        player_id_keys = {"userId", "user_id", "user_Id", "player_id", "player_Id", "PlayerID", "PlayerId"}
+        player_id_keys = {
+            "userId", "user_id", "user_Id", "player_id", "player_Id", "PlayerID", "PlayerId", "uid", "PID"
+        }
 
         normalized_events = []
         for event in events:
-            # Create a copy to avoid modifying the original list of dicts
+            if not isinstance(event, dict):
+                continue
+
             new_event = event.copy()
+            quality_flags: list[str] = []
 
-            # Standardize the player identifier key.
             for key in player_id_keys:
-                if key in new_event:
+                if key in new_event and new_event.get(key) not in (None, ""):
                     new_event['player_id'] = new_event.pop(key)
-                    break # Stop after finding the first match
+                    break
 
-            new_event['event_type'] = self._normalize_event_name(event['event_type'])
-            new_event['event_properties'] = self._normalize_properties(event.get('event_properties', {}))
-            new_event['user_properties'] = self._normalize_properties(event.get('user_properties', {}))
-            
+            if not new_event.get("player_id"):
+                new_event["player_id"] = "unknown_user"
+                quality_flags.append("missing_player_id")
+
+            new_event['event_type'] = self._normalize_event_name(new_event.get('event_type') or new_event.get('event_name'))
+
+            props = self._normalize_properties(new_event.get('event_properties', {}))
+            user_props = self._normalize_properties(new_event.get('user_properties', {}))
+
+            event_time_iso, valid_time = self._to_iso(new_event.get("event_time") or new_event.get("timestamp") or new_event.get("time"))
+            new_event["event_time"] = event_time_iso
+            if not valid_time:
+                quality_flags.append("invalid_event_time")
+
+            # revenue coercion
+            raw_revenue = props.get("revenue_usd", props.get("revenue", props.get("value")))
+            revenue, ok_rev = self._to_float(raw_revenue)
+            if raw_revenue is not None and not ok_rev:
+                quality_flags.append("malformed_revenue")
+            if revenue is not None:
+                props["revenue_usd"] = revenue
+
+            # currency normalization
+            if props.get("currency") is not None:
+                props["currency"] = str(props.get("currency")).upper()
+
+            new_event['event_properties'] = props
+            new_event['user_properties'] = user_props
+            new_event['data_quality_flags'] = quality_flags
+
             normalized_events.append(new_event)
-            
+
         print(f"Normalized {len(normalized_events)} events.")
         return normalized_events

@@ -328,6 +328,13 @@ Connector API response parsing supports common wrappers (`data`, `results`, `ite
 Per-job import output now includes:
 - `source_stats`: ingested event counts per source
 - `processing_stats`: normalized count, deduped count, duplicates removed
+- `processing_stats.quality`: clean/flagged rows and data-quality flag counts
+
+Cleanup P1 currently performs:
+- timestamp normalization to ISO with `invalid_event_time` flag
+- player ID fallback (`unknown_user`) with `missing_player_id` flag
+- revenue type coercion (`revenue_usd`) with `malformed_revenue` flag
+- currency normalization to uppercase
 
 ### Manual field mapping (canonical override)
 Use this when sources use different field names (e.g., `PID`, `uid`, `user_id`).

@@ -51,7 +51,16 @@ export interface ImportJob {
   start_date: string;
   end_date: string;
   source_stats?: Array<{ source: string; type: string; ingested_events: number; status?: string; error?: string }>;
-  processing_stats?: { raw_normalized_events: number; deduped_events: number; duplicates_removed: number };
+  processing_stats?: {
+    raw_normalized_events: number;
+    deduped_events: number;
+    duplicates_removed: number;
+    quality?: {
+      rows_with_flags: number;
+      rows_clean: number;
+      flag_counts: Record<string, number>;
+    };
+  };
 }
 
 export interface PredictionRow {

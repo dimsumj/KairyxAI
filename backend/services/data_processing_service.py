@@ -76,10 +76,24 @@ class DataProcessingService:
         deduped_events = list(dedupe_map.values())
         self.bigquery_service.write_processed_events(deduped_events, self.job_identifier)
 
+        flag_counts: Dict[str, int] = {}
+        rows_with_flags = 0
+        for e in deduped_events:
+            flags = e.get("data_quality_flags") or []
+            if flags:
+                rows_with_flags += 1
+            for f in flags:
+                flag_counts[f] = flag_counts.get(f, 0) + 1
+
         stats = {
             "raw_normalized_events": len(all_normalized),
             "deduped_events": len(deduped_events),
             "duplicates_removed": max(0, len(all_normalized) - len(deduped_events)),
+            "quality": {
+                "rows_with_flags": rows_with_flags,
+                "rows_clean": max(0, len(deduped_events) - rows_with_flags),
+                "flag_counts": flag_counts,
+            },
         }
         print(f"Data processing pipeline finished. Stats: {stats}")
         return stats

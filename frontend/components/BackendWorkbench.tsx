@@ -712,8 +712,18 @@ const BackendWorkbench: React.FC = () => {
                           </div>
                         ))}
                         {job.processing_stats ? (
-                          <div className="text-gray-400 mt-1">
-                            normalized={job.processing_stats.raw_normalized_events}, deduped={job.processing_stats.deduped_events}, removed={job.processing_stats.duplicates_removed}
+                          <div className="text-gray-400 mt-1 space-y-1">
+                            <div>normalized={job.processing_stats.raw_normalized_events}, deduped={job.processing_stats.deduped_events}, removed={job.processing_stats.duplicates_removed}</div>
+                            {job.processing_stats.quality ? (
+                              <div>
+                                quality: clean={job.processing_stats.quality.rows_clean}, flagged={job.processing_stats.quality.rows_with_flags}
+                                {Object.keys(job.processing_stats.quality.flag_counts || {}).length > 0 ? (
+                                  <div className="text-[11px] text-amber-300">
+                                    {Object.entries(job.processing_stats.quality.flag_counts).map(([k, v]) => `${k}:${v}`).join(' · ')}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
