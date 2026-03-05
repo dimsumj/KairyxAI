@@ -14,6 +14,7 @@ import gzip
 import json
 import threading
 from typing import Any, Optional, Dict
+from urllib.parse import urlparse
 from datetime import (
     datetime,
     timedelta,
@@ -356,6 +357,237 @@ def append_audit_log(action: str, detail: Dict[str, Any]):
         f.write(json.dumps(record) + "\n")
 
 
+def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for parser in (
+        datetime.fromisoformat,
+        lambda v: datetime.strptime(v, "%Y-%m-%d %H:%M:%S,%f"),
+        lambda v: datetime.strptime(v, "%Y-%m-%d %H:%M:%S"),
+    ):
+        try:
+            return parser(text)
+        except Exception:
+            continue
+    return None
+
+
+def _history_sort_key(item: Dict[str, Any]) -> datetime:
+    parsed = _parse_history_timestamp(item.get("timestamp"))
+    return parsed or datetime.min
+
+
+def _join_history_details(*parts: Optional[str]) -> str:
+    return " | ".join([str(part) for part in parts if part not in (None, "", [], {})])
+
+
+def _make_history_item(
+    *,
+    timestamp: Optional[str],
+    category: str,
+    summary: str,
+    status: Optional[str],
+    details: Optional[str] = None,
+    kind: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    parsed_ts = _parse_history_timestamp(timestamp)
+    return {
+        "timestamp": parsed_ts.isoformat() if parsed_ts else timestamp,
+        "category": category,
+        "summary": summary,
+        "status": status,
+        "details": details or "",
+        "kind": kind or category,
+        "metadata": metadata or {},
+    }
+
+
+def _current_import_job(job_name: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not job_name:
+        return None
+    return next((job for job in IMPORT_JOBS if job.get("name") == job_name), None)
+
+
+def _current_prediction_job(prediction_job_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not prediction_job_id:
+        return None
+    return next((job for job in PREDICTION_JOBS if job.get("id") == prediction_job_id), None)
+
+
+def _normalize_status_label(status: Optional[str]) -> Optional[str]:
+    if not status:
+        return None
+    return str(status).strip().lower().replace(" ", "_")
+
+
+def _parse_audit_history(limit: int = 200) -> list[Dict[str, Any]]:
+    if not os.path.exists(AUDIT_LOG_FILE):
+        return []
+
+    items: list[Dict[str, Any]] = []
+    with open(AUDIT_LOG_FILE, "r") as f:
+        for line in f:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            action = record.get("action")
+            detail = record.get("detail") or {}
+            ts = record.get("ts")
+            item = _audit_record_to_history_item(action, detail, ts)
+            if item:
+                items.append(item)
+
+    items.sort(key=_history_sort_key, reverse=True)
+    return items[: max(1, int(limit))]
+
+
+def _audit_record_to_history_item(action: str, detail: Dict[str, Any], ts: Optional[str]) -> Optional[Dict[str, Any]]:
+    if action == "import_job_started":
+        current_job = _current_import_job(detail.get("job_name"))
+        source = detail.get("source")
+        date_range = _join_history_details(
+            f"source={source}" if source else None,
+            f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
+            "manual mapping enabled" if detail.get("auto_mapping") else None,
+            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
+        )
+        return _make_history_item(
+            timestamp=ts,
+            category="import",
+            summary=f"Import requested for {detail.get('job_name')}",
+            status=_normalize_status_label(current_job.get("status")) if current_job else "started",
+            details=date_range,
+            kind=action,
+            metadata=detail,
+        )
+
+    if action == "process_after_mapping_requested":
+        current_job = _current_import_job(detail.get("job_name"))
+        return _make_history_item(
+            timestamp=ts,
+            category="mapping",
+            summary=f"Process-after-mapping requested for {detail.get('job_name')}",
+            status=_normalize_status_label(current_job.get("status")) if current_job else "processing",
+            details=_join_history_details(
+                f"source={detail.get('source')}" if detail.get("source") else None,
+                f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
+                f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
+            ),
+            kind=action,
+            metadata=detail,
+        )
+
+    if action in {"import_job_stop_requested"}:
+        current_job = _current_import_job(detail.get("job_name"))
+        status_map = {
+            "import_job_stop_requested": "stopped",
+        }
+        summary_map = {
+            "import_job_stop_requested": "Import stop requested",
+        }
+        details = _join_history_details(
+            f"job={detail.get('job_name')}" if detail.get("job_name") else None,
+            f"source={detail.get('source')}" if detail.get("source") else None,
+            f"range={detail.get('start_date')} to {detail.get('end_date')}" if detail.get("start_date") and detail.get("end_date") else None,
+            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
+        )
+        return _make_history_item(
+            timestamp=ts,
+            category="import",
+            summary=f"{summary_map[action]}: {detail.get('job_name')}",
+            status=_normalize_status_label(current_job.get("status")) if current_job else status_map[action],
+            details=details,
+            kind=action,
+            metadata=detail,
+        )
+
+    if action in {"prediction_job_started", "prediction_job_stop_requested"}:
+        current_job = _current_prediction_job(detail.get("prediction_job_id"))
+        status_map = {
+            "prediction_job_started": "started",
+            "prediction_job_stop_requested": "stopping",
+        }
+        summary_map = {
+            "prediction_job_started": "Prediction requested",
+            "prediction_job_stop_requested": "Prediction stop requested",
+        }
+        details = _join_history_details(
+            f"job={detail.get('import_job_name')}" if detail.get("import_job_name") else None,
+            f"mode={detail.get('prediction_mode')}" if detail.get("prediction_mode") else None,
+            f"status={current_job.get('status')}" if current_job and current_job.get("status") else None,
+        )
+        return _make_history_item(
+            timestamp=ts,
+            category="prediction",
+            summary=f"{summary_map[action]}: {detail.get('import_job_name') or detail.get('prediction_job_id')}",
+            status=_normalize_status_label(current_job.get("status")) if current_job else status_map[action],
+            details=details,
+            kind=action,
+            metadata=detail,
+        )
+
+    if action in {"campaign_audience_exported", "churn_export_third_party"}:
+        provider = detail.get("provider") or "webhook"
+        details = _join_history_details(
+            f"job={detail.get('job_name')}" if detail.get("job_name") else None,
+            f"provider={provider}",
+            f"channel={detail.get('channel')}" if detail.get("channel") else None,
+            f"audience={detail.get('audience_name')}" if detail.get("audience_name") else None,
+            f"count={detail.get('count')}" if detail.get("count") is not None else None,
+            f"status_code={detail.get('status_code')}" if detail.get("status_code") is not None else None,
+        )
+        return _make_history_item(
+            timestamp=ts,
+            category="campaign",
+            summary="Audience exported to campaign provider" if action == "campaign_audience_exported" else "Churn list exported to third-party",
+            status="completed" if detail.get("ok", True) else "failed",
+            details=details,
+            kind=action,
+            metadata=detail,
+        )
+
+    if action == "field_mapping_updated":
+        return _make_history_item(
+            timestamp=ts,
+            category="mapping",
+            summary=f"Field mapping updated for {detail.get('connector')}",
+            status="saved",
+            details=_join_history_details(
+                f"connector={detail.get('connector')}" if detail.get("connector") else None,
+                f"keys={len(detail.get('keys') or [])}" if detail.get("keys") is not None else None,
+            ),
+            kind=action,
+            metadata=detail,
+        )
+
+    if action in {"connector_configured", "connector_deleted", "experiment_config_updated", "churn_config_updated"}:
+        summary_map = {
+            "connector_configured": f"Connector configured: {detail.get('name') or detail.get('type')}",
+            "connector_deleted": f"Connector deleted: {detail.get('name')}",
+            "experiment_config_updated": "Experiment configuration updated",
+            "churn_config_updated": "Churn configuration updated",
+        }
+        return _make_history_item(
+            timestamp=ts,
+            category="settings",
+            summary=summary_map[action],
+            status="saved",
+            details=_join_history_details(
+                f"type={detail.get('type')}" if detail.get("type") else None,
+                f"name={detail.get('name')}" if detail.get("name") else None,
+            ),
+            kind=action,
+            metadata=detail,
+        )
+
+    return None
+
+
 def load_connector_status_from_cache():
     global CONNECTOR_STATUS
     if os.path.exists(CONNECTOR_STATUS_CACHE_FILE):
@@ -590,6 +822,18 @@ class ChurnExportThirdPartyRequest(BaseModel):
     prediction_mode: Optional[str] = "local"
     include_churned: bool = True
     include_risks: Optional[list[str]] = None
+    webhook_url: Optional[str] = None
+    webhook_token: Optional[str] = None
+
+
+class CampaignAudienceExportRequest(BaseModel):
+    job_name: str
+    prediction_mode: Optional[str] = "local"
+    include_churned: bool = False
+    include_risks: list[str] = Field(default_factory=lambda: ["high", "medium"])
+    provider: str = "webhook"
+    channel: str = "push_notification"
+    audience_name: Optional[str] = None
     webhook_url: Optional[str] = None
     webhook_token: Optional[str] = None
 
@@ -979,6 +1223,20 @@ def _get_connector_config(connector_name: str) -> tuple[Optional[Dict[str, Any]]
         except json.JSONDecodeError:
             pass
     return None, None
+
+
+def _get_first_connector_config_by_type(conn_type: str) -> Optional[Dict[str, Any]]:
+    """Returns the first configured connector entry for a connector type."""
+    if not os.path.exists(KEYS_CACHE_FILE):
+        return None
+    with open(KEYS_CACHE_FILE, 'r') as f:
+        try:
+            cached_data = json.load(f)
+            connectors = cached_data.get("connectors", {})
+            configs = connectors.get(conn_type) or []
+            return configs[0] if configs else None
+        except json.JSONDecodeError:
+            return None
 @app.get("/list-imports")
 async def list_imports():
     """
@@ -1248,6 +1506,229 @@ def _filter_export_rows(rows: list[dict], include_churned: bool, include_risks: 
     return out
 
 
+def _clean_optional_string(value: Any, lowercase: bool = False) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    return cleaned.lower() if lowercase else cleaned
+
+
+def _clean_optional_float(value: Any) -> Optional[float]:
+    if value in (None, "", "N/A"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_optional_int(value: Any) -> Optional[int]:
+    if value in (None, "", "N/A"):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_campaign_provider(provider: str) -> str:
+    normalized = str(provider or "webhook").strip().lower().replace("-", "_")
+    aliases = {
+        "push": "braze",
+        "push_notification": "braze",
+        "email": "sendgrid",
+        "custom_webhook": "webhook",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _chunked(items: list[dict], size: int) -> list[list[dict]]:
+    chunk_size = max(1, int(size))
+    return [items[idx:idx + chunk_size] for idx in range(0, len(items), chunk_size)]
+
+
+def _build_campaign_audience_rows(
+    rows: list[dict],
+    *,
+    job_name: str,
+    channel: str,
+    audience_name: Optional[str] = None,
+) -> list[dict]:
+    cleaned_rows = []
+    export_time = datetime.utcnow().isoformat()
+
+    for row in rows:
+        user_id = _clean_optional_string(row.get("user_id"))
+        email = _clean_optional_string(row.get("email"), lowercase=True)
+        if not user_id and not email:
+            continue
+
+        cleaned_rows.append(
+            {
+                "user_id": user_id,
+                "email": email,
+                "channel": _clean_optional_string(channel) or "push_notification",
+                "job_name": _clean_optional_string(job_name),
+                "audience_name": _clean_optional_string(audience_name),
+                "churn_state": _clean_optional_string(row.get("churn_state")),
+                "predicted_churn_risk": _clean_optional_string(row.get("predicted_churn_risk"), lowercase=True),
+                "prediction_source": _clean_optional_string(row.get("prediction_source")),
+                "suggested_action": _clean_optional_string(row.get("suggested_action")),
+                "churn_reason": _clean_optional_string(row.get("churn_reason")),
+                "ltv": _clean_optional_float(row.get("ltv")),
+                "session_count": _clean_optional_int(row.get("session_count")),
+                "event_count": _clean_optional_int(row.get("event_count")),
+                "days_since_last_seen": _clean_optional_int(row.get("days_since_last_seen")),
+                "exported_at": export_time,
+            }
+        )
+
+    return cleaned_rows
+
+
+def _post_campaign_audience_webhook(request: CampaignAudienceExportRequest, audience_rows: list[dict]) -> dict:
+    webhook_url = request.webhook_url or CHURN_CONFIG.get("export_webhook_url")
+    webhook_token = request.webhook_token or CHURN_CONFIG.get("export_webhook_token")
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="Missing webhook_url (request or churn config)")
+
+    headers = {"Content-Type": "application/json"}
+    if webhook_token:
+        headers["Authorization"] = f"Bearer {webhook_token}"
+
+    payload = {
+        "job_name": request.job_name,
+        "prediction_mode": request.prediction_mode or "local",
+        "provider": "webhook",
+        "channel": request.channel,
+        "audience_name": request.audience_name,
+        "count": len(audience_rows),
+        "fields": list(audience_rows[0].keys()) if audience_rows else [],
+        "rows": audience_rows,
+        "sent_at": datetime.utcnow().isoformat(),
+    }
+
+    resp = requests.post(webhook_url, json=payload, headers=headers, timeout=30)
+    ok = 200 <= resp.status_code < 300
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Webhook audience export failed: {resp.status_code} {resp.text[:300]}")
+
+    return {
+        "message": "Audience pushed to webhook successfully.",
+        "provider": "webhook",
+        "channel": request.channel,
+        "count": len(audience_rows),
+        "status_code": resp.status_code,
+        "fields": payload["fields"],
+    }
+
+
+def _post_campaign_audience_braze(request: CampaignAudienceExportRequest, audience_rows: list[dict]) -> dict:
+    connector = _get_first_connector_config_by_type("braze") or {}
+    api_key = connector.get("api_key") or os.getenv("BRAZE_API_KEY")
+    rest_endpoint = (connector.get("rest_endpoint") or os.getenv("BRAZE_REST_ENDPOINT") or "").rstrip("/")
+    if not api_key or not rest_endpoint:
+        raise HTTPException(status_code=400, detail="Braze is not configured. Set Braze API key and REST endpoint first.")
+
+    attributes = []
+    skipped_missing_user_id = 0
+    for row in audience_rows:
+        external_id = row.get("user_id")
+        if not external_id:
+            skipped_missing_user_id += 1
+            continue
+
+        attr = {
+            "external_id": external_id,
+            "kairyx_job_name": row.get("job_name"),
+            "kairyx_audience_name": row.get("audience_name"),
+            "kairyx_channel": row.get("channel"),
+            "kairyx_churn_state": row.get("churn_state"),
+            "kairyx_predicted_churn_risk": row.get("predicted_churn_risk"),
+            "kairyx_prediction_source": row.get("prediction_source"),
+            "kairyx_suggested_action": row.get("suggested_action"),
+            "kairyx_churn_reason": row.get("churn_reason"),
+            "kairyx_ltv": row.get("ltv"),
+            "kairyx_session_count": row.get("session_count"),
+            "kairyx_event_count": row.get("event_count"),
+            "kairyx_days_since_last_seen": row.get("days_since_last_seen"),
+            "kairyx_exported_at": row.get("exported_at"),
+        }
+        if row.get("email"):
+            attr["email"] = row["email"]
+        attributes.append({k: v for k, v in attr.items() if v is not None})
+
+    if not attributes:
+        raise HTTPException(status_code=400, detail="Braze export requires at least one audience row with user_id.")
+
+    status_codes = []
+    url = f"{rest_endpoint}/users/track"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    for chunk in _chunked(attributes, 75):
+        resp = requests.post(url, headers=headers, json={"attributes": chunk}, timeout=30)
+        ok = 200 <= resp.status_code < 300
+        status_codes.append(resp.status_code)
+        if not ok:
+            raise HTTPException(status_code=502, detail=f"Braze audience export failed: {resp.status_code} {resp.text[:300]}")
+
+    return {
+        "message": "Audience pushed to Braze successfully.",
+        "provider": "braze",
+        "channel": request.channel,
+        "count": len(attributes),
+        "skipped_missing_user_id": skipped_missing_user_id,
+        "request_count": len(status_codes),
+        "status_code": status_codes[-1] if status_codes else 200,
+        "fields": list(audience_rows[0].keys()) if audience_rows else [],
+    }
+
+
+def _put_campaign_audience_sendgrid(request: CampaignAudienceExportRequest, audience_rows: list[dict]) -> dict:
+    connector = _get_first_connector_config_by_type("sendgrid") or {}
+    api_key = connector.get("api_key") or os.getenv("SENDGRID_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="SendGrid is not configured. Set a SendGrid API key first.")
+
+    contacts = []
+    skipped_missing_email = 0
+    for row in audience_rows:
+        email = row.get("email")
+        if not email:
+            skipped_missing_email += 1
+            continue
+
+        contact = {
+            "email": email,
+            "external_id": row.get("user_id"),
+        }
+        contacts.append({k: v for k, v in contact.items() if v is not None})
+
+    if not contacts:
+        raise HTTPException(status_code=400, detail="SendGrid export requires at least one audience row with email.")
+
+    resp = requests.put(
+        "https://api.sendgrid.com/v3/marketing/contacts",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"contacts": contacts},
+        timeout=30,
+    )
+    ok = 200 <= resp.status_code < 300
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"SendGrid audience export failed: {resp.status_code} {resp.text[:300]}")
+
+    return {
+        "message": "Audience pushed to SendGrid successfully.",
+        "provider": "sendgrid",
+        "channel": request.channel,
+        "count": len(contacts),
+        "skipped_missing_email": skipped_missing_email,
+        "status_code": resp.status_code,
+        "fields": list(audience_rows[0].keys()) if audience_rows else [],
+    }
+
+
 def _default_action_suggestion(churn_state: str, churn_risk: str) -> Dict[str, Any]:
     risk = (churn_risk or "").lower()
     if churn_state == "churned" or risk in {"already_churned", "low", "unknown", "n/a"}:
@@ -1347,12 +1828,67 @@ async def export_churn_to_third_party(request: ChurnExportThirdPartyRequest):
 
     resp = requests.post(webhook_url, json=payload, headers=headers, timeout=30)
     ok = 200 <= resp.status_code < 300
-    append_audit_log("churn_export_third_party", {"job_name": request.job_name, "count": len(filtered), "status_code": resp.status_code, "ok": ok})
+    append_audit_log(
+        "churn_export_third_party",
+        {
+            "job_name": request.job_name,
+            "provider": "webhook",
+            "count": len(filtered),
+            "status_code": resp.status_code,
+            "ok": ok,
+            "destination_host": urlparse(webhook_url).netloc or None,
+        },
+    )
 
     if not ok:
         raise HTTPException(status_code=502, detail=f"Third-party export failed: {resp.status_code} {resp.text[:300]}")
 
     return {"message": "Exported to third-party successfully.", "count": len(filtered), "status_code": resp.status_code}
+
+
+@app.post("/campaigns/export-audience")
+async def export_campaign_audience(request: CampaignAudienceExportRequest):
+    rows = await _compute_predictions_for_job(
+        request.job_name,
+        force_recalculate=False,
+        prediction_mode=request.prediction_mode or "local",
+    )
+    filtered = _filter_export_rows(
+        rows,
+        include_churned=request.include_churned,
+        include_risks=request.include_risks,
+    )
+    audience_rows = _build_campaign_audience_rows(
+        filtered,
+        job_name=request.job_name,
+        channel=request.channel,
+        audience_name=request.audience_name,
+    )
+    if not audience_rows:
+        raise HTTPException(status_code=400, detail="No audience rows matched the selected export filters.")
+
+    provider = _normalize_campaign_provider(request.provider)
+    if provider == "webhook":
+        result = _post_campaign_audience_webhook(request, audience_rows)
+    elif provider == "braze":
+        result = _post_campaign_audience_braze(request, audience_rows)
+    elif provider == "sendgrid":
+        result = _put_campaign_audience_sendgrid(request, audience_rows)
+    else:
+        raise HTTPException(status_code=400, detail="provider must be one of: webhook, braze, sendgrid")
+
+    append_audit_log(
+        "campaign_audience_exported",
+        {
+            "job_name": request.job_name,
+            "provider": provider,
+            "channel": request.channel,
+            "audience_name": request.audience_name,
+            "count": result.get("count", len(audience_rows)),
+            "status_code": result.get("status_code"),
+        },
+    )
+    return result
 
 
 @app.get("/churn/external-updates")
@@ -1579,25 +2115,13 @@ async def create_cohorts(request: CohortCreationRequest):
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 @app.get("/action-history")
-async def get_action_history():
+async def get_action_history(limit: int = 200):
     """
-    Retrieves the history of engagement actions taken.
+    Retrieves a timeline of human-triggered operational actions.
     """
     try:
-        with open('engagement_actions.log', 'r') as f:
-            logs = f.readlines()
-        
-        history = []
-        # Example log line: 2026-01-16 03:48:42,420 - INFO - Action Sent - ActionID: ..., PlayerID: ..., Channel: ..., Content: '...'
-        log_pattern = re.compile(r"^(?P<timestamp>[\d\- ,:]+) - INFO - Action Sent - ActionID: (?P<action_id>[^,]+), PlayerID: (?P<player_id>[^,]+), Channel: (?P<channel>[^,]+), Content: '(?P<content>.+)'$")
-        for log in logs:
-            match = log_pattern.match(log.strip())
-            if match:
-                history.append(match.groupdict())
-        
-        return {"action_history": history}
-    except FileNotFoundError:
-        return {"action_history": []}
+        history = _parse_audit_history(limit=limit)
+        return {"action_history": history[: max(1, int(limit))]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read action history: {str(e)}")
 
@@ -1787,6 +2311,18 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                     "published_messages": len(ingestion_service.published_message_ids),
                     "status": "ok",
                 })
+                append_audit_log(
+                    "import_source_ingested",
+                    {
+                        "job_name": job_name,
+                        "source": source_name,
+                        "connector_type": conn_type,
+                        "ingested_events": ingested_count,
+                        "shards_created": len(ingestion_service.staged_shards),
+                        "published_messages": len(ingestion_service.published_message_ids),
+                        "status": "ok",
+                    },
+                )
                 update_connector_status(source_name, conn_type, success=True, ingested_events=ingested_count)
             except Exception as source_error:
                 source_stats.append({
@@ -1796,6 +2332,17 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                     "status": "failed",
                     "error": str(source_error),
                 })
+                append_audit_log(
+                    "import_source_ingested",
+                    {
+                        "job_name": job_name,
+                        "source": source_name,
+                        "connector_type": "unknown",
+                        "ingested_events": 0,
+                        "status": "failed",
+                        "error": str(source_error),
+                    },
+                )
                 update_connector_status(source_name, "unknown", success=False, ingested_events=0, error=str(source_error))
                 if not continue_on_source_error:
                     raise
@@ -1817,6 +2364,16 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                 job["progress_pct"] = 85
                 _transition_job_status(job, "Awaiting Mapping", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
                 save_import_jobs_to_cache()
+                append_audit_log(
+                    "import_job_awaiting_mapping",
+                    {
+                        "job_name": job_name,
+                        "source": ",".join(source_names),
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "count": len(aggregate_ingestion.message_queue_topic),
+                    },
+                )
                 print(f"Job '{job_name}' is awaiting manual mapping.")
             return
 
@@ -1845,6 +2402,18 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
             job["progress_pct"] = 100
             _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
+            append_audit_log(
+                "import_job_completed",
+                {
+                    "job_name": job_name,
+                    "source": ",".join(source_names),
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "raw_normalized_events": processing_stats.get("raw_normalized_events"),
+                    "deduped_events": processing_stats.get("deduped_events"),
+                    "duplicates_removed": processing_stats.get("duplicates_removed"),
+                },
+            )
             print(f"Job '{job_name}' completed successfully.")
 
     except Exception as e:
@@ -1855,6 +2424,16 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
             job["progress_pct"] = job.get("progress_pct", 0)
             _transition_job_status(job, "Failed", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
+            append_audit_log(
+                "import_job_failed",
+                {
+                    "job_name": job_name,
+                    "source": source,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "error": str(e),
+                },
+            )
 
 @app.post("/ingest-and-process-data")
 async def ingest_and_process_data(request: IngestionRequest, background_tasks: BackgroundTasks):
@@ -1879,6 +2458,17 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
             "start_date": start_date,
             "end_date": end_date
         })
+        append_audit_log(
+            "import_job_started",
+            {
+                "job_name": job_name,
+                "source": request.source,
+                "start_date": start_date,
+                "end_date": end_date,
+                "continue_on_source_error": request.continue_on_source_error,
+                "auto_mapping": request.auto_mapping,
+            },
+        )
         background_tasks.add_task(
             run_pipeline_background,
             start_date,
@@ -1905,6 +2495,7 @@ async def stop_job(job_name: str):
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
 
     if job_to_stop.get("status") == "Processing":
+        append_audit_log("import_job_stop_requested", {"job_name": job_name, "status": job_to_stop.get("status")})
         _transition_job_status(job_to_stop, "Interrupted", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
         save_import_jobs_to_cache()
         return {"message": f"Job '{job_name}' has been interrupted."}
@@ -1932,6 +2523,15 @@ async def process_after_mapping(job_name: str):
     job_identifier = f"{start_date}_to_{end_date}"
     aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": pending_notifications})()
 
+    append_audit_log(
+        "process_after_mapping_requested",
+        {
+            "job_name": job_name,
+            "source": ",".join([s.get("source") for s in (job.get("source_stats") or []) if s.get("source")]) or None,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
     job["current_step"] = "Processing after manual mapping"
     job["progress_pct"] = 90
     save_import_jobs_to_cache()
@@ -1955,6 +2555,18 @@ async def process_after_mapping(job_name: str):
     job.pop("pending_notifications", None)
     _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
     save_import_jobs_to_cache()
+    append_audit_log(
+        "import_job_completed_after_mapping",
+        {
+            "job_name": job_name,
+            "source": ",".join([s.get("source") for s in (job.get("source_stats") or []) if s.get("source")]) or None,
+            "start_date": start_date,
+            "end_date": end_date,
+            "raw_normalized_events": processing_stats.get("raw_normalized_events"),
+            "deduped_events": processing_stats.get("deduped_events"),
+            "duplicates_removed": processing_stats.get("duplicates_removed"),
+        },
+    )
 
     return {"message": f"Job '{job_name}' processed after mapping.", "processing_stats": processing_stats}
 
@@ -2249,8 +2861,30 @@ async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recal
         )
         if prediction_job.get("stop_requested"):
             _transition_job_status(prediction_job, "Stopped", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+            append_audit_log(
+                "prediction_job_stopped",
+                {
+                    "prediction_job_id": prediction_job_id,
+                    "import_job_name": job_name,
+                    "prediction_mode": prediction_mode,
+                    "processed_count": prediction_job.get("processed_count"),
+                    "total_count": prediction_job.get("total_count"),
+                    "result_count": len(predictions),
+                },
+            )
         else:
             _transition_job_status(prediction_job, "Ready", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+            append_audit_log(
+                "prediction_job_completed",
+                {
+                    "prediction_job_id": prediction_job_id,
+                    "import_job_name": job_name,
+                    "prediction_mode": prediction_mode,
+                    "processed_count": prediction_job.get("processed_count"),
+                    "total_count": prediction_job.get("total_count"),
+                    "result_count": len(predictions),
+                },
+            )
         prediction_job["predictions"] = predictions
         prediction_job["result_count"] = len(predictions)
         prediction_job["error"] = None
@@ -2258,10 +2892,33 @@ async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recal
         prediction_job["stop_requested"] = True
         if prediction_job.get("status") == "Processing":
             _transition_job_status(prediction_job, "Stopped", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        append_audit_log(
+            "prediction_job_stopped",
+            {
+                "prediction_job_id": prediction_job_id,
+                "import_job_name": job_name,
+                "prediction_mode": prediction_job.get("prediction_mode", "local"),
+                "processed_count": prediction_job.get("processed_count"),
+                "total_count": prediction_job.get("total_count"),
+                "result_count": prediction_job.get("result_count"),
+            },
+        )
         prediction_job["error"] = None
     except Exception as e:
         prediction_job["error"] = str(e)
         _transition_job_status(prediction_job, "Failed", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
+        append_audit_log(
+            "prediction_job_failed",
+            {
+                "prediction_job_id": prediction_job_id,
+                "import_job_name": job_name,
+                "prediction_mode": prediction_job.get("prediction_mode", "local"),
+                "processed_count": prediction_job.get("processed_count"),
+                "total_count": prediction_job.get("total_count"),
+                "result_count": prediction_job.get("result_count"),
+                "error": str(e),
+            },
+        )
     finally:
         _clear_prediction_job_runner(prediction_job_id)
         save_prediction_jobs_to_cache()
@@ -2279,6 +2936,15 @@ async def predict_churn_for_import_async(request: ChurnPredictionRequest, backgr
     prediction_job = _create_prediction_job(request.job_name, request.force_recalculate)
     prediction_job["prediction_mode"] = request.prediction_mode or "local"
     save_prediction_jobs_to_cache()
+    append_audit_log(
+        "prediction_job_started",
+        {
+            "prediction_job_id": prediction_job["id"],
+            "import_job_name": request.job_name,
+            "force_recalculate": request.force_recalculate,
+            "prediction_mode": prediction_job["prediction_mode"],
+        },
+    )
     runner = threading.Thread(
         target=_run_prediction_job_in_thread,
         args=(prediction_job["id"], request.job_name, request.force_recalculate),
@@ -2318,6 +2984,14 @@ async def stop_prediction_job(prediction_job_id: str):
         return {"message": "Prediction job is not running.", "prediction_job": prediction_job}
 
     prediction_job["stop_requested"] = True
+    append_audit_log(
+        "prediction_job_stop_requested",
+        {
+            "prediction_job_id": prediction_job_id,
+            "import_job_name": prediction_job.get("import_job_name"),
+            "prediction_mode": prediction_job.get("prediction_mode", "local"),
+        },
+    )
     save_prediction_jobs_to_cache()
     runner = _get_prediction_job_runner(prediction_job_id)
     if (not runner or not runner.is_alive()) and prediction_job.get("status") == "Processing":

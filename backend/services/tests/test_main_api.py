@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 
 import pytest
@@ -100,6 +101,226 @@ def test_export_estimate_csv_and_third_party(client, monkeypatch):
     rtp = client.post('/churn/export/third-party', json={'job_name': 'j1', 'webhook_url': 'https://example.com/hook'})
     assert rtp.status_code == 200
     assert rtp.json()['count'] == 2
+
+
+def test_campaign_audience_export_webhook_uses_clean_rows(client, monkeypatch):
+    async def _fake_compute(job_name, force_recalculate, prediction_mode='local'):
+        return [
+            {
+                'user_id': 'u_1',
+                'email': 'U1@example.com',
+                'churn_state': 'active',
+                'predicted_churn_risk': 'high',
+                'prediction_source': 'local',
+                'churn_reason': 'risk',
+                'session_count': 5,
+                'event_count': 20,
+                'days_since_last_seen': 3,
+                'ltv': 12.3,
+                'suggested_action': 'Send push',
+                'top_signals': [{'signal': 'inactive_3d_plus', 'value': 3}],
+                'prediction_details': {'selected_source': 'local'},
+            }
+        ]
+
+    captured = {}
+
+    class DummyResp:
+        status_code = 202
+        text = 'accepted'
+
+    def _fake_post(url, json=None, headers=None, timeout=None):
+        captured['url'] = url
+        captured['json'] = json
+        captured['headers'] = headers
+        captured['timeout'] = timeout
+        return DummyResp()
+
+    monkeypatch.setattr(main_service, '_compute_predictions_for_job', _fake_compute)
+    monkeypatch.setattr(main_service.requests, 'post', _fake_post)
+
+    resp = client.post(
+        '/campaigns/export-audience',
+        json={
+            'job_name': 'j1',
+            'provider': 'webhook',
+            'channel': 'push_notification',
+            'webhook_url': 'https://example.com/audience',
+            'include_churned': False,
+            'include_risks': ['high'],
+            'audience_name': 'winback_push_high',
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['provider'] == 'webhook'
+    assert body['count'] == 1
+
+    payload = captured['json']
+    assert captured['url'] == 'https://example.com/audience'
+    assert payload['count'] == 1
+    assert payload['channel'] == 'push_notification'
+    assert payload['audience_name'] == 'winback_push_high'
+    assert payload['fields'] == [
+        'user_id',
+        'email',
+        'channel',
+        'job_name',
+        'audience_name',
+        'churn_state',
+        'predicted_churn_risk',
+        'prediction_source',
+        'suggested_action',
+        'churn_reason',
+        'ltv',
+        'session_count',
+        'event_count',
+        'days_since_last_seen',
+        'exported_at',
+    ]
+    assert payload['rows'][0]['user_id'] == 'u_1'
+    assert payload['rows'][0]['email'] == 'u1@example.com'
+    assert payload['rows'][0]['ltv'] == 12.3
+    assert 'top_signals' not in payload['rows'][0]
+    assert 'prediction_details' not in payload['rows'][0]
+
+
+def test_campaign_audience_export_sendgrid_skips_rows_without_email(client, monkeypatch):
+    async def _fake_compute(job_name, force_recalculate, prediction_mode='local'):
+        return [
+            {
+                'user_id': 'u_1',
+                'email': 'u1@example.com',
+                'churn_state': 'active',
+                'predicted_churn_risk': 'medium',
+                'prediction_source': 'local',
+                'churn_reason': 'risk',
+                'session_count': 5,
+                'event_count': 20,
+                'ltv': 12.3,
+                'suggested_action': 'Send email',
+            },
+            {
+                'user_id': 'u_2',
+                'email': '',
+                'churn_state': 'active',
+                'predicted_churn_risk': 'medium',
+                'prediction_source': 'local',
+                'churn_reason': 'missing-email',
+                'session_count': 2,
+                'event_count': 8,
+                'ltv': 5.5,
+                'suggested_action': 'Send email',
+            },
+        ]
+
+    captured = {}
+
+    class DummyResp:
+        status_code = 202
+        text = 'accepted'
+
+    def _fake_put(url, json=None, headers=None, timeout=None):
+        captured['url'] = url
+        captured['json'] = json
+        captured['headers'] = headers
+        captured['timeout'] = timeout
+        return DummyResp()
+
+    monkeypatch.setattr(main_service, '_compute_predictions_for_job', _fake_compute)
+    monkeypatch.setattr(main_service.requests, 'put', _fake_put)
+    monkeypatch.setenv('SENDGRID_API_KEY', 'sendgrid-test-key')
+
+    resp = client.post(
+        '/campaigns/export-audience',
+        json={
+            'job_name': 'j1',
+            'provider': 'sendgrid',
+            'channel': 'email',
+            'include_churned': False,
+            'include_risks': ['medium'],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['provider'] == 'sendgrid'
+    assert body['count'] == 1
+    assert body['skipped_missing_email'] == 1
+    assert captured['url'] == 'https://api.sendgrid.com/v3/marketing/contacts'
+    assert captured['json'] == {
+        'contacts': [
+            {
+                'email': 'u1@example.com',
+                'external_id': 'u_1',
+            }
+        ]
+    }
+
+
+def test_action_history_only_includes_human_triggered_actions(client, monkeypatch, tmp_path):
+    audit_log = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(main_service, "AUDIT_LOG_FILE", str(audit_log))
+
+    with audit_log.open("w") as f:
+        f.write(json.dumps({
+            "ts": "2026-03-05T10:00:00",
+            "action": "import_job_started",
+            "detail": {
+                "job_name": "20260305-100000-Amplitude",
+                "source": "Amplitude 1",
+                "start_date": "20260301",
+                "end_date": "20260304",
+                "auto_mapping": True,
+            },
+        }) + "\n")
+        f.write(json.dumps({
+            "ts": "2026-03-05T10:02:00",
+            "action": "field_mapping_updated",
+            "detail": {
+                "connector": "Amplitude 1",
+                "keys": ["canonical_user_id", "event_name", "event_time"],
+            },
+        }) + "\n")
+        f.write(json.dumps({
+            "ts": "2026-03-05T10:05:00",
+            "action": "campaign_audience_exported",
+            "detail": {
+                "job_name": "20260305-100000-Amplitude",
+                "provider": "braze",
+                "channel": "push_notification",
+                "audience_name": "winback_high",
+                "count": 42,
+                "status_code": 201,
+            },
+        }) + "\n")
+        f.write(json.dumps({
+            "ts": "2026-03-05T10:06:00",
+            "action": "import_job_completed",
+            "detail": {
+                "job_name": "20260305-100000-Amplitude",
+                "source": "Amplitude 1",
+            },
+        }) + "\n")
+
+    resp = client.get("/action-history?limit=10")
+    assert resp.status_code == 200
+    items = resp.json()["action_history"]
+    assert len(items) == 3
+
+    assert items[0]["category"] == "campaign"
+    assert items[0]["summary"] == "Audience exported to campaign provider"
+    assert items[0]["status"] == "completed"
+    assert "provider=braze" in items[0]["details"]
+    assert "count=42" in items[0]["details"]
+
+    assert items[1]["category"] == "mapping"
+    assert items[1]["summary"] == "Field mapping updated for Amplitude 1"
+    assert items[1]["status"] == "saved"
+
+    assert items[2]["category"] == "import"
+    assert items[2]["summary"] == "Import requested for 20260305-100000-Amplitude"
+    assert items[2]["status"] == "started"
+    assert "source=Amplitude 1" in items[2]["details"]
 
 
 def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):

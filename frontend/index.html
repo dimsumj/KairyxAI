@@ -11,6 +11,7 @@
             --sidebar-bg: #ffffff;
             --main-text: #2d3748;
             --subtle-text: #718096;
+            --text-secondary: #718096;
             --border-color: #e2e8f0;
             --primary-color: #4a5568;
             --primary-hover: #2d3748;
@@ -26,6 +27,7 @@
             --sidebar-bg: #1e1e1e;
             --main-text: #e0e0e0;
             --subtle-text: #a0a0a0;
+            --text-secondary: #a0a0a0;
             --border-color: #333333;
             --primary-color: #63b3ed;
             --primary-hover: #4299e1;
@@ -319,9 +321,58 @@
                     <label for="dataset-select">Select Dataset</label>
                     <select id="dataset-select"></select>
                 </div>
-                <button id="predict-churn-btn">Predict Churn</button>
-                <button id="stop-predict-btn" style="background: var(--red);" disabled>Stop</button>
-                <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                    <button id="predict-churn-btn">Predict Churn</button>
+                    <button id="stop-predict-btn" style="background: var(--red);" disabled>Stop</button>
+                    <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
+                </div>
+                <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                    <h2 style="font-size: 1rem; margin: 0 0 0.75rem 0;">Push Audience to Campaign Provider</h2>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0;">Exports a clean audience payload with normalized identifiers like <code>user_id</code> and <code>email</code>.</p>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-provider-select">Provider</label>
+                            <select id="campaign-provider-select">
+                                <option value="webhook">Webhook</option>
+                                <option value="braze">Braze</option>
+                                <option value="sendgrid">SendGrid</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-channel-select">Channel</label>
+                            <select id="campaign-channel-select">
+                                <option value="push_notification">Push Notification</option>
+                                <option value="email">Email</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-risk-filters">Risk Filters</label>
+                            <input type="text" id="campaign-risk-filters" value="high,medium" placeholder="high,medium">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-audience-name">Audience Name</label>
+                            <input type="text" id="campaign-audience-name" placeholder="e.g. churn_push_high">
+                        </div>
+                    </div>
+                    <div id="campaign-webhook-fields" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-webhook-url">Webhook URL</label>
+                            <input type="text" id="campaign-webhook-url" placeholder="Leave blank to use configured export webhook">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="campaign-webhook-token">Webhook Token</label>
+                            <input type="password" id="campaign-webhook-token" placeholder="Optional bearer token">
+                        </div>
+                    </div>
+                    <label style="display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.9rem;">
+                        <input type="checkbox" id="campaign-include-churned">
+                        Include already churned users
+                    </label>
+                    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 1rem;">
+                        <button id="push-audience-btn">Push Audience</button>
+                        <span id="campaign-export-status" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
+                    </div>
+                </div>
             </div>
             <div class="card">
                 <table>
@@ -387,25 +438,18 @@
         <section id="action-history" class="page">
             <h1>Action History</h1>
             <div class="card">
-                <p>A log of actions taken on each cohort, tracked by date and time.</p>
+                <p>A timeline of human-triggered actions such as imports, manual mapping updates, prediction runs, and audience exports.</p>
                 <table>
                     <thead>
                         <tr>
                             <th>Timestamp</th>
-                            <th>Player ID</th>
-                            <th>Action</th>
-                            <th>Channel</th>
+                            <th>Category</th>
+                            <th>Summary</th>
+                            <th>Status</th>
+                            <th>Details</th>
                         </tr>
                     </thead>
-                    <tbody>
-                         <!-- Example Row -->
-                        <tr>
-                            <td>2026-01-16 03:48:42</td>
-                            <td>user_abcde</td>
-                            <td>Sent "Welcome Back" bonus</td>
-                            <td>In-App Message</td>
-                        </tr>
-                    </tbody>
+                    <tbody id="action-history-results"></tbody>
                 </table>
             </div>
         </section>
@@ -765,6 +809,16 @@
             const predictChurnBtn = document.getElementById('predict-churn-btn');
             const stopPredictBtn = document.getElementById('stop-predict-btn');
             const predictionProgressInfo = document.getElementById('prediction-progress-info');
+            const campaignProviderSelect = document.getElementById('campaign-provider-select');
+            const campaignChannelSelect = document.getElementById('campaign-channel-select');
+            const campaignRiskFiltersInput = document.getElementById('campaign-risk-filters');
+            const campaignAudienceNameInput = document.getElementById('campaign-audience-name');
+            const campaignWebhookFields = document.getElementById('campaign-webhook-fields');
+            const campaignWebhookUrlInput = document.getElementById('campaign-webhook-url');
+            const campaignWebhookTokenInput = document.getElementById('campaign-webhook-token');
+            const campaignIncludeChurnedCheckbox = document.getElementById('campaign-include-churned');
+            const pushAudienceBtn = document.getElementById('push-audience-btn');
+            const campaignExportStatus = document.getElementById('campaign-export-status');
             const operatorHubResults = document.getElementById('operator-hub-results');
 
             let allChurnPredictionPlayers = [];
@@ -784,6 +838,19 @@
                         ? 'Stopping'
                         : rawStatus);
                 predictionProgressInfo.textContent = `Prediction job: ${displayStatus} · ${processed}/${total} (${pct}%)`;
+            }
+
+            function setCampaignExportStatus(message = '', isError = false) {
+                campaignExportStatus.textContent = message;
+                campaignExportStatus.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
+            }
+
+            function updateCampaignProviderFields() {
+                const provider = campaignProviderSelect.value || 'webhook';
+                campaignWebhookFields.style.display = provider === 'webhook' ? 'grid' : 'none';
+                if (provider === 'sendgrid') {
+                    campaignChannelSelect.value = 'email';
+                }
             }
 
 
@@ -815,15 +882,20 @@
                         renderChurnTable();
                         predictChurnBtn.disabled = false;
                         stopPredictBtn.disabled = true;
+                        pushAudienceBtn.disabled = false;
                         predictionStopRequested = false;
                         predictionProgressInfo.textContent = '';
+                        setCampaignExportStatus('');
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
                         predictChurnBtn.disabled = true;
+                        pushAudienceBtn.disabled = true;
+                        setCampaignExportStatus('');
                     }
                 } catch (error) {
                     datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
                     predictChurnBtn.disabled = true;
+                    pushAudienceBtn.disabled = true;
                     console.error('Error loading datasets for Operator Hub:', error);
                 }
             }
@@ -885,6 +957,51 @@
                     activePredictionJobId = null;
                     predictChurnBtn.disabled = false;
                     stopPredictBtn.disabled = true;
+                }
+            }
+
+            async function pushAudienceToCampaignProvider() {
+                const jobName = datasetSelect.value;
+                if (!jobName) {
+                    setCampaignExportStatus('Select a ready dataset first.', true);
+                    return;
+                }
+
+                const provider = campaignProviderSelect.value || 'webhook';
+                const channel = campaignChannelSelect.value || 'push_notification';
+                const includeRisks = (campaignRiskFiltersInput.value || '')
+                    .split(',')
+                    .map((risk) => risk.trim().toLowerCase())
+                    .filter(Boolean);
+
+                pushAudienceBtn.disabled = true;
+                setCampaignExportStatus(`Pushing audience to ${provider}...`);
+                try {
+                    const payload = {
+                        job_name: jobName,
+                        prediction_mode: 'local',
+                        include_churned: campaignIncludeChurnedCheckbox.checked,
+                        include_risks: includeRisks.length > 0 ? includeRisks : ['high', 'medium'],
+                        provider,
+                        channel,
+                        audience_name: (campaignAudienceNameInput.value || '').trim() || null,
+                        webhook_url: provider === 'webhook' ? ((campaignWebhookUrlInput.value || '').trim() || null) : null,
+                        webhook_token: provider === 'webhook' ? ((campaignWebhookTokenInput.value || '').trim() || null) : null,
+                    };
+                    const response = await fetch(`${backendUrl}/campaigns/export-audience`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(result.detail || result.message || 'Failed to push audience to provider.');
+                    }
+                    setCampaignExportStatus(`${result.message || 'Audience pushed.'} ${result.count || 0} row(s) exported.`);
+                } catch (error) {
+                    setCampaignExportStatus(error.message || 'Failed to push audience to provider.', true);
+                } finally {
+                    pushAudienceBtn.disabled = false;
                 }
             }
 
@@ -954,6 +1071,7 @@
                 renderChurnTable();
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = '';
+                setCampaignExportStatus('');
             });
 
             predictChurnBtn.addEventListener('click', () => {
@@ -980,6 +1098,10 @@
                     console.error('Failed to stop prediction job', e);
                 }
             });
+
+            campaignProviderSelect.addEventListener('change', updateCampaignProviderFields);
+            pushAudienceBtn.addEventListener('click', pushAudienceToCampaignProvider);
+            updateCampaignProviderFields();
 
             document.getElementById('items-per-page').addEventListener('change', (e) => {
                 itemsPerPage = parseInt(e.target.value, 10);
@@ -1138,6 +1260,68 @@
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 } finally {
                     startCountdownTimers(); // Ensure timers are always started/restarted after data load
+                }
+            }
+
+            // Action History Page Logic
+            const actionHistoryResults = document.getElementById('action-history-results');
+
+            function getActionHistoryStatusColor(status) {
+                const normalized = String(status || '').toLowerCase();
+                if (['completed', 'ok', 'saved', 'sent'].includes(normalized)) return 'var(--green)';
+                if (['failed', 'error'].includes(normalized)) return 'var(--red)';
+                if (['started', 'stopping', 'awaiting_mapping'].includes(normalized)) return 'var(--yellow)';
+                if (['stopped'].includes(normalized)) return 'var(--primary-color)';
+                return 'var(--text-secondary)';
+            }
+
+            function escapeHtml(value) {
+                return String(value ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            async function loadActionHistory() {
+                if (!actionHistoryResults) return;
+                actionHistoryResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">Loading action history...</td></tr>';
+                try {
+                    const response = await fetch(`${backendUrl}/action-history?limit=150`);
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Failed to load action history.');
+                    }
+                    const data = await response.json();
+                    const history = data.action_history || [];
+
+                    if (history.length === 0) {
+                        actionHistoryResults.innerHTML = '<tr><td colspan="5" style="text-align: center;">No recorded actions yet.</td></tr>';
+                        return;
+                    }
+
+                    actionHistoryResults.innerHTML = '';
+                    history.forEach((item) => {
+                        const row = document.createElement('tr');
+                        const timestamp = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
+                        const category = item.category || '-';
+                        const summary = item.summary || '-';
+                        const status = item.status || '-';
+                        const details = item.details || '-';
+                        const statusColor = getActionHistoryStatusColor(status);
+
+                        row.innerHTML = `
+                            <td>${escapeHtml(timestamp)}</td>
+                            <td style="text-transform: capitalize;">${escapeHtml(category)}</td>
+                            <td>${escapeHtml(summary)}</td>
+                            <td><span style="display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; color: ${statusColor}; border: 1px solid ${statusColor}; text-transform: capitalize;">${escapeHtml(status)}</span></td>
+                            <td style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(details)}</td>
+                        `;
+                        actionHistoryResults.appendChild(row);
+                    });
+                } catch (error) {
+                    actionHistoryResults.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 }
             }
 
