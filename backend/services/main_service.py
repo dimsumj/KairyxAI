@@ -313,6 +313,34 @@ def append_audit_log(action: str, detail: Dict[str, Any]):
     with open(AUDIT_LOG_FILE, "a") as f:
         f.write(json.dumps(record) + "\n")
 
+
+def _transition_job_status(job: Dict[str, Any], next_status: str, allowed: Dict[str, set], kind: str):
+    current = job.get("status")
+    if next_status == current:
+        return
+    allowed_next = allowed.get(current, set())
+    if next_status not in allowed_next:
+        raise ValueError(f"Invalid {kind} job status transition: {current} -> {next_status}")
+    job["status"] = next_status
+    append_audit_log(
+        "job_status_transition",
+        {"kind": kind, "id": job.get("id") or job.get("name"), "from": current, "to": next_status},
+    )
+
+
+IMPORT_JOB_ALLOWED_TRANSITIONS = {
+    "Processing": {"Ready to Use", "Failed", "Interrupted"},
+    "Failed": set(),
+    "Interrupted": set(),
+    "Ready to Use": set(),
+}
+
+PREDICTION_JOB_ALLOWED_TRANSITIONS = {
+    "Processing": {"Ready", "Failed"},
+    "Failed": set(),
+    "Ready": set(),
+}
+
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
 # clear_api_key_cache_on_startup()
@@ -687,6 +715,32 @@ async def get_services_health():
     }
     return services_status
 
+@app.get("/observability/local-events")
+async def get_local_observability_events(limit: int = 200):
+    """Returns recent local audit and dead-letter events for debugging in demo mode."""
+    events = []
+
+    if os.path.exists(AUDIT_LOG_FILE):
+        with open(AUDIT_LOG_FILE, "r") as f:
+            for line in f.readlines()[-limit:]:
+                try:
+                    events.append({"stream": "audit", "record": json.loads(line)})
+                except json.JSONDecodeError:
+                    continue
+
+    dlq_file = os.getenv("INGEST_DLQ_FILE", ".cache/ingest_dlq.jsonl")
+    if os.path.exists(dlq_file):
+        with open(dlq_file, "r") as f:
+            for line in f.readlines()[-limit:]:
+                try:
+                    events.append({"stream": "ingest_dlq", "record": json.loads(line)})
+                except json.JSONDecodeError:
+                    continue
+
+    events = sorted(events, key=lambda x: x["record"].get("ts") or x["record"].get("timestamp", ""), reverse=True)
+    return {"events": events[:limit]}
+
+
 @app.post("/configure-adjust-credentials")
 async def configure_adjust_credentials(key: AdjustApiKey):
     """
@@ -1056,14 +1110,15 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         processing_service.run_processing_pipeline(ingestion_service)
 
         if job and job.get("status") != "Interrupted":
-            job["status"] = "Ready to Use"
+            _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
             print(f"Job '{job_name}' completed successfully.")
 
     except Exception as e:
         print(f"Error processing job '{job_name}': {e}")
         if job and job.get("status") != "Interrupted":
-            job["status"] = "Failed"
+            job["last_error"] = str(e)
+            _transition_job_status(job, "Failed", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
 
 @app.post("/ingest-and-process-data")
@@ -1105,7 +1160,7 @@ async def stop_job(job_name: str):
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found.")
 
     if job_to_stop.get("status") == "Processing":
-        job_to_stop["status"] = "Interrupted"
+        _transition_job_status(job_to_stop, "Interrupted", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
         save_import_jobs_to_cache()
         return {"message": f"Job '{job_name}' has been interrupted."}
     else:
@@ -1283,12 +1338,12 @@ async def _run_prediction_job(prediction_job_id: str, job_name: str, force_recal
     try:
         prediction_mode = prediction_job.get("prediction_mode", "local")
         predictions = await _compute_predictions_for_job(job_name, force_recalculate, prediction_mode)
-        prediction_job["status"] = "Ready"
+        _transition_job_status(prediction_job, "Ready", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
         prediction_job["result_count"] = len(predictions)
         prediction_job["error"] = None
     except Exception as e:
-        prediction_job["status"] = "Failed"
         prediction_job["error"] = str(e)
+        _transition_job_status(prediction_job, "Failed", PREDICTION_JOB_ALLOWED_TRANSITIONS, "prediction")
     finally:
         save_prediction_jobs_to_cache()
 
@@ -1335,7 +1390,13 @@ async def analyze_and_engage_player(request: PlayerAnalysisRequest):
 
         # Initialize clients and engines.
         # The modeling engine now uses the BigQuery service to get data.
-        gemini_client = GeminiClient()
+        gemini_client = None
+        try:
+            if os.getenv("GOOGLE_API_KEY"):
+                gemini_client = GeminiClient()
+        except Exception as e:
+            print(f"Warning: Gemini unavailable, falling back to heuristic mode: {e}")
+
         modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
         decision_engine = GrowthDecisionEngine(gemini_client)
         executor = EngagementExecutor()
