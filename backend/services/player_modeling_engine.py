@@ -31,11 +31,19 @@ class PlayerModelingEngine:
         if df is None or df.empty:
             return None
         
-        # The 'event_time' from Amplitude is a string like '2024-01-01 12:34:56.123456'
-        # We need to parse it into a datetime object.
-        df['event_time'] = pd.to_datetime(df['event_time'])
-        
-        print(f"Preprocessing complete for player {player_id}. DataFrame created with {len(df)} events.")
+        # Parse timestamps in tolerant mode (supports both
+        # '2024-01-01 12:34:56.123456' and '2024-01-01T12:34:56.123456').
+        df['event_time'] = pd.to_datetime(df['event_time'], errors='coerce', utc=False)
+
+        # Drop invalid timestamps to avoid downstream format exceptions.
+        before = len(df)
+        df = df[df['event_time'].notna()].copy()
+        dropped = before - len(df)
+
+        if df.empty:
+            return None
+
+        print(f"Preprocessing complete for player {player_id}. DataFrame created with {len(df)} events (dropped invalid timestamps: {dropped}).")
         return df
 
 
