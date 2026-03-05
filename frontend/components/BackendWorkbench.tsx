@@ -60,6 +60,11 @@ const BackendWorkbench: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [continueOnSourceError, setContinueOnSourceError] = useState(true);
   const [autoMapping, setAutoMapping] = useState(false);
+  const [exportJobName, setExportJobName] = useState('');
+  const [exportIncludeChurned, setExportIncludeChurned] = useState(true);
+  const [exportIncludeRisks, setExportIncludeRisks] = useState('high,medium,low');
+  const [exportWebhookUrl, setExportWebhookUrl] = useState('');
+  const [exportWebhookToken, setExportWebhookToken] = useState('');
 
   const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
   const awaitingMappingJobs = useMemo(() => imports.filter((job) => job.status === 'Awaiting Mapping'), [imports]);
@@ -105,6 +110,10 @@ const BackendWorkbench: React.FC = () => {
       if (!selectedJob && importsResp.imports?.length) {
         const firstReady = importsResp.imports.find((j) => j.status === 'Ready to Use');
         if (firstReady) setSelectedJob(firstReady.name);
+      }
+      if (!exportJobName && importsResp.imports?.length) {
+        const firstReady = importsResp.imports.find((j) => j.status === 'Ready to Use');
+        if (firstReady) setExportJobName(firstReady.name);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to refresh backend data.');
@@ -276,6 +285,45 @@ const BackendWorkbench: React.FC = () => {
       setMessage('Churn config saved.');
     } catch (err: any) {
       setError(err.message || 'Failed to save churn config.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportCsv = () => {
+    if (!exportJobName) {
+      setError('Please choose an import job for export.');
+      return;
+    }
+    const url = backendService.exportChurnCsvUrl({
+      jobName: exportJobName,
+      predictionMode: 'local',
+      includeChurned: exportIncludeChurned,
+      includeRisks: exportIncludeRisks.split(',').map((x) => x.trim()).filter(Boolean),
+    });
+    window.open(url, '_blank');
+  };
+
+  const exportThirdParty = async () => {
+    if (!exportJobName) {
+      setError('Please choose an import job for export.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const resp = await backendService.exportChurnToThirdParty({
+        job_name: exportJobName,
+        prediction_mode: 'local',
+        include_churned: exportIncludeChurned,
+        include_risks: exportIncludeRisks.split(',').map((x) => x.trim()).filter(Boolean),
+        webhook_url: exportWebhookUrl || undefined,
+        webhook_token: exportWebhookToken || undefined,
+      });
+      setMessage(`Exported ${resp.count} rows to third-party.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to export to third-party.');
     } finally {
       setLoading(false);
     }
@@ -1056,6 +1104,61 @@ const BackendWorkbench: React.FC = () => {
           </label>
           <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={saveChurnConfig} disabled={loading}>
             Save
+          </button>
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Export Churn Lists</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <select
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={exportJobName}
+            onChange={(e) => setExportJobName(e.target.value)}
+          >
+            <option value="">Select Ready Import Job</option>
+            {readyJobs.map((job) => (
+              <option key={job.name} value={job.name}>{job.name}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={exportIncludeRisks}
+            onChange={(e) => setExportIncludeRisks(e.target.value)}
+            placeholder="risk filters, comma-separated (high,medium,low)"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input
+            type="checkbox"
+            checked={exportIncludeChurned}
+            onChange={(e) => setExportIncludeChurned(e.target.checked)}
+          />
+          Include already-churned users
+        </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input
+            type="text"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={exportWebhookUrl}
+            onChange={(e) => setExportWebhookUrl(e.target.value)}
+            placeholder="Third-party webhook URL (optional override)"
+          />
+          <input
+            type="password"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            value={exportWebhookToken}
+            onChange={(e) => setExportWebhookToken(e.target.value)}
+            placeholder="Third-party webhook token (optional override)"
+          />
+        </div>
+        <div className="flex gap-3">
+          <button className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm" onClick={exportCsv}>
+            Export CSV
+          </button>
+          <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={exportThirdParty} disabled={loading}>
+            Export to 3rd Party
           </button>
         </div>
       </section>

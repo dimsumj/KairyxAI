@@ -182,6 +182,19 @@ export const backendService = {
     return request<any>("/churn/external-updates", "POST", { items });
   },
 
+  exportChurnCsvUrl(params: { jobName: string; predictionMode?: string; includeChurned?: boolean; includeRisks?: string[] }) {
+    const q = new URLSearchParams();
+    q.set('job_name', params.jobName);
+    q.set('prediction_mode', params.predictionMode || 'local');
+    q.set('include_churned', String(params.includeChurned ?? true));
+    q.set('include_risks', (params.includeRisks || ['high', 'medium', 'low']).join(','));
+    return `${this.baseUrl}/churn/export/csv?${q.toString()}`;
+  },
+
+  async exportChurnToThirdParty(payload: { job_name: string; prediction_mode?: string; include_churned?: boolean; include_risks?: string[]; webhook_url?: string; webhook_token?: string }) {
+    return request<any>("/churn/export/third-party", "POST", payload);
+  },
+
   async deleteConnector(connectorName: string) {
     return request<{ message: string }>(`/connector/${encodeURIComponent(connectorName)}`, "DELETE");
   },

@@ -2,6 +2,7 @@
 
 import os
 import re
+import csv
 import uvicorn
 import shutil
 import uuid
@@ -17,7 +18,7 @@ from datetime import (
 )
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, Response
 from event_semantic_normalizer import EventSemanticNormalizer
 from player_modeling_engine import PlayerModelingEngine
 from growth_decision_engine import GrowthDecisionEngine
@@ -106,6 +107,8 @@ EXPERIMENT_CONFIG = {
 CHURN_CONFIG = {
     "churn_inactive_days": 14,
     "third_party_for_active": True,
+    "export_webhook_url": None,
+    "export_webhook_token": None,
 }
 EXTERNAL_CHURN_UPDATES = {
     "by_user_id": {},
@@ -571,6 +574,17 @@ class ExperimentConfigRequest(BaseModel):
 class ChurnConfigRequest(BaseModel):
     churn_inactive_days: Optional[int] = None
     third_party_for_active: Optional[bool] = None
+    export_webhook_url: Optional[str] = None
+    export_webhook_token: Optional[str] = None
+
+
+class ChurnExportThirdPartyRequest(BaseModel):
+    job_name: str
+    prediction_mode: Optional[str] = "local"
+    include_churned: bool = True
+    include_risks: Optional[list[str]] = None
+    webhook_url: Optional[str] = None
+    webhook_token: Optional[str] = None
 
 
 class ExternalChurnItem(BaseModel):
@@ -1209,8 +1223,85 @@ async def update_churn_config(request: ChurnConfigRequest):
     if "churn_inactive_days" in payload and payload["churn_inactive_days"] < 1:
         raise HTTPException(status_code=400, detail="churn_inactive_days must be >= 1")
     CHURN_CONFIG.update(payload)
-    append_audit_log("churn_config_updated", CHURN_CONFIG)
-    return {"churn": CHURN_CONFIG}
+    append_audit_log("churn_config_updated", {k: ("***" if "token" in k else v) for k, v in CHURN_CONFIG.items()})
+    return {"churn": {**CHURN_CONFIG, "export_webhook_token": "***" if CHURN_CONFIG.get("export_webhook_token") else None}}
+
+
+def _filter_export_rows(rows: list[dict], include_churned: bool, include_risks: Optional[list[str]] = None) -> list[dict]:
+    risks = set((include_risks or ["high", "medium", "low"]))
+    out = []
+    for r in rows:
+        churn_state = str(r.get("churn_state", ""))
+        churn_risk = str(r.get("predicted_churn_risk", "")).lower()
+        if include_churned and churn_state == "churned":
+            out.append(r)
+            continue
+        if churn_risk in risks:
+            out.append(r)
+    return out
+
+
+@app.get("/churn/export/csv")
+async def export_churn_csv(job_name: str, prediction_mode: str = "local", include_churned: bool = True, include_risks: Optional[str] = "high,medium,low"):
+    rows = await _compute_predictions_for_job(job_name, force_recalculate=False, prediction_mode=prediction_mode)
+    risk_list = [x.strip().lower() for x in (include_risks or "").split(",") if x.strip()]
+    filtered = _filter_export_rows(rows, include_churned=include_churned, include_risks=risk_list)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "user_id", "email", "churn_state", "predicted_churn_risk", "prediction_source",
+        "days_since_last_seen", "ltv", "session_count", "event_count", "churn_reason"
+    ])
+    for r in filtered:
+        writer.writerow([
+            r.get("user_id"),
+            r.get("email"),
+            r.get("churn_state"),
+            r.get("predicted_churn_risk"),
+            r.get("prediction_source"),
+            r.get("days_since_last_seen"),
+            r.get("ltv"),
+            r.get("session_count"),
+            r.get("event_count"),
+            r.get("churn_reason"),
+        ])
+
+    csv_text = buf.getvalue()
+    filename = f"churn_export_{job_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.post("/churn/export/third-party")
+async def export_churn_to_third_party(request: ChurnExportThirdPartyRequest):
+    rows = await _compute_predictions_for_job(request.job_name, force_recalculate=False, prediction_mode=request.prediction_mode or "local")
+    filtered = _filter_export_rows(rows, include_churned=request.include_churned, include_risks=request.include_risks)
+
+    webhook_url = request.webhook_url or CHURN_CONFIG.get("export_webhook_url")
+    webhook_token = request.webhook_token or CHURN_CONFIG.get("export_webhook_token")
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="Missing webhook_url (request or churn config)")
+
+    headers = {"Content-Type": "application/json"}
+    if webhook_token:
+        headers["Authorization"] = f"Bearer {webhook_token}"
+
+    payload = {
+        "job_name": request.job_name,
+        "prediction_mode": request.prediction_mode or "local",
+        "count": len(filtered),
+        "rows": filtered,
+        "sent_at": datetime.utcnow().isoformat(),
+    }
+
+    resp = requests.post(webhook_url, json=payload, headers=headers, timeout=30)
+    ok = 200 <= resp.status_code < 300
+    append_audit_log("churn_export_third_party", {"job_name": request.job_name, "count": len(filtered), "status_code": resp.status_code, "ok": ok})
+
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Third-party export failed: {resp.status_code} {resp.text[:300]}")
+
+    return {"message": "Exported to third-party successfully.", "count": len(filtered), "status_code": resp.status_code}
 
 
 @app.get("/churn/external-updates")
@@ -1955,6 +2046,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
 
         predictions.append({
             "user_id": player_id,
+            "email": profile.get("email"),
             "ltv": profile.get("total_revenue", "N/A"),
             "session_count": profile.get("total_sessions", "N/A"),
             "event_count": profile.get("total_events", "N/A"),

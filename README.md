@@ -411,3 +411,8 @@ When matched, predictions are auto-overridden for active users and `prediction_s
 Workbench now includes an **External Churn Updates** panel to paste/upload JSON lists and view ingest stats.
 It also supports pre-upload validation (`/churn/external-updates/validate`) with preview + row-level errors.
 
+Export churn audience lists:
+- CSV download: `GET /churn/export/csv?job_name=<job>&prediction_mode=local&include_churned=true&include_risks=high,medium,low`
+- Third-party push: `POST /churn/export/third-party`
+  - Supports webhook URL/token from request or `/churn/config`
+
