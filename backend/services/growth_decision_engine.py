@@ -11,7 +11,7 @@ class GrowthDecisionEngine:
     and a specific growth objective.
     """
 
-    def __init__(self, gemini_client: GeminiClient):
+    def __init__(self, gemini_client: Optional[GeminiClient]):
         self.ai_client = gemini_client
 
     def decide_next_action(
@@ -22,27 +22,42 @@ class GrowthDecisionEngine:
     ) -> Optional[Dict[str, Any]]:
         """
         Determines whether to act, on which channel, with what content, and when.
-
-        Args:
-            player_profile: A dictionary summarizing the player's activity.
-            churn_estimate: A dictionary with the player's churn risk.
-            objective: The strategic goal (e.g., 'reduce_churn').
-
-        Returns:
-            A dictionary describing the action to take, or None if no action is needed.
         """
         if not player_profile or not churn_estimate:
             return None
 
         if objective == 'reduce_churn':
             return self._decide_churn_reduction_action(player_profile, churn_estimate)
-        
-        # Future objectives can be added here
-        # if objective == 'increase_monetization':
-        #     return self._decide_monetization_action(player_profile)
 
         print(f"Warning: Objective '{objective}' not recognized. No action taken.")
         return None
+
+    def _fallback_action(self, player_profile: Dict[str, Any], churn_estimate: Dict[str, Any]) -> Dict[str, Any]:
+        """Deterministic fallback when LLM is unavailable."""
+        player_id = player_profile.get("player_id")
+        churn_risk = churn_estimate.get("churn_risk")
+
+        if churn_risk == "high":
+            content = "We miss you! Come back today for a special comeback reward 🎁"
+            decision = "ACT"
+        elif churn_risk == "medium":
+            content = "Your squad is waiting—jump back in and keep your streak alive ⚡"
+            decision = "ACT"
+        else:
+            return {
+                "player_id": player_id,
+                "decision": "NO_ACTION",
+                "reason": "Low churn risk under fallback policy."
+            }
+
+        return {
+            "player_id": player_id,
+            "decision": decision,
+            "channel": "push_notification",
+            "content": content,
+            "timing": "immediate",
+            "reason": "Heuristic fallback action (no LLM).",
+        }
 
     def _decide_churn_reduction_action(
         self,
@@ -50,7 +65,7 @@ class GrowthDecisionEngine:
         churn_estimate: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Rule-based decisions for the 'reduce_churn' objective."""
-        
+
         churn_risk = churn_estimate.get("churn_risk")
         player_id = player_profile.get("player_id")
 
@@ -60,6 +75,9 @@ class GrowthDecisionEngine:
                 "decision": "NO_ACTION",
                 "reason": "AI analysis indicates player is already engaged and has low churn risk."
             }
+
+        if self.ai_client is None:
+            return self._fallback_action(player_profile, churn_estimate)
 
         prompt = f"""
         As a world-class AI Growth Operator for a mobile game, your goal is to reduce player churn.
@@ -82,12 +100,8 @@ class GrowthDecisionEngine:
             cleaned_json_text = ai_response_text.strip().replace("```json", "").replace("```", "")
             action = json.loads(cleaned_json_text)
             action["player_id"] = player_id
-            action["timing"] = "immediate" # Add timing
+            action["timing"] = "immediate"
             return action
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error processing AI response for next action: {e}")
-            return {
-                "player_id": player_id,
-                "decision": "NO_ACTION",
-                "reason": "Failed to generate a valid action from the AI model."
-            }
+            return self._fallback_action(player_profile, churn_estimate)

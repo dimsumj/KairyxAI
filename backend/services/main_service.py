@@ -1144,9 +1144,6 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
     if not job or job.get("status") != "Ready to Use":
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found or not ready.")
 
-    if not os.getenv("GOOGLE_API_KEY"):
-        raise HTTPException(status_code=400, detail="Google Gemini API key is not configured. Please set it in the Connectors section before running predictions.")
-
     os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
     mode_key = (prediction_mode or "local").lower()
     prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}_{mode_key}.json")
@@ -1155,7 +1152,13 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
         with open(prediction_cache_file, 'r') as f:
             return json.load(f)
 
-    gemini_client = GeminiClient()
+    gemini_client = None
+    try:
+        if os.getenv("GOOGLE_API_KEY"):
+            gemini_client = GeminiClient()
+    except Exception as e:
+        print(f"Warning: Gemini unavailable, falling back to heuristic mode: {e}")
+
     modeling_engine = PlayerModelingEngine(gemini_client=gemini_client, bigquery_service=BIGQUERY_SERVICE_INSTANCE)
     decision_engine = GrowthDecisionEngine(gemini_client)
 

@@ -13,12 +13,12 @@ class PlayerModelingEngine:
     Analyzes player event data to build intelligence profiles, including
     summaries, churn risk, and engagement patterns.
     """
-    def __init__(self, gemini_client: GeminiClient, bigquery_service: BigQueryService):
+    def __init__(self, gemini_client: Optional[GeminiClient], bigquery_service: BigQueryService):
         """
         Initializes the engine with AI and data warehouse clients.
 
         Args:
-            gemini_client: Client for generative AI models.
+            gemini_client: Optional client for generative AI models.
             bigquery_service: Client for querying processed player data.
         """
         self.ai_client = gemini_client
@@ -85,6 +85,47 @@ class PlayerModelingEngine:
         }
         return profile
 
+    def _estimate_churn_risk_heuristic(self, player_id: Any, player_profile: Dict[str, Any]) -> Dict[str, Any]:
+        """Deterministic fallback when LLM is unavailable."""
+        days_since_last_seen = float(player_profile.get("days_since_last_seen", 0) or 0)
+        total_sessions = float(player_profile.get("total_sessions", 0) or 0)
+        total_revenue = float(player_profile.get("total_revenue", 0.0) or 0.0)
+
+        score = 0.0
+        # Recency dominates for churn
+        if days_since_last_seen >= 14:
+            score += 70
+        elif days_since_last_seen >= 7:
+            score += 45
+        elif days_since_last_seen >= 3:
+            score += 20
+
+        # Low historical engagement increases risk
+        if total_sessions <= 2:
+            score += 20
+        elif total_sessions <= 5:
+            score += 10
+
+        # High spenders get slightly reduced churn score
+        if total_revenue >= 100:
+            score -= 10
+
+        if score >= 70:
+            churn_risk = "high"
+        elif score >= 35:
+            churn_risk = "medium"
+        else:
+            churn_risk = "low"
+
+        return {
+            "player_id": player_id,
+            "churn_risk": churn_risk,
+            "reason": (
+                f"Heuristic fallback (no LLM): days_since_last_seen={days_since_last_seen}, "
+                f"sessions={total_sessions}, revenue={total_revenue}."
+            )
+        }
+
     async def estimate_churn_risk(self, player_id: Any, player_profile: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
         Estimates the churn risk for a single player based on their profile.
@@ -102,6 +143,9 @@ class PlayerModelingEngine:
 
         if not player_profile:
             return None
+
+        if self.ai_client is None:
+            return self._estimate_churn_risk_heuristic(player_id, player_profile)
 
         prompt = f"""
         As a world-class mobile game analyst, analyze the following player profile and estimate their churn risk.
@@ -123,11 +167,7 @@ class PlayerModelingEngine:
             }
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error processing AI response for churn risk: {e}")
-            return {
-                "player_id": player_id,
-                "churn_risk": "unknown",
-                "reason": "Failed to get a valid analysis from the AI model."
-            }
+            return self._estimate_churn_risk_heuristic(player_id, player_profile)
 
     def get_player_engagement_patterns(self, player_id: Any) -> Optional[pd.Series]:
         """
