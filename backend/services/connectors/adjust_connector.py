@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 import requests
 
 from .normalizer import canonical_attribution_event
+from .parsers import extract_rows
 
 
 class AdjustConnector:
@@ -54,5 +55,5 @@ class AdjustConnector:
         )
         resp.raise_for_status()
         data = resp.json()
-        rows = data if isinstance(data, list) else data.get("data", [])
+        rows = extract_rows(data)
         return [canonical_attribution_event("adjust", r) for r in rows]

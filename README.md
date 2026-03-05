@@ -276,7 +276,7 @@ You can import from multiple sources in one job by passing comma-separated conne
 ```bash
 curl -X POST http://localhost:8000/ingest-and-process-data \
   -H "Content-Type: application/json" \
-  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1"}'
+  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1","continue_on_source_error":true}'
 ```
 
 ### Connector health check
@@ -294,6 +294,8 @@ In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attr
 ### Merge + dedupe strategy (current)
 During processing, events from all selected sources are normalized and merged, then deduplicated using:
 `(player_id, event_type, event_time, source)`.
+
+Connector API response parsing supports common wrappers (`data`, `results`, `items`, `rows`, `events`, nested `data.records`) to reduce integration friction.
 
 Per-job import output now includes:
 - `source_stats`: ingested event counts per source

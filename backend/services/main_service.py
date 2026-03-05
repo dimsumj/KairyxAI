@@ -460,6 +460,7 @@ class IngestionRequest(BaseModel):
     start_date: str
     end_date: str
     source: str
+    continue_on_source_error: bool = True
 
 class ChurnPredictionRequest(BaseModel):
     """Request model for running churn prediction on an imported dataset."""
@@ -1189,7 +1190,7 @@ async def delete_job_cache(job_name: str):
     save_import_jobs_to_cache()
     return {"message": f"Job '{job_name}' and its cache have been deleted."}
 
-def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str):
+def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str, continue_on_source_error: bool = True):
     """The actual data processing logic that runs in the background."""
     try:
         job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
@@ -1206,18 +1207,32 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         source_stats = []
 
         for source_name in source_names:
-            connector_config, conn_type = _get_connector_config(source_name)
-            if not connector_config:
-                raise ValueError(f"Connector configuration for '{source_name}' not found.")
+            try:
+                connector_config, conn_type = _get_connector_config(source_name)
+                if not connector_config:
+                    raise ValueError(f"Connector configuration for '{source_name}' not found.")
 
-            ingestion_service = IngestionService(
-                gcs_service=GCS_SERVICE_INSTANCE,
-                connector_config=connector_config,
-                connector_type=conn_type,
-            )
-            ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date)
-            aggregate_ingestion.message_queue_topic.extend(ingestion_service.message_queue_topic)
-            source_stats.append({"source": source_name, "type": conn_type, "ingested_events": ingested_count})
+                ingestion_service = IngestionService(
+                    gcs_service=GCS_SERVICE_INSTANCE,
+                    connector_config=connector_config,
+                    connector_type=conn_type,
+                )
+                ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date)
+                aggregate_ingestion.message_queue_topic.extend(ingestion_service.message_queue_topic)
+                source_stats.append({"source": source_name, "type": conn_type, "ingested_events": ingested_count, "status": "ok"})
+            except Exception as source_error:
+                source_stats.append({
+                    "source": source_name,
+                    "type": "unknown",
+                    "ingested_events": 0,
+                    "status": "failed",
+                    "error": str(source_error),
+                })
+                if not continue_on_source_error:
+                    raise
+
+        if not aggregate_ingestion.message_queue_topic:
+            raise ValueError("No source produced data for this import window.")
 
         processing_service = DataProcessingService(
             bigquery_service=BIGQUERY_SERVICE_INSTANCE,
@@ -1261,7 +1276,14 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
             "start_date": start_date,
             "end_date": end_date
         })
-        background_tasks.add_task(run_pipeline_background, start_date, end_date, job_name, request.source)
+        background_tasks.add_task(
+            run_pipeline_background,
+            start_date,
+            end_date,
+            job_name,
+            request.source,
+            request.continue_on_source_error,
+        )
         save_import_jobs_to_cache()
         return {"message": f"Data import '{job_name}' started. It will be processed in the background."}
     except Exception as e:

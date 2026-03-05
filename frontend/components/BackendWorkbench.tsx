@@ -42,6 +42,7 @@ const BackendWorkbench: React.FC = () => {
   const [importSource, setImportSource] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [continueOnSourceError, setContinueOnSourceError] = useState(true);
 
   const readyJobs = useMemo(() => imports.filter((job) => job.status === 'Ready to Use'), [imports]);
 
@@ -121,7 +122,12 @@ const BackendWorkbench: React.FC = () => {
     setError('');
     setMessage('');
     try {
-      await backendService.startImport(startDate.replaceAll('-', ''), endDate.replaceAll('-', ''), importSource);
+      await backendService.startImport(
+        startDate.replaceAll('-', ''),
+        endDate.replaceAll('-', ''),
+        importSource,
+        continueOnSourceError,
+      );
       setMessage('Import job started.');
       await refreshAll();
     } catch (err: any) {
@@ -416,6 +422,14 @@ const BackendWorkbench: React.FC = () => {
             onChange={(e) => setEndDate(e.target.value)}
           />
         </div>
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input
+            type="checkbox"
+            checked={continueOnSourceError}
+            onChange={(e) => setContinueOnSourceError(e.target.checked)}
+          />
+          Continue if one source fails
+        </label>
         <button className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm" onClick={runStartImport} disabled={loading}>
           Start Import
         </button>
@@ -443,7 +457,10 @@ const BackendWorkbench: React.FC = () => {
                     {job.source_stats?.length ? (
                       <div className="space-y-1">
                         {job.source_stats.map((s, idx) => (
-                          <div key={`${job.name}-s-${idx}`}>{s.source} ({s.type}): {s.ingested_events}</div>
+                          <div key={`${job.name}-s-${idx}`}>
+                            {s.source} ({s.type}): {s.ingested_events}
+                            {s.status === 'failed' ? <span className="text-red-400"> — failed: {s.error}</span> : null}
+                          </div>
                         ))}
                         {job.processing_stats ? (
                           <div className="text-gray-400 mt-1">

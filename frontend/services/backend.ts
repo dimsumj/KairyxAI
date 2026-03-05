@@ -31,7 +31,7 @@ export interface ImportJob {
   timestamp: string;
   start_date: string;
   end_date: string;
-  source_stats?: Array<{ source: string; type: string; ingested_events: number }>;
+  source_stats?: Array<{ source: string; type: string; ingested_events: number; status?: string; error?: string }>;
   processing_stats?: { raw_normalized_events: number; deduped_events: number; duplicates_removed: number };
 }
 
@@ -140,11 +140,12 @@ export const backendService = {
     return request<{ imports: ImportJob[] }>("/list-imports");
   },
 
-  async startImport(startDate: string, endDate: string, source: string) {
+  async startImport(startDate: string, endDate: string, source: string, continueOnSourceError = true) {
     return request<{ message: string }>("/ingest-and-process-data", "POST", {
       start_date: startDate,
       end_date: endDate,
       source,
+      continue_on_source_error: continueOnSourceError,
     });
   },
 
