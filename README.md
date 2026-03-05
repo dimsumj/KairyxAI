@@ -160,3 +160,9 @@ Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
 
 Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
 
+Local reliability/security defaults added:
+- Ingestion retry + backoff for external source pulls
+- Dead-letter log for failed ingestion: `.cache/ingest_dlq.jsonl`
+- Local audit log for connector changes: `.audit.log.jsonl`
+- Local SQLite job persistence: `backend/services/.kairyx_local.db`
+

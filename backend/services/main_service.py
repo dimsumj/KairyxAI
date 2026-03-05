@@ -58,6 +58,7 @@ PREDICTION_CACHE_DIR = ".cache/predictions"
 CACHE_DIR = ".cache"
 LLM_POLICY_CACHE_FILE = ".llm_policy.json"
 SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
+AUDIT_LOG_FILE = ".audit.log.jsonl"
 DEFAULT_SAFETY_RAILS = {
     "AI_DAILY_TOKEN_LIMIT": 500000,
     "AI_MONTHLY_TOKEN_LIMIT": 10000000,
@@ -301,6 +302,17 @@ def apply_default_safety_rails():
     for key, value in DEFAULT_SAFETY_RAILS.items():
         os.environ.setdefault(key, str(value))
 
+
+def append_audit_log(action: str, detail: Dict[str, Any]):
+    """Append lightweight local audit trail (local-demo friendly)."""
+    record = {
+        "ts": datetime.utcnow().isoformat(),
+        "action": action,
+        "detail": detail,
+    }
+    with open(AUDIT_LOG_FILE, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
 # clear_api_key_cache_on_startup()
@@ -448,6 +460,7 @@ async def configure_amplitude_keys(keys: AmplitudeApiKeys):
         "secret_key": keys.amplitude_secret_key
     }
     _add_connector_config("amplitude", "Amplitude", new_config)
+    append_audit_log("connector_configured", {"type": "amplitude", "name": "Amplitude"})
 
     return {"message": "Amplitude API keys have been configured and cached."}
 
@@ -465,6 +478,7 @@ async def configure_google_key(key: GoogleApiKey):
         os.environ["GOOGLE_GEMINI_MODEL"] = key.model_name
         new_config["model_name"] = key.model_name
     _add_connector_config("google", "Google Gemini", new_config)
+    append_audit_log("connector_configured", {"type": "google", "name": "Google Gemini"})
 
     try:
         import google.generativeai as genai
@@ -483,6 +497,7 @@ async def configure_bigquery(creds: BigQueryCredentials):
     os.environ["BIGQUERY_PROJECT_ID"] = creds.project_id
     new_config = {"project_id": creds.project_id}
     _add_connector_config("bigquery", "Google BigQuery", new_config)
+    append_audit_log("connector_configured", {"type": "bigquery", "name": "Google BigQuery"})
     # In a real app, you might also initialize the BigQuery client here to verify credentials.
     return {"message": "BigQuery Project ID has been configured and cached."}
 
@@ -494,6 +509,7 @@ async def configure_sendgrid_key(key: SendGridApiKey):
     os.environ["SENDGRID_API_KEY"] = key.sendgrid_api_key
     new_config = {"api_key": key.sendgrid_api_key}
     _add_connector_config("sendgrid", "SendGrid", new_config)
+    append_audit_log("connector_configured", {"type": "sendgrid", "name": "SendGrid"})
     return {"message": "SendGrid API key has been configured and cached."}
 
 
@@ -508,6 +524,7 @@ async def configure_cloud_churn(config: CloudChurnConfig):
         os.environ["CHURN_API_TOKEN"] = config.api_token
         new_config["api_token"] = config.api_token
     _add_connector_config("cloud_churn", "Cloud Churn", new_config)
+    append_audit_log("connector_configured", {"type": "cloud_churn", "name": "Cloud Churn"})
     return {"message": "Cloud churn provider configured and cached."}
 
 @app.get("/list-configured-sources")
@@ -584,6 +601,7 @@ async def delete_connector(connector_name: str):
 
     # Note: This does not remove keys from os.environ. A restart or re-configuration
     # would be needed to update the environment-level primary keys.
+    append_audit_log("connector_deleted", {"name": connector_name})
     return {"message": f"Connector '{connector_name}' has been deleted successfully."}
 
 def _add_connector_config(conn_type: str, base_name: str, config: dict):
@@ -679,6 +697,7 @@ async def configure_adjust_credentials(key: AdjustApiKey):
     os.environ["ADJUST_API_TOKEN"] = key.adjust_api_token
     new_config = {"api_token": key.adjust_api_token}
     _add_connector_config("adjust", "Adjust", new_config)
+    append_audit_log("connector_configured", {"type": "adjust", "name": "Adjust"})
     return {"message": "Adjust API token has been configured and cached."}
 
 @app.post("/configure-safety-rails")

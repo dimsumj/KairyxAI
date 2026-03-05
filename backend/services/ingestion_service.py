@@ -1,59 +1,88 @@
 # ingestion_service.py
 
 import json
-from typing import List, Dict, Any, Optional
+import os
+import time
+from pathlib import Path
+from typing import Dict, Any
 from datetime import datetime
+
 from gcs_service import GcsService
 from amplitude_service import AmplitudeService
+
 
 class IngestionService:
     """
     Simulates a data ingestion service that fetches data from a source
     and publishes it to a message queue like Google Cloud Pub/Sub.
+
+    Reliability additions (P0):
+    - retry with backoff for external fetch
+    - dead-letter record for failed fetches
     """
 
     def __init__(self, gcs_service: GcsService, connector_config: Dict[str, Any], connector_type: str):
-        """
-        In a real application, this would initialize a Pub/Sub client.
-        Args:
-            gcs_service: The service for interacting with Google Cloud Storage.
-            connector_config: The specific configuration for the connector to use (e.g., API keys).
-            connector_type: The type of the connector (e.g., 'amplitude').
-        """
         self.gcs_service = gcs_service
         self.amplitude_client = None
         if connector_type == 'amplitude':
-            self.amplitude_client = AmplitudeService(api_key=connector_config['api_key'], secret_key=connector_config['secret_key'])
-        
-        self.message_queue_topic = [] 
+            self.amplitude_client = AmplitudeService(
+                api_key=connector_config['api_key'],
+                secret_key=connector_config['secret_key']
+            )
+
+        self.message_queue_topic = []
+        self.retry_max_attempts = int(os.getenv("INGEST_RETRY_MAX_ATTEMPTS", "3"))
+        self.retry_backoff_sec = float(os.getenv("INGEST_RETRY_BACKOFF_SEC", "1.5"))
+        self.dlq_path = Path(os.getenv("INGEST_DLQ_FILE", ".cache/ingest_dlq.jsonl"))
+        self.dlq_path.parent.mkdir(parents=True, exist_ok=True)
         print("IngestionService initialized (simulating Pub/Sub publisher).")
+
+    def _record_dead_letter(self, start_date: str, end_date: str, error_text: str):
+        record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "amplitude",
+            "start_date": start_date,
+            "end_date": end_date,
+            "error": error_text,
+        }
+        with self.dlq_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def _fetch_events_with_retry(self, start_date: str, end_date: str):
+        if not self.amplitude_client:
+            raise ValueError("IngestionService is not configured for Amplitude. Cannot fetch events.")
+
+        last_error = None
+        for attempt in range(1, self.retry_max_attempts + 1):
+            try:
+                print(f"[Ingestion] Attempt {attempt}/{self.retry_max_attempts} for {start_date} -> {end_date}")
+                return self.amplitude_client.export_events(start_date, end_date)
+            except Exception as e:
+                last_error = e
+                if attempt < self.retry_max_attempts:
+                    sleep_sec = self.retry_backoff_sec * (2 ** (attempt - 1))
+                    print(f"[Ingestion] attempt {attempt} failed: {e}. Retrying in {sleep_sec:.1f}s...")
+                    time.sleep(sleep_sec)
+                else:
+                    print(f"[Ingestion] final attempt failed: {e}")
+
+        self._record_dead_letter(start_date, end_date, str(last_error))
+        raise RuntimeError(f"Ingestion failed after retries: {last_error}")
 
     def fetch_and_publish_events(self, start_date: str, end_date: str) -> int:
         """
         Fetches events from Amplitude and publishes them to the simulated queue.
-
-        Args:
-            start_date: The start date for the data fetch.
-            end_date: The end date for the data fetch.
-
-        Returns:
-            The number of events published.
         """
-        if not self.amplitude_client:
-            raise ValueError("IngestionService is not configured for Amplitude. Cannot fetch events.")
-
         print(f"Fetching events from Amplitude for {start_date} to {end_date}...")
-        raw_events = self.amplitude_client.export_events(start_date, end_date)
+        raw_events = self._fetch_events_with_retry(start_date, end_date)
 
         if raw_events:
-            # 1. Save raw data to Google Cloud Storage
             timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             blob_name = f"raw_events/{start_date}_to_{end_date}/{timestamp}.json"
             gcs_path = self.gcs_service.upload_raw_events(raw_events, blob_name)
 
-            # 2. Publish a notification with the GCS path to the message queue
             notification = {"gcs_path": gcs_path, "event_count": len(raw_events)}
             self.message_queue_topic.append(json.dumps(notification))
             print(f"Published notification for {len(raw_events)} events to the message queue.")
-        
+
         return len(raw_events)
