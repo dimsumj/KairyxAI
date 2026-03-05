@@ -991,6 +991,34 @@ async def get_local_observability_events(limit: int = 200):
     return {"events": events[:limit]}
 
 
+@app.get("/cleanup/rejected-events")
+async def get_rejected_events(limit: int = 200):
+    path = ".cache/rejected_events.jsonl"
+    out = []
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            for line in f.readlines()[-limit:]:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return {"rejected_events": out}
+
+
+@app.get("/cleanup/conflicts")
+async def get_cleanup_conflicts(limit: int = 200):
+    path = ".cache/conflict_log.jsonl"
+    out = []
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            for line in f.readlines()[-limit:]:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return {"conflicts": out}
+
+
 @app.post("/configure-adjust-credentials")
 async def configure_adjust_credentials(key: AdjustApiKey):
     """

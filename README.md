@@ -336,6 +336,15 @@ Cleanup P1 currently performs:
 - revenue type coercion (`revenue_usd`) with `malformed_revenue` flag
 - currency normalization to uppercase
 
+Cleanup P2 adds:
+- rejection policy: critically bad rows (missing player id / invalid event time) are isolated to `.cache/rejected_events.jsonl`
+- conflict resolution logging: cross-source conflicts on `campaign/adset/media_source` for same canonical event are logged to `.cache/conflict_log.jsonl`
+- job stats include `rejected_events` and `conflicts_logged`
+
+APIs:
+- `GET /cleanup/rejected-events`
+- `GET /cleanup/conflicts`
+
 ### Manual field mapping (canonical override)
 Use this when sources use different field names (e.g., `PID`, `uid`, `user_id`).
 

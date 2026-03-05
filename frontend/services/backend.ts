@@ -55,6 +55,8 @@ export interface ImportJob {
     raw_normalized_events: number;
     deduped_events: number;
     duplicates_removed: number;
+    rejected_events?: number;
+    conflicts_logged?: number;
     quality?: {
       rows_with_flags: number;
       rows_clean: number;

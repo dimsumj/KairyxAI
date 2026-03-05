@@ -713,7 +713,7 @@ const BackendWorkbench: React.FC = () => {
                         ))}
                         {job.processing_stats ? (
                           <div className="text-gray-400 mt-1 space-y-1">
-                            <div>normalized={job.processing_stats.raw_normalized_events}, deduped={job.processing_stats.deduped_events}, removed={job.processing_stats.duplicates_removed}</div>
+                            <div>normalized={job.processing_stats.raw_normalized_events}, deduped={job.processing_stats.deduped_events}, removed={job.processing_stats.duplicates_removed}, rejected={job.processing_stats.rejected_events || 0}, conflicts={job.processing_stats.conflicts_logged || 0}</div>
                             {job.processing_stats.quality ? (
                               <div>
                                 quality: clean={job.processing_stats.quality.rows_clean}, flagged={job.processing_stats.quality.rows_with_flags}
