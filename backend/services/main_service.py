@@ -388,6 +388,11 @@ class SendGridApiKey(BaseModel):
     """Request model for setting the SendGrid API key."""
     sendgrid_api_key: str = Field(..., alias='api_key')
 
+class BrazeCredentials(BaseModel):
+    """Request model for setting Braze API key and endpoint."""
+    api_key: str
+    rest_endpoint: str
+
 class ChurnReportRequest(BaseModel):
     """Request model for generating a churn report."""
     start_date: str
@@ -539,6 +544,17 @@ async def configure_sendgrid_key(key: SendGridApiKey):
     _add_connector_config("sendgrid", "SendGrid", new_config)
     append_audit_log("connector_configured", {"type": "sendgrid", "name": "SendGrid"})
     return {"message": "SendGrid API key has been configured and cached."}
+
+
+@app.post("/configure-braze")
+async def configure_braze(creds: BrazeCredentials):
+    """Configures Braze REST credentials."""
+    os.environ["BRAZE_API_KEY"] = creds.api_key
+    os.environ["BRAZE_REST_ENDPOINT"] = creds.rest_endpoint
+    new_config = {"api_key": creds.api_key, "rest_endpoint": creds.rest_endpoint}
+    _add_connector_config("braze", "Braze", new_config)
+    append_audit_log("connector_configured", {"type": "braze", "name": "Braze"})
+    return {"message": "Braze credentials have been configured and cached."}
 
 
 @app.post("/configure-cloud-churn")
@@ -711,6 +727,10 @@ async def get_services_health():
         "sendgrid": {
             "status": "ok" if os.getenv("SENDGRID_API_KEY") else "error",
             "details": "Configured" if os.getenv("SENDGRID_API_KEY") else "Not Configured"
+        },
+        "braze": {
+            "status": "ok" if os.getenv("BRAZE_API_KEY") and os.getenv("BRAZE_REST_ENDPOINT") else "warning",
+            "details": "Configured" if os.getenv("BRAZE_API_KEY") and os.getenv("BRAZE_REST_ENDPOINT") else "Not Configured (optional)"
         }
     }
     return services_status

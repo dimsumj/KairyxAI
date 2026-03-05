@@ -166,3 +166,8 @@ Local reliability/security defaults added:
 - Local audit log for connector changes: `.audit.log.jsonl`
 - Local SQLite job persistence: `backend/services/.kairyx_local.db`
 
+P1 execution adapters (local-friendly):
+- `email` channel routes via SendGrid when configured, otherwise local simulation
+- `braze` channel routes via Braze REST when configured, otherwise push simulation
+- Configure Braze via `POST /configure-braze` with `{ api_key, rest_endpoint }`
+
