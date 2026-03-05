@@ -1732,8 +1732,17 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": []})()
         source_stats = []
 
-        for source_name in source_names:
+        if job:
+            job["current_step"] = "Starting import"
+            job["progress_pct"] = 5
+            save_import_jobs_to_cache()
+
+        for idx, source_name in enumerate(source_names, start=1):
             try:
+                if job:
+                    job["current_step"] = f"Importing source {idx}/{len(source_names)}: {source_name}"
+                    job["progress_pct"] = min(70, 10 + int((idx - 1) / max(1, len(source_names)) * 50))
+                    save_import_jobs_to_cache()
                 connector_config, conn_type = _get_connector_config(source_name)
                 if not connector_config:
                     raise ValueError(f"Connector configuration for '{source_name}' not found.")
@@ -1765,14 +1774,26 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         if not aggregate_ingestion.message_queue_topic:
             raise ValueError("No source produced data for this import window.")
 
+        if job:
+            job["current_step"] = "Import complete, preparing processing"
+            job["progress_pct"] = 75
+            save_import_jobs_to_cache()
+
         if auto_mapping:
             if job and job.get("status") != "Interrupted":
                 job["source_stats"] = source_stats
                 job["pending_notifications"] = list(aggregate_ingestion.message_queue_topic)
+                job["current_step"] = "Awaiting manual mapping"
+                job["progress_pct"] = 85
                 _transition_job_status(job, "Awaiting Mapping", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
                 save_import_jobs_to_cache()
                 print(f"Job '{job_name}' is awaiting manual mapping.")
             return
+
+        if job:
+            job["current_step"] = "Processing and normalizing events"
+            job["progress_pct"] = 90
+            save_import_jobs_to_cache()
 
         processing_service = DataProcessingService(
             bigquery_service=BIGQUERY_SERVICE_INSTANCE,
@@ -1784,6 +1805,8 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         if job and job.get("status") != "Interrupted":
             job["source_stats"] = source_stats
             job["processing_stats"] = processing_stats
+            job["current_step"] = "Completed"
+            job["progress_pct"] = 100
             _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
             print(f"Job '{job_name}' completed successfully.")
@@ -1792,6 +1815,8 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         print(f"Error processing job '{job_name}': {e}")
         if job and job.get("status") != "Interrupted":
             job["last_error"] = str(e)
+            job["current_step"] = "Failed"
+            job["progress_pct"] = job.get("progress_pct", 0)
             _transition_job_status(job, "Failed", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
 
@@ -1808,8 +1833,10 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
         expiration_timestamp = job_timestamp + timedelta(days=3)
         job_name = f"{job_timestamp.strftime('%Y%m%d-%H%M%S')}-{request.source.capitalize()}"
         IMPORT_JOBS.append({
-            "name": job_name, 
-            "status": "Processing", 
+            "name": job_name,
+            "status": "Processing",
+            "current_step": "Queued",
+            "progress_pct": 0,
             "timestamp": job_timestamp.isoformat(),
             "creation_timestamp": job_timestamp.isoformat(),
             "expiration_timestamp": expiration_timestamp.isoformat(),
@@ -1869,6 +1896,10 @@ async def process_after_mapping(job_name: str):
     job_identifier = f"{start_date}_to_{end_date}"
     aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": pending_notifications})()
 
+    job["current_step"] = "Processing after manual mapping"
+    job["progress_pct"] = 90
+    save_import_jobs_to_cache()
+
     processing_service = DataProcessingService(
         bigquery_service=BIGQUERY_SERVICE_INSTANCE,
         gcs_service=GCS_SERVICE_INSTANCE,
@@ -1877,6 +1908,8 @@ async def process_after_mapping(job_name: str):
     processing_stats = processing_service.run_processing_pipeline(aggregate_ingestion)
 
     job["processing_stats"] = processing_stats
+    job["current_step"] = "Completed"
+    job["progress_pct"] = 100
     job.pop("pending_notifications", None)
     _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
     save_import_jobs_to_cache()

@@ -935,6 +935,14 @@ const BackendWorkbench: React.FC = () => {
                   <td className="px-3 py-2">
                     <div className="space-y-1">
                       <div>{job.status}</div>
+                      {typeof job.progress_pct === 'number' ? (
+                        <div className="space-y-1">
+                          <div className="w-40 bg-gray-700 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, job.progress_pct))}%` }} />
+                          </div>
+                          <div className="text-[11px] text-gray-400">{job.current_step || '-'} · {job.progress_pct}%</div>
+                        </div>
+                      ) : null}
                       {job.status === 'Awaiting Mapping' ? (
                         <button
                           className="text-xs bg-indigo-600 hover:bg-indigo-500 rounded px-2 py-1"

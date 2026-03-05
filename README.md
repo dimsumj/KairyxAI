@@ -417,3 +417,9 @@ Export churn audience lists:
 - Third-party push: `POST /churn/export/third-party`
   - Supports webhook URL/token from request or `/churn/config`
 
+Import status now includes step/progress fields:
+- `status`
+- `current_step`
+- `progress_pct`
+(frontend shows progress bar instead of only `Processing`).
+

@@ -47,6 +47,8 @@ export interface IdentityLink {
 export interface ImportJob {
   name: string;
   status: string;
+  current_step?: string;
+  progress_pct?: number;
   timestamp: string;
   start_date: string;
   end_date: string;
