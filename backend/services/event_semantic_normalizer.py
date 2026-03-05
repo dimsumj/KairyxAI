@@ -5,6 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Dict, Any
 
+from pipeline_models import (
+    PIPELINE_SCHEMA_VERSION,
+    build_event_fingerprint,
+    derive_event_date,
+)
+
 
 class EventSemanticNormalizer:
     """
@@ -111,6 +117,9 @@ class EventSemanticNormalizer:
             new_event['event_properties'] = props
             new_event['user_properties'] = user_props
             new_event['data_quality_flags'] = quality_flags
+            new_event['schema_version'] = PIPELINE_SCHEMA_VERSION
+            new_event['event_date'] = derive_event_date(new_event["event_time"])
+            new_event['event_fingerprint'] = build_event_fingerprint(new_event)
 
             normalized_events.append(new_event)
 

@@ -38,17 +38,48 @@ class GcsService:
         self._bucket = self._client.bucket(self.bucket_name)
 
     def _init_mock_backend(self):
-        self._bucket_path = os.path.join(".gcs_bucket", self.bucket_name)
+        self._bucket_path = os.path.join(".cache", "raw", self.bucket_name)
+        self._legacy_bucket_path = os.path.join(".gcs_bucket", self.bucket_name)
         os.makedirs(self._bucket_path, exist_ok=True)
+
+    def _encode_raw_events(self, events: List[Dict[str, Any]]) -> str:
+        return "\n".join(json.dumps(event) for event in events)
+
+    def _decode_raw_events(self, payload: str) -> List[Dict[str, Any]]:
+        stripped = payload.strip()
+        if not stripped:
+            return []
+
+        if stripped.startswith("["):
+            parsed = json.loads(stripped)
+            return parsed if isinstance(parsed, list) else []
+
+        events = []
+        for line in stripped.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            events.append(json.loads(line))
+        return events
+
+    def _resolve_mock_blob_path(self, blob_name: str) -> str:
+        candidate_paths = [
+            os.path.join(self._bucket_path, blob_name),
+            os.path.join(self._legacy_bucket_path, blob_name),
+        ]
+        for path in candidate_paths:
+            if os.path.exists(path):
+                return path
+        return candidate_paths[0]
 
     def upload_raw_events(self, events: List[Dict[str, Any]], destination_blob_name: str) -> str:
         if not events:
             return ""
 
-        payload = json.dumps(events)
+        payload = self._encode_raw_events(events)
         if self.mode == "gcp":
             blob = self._bucket.blob(destination_blob_name)
-            blob.upload_from_string(payload, content_type="application/json")
+            blob.upload_from_string(payload, content_type="application/x-ndjson")
             gcs_path = f"gs://{self.bucket_name}/{destination_blob_name}"
             print(f"Uploaded {len(events)} events to GCS at: {gcs_path}")
             return gcs_path
@@ -67,27 +98,33 @@ class GcsService:
             blob = self._bucket.blob(blob_name)
             if not blob.exists():
                 raise FileNotFoundError(f"Blob not found in GCS: {blob_name}")
-            return json.loads(blob.download_as_text())
+            return self._decode_raw_events(blob.download_as_text())
 
-        file_path = os.path.join(self._bucket_path, blob_name)
+        file_path = self._resolve_mock_blob_path(blob_name)
         with open(file_path, "r") as f:
-            return json.load(f)
+            return self._decode_raw_events(f.read())
 
     def delete_data_for_job(self, job_identifier: str):
         """
         Deletes all blobs associated with a specific job identifier.
         """
-        prefix = f"raw_events/{job_identifier}/"
+        job_fragment = f"/{job_identifier}/"
         if self.mode == "gcp":
-            for blob in self._client.list_blobs(self.bucket_name, prefix=prefix):
+            for blob in self._client.list_blobs(self.bucket_name, prefix="raw_events/"):
+                if job_fragment not in f"/{blob.name}":
+                    continue
                 blob.delete()
                 print(f"Deleted blob '{blob.name}' from GCS.")
             return
 
-        job_dir = os.path.join(self._bucket_path, "raw_events", job_identifier)
-        if os.path.isdir(job_dir):
-            for filename in os.listdir(job_dir):
-                file_to_delete = os.path.join(job_dir, filename)
-                os.remove(file_to_delete)
-                print(f"Deleted blob '{os.path.join('raw_events', job_identifier, filename)}' from local GCS mock.")
-
+        for root in (self._bucket_path, self._legacy_bucket_path):
+            if not os.path.isdir(root):
+                continue
+            for current_root, _, filenames in os.walk(root):
+                for filename in filenames:
+                    file_to_delete = os.path.join(current_root, filename)
+                    rel_path = os.path.relpath(file_to_delete, root)
+                    if job_fragment not in f"/{rel_path}":
+                        continue
+                    os.remove(file_to_delete)
+                    print(f"Deleted blob '{rel_path}' from local GCS mock.")

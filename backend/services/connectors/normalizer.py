@@ -3,6 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from pipeline_models import (
+    PIPELINE_SCHEMA_VERSION,
+    build_event_fingerprint,
+    derive_event_date,
+)
+
 
 def to_iso(ts: Any) -> str:
     if ts is None:
@@ -54,11 +60,15 @@ def canonical_attribution_event(source: str, raw: Dict[str, Any], field_mapping:
         "raw": raw,
     }
 
-    return {
+    event = {
         "player_id": str(player_id),
         "event_type": str(event_type),
         "event_time": event_time,
+        "event_date": derive_event_date(event_time),
         "source": source,
         "source_event_id": str(source_event_id) if source_event_id is not None else None,
+        "schema_version": PIPELINE_SCHEMA_VERSION,
         "event_properties": props,
     }
+    event["event_fingerprint"] = build_event_fingerprint(event)
+    return event

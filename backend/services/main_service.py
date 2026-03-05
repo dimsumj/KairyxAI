@@ -50,6 +50,8 @@ from local_job_store import (
     save_field_mapping,
     get_field_mapping,
     list_field_mappings,
+    list_ingestion_checkpoints,
+    delete_ingestion_checkpoints,
 )
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
@@ -1718,6 +1720,9 @@ async def delete_job_cache(job_name: str):
     # 3. Delete data from simulated BigQuery
     BIGQUERY_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
 
+    # 3b. Delete ingestion checkpoints associated with this import job
+    delete_ingestion_checkpoints(job_name)
+
     # 4. Delete prediction cache file if it exists
     prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}.json")
     if os.path.exists(prediction_cache_file):
@@ -1766,10 +1771,18 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                     gcs_service=GCS_SERVICE_INSTANCE,
                     connector_config=connector_config,
                     connector_type=conn_type,
+                    source_config_id=source_name,
                 )
-                ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date)
+                ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date, job_id=job_name)
                 aggregate_ingestion.message_queue_topic.extend(ingestion_service.message_queue_topic)
-                source_stats.append({"source": source_name, "type": conn_type, "ingested_events": ingested_count, "status": "ok"})
+                source_stats.append({
+                    "source": source_name,
+                    "type": conn_type,
+                    "ingested_events": ingested_count,
+                    "shards_created": len(ingestion_service.staged_shards),
+                    "published_messages": len(ingestion_service.published_message_ids),
+                    "status": "ok",
+                })
                 update_connector_status(source_name, conn_type, success=True, ingested_events=ingested_count)
             except Exception as source_error:
                 source_stats.append({
@@ -1794,6 +1807,7 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
         if auto_mapping:
             if job and job.get("status") != "Interrupted":
                 job["source_stats"] = source_stats
+                job["ingestion_checkpoints"] = list_ingestion_checkpoints(job_name)
                 job["pending_notifications"] = list(aggregate_ingestion.message_queue_topic)
                 job["current_step"] = "Awaiting manual mapping"
                 job["progress_pct"] = 85
@@ -1813,10 +1827,16 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
             job_identifier=job_identifier,
         )
         processing_stats = processing_service.run_processing_pipeline(aggregate_ingestion)
+        warehouse_stats = {
+            "curation": BIGQUERY_SERVICE_INSTANCE.run_events_curation(job_id=job_identifier),
+            "player_latest_state": BIGQUERY_SERVICE_INSTANCE.refresh_player_latest_state(job_id=job_identifier),
+        }
 
         if job and job.get("status") != "Interrupted":
             job["source_stats"] = source_stats
+            job["ingestion_checkpoints"] = list_ingestion_checkpoints(job_name)
             job["processing_stats"] = processing_stats
+            job["warehouse_stats"] = warehouse_stats
             job["current_step"] = "Completed"
             job["progress_pct"] = 100
             _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
@@ -1918,8 +1938,14 @@ async def process_after_mapping(job_name: str):
         job_identifier=job_identifier,
     )
     processing_stats = processing_service.run_processing_pipeline(aggregate_ingestion)
+    warehouse_stats = {
+        "curation": BIGQUERY_SERVICE_INSTANCE.run_events_curation(job_id=job_identifier),
+        "player_latest_state": BIGQUERY_SERVICE_INSTANCE.refresh_player_latest_state(job_id=job_identifier),
+    }
 
+    job["ingestion_checkpoints"] = list_ingestion_checkpoints(job_name)
     job["processing_stats"] = processing_stats
+    job["warehouse_stats"] = warehouse_stats
     job["current_step"] = "Completed"
     job["progress_pct"] = 100
     job.pop("pending_notifications", None)

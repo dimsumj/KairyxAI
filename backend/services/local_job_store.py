@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -6,8 +7,17 @@ from typing import Any, Dict, List, Optional
 DB_PATH = Path(__file__).resolve().parent / ".kairyx_local.db"
 
 
+def _db_path() -> Path:
+    override = os.getenv("KAIRYX_LOCAL_DB_PATH")
+    if override:
+        return Path(override)
+    return DB_PATH
+
+
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    db_path = _db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
@@ -56,6 +66,18 @@ def init_db() -> None:
             )
             """
         )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
+                job_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                shard_index INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (job_id, source, shard_index)
+            )
+            """
+        )
 
 
 def save_import_jobs(jobs: List[Dict[str, Any]]) -> None:
@@ -92,6 +114,7 @@ def load_prediction_jobs() -> List[Dict[str, Any]]:
 
 def resolve_or_create_canonical_user_id(source: str, source_user_id: str) -> str:
     source_user_id = str(source_user_id or "unknown_user")
+    init_db()
     with _conn() as c:
         row = c.execute(
             "SELECT canonical_user_id FROM identity_links WHERE source=? AND source_user_id=?",
@@ -175,3 +198,49 @@ def list_field_mappings() -> Dict[str, Any]:
         except json.JSONDecodeError:
             out[name] = {}
     return out
+
+
+def save_ingestion_checkpoint(job_id: str, source: str, shard_index: int, payload: Dict[str, Any]) -> None:
+    init_db()
+    with _conn() as c:
+        c.execute(
+            """
+            INSERT OR REPLACE INTO ingestion_checkpoints(job_id, source, shard_index, payload, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (job_id, source, int(shard_index), json.dumps(payload)),
+        )
+
+
+def list_ingestion_checkpoints(job_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    init_db()
+    query = """
+        SELECT job_id, source, shard_index, payload
+        FROM ingestion_checkpoints
+    """
+    params: tuple[Any, ...] = ()
+    if job_id:
+        query += " WHERE job_id=?"
+        params = (job_id,)
+    query += " ORDER BY job_id, source, shard_index"
+
+    with _conn() as c:
+        rows = c.execute(query, params).fetchall()
+
+    checkpoints: List[Dict[str, Any]] = []
+    for row_job_id, source, shard_index, payload in rows:
+        try:
+            checkpoint = json.loads(payload)
+        except json.JSONDecodeError:
+            checkpoint = {}
+        checkpoint.setdefault("job_id", row_job_id)
+        checkpoint.setdefault("source", source)
+        checkpoint.setdefault("shard_index", shard_index)
+        checkpoints.append(checkpoint)
+    return checkpoints
+
+
+def delete_ingestion_checkpoints(job_id: str) -> None:
+    init_db()
+    with _conn() as c:
+        c.execute("DELETE FROM ingestion_checkpoints WHERE job_id=?", (job_id,))

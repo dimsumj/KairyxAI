@@ -25,6 +25,63 @@ class PlayerModelingEngine:
         self.db_client = bigquery_service
         self.churn_inactive_days = max(1, int(churn_inactive_days))
 
+    def _get_player_latest_state(self, player_id: Any) -> Optional[Dict[str, Any]]:
+        getter = getattr(self.db_client, "get_player_latest_state", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(player_id)
+        except Exception:
+            return None
+
+    def _build_profile_from_latest_state(self, player_id: Any) -> Optional[Dict[str, Any]]:
+        latest_state = self._get_player_latest_state(player_id)
+        if not latest_state:
+            return None
+
+        first_seen = latest_state.get("first_seen_at") or latest_state.get("first_seen_date")
+        last_seen = latest_state.get("last_seen_at") or latest_state.get("last_seen_date")
+        if not first_seen or not last_seen:
+            return None
+
+        try:
+            last_seen_dt = pd.to_datetime(last_seen, errors="coerce", utc=False)
+            if pd.isna(last_seen_dt):
+                return None
+            days_since_last_seen = int(
+                latest_state.get("days_since_last_seen")
+                if latest_state.get("days_since_last_seen") is not None
+                else (datetime.utcnow() - last_seen_dt.to_pydatetime().replace(tzinfo=None)).days
+            )
+        except Exception:
+            return None
+
+        total_sessions = latest_state.get("total_sessions")
+        if total_sessions is None:
+            total_sessions = latest_state.get("sessions_30d", 0)
+
+        total_events = latest_state.get("total_events")
+        if total_events is None:
+            total_events = latest_state.get("lifetime_events", 0)
+
+        total_revenue = latest_state.get("total_revenue")
+        if total_revenue is None:
+            total_revenue = latest_state.get("lifetime_revenue_usd", 0.0)
+
+        churn_state = "churned" if days_since_last_seen >= self.churn_inactive_days else "active"
+        return {
+            "player_id": latest_state.get("player_id") or player_id,
+            "email": latest_state.get("email"),
+            "first_seen_date": str(first_seen),
+            "last_seen_date": str(last_seen),
+            "total_sessions": int(total_sessions or 0),
+            "total_events": int(total_events or 0),
+            "total_revenue": float(total_revenue or 0.0),
+            "days_since_last_seen": days_since_last_seen,
+            "churn_state": churn_state,
+            "churn_inactive_days": self.churn_inactive_days,
+        }
+
     def _get_and_preprocess_player_data(self, player_id: Any) -> Optional[pd.DataFrame]:
         """Fetches player data from the warehouse and performs preprocessing."""
         df = self.db_client.get_events_for_player(player_id)
@@ -57,6 +114,10 @@ class PlayerModelingEngine:
         Returns:
             A dictionary containing the player's profile, or None if not found.
         """
+        aggregate_profile = self._build_profile_from_latest_state(player_id)
+        if aggregate_profile:
+            return aggregate_profile
+
         player_events = self._get_and_preprocess_player_data(player_id)
 
         if player_events is None or player_events.empty:

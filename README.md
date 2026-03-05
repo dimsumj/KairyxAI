@@ -124,6 +124,14 @@ Initial focus:
 
 - Founders building tooling for games or consumer apps
 
+## Scalability Direction
+
+The repository keeps its current local-first demo flow and is evolving toward a production GCP ingestion path for high-volume event processing.
+
+- Local play-around mode remains centered on `DATA_BACKEND_MODE=mock`
+- Production scale target is GCS + Pub/Sub + Dataflow + BigQuery
+- The implementation blueprint lives in [docs/scalable-ingestion-blueprint.md](/Users/jeremyz/Projects/KairyxAI/docs/scalable-ingestion-blueprint.md)
+
 **Disclaimer**
 
 KairyxAI is an experimental project.
@@ -422,4 +430,3 @@ Import status now includes step/progress fields:
 - `current_step`
 - `progress_pct`
 (frontend shows progress bar instead of only `Processing`).
-

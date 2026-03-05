@@ -9,6 +9,7 @@ from bigquery_service import BigQueryService
 from gcs_service import GcsService
 from ingestion_service import IngestionService
 from local_job_store import resolve_or_create_canonical_user_id
+from pipeline_models import PIPELINE_SCHEMA_VERSION, build_event_fingerprint, derive_event_date
 
 class DataProcessingService:
     """
@@ -39,6 +40,74 @@ class DataProcessingService:
         self.conflict_file.parent.mkdir(parents=True, exist_ok=True)
         print("DataProcessingService initialized (simulating Dataflow).")
 
+    def _apply_event_to_dedupe_state(
+        self,
+        event: Dict[str, Any],
+        dedupe_map: Dict[tuple, Dict[str, Any]],
+        seen_canonical: Dict[tuple, Dict[str, Any]],
+        rejected_events: List[Dict[str, Any]],
+    ) -> int:
+        source = str(event.get("source", "unknown"))
+        player_id = str(event.get("player_id", "unknown_user"))
+        canonical_user_id = resolve_or_create_canonical_user_id(source, player_id)
+        event["canonical_user_id"] = canonical_user_id
+        event["schema_version"] = event.get("schema_version") or PIPELINE_SCHEMA_VERSION
+        event["event_date"] = event.get("event_date") or derive_event_date(event.get("event_time"))
+        event["event_fingerprint"] = build_event_fingerprint(event, canonical_user_id=canonical_user_id)
+
+        flags = set(event.get("data_quality_flags") or [])
+        if "missing_player_id" in flags or "invalid_event_time" in flags:
+            event["rejection_reason"] = "critical_quality_failure"
+            rejected_events.append(event)
+            return 0
+
+        source_event_id = event.get("source_event_id")
+        key = (
+            "srcid",
+            str(source),
+            str(source_event_id),
+        ) if source_event_id else (
+            "fallback",
+            str(canonical_user_id),
+            str(event.get("event_type")),
+            str(event.get("event_time")),
+            str(source),
+        )
+        dedupe_map[key] = event
+
+        conflict_key = (
+            str(canonical_user_id),
+            str(event.get("event_type")),
+            str(event.get("event_time")),
+        )
+        prev = seen_canonical.get(conflict_key)
+        conflicts_logged = 0
+        if prev:
+            p = prev.get("event_properties") or {}
+            c = event.get("event_properties") or {}
+            for field in ["campaign", "adset", "media_source"]:
+                pv = p.get(field)
+                cv = c.get(field)
+                if pv is not None and cv is not None and pv != cv:
+                    conflicts_logged += 1
+                    conflict = {
+                        "ts": datetime.utcnow().isoformat(),
+                        "job_identifier": self.job_identifier,
+                        "canonical_user_id": canonical_user_id,
+                        "event_type": event.get("event_type"),
+                        "event_time": event.get("event_time"),
+                        "field": field,
+                        "source_a": prev.get("source"),
+                        "value_a": pv,
+                        "source_b": event.get("source"),
+                        "value_b": cv,
+                        "resolution": "keep_latest_seen",
+                    }
+                    with self.conflict_file.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(conflict) + "\n")
+        seen_canonical[conflict_key] = event
+        return conflicts_logged
+
     def run_processing_pipeline(self, ingestion_service: IngestionService):
         """
         Simulates the execution of the processing pipeline.
@@ -48,7 +117,13 @@ class DataProcessingService:
         print("Starting data processing pipeline...")
         notifications = [json.loads(msg) for msg in ingestion_service.message_queue_topic]
 
-        all_normalized: List[Dict[str, Any]] = []
+        dedupe_map: Dict[tuple, Dict[str, Any]] = {}
+        rejected_events: List[Dict[str, Any]] = []
+
+        # conflict tracking key: (canonical_user_id, event_type, event_time)
+        seen_canonical: Dict[tuple, Dict[str, Any]] = {}
+        raw_normalized_events = 0
+        conflicts_logged = 0
 
         for notification in notifications:
             gcs_path = notification.get("gcs_path")
@@ -58,75 +133,18 @@ class DataProcessingService:
             blob_name = gcs_path.replace(f"gs://{self.gcs_service.bucket_name}/", "")
             raw_events = self.gcs_service.download_raw_events(blob_name)
             normalized_events = self.normalizer.normalize_events(raw_events)
-            all_normalized.extend(normalized_events)
+            raw_normalized_events += len(normalized_events)
 
-        dedupe_map: Dict[tuple, Dict[str, Any]] = {}
-        rejected_events: List[Dict[str, Any]] = []
-
-        # conflict tracking key: (canonical_user_id, event_type, event_time)
-        seen_canonical: Dict[tuple, Dict[str, Any]] = {}
-        conflicts_logged = 0
-
-        for e in all_normalized:
-            source = str(e.get("source", "unknown"))
-            player_id = str(e.get("player_id", "unknown_user"))
-            canonical_user_id = resolve_or_create_canonical_user_id(source, player_id)
-            e["canonical_user_id"] = canonical_user_id
-
-            # rejection policy: critical flags -> isolate
-            flags = set(e.get("data_quality_flags") or [])
-            if "missing_player_id" in flags or "invalid_event_time" in flags:
-                e["rejection_reason"] = "critical_quality_failure"
-                rejected_events.append(e)
-                continue
-
-            source_event_id = e.get("source_event_id")
-            key = (
-                "srcid",
-                str(source),
-                str(source_event_id),
-            ) if source_event_id else (
-                "fallback",
-                str(canonical_user_id),
-                str(e.get("event_type")),
-                str(e.get("event_time")),
-                str(source),
-            )
-            dedupe_map[key] = e
-
-            conflict_key = (
-                str(canonical_user_id),
-                str(e.get("event_type")),
-                str(e.get("event_time")),
-            )
-            prev = seen_canonical.get(conflict_key)
-            if prev:
-                p = prev.get("event_properties") or {}
-                c = e.get("event_properties") or {}
-                for field in ["campaign", "adset", "media_source"]:
-                    pv = p.get(field)
-                    cv = c.get(field)
-                    if pv is not None and cv is not None and pv != cv:
-                        conflicts_logged += 1
-                        conflict = {
-                            "ts": datetime.utcnow().isoformat(),
-                            "job_identifier": self.job_identifier,
-                            "canonical_user_id": canonical_user_id,
-                            "event_type": e.get("event_type"),
-                            "event_time": e.get("event_time"),
-                            "field": field,
-                            "source_a": prev.get("source"),
-                            "value_a": pv,
-                            "source_b": e.get("source"),
-                            "value_b": cv,
-                            "resolution": "keep_latest_seen",
-                        }
-                        with self.conflict_file.open("a", encoding="utf-8") as f:
-                            f.write(json.dumps(conflict) + "\n")
-            seen_canonical[conflict_key] = e
+            for event in normalized_events:
+                conflicts_logged += self._apply_event_to_dedupe_state(
+                    event,
+                    dedupe_map=dedupe_map,
+                    seen_canonical=seen_canonical,
+                    rejected_events=rejected_events,
+                )
 
         deduped_events = list(dedupe_map.values())
-        self.bigquery_service.write_processed_events(deduped_events, self.job_identifier)
+        self.bigquery_service.write_events_staging(deduped_events, job_id=self.job_identifier)
 
         if rejected_events:
             with self.rejection_file.open("a", encoding="utf-8") as f:
@@ -143,9 +161,9 @@ class DataProcessingService:
                 flag_counts[f] = flag_counts.get(f, 0) + 1
 
         stats = {
-            "raw_normalized_events": len(all_normalized),
+            "raw_normalized_events": raw_normalized_events,
             "deduped_events": len(deduped_events),
-            "duplicates_removed": max(0, len(all_normalized) - len(deduped_events)),
+            "duplicates_removed": max(0, raw_normalized_events - len(deduped_events)),
             "rejected_events": len(rejected_events),
             "conflicts_logged": conflicts_logged,
             "quality": {
