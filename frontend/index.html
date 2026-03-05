@@ -718,6 +718,7 @@
             const datasetSelect = document.getElementById('dataset-select');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
             const stopPredictBtn = document.getElementById('stop-predict-btn');
+            const predictionProgressInfo = document.getElementById('prediction-progress-info');
             const operatorHubResults = document.getElementById('operator-hub-results');
 
             let allChurnPredictionPlayers = [];
@@ -749,6 +750,7 @@
                         renderChurnTable();
                         predictChurnBtn.disabled = false;
                         stopPredictBtn.disabled = true;
+                        predictionProgressInfo.textContent = '';
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
                         predictChurnBtn.disabled = true;
@@ -770,6 +772,7 @@
                 operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
                 predictChurnBtn.disabled = true;
                 stopPredictBtn.disabled = false;
+                predictionProgressInfo.textContent = 'Prediction job: starting...';
                 allChurnPredictionPlayers = [];
                 renderChurnTable();
 
@@ -802,11 +805,7 @@
                         const processed = job.processed_count || 0;
                         const total = job.total_count || 0;
                         const pct = job.progress_pct || 0;
-                        operatorHubResults.innerHTML = operatorHubResults.innerHTML || '';
-                        const info = document.getElementById('prediction-progress-info');
-                        if (info) {
-                            info.textContent = `Prediction job: ${job.status || 'Processing'} · ${processed}/${total} (${pct}%)`;
-                        }
+                        predictionProgressInfo.textContent = `Prediction job: ${job.status || 'Processing'} · ${processed}/${total} (${pct}%)`;
 
                         if (job.status === 'Ready' || job.status === 'Failed' || job.status === 'Stopped') {
                             done = true;
@@ -888,6 +887,7 @@
                 // Selection alone should not trigger prediction.
                 allChurnPredictionPlayers = [];
                 renderChurnTable();
+                predictionProgressInfo.textContent = '';
             });
 
             predictChurnBtn.addEventListener('click', () => {
@@ -898,6 +898,7 @@
             stopPredictBtn.addEventListener('click', async () => {
                 if (!activePredictionJobId) return;
                 try {
+                    predictionProgressInfo.textContent = 'Prediction job: stopping...';
                     await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
                 } catch (e) {
                     console.error('Failed to stop prediction job', e);
