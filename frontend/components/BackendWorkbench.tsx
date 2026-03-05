@@ -390,18 +390,19 @@ const BackendWorkbench: React.FC = () => {
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Import Data</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <select
+          <input
+            type="text"
             className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+            placeholder="Source name(s), comma-separated (e.g., Amplitude 1,AppsFlyer 1)"
             value={importSource}
             onChange={(e) => setImportSource(e.target.value)}
-          >
-            <option value="">Select Source</option>
+            list="configured-sources"
+          />
+          <datalist id="configured-sources">
             {sources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name}
-              </option>
+              <option key={source.id} value={source.id} />
             ))}
-          </select>
+          </datalist>
           <input
             type="date"
             className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
@@ -426,22 +427,37 @@ const BackendWorkbench: React.FC = () => {
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Date Range</th>
                 <th className="px-3 py-2">Created</th>
+                <th className="px-3 py-2">Source/Processing Stats</th>
               </tr>
             </thead>
             <tbody>
               {imports.map((job) => (
-                <tr key={job.name} className="border-t border-gray-800">
+                <tr key={job.name} className="border-t border-gray-800 align-top">
                   <td className="px-3 py-2">{job.name}</td>
                   <td className="px-3 py-2">{job.status}</td>
                   <td className="px-3 py-2">
                     {job.start_date} to {job.end_date}
                   </td>
                   <td className="px-3 py-2">{new Date(job.timestamp).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-xs text-gray-300">
+                    {job.source_stats?.length ? (
+                      <div className="space-y-1">
+                        {job.source_stats.map((s, idx) => (
+                          <div key={`${job.name}-s-${idx}`}>{s.source} ({s.type}): {s.ingested_events}</div>
+                        ))}
+                        {job.processing_stats ? (
+                          <div className="text-gray-400 mt-1">
+                            normalized={job.processing_stats.raw_normalized_events}, deduped={job.processing_stats.deduped_events}, removed={job.processing_stats.duplicates_removed}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : <span className="text-gray-500">-</span>}
+                  </td>
                 </tr>
               ))}
               {imports.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-2 text-gray-500" colSpan={4}>
+                  <td className="px-3 py-2 text-gray-500" colSpan={5}>
                     No imports yet.
                   </td>
                 </tr>

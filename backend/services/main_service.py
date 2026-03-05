@@ -1192,27 +1192,43 @@ async def delete_job_cache(job_name: str):
 def run_pipeline_background(start_date: str, end_date: str, job_name: str, source: str):
     """The actual data processing logic that runs in the background."""
     try:
-        # Find the job to update its status later
         job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
 
-        # 1. Ingestion: Fetch from source, upload to GCS, and publish notification
-        # Construct the job_identifier consistently for GCS and BigQuery
         start_date = _normalize_date_for_amplitude(start_date)
         end_date = _normalize_date_for_amplitude(end_date)
         job_identifier = f"{start_date}_to_{end_date}"
 
-        connector_config, conn_type = _get_connector_config(source) # 'source' is now the connector name
-        if not connector_config:
-            raise ValueError(f"Connector configuration for '{source}' not found.")
+        source_names = [s.strip() for s in (source or "").split(",") if s.strip()]
+        if not source_names:
+            raise ValueError("At least one source connector name is required.")
 
-        ingestion_service = IngestionService(gcs_service=GCS_SERVICE_INSTANCE, connector_config=connector_config, connector_type=conn_type)
-        ingestion_service.fetch_and_publish_events(start_date, end_date)
+        aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": []})()
+        source_stats = []
 
-        # 2. Processing: Consume from queue, normalize, and write to BigQuery
-        processing_service = DataProcessingService(bigquery_service=BIGQUERY_SERVICE_INSTANCE, gcs_service=GCS_SERVICE_INSTANCE, job_identifier=job_identifier)
-        processing_service.run_processing_pipeline(ingestion_service)
+        for source_name in source_names:
+            connector_config, conn_type = _get_connector_config(source_name)
+            if not connector_config:
+                raise ValueError(f"Connector configuration for '{source_name}' not found.")
+
+            ingestion_service = IngestionService(
+                gcs_service=GCS_SERVICE_INSTANCE,
+                connector_config=connector_config,
+                connector_type=conn_type,
+            )
+            ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date)
+            aggregate_ingestion.message_queue_topic.extend(ingestion_service.message_queue_topic)
+            source_stats.append({"source": source_name, "type": conn_type, "ingested_events": ingested_count})
+
+        processing_service = DataProcessingService(
+            bigquery_service=BIGQUERY_SERVICE_INSTANCE,
+            gcs_service=GCS_SERVICE_INSTANCE,
+            job_identifier=job_identifier,
+        )
+        processing_stats = processing_service.run_processing_pipeline(aggregate_ingestion)
 
         if job and job.get("status") != "Interrupted":
+            job["source_stats"] = source_stats
+            job["processing_stats"] = processing_stats
             _transition_job_status(job, "Ready to Use", IMPORT_JOB_ALLOWED_TRANSITIONS, "import")
             save_import_jobs_to_cache()
             print(f"Job '{job_name}' completed successfully.")

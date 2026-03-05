@@ -1,7 +1,7 @@
 # data_processing_service.py
 
 import json
-from typing import List
+from typing import List, Dict, Any
 from event_semantic_normalizer import EventSemanticNormalizer
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
@@ -34,24 +34,40 @@ class DataProcessingService:
         """
         Simulates the execution of the processing pipeline.
 
-        Args:
-            ingestion_service: The service holding the raw data in its queue.
+        Returns processing stats including dedupe effect.
         """
-        # In a real system, this would be a continuously running Dataflow job
-        # listening to a Pub/Sub subscription.
         print("Starting data processing pipeline...")
         notifications = [json.loads(msg) for msg in ingestion_service.message_queue_topic]
+
+        all_normalized: List[Dict[str, Any]] = []
 
         for notification in notifications:
             gcs_path = notification.get("gcs_path")
             if not gcs_path:
                 continue
-            
-            # 1. Download raw data from GCS
+
             blob_name = gcs_path.replace(f"gs://{self.gcs_service.bucket_name}/", "")
             raw_events = self.gcs_service.download_raw_events(blob_name)
-            
-            # 2. Normalize and 3. Write to BigQuery
-            normalized_events = self.normalizer.normalize_events(raw_events) # Normalizer doesn't need job_identifier
-            self.bigquery_service.write_processed_events(normalized_events, self.job_identifier)
-        print("Data processing pipeline finished.")
+            normalized_events = self.normalizer.normalize_events(raw_events)
+            all_normalized.extend(normalized_events)
+
+        dedupe_map: Dict[tuple, Dict[str, Any]] = {}
+        for e in all_normalized:
+            key = (
+                str(e.get("player_id")),
+                str(e.get("event_type")),
+                str(e.get("event_time")),
+                str(e.get("source", "")),
+            )
+            dedupe_map[key] = e
+
+        deduped_events = list(dedupe_map.values())
+        self.bigquery_service.write_processed_events(deduped_events, self.job_identifier)
+
+        stats = {
+            "raw_normalized_events": len(all_normalized),
+            "deduped_events": len(deduped_events),
+            "duplicates_removed": max(0, len(all_normalized) - len(deduped_events)),
+        }
+        print(f"Data processing pipeline finished. Stats: {stats}")
+        return stats

@@ -31,6 +31,8 @@ export interface ImportJob {
   timestamp: string;
   start_date: string;
   end_date: string;
+  source_stats?: Array<{ source: string; type: string; ingested_events: number }>;
+  processing_stats?: { raw_normalized_events: number; deduped_events: number; duplicates_removed: number };
 }
 
 export interface PredictionRow {

@@ -270,7 +270,14 @@ curl -X POST http://localhost:8000/configure-appsflyer \
 ```
 
 ### Import from connector sources
-Once configured, sources appear in the workbench import source dropdown (Amplitude/Adjust/AppsFlyer).
+Once configured, sources appear in the workbench import source selector (Amplitude/Adjust/AppsFlyer).
+You can import from multiple sources in one job by passing comma-separated connector names:
+
+```bash
+curl -X POST http://localhost:8000/ingest-and-process-data \
+  -H "Content-Type: application/json" \
+  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1"}'
+```
 
 ### Connector health check
 ```bash
@@ -283,4 +290,12 @@ curl http://localhost:8000/connector-health/AppsFlyer%201
 
 ### Local demo behavior
 In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.
+
+### Merge + dedupe strategy (current)
+During processing, events from all selected sources are normalized and merged, then deduplicated using:
+`(player_id, event_type, event_time, source)`.
+
+Per-job import output now includes:
+- `source_stats`: ingested event counts per source
+- `processing_stats`: normalized count, deduped count, duplicates removed
 
