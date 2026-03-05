@@ -7,3 +7,5 @@ pandas
 pyarrow
 google-cloud-bigquery
 google-cloud-storage
+pytest
+httpx
