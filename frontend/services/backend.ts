@@ -25,6 +25,15 @@ export interface Connector {
   details: string;
 }
 
+export interface ConnectorFreshness {
+  connector_name: string;
+  connector_type: string;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  last_ingested_events?: number;
+  last_error?: string | null;
+}
+
 export interface ImportJob {
   name: string;
   status: string;
@@ -83,6 +92,10 @@ export const backendService = {
 
   async connectorHealth(connectorName: string) {
     return request<{ connector: string; type: string; health: { ok: boolean; message?: string } }>(`/connector-health/${encodeURIComponent(connectorName)}`);
+  },
+
+  async connectorFreshness() {
+    return request<{ connectors: Record<string, ConnectorFreshness> }>("/connector-freshness");
   },
 
   async deleteConnector(connectorName: string) {

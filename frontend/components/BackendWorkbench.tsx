@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary } from '../services/backend.ts';
+import { backendService, Connector, ImportJob, PredictionRow, ExperimentConfig, ExperimentSummary, ConnectorFreshness } from '../services/backend.ts';
 
 type ConnectorType = 'amplitude' | 'google' | 'bigquery' | 'adjust' | 'appsflyer' | 'sendgrid' | 'braze';
 
@@ -10,6 +10,7 @@ const BackendWorkbench: React.FC = () => {
   const [sources, setSources] = useState<Array<{ id: string; name: string }>>([]);
   const [imports, setImports] = useState<ImportJob[]>([]);
   const [predictions, setPredictions] = useState<PredictionRow[]>([]);
+  const [freshness, setFreshness] = useState<Record<string, ConnectorFreshness>>({});
   const [selectedJob, setSelectedJob] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -49,18 +50,20 @@ const BackendWorkbench: React.FC = () => {
   const refreshAll = async () => {
     setError('');
     try {
-      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp] = await Promise.all([
+      const [health, connectorsResp, sourcesResp, importsResp, expConfigResp, freshnessResp] = await Promise.all([
         backendService.health(),
         backendService.listConnectors(),
         backendService.listConfiguredSources(),
         backendService.listImports(),
         backendService.getExperimentConfig(),
+        backendService.connectorFreshness(),
       ]);
       setHealthStatus(health.status);
       setConnectors(connectorsResp.connectors || []);
       setSources(sourcesResp.sources || []);
       setImports(importsResp.imports || []);
       setExperimentConfig(expConfigResp.experiment);
+      setFreshness(freshnessResp.connectors || {});
       if (!importSource && sourcesResp.sources?.length) {
         setImportSource(sourcesResp.sources[0].id);
       }
@@ -376,21 +379,32 @@ const BackendWorkbench: React.FC = () => {
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-lg font-semibold">Saved Connectors</h3>
         {connectors.length === 0 ? <p className="text-gray-500 text-sm">No connectors configured yet.</p> : null}
-        {connectors.map((connector) => (
-          <div key={connector.name} className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
-            <div>
-              <div className="font-medium">{connector.name}</div>
-              <div className="text-xs text-gray-400">{connector.type}</div>
+        {connectors.map((connector) => {
+          const fr = freshness[connector.name];
+          return (
+            <div key={connector.name} className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+              <div>
+                <div className="font-medium">{connector.name}</div>
+                <div className="text-xs text-gray-400">{connector.type}</div>
+                {fr ? (
+                  <div className="text-[11px] text-gray-400 mt-1">
+                    <div>last_success_at: {fr.last_success_at ? new Date(fr.last_success_at).toLocaleString() : 'N/A'}</div>
+                    <div>last_attempt_at: {fr.last_attempt_at ? new Date(fr.last_attempt_at).toLocaleString() : 'N/A'}</div>
+                    <div>last_ingested_events: {fr.last_ingested_events ?? 0}</div>
+                    {fr.last_error ? <div className="text-red-400">last_error: {fr.last_error}</div> : null}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                className="bg-red-600/20 border border-red-500/40 text-red-300 rounded px-3 py-1 text-xs"
+                onClick={() => deleteConnector(connector.name)}
+                disabled={loading}
+              >
+                Delete
+              </button>
             </div>
-            <button
-              className="bg-red-600/20 border border-red-500/40 text-red-300 rounded px-3 py-1 text-xs"
-              onClick={() => deleteConnector(connector.name)}
-              disabled={loading}
-            >
-              Delete
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </section>
 
       <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">

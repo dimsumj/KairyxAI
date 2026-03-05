@@ -288,6 +288,16 @@ Example:
 curl http://localhost:8000/connector-health/AppsFlyer%201
 ```
 
+### Source freshness / last success
+```bash
+curl http://localhost:8000/connector-freshness
+```
+Returns per-connector:
+- `last_attempt_at`
+- `last_success_at`
+- `last_ingested_events`
+- `last_error`
+
 ### Local demo behavior
 In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.
 

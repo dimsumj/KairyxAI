@@ -61,6 +61,7 @@ CACHE_DIR = ".cache"
 LLM_POLICY_CACHE_FILE = ".llm_policy.json"
 SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
 AUDIT_LOG_FILE = ".audit.log.jsonl"
+CONNECTOR_STATUS_CACHE_FILE = ".connector_status.json"
 DEFAULT_SAFETY_RAILS = {
     "AI_DAILY_TOKEN_LIMIT": 500000,
     "AI_MONTHLY_TOKEN_LIMIT": 10000000,
@@ -87,6 +88,7 @@ IMPORT_JOBS = []
 PREDICTION_JOBS = []
 LLM_POLICY_ENGINE = LlmPolicyEngine()
 LLM_POLICY_CONFIG = DEFAULT_LLM_POLICY.copy()
+CONNECTOR_STATUS: Dict[str, Any] = {}
 EXPERIMENT_SERVICE = ExperimentService(base_dir=".")
 EXPERIMENT_CONFIG = {
     "experiment_id": "churn_engagement_v1",
@@ -330,6 +332,38 @@ def append_audit_log(action: str, detail: Dict[str, Any]):
         f.write(json.dumps(record) + "\n")
 
 
+def load_connector_status_from_cache():
+    global CONNECTOR_STATUS
+    if os.path.exists(CONNECTOR_STATUS_CACHE_FILE):
+        try:
+            with open(CONNECTOR_STATUS_CACHE_FILE, "r") as f:
+                CONNECTOR_STATUS = json.load(f)
+        except json.JSONDecodeError:
+            CONNECTOR_STATUS = {}
+
+
+def save_connector_status_to_cache():
+    with open(CONNECTOR_STATUS_CACHE_FILE, "w") as f:
+        json.dump(CONNECTOR_STATUS, f, indent=2)
+
+
+def update_connector_status(connector_name: str, connector_type: str, success: bool, ingested_events: int = 0, error: Optional[str] = None):
+    now = datetime.utcnow().isoformat()
+    existing = CONNECTOR_STATUS.get(connector_name, {})
+    record = {
+        **existing,
+        "connector_name": connector_name,
+        "connector_type": connector_type,
+        "last_attempt_at": now,
+        "last_ingested_events": ingested_events,
+        "last_error": error,
+    }
+    if success:
+        record["last_success_at"] = now
+    CONNECTOR_STATUS[connector_name] = record
+    save_connector_status_to_cache()
+
+
 def _transition_job_status(job: Dict[str, Any], next_status: str, allowed: Dict[str, set], kind: str):
     current = job.get("status")
     if next_status == current:
@@ -364,6 +398,7 @@ init_local_job_db()
 load_import_jobs_from_cache()
 load_prediction_jobs_from_cache()
 load_keys_from_cache()
+load_connector_status_from_cache()
 load_llm_policy_from_cache()
 load_safety_rails_from_cache()
 apply_default_safety_rails()
@@ -615,6 +650,12 @@ async def connector_health(connector_name: str):
         return {"connector": connector_name, "type": ctype, "health": connector.health_check()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Connector health check failed: {e}")
+
+
+@app.get("/connector-freshness")
+async def connector_freshness():
+    """Returns connector freshness metadata (last attempt/success/error)."""
+    return {"connectors": CONNECTOR_STATUS}
 
 
 @app.get("/list-configured-sources")
@@ -1220,6 +1261,7 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                 ingested_count = ingestion_service.fetch_and_publish_events(start_date, end_date)
                 aggregate_ingestion.message_queue_topic.extend(ingestion_service.message_queue_topic)
                 source_stats.append({"source": source_name, "type": conn_type, "ingested_events": ingested_count, "status": "ok"})
+                update_connector_status(source_name, conn_type, success=True, ingested_events=ingested_count)
             except Exception as source_error:
                 source_stats.append({
                     "source": source_name,
@@ -1228,6 +1270,7 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
                     "status": "failed",
                     "error": str(source_error),
                 })
+                update_connector_status(source_name, "unknown", success=False, ingested_events=0, error=str(source_error))
                 if not continue_on_source_error:
                     raise
 
