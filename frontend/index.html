@@ -155,12 +155,16 @@
             margin-bottom: 0.5rem;
         }
 
-        .form-group input {
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid var(--border-color);
             border-radius: 4px;
             box-sizing: border-box;
+            background-color: var(--white);
+            color: var(--main-text);
         }
 
         button {
@@ -468,11 +472,23 @@
                  <p style="font-size: 0.85rem; color: var(--text-secondary);">
                     Example mapping keys: <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, <code>source_event_id</code>, <code>campaign</code>, <code>adset</code>, <code>media_source</code>. Values are raw JSON paths like <code>event_properties.PID</code>.
                  </p>
+                 <details style="margin-bottom: 1rem;">
+                     <summary style="cursor: pointer; font-weight: 600;">Example mapping JSON</summary>
+                     <pre style="margin-top: 0.75rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"><code>{
+  "canonical_user_id": "event_properties.PID",
+  "event_name": "event_type",
+  "event_time": "event_time",
+  "source_event_id": "event_properties.insert_id",
+  "campaign": "event_properties.campaign_name",
+  "adset": "event_properties.adgroup_name",
+  "media_source": "event_properties.network"
+}</code></pre>
+                 </details>
                  <div class="form-group">
                      <label for="data-sandbox-mapping-json">Mapping JSON</label>
                      <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
                  </div>
-                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+                 <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
                      <div class="form-group" style="margin-bottom: 0;">
                          <label for="data-sandbox-sample-json">Sample Raw Event</label>
                          <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
