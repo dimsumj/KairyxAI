@@ -132,11 +132,22 @@ Expect rapid iteration, architectural changes, and evolving abstractions.
 
 =========================================
 
-Test locally: 
+Test locally (no full infra required):
 
+### Fast start (recommended)
+```bash
+./run_local_demo.sh
+```
+This starts:
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:5173`
+
+Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
+
+### Manual start
 1. Checkout the project
-2. browse to /backend/services/
-3. In console, run pip install requirements.txt
+2. browse to `/backend/services/`
+3. run: `pip install -r requirements.txt`
 4. choose data backend mode:
    - Mock mode (dev/qa): `export DATA_BACKEND_MODE=mock`
    - GCP mode (prod-like): `export DATA_BACKEND_MODE=gcp`
@@ -144,6 +155,8 @@ Test locally:
    - `export BIGQUERY_PROJECT_ID=<your_project_id>`
    - `export GCS_BUCKET_NAME=<your_bucket_name>`
    - configure ADC (Application Default Credentials)
-6. after install all the libs, run: _uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend_
-7. Make sure you have gemini AI API key and sample data source (amplitude/adjust for now)
+6. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
+7. run frontend in `/frontend`: `npm install && npm run dev`
+
+Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
 

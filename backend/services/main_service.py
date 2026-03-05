@@ -35,6 +35,13 @@ from engagement_feedback import EngagementFeedback
 from policy_engine import LlmPolicyEngine, DEFAULT_LLM_POLICY
 from cloud_churn_service import CloudChurnService
 from pydantic import BaseModel, Field
+from local_job_store import (
+    init_db as init_local_job_db,
+    save_import_jobs as save_import_jobs_db,
+    load_import_jobs as load_import_jobs_db,
+    save_prediction_jobs as save_prediction_jobs_db,
+    load_prediction_jobs as load_prediction_jobs_db,
+)
 
 KEYS_CACHE_FILE = ".api_keys_cache.json"
 
@@ -110,12 +117,23 @@ def clear_api_key_cache_on_startup():
         os.remove(KEYS_CACHE_FILE)
 
 def save_import_jobs_to_cache():
-    """Saves the current IMPORT_JOBS list to a file."""
+    """Saves the current IMPORT_JOBS list to local sqlite + legacy json cache."""
+    save_import_jobs_db(IMPORT_JOBS)
     with open(IMPORT_JOBS_CACHE_FILE, 'w') as f:
         json.dump(IMPORT_JOBS, f, indent=2)
 
+
 def load_import_jobs_from_cache():
-    """Loads IMPORT_JOBS from a file if it exists."""
+    """Loads IMPORT_JOBS from local sqlite first, then falls back to legacy json cache."""
+    IMPORT_JOBS.clear()
+    try:
+        jobs = load_import_jobs_db()
+        if jobs:
+            IMPORT_JOBS.extend(jobs)
+            return
+    except Exception as e:
+        print(f"Warning: Could not load import jobs from sqlite: {e}")
+
     if os.path.exists(IMPORT_JOBS_CACHE_FILE):
         with open(IMPORT_JOBS_CACHE_FILE, 'r') as f:
             try:
@@ -126,13 +144,23 @@ def load_import_jobs_from_cache():
 
 
 def save_prediction_jobs_to_cache():
-    """Saves current PREDICTION_JOBS list to a file."""
+    """Saves current PREDICTION_JOBS list to local sqlite + legacy json cache."""
+    save_prediction_jobs_db(PREDICTION_JOBS)
     with open(PREDICTION_JOBS_CACHE_FILE, 'w') as f:
         json.dump(PREDICTION_JOBS, f, indent=2)
 
 
 def load_prediction_jobs_from_cache():
-    """Loads PREDICTION_JOBS from a file if it exists."""
+    """Loads PREDICTION_JOBS from local sqlite first, then falls back to legacy json cache."""
+    PREDICTION_JOBS.clear()
+    try:
+        jobs = load_prediction_jobs_db()
+        if jobs:
+            PREDICTION_JOBS.extend(jobs)
+            return
+    except Exception as e:
+        print(f"Warning: Could not load prediction jobs from sqlite: {e}")
+
     if os.path.exists(PREDICTION_JOBS_CACHE_FILE):
         with open(PREDICTION_JOBS_CACHE_FILE, 'r') as f:
             try:
@@ -276,6 +304,7 @@ def apply_default_safety_rails():
 # Load any cached API keys on application startup
 # clear_cache_on_startup()
 # clear_api_key_cache_on_startup()
+init_local_job_db()
 load_import_jobs_from_cache()
 load_prediction_jobs_from_cache()
 load_keys_from_cache()
@@ -1009,12 +1038,14 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
 
         if job and job.get("status") != "Interrupted":
             job["status"] = "Ready to Use"
+            save_import_jobs_to_cache()
             print(f"Job '{job_name}' completed successfully.")
 
     except Exception as e:
         print(f"Error processing job '{job_name}': {e}")
         if job and job.get("status") != "Interrupted":
             job["status"] = "Failed"
+            save_import_jobs_to_cache()
 
 @app.post("/ingest-and-process-data")
 async def ingest_and_process_data(request: IngestionRequest, background_tasks: BackgroundTasks):
