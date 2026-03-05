@@ -178,3 +178,72 @@ P1 experimentation (A/B + holdout, local):
 - Outcome log: `.experiments_outcome.jsonl`
 - Default setup: 10% holdout, remaining users split A/B 50:50
 
+## Experiment Framework: Setup & Usage
+
+This project includes a built-in local experimentation framework for churn engagement decisions.
+
+### 1) Start the app
+```bash
+./run_local_demo.sh
+```
+
+### 2) Configure experiment parameters
+Use the Backend Workbench UI (Experiment Control section), or call API directly.
+
+Get current config:
+```bash
+curl http://localhost:8000/experiments/config
+```
+
+Update config:
+```bash
+curl -X POST http://localhost:8000/experiments/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "experiment_id": "churn_engagement_v1",
+    "enabled": true,
+    "holdout_pct": 0.10,
+    "b_variant_pct": 0.50
+  }'
+```
+
+Config meanings:
+- `experiment_id`: logical name for one experiment run
+- `enabled`: enable/disable experiment routing
+- `holdout_pct`: % of users receiving no action (control)
+- `b_variant_pct`: split of non-holdout traffic between A/B
+
+### 3) Generate experiment exposures
+Run player analysis flow (UI: Player Inspector / Analyze & Engage) or API:
+```bash
+curl -X POST http://localhost:8000/analyze-and-engage-player \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"p_8921","prediction_mode":"local"}'
+```
+
+What happens automatically:
+- user is deterministically assigned to `holdout`, `treatment_a`, or `treatment_b`
+- holdout users get `NO_ACTION`
+- treatment B gets a variant-marked message
+- exposure and outcome are logged locally
+
+### 4) Inspect results and uplift
+```bash
+curl "http://localhost:8000/experiments/summary?experiment_id=churn_engagement_v1"
+```
+
+Summary includes per-group:
+- sample size `n`
+- `engagement_rate`
+- `return_rate`
+- `uplift_vs_holdout_return_rate` (for treatment groups)
+
+### 5) Local files used
+- Exposures: `.experiments_exposure.jsonl`
+- Outcomes: `.experiments_outcome.jsonl`
+
+### Notes
+- This is a local/demo experimentation pipeline (not a full statistical engine yet).
+- Assignment is stable for a given `(experiment_id, player_id)`.
+- For clean reruns, change `experiment_id` or archive/remove local experiment log files.
+
