@@ -197,7 +197,7 @@ class PlayerModelingEngine:
         Provide JSON with keys:
         - churn_risk: "low" | "medium" | "high"
         - reason: short plain explanation
-        - top_signals: array of up to 3 objects {"signal": string, "value": number|string}
+        - top_signals: array of up to 3 objects {{"signal": string, "value": number|string}}
 
         Player Profile:
         {json.dumps(player_profile, indent=2, cls=NpEncoder)}
