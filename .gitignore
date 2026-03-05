@@ -53,6 +53,9 @@ wheels/
 # Environment variables
 .env
 .venv/
+frontend/playwright-report/
+frontend/test-results/
+frontend/.playwright/
 
 # IDE / Editor specific files
 .vscode/
