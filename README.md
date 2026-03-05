@@ -259,8 +259,8 @@ Ingestion pipeline uses the selected connector automatically via connector type.
 
 ### Configure connectors
 - Amplitude: `POST /configure-amplitude-keys`
-- Adjust: `POST /configure-adjust-credentials`
-- AppsFlyer: `POST /configure-appsflyer`
+- Adjust: `POST /configure-adjust-credentials` (`api_token`, optional `api_url`)
+- AppsFlyer: `POST /configure-appsflyer` (`api_token`, `app_id`, optional `pull_api_url`)
 
 AppsFlyer configure example:
 ```bash
@@ -271,6 +271,15 @@ curl -X POST http://localhost:8000/configure-appsflyer \
 
 ### Import from connector sources
 Once configured, sources appear in the workbench import source dropdown (Amplitude/Adjust/AppsFlyer).
+
+### Connector health check
+```bash
+curl http://localhost:8000/connector-health/<connector_name>
+```
+Example:
+```bash
+curl http://localhost:8000/connector-health/AppsFlyer%201
+```
 
 ### Local demo behavior
 In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.

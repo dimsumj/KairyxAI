@@ -28,6 +28,7 @@ from churn_reporter import ChurnReporter
 from fastapi.staticfiles import StaticFiles
 from ingestion_service import IngestionService
 from data_processing_service import DataProcessingService
+from connectors import create_connector
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
 from amplitude_service import AmplitudeService
@@ -227,9 +228,13 @@ def load_keys_from_cache():
                     os.environ["GOOGLE_GEMINI_MODEL"] = connectors["google"][0].get("model_name")
                 if "adjust" in connectors and connectors["adjust"]:
                     os.environ["ADJUST_API_TOKEN"] = connectors["adjust"][0].get("api_token")
+                    if connectors["adjust"][0].get("api_url"):
+                        os.environ["ADJUST_API_URL"] = connectors["adjust"][0].get("api_url")
                 if "appsflyer" in connectors and connectors["appsflyer"]:
                     os.environ["APPSFLYER_API_TOKEN"] = connectors["appsflyer"][0].get("api_token")
                     os.environ["APPSFLYER_APP_ID"] = connectors["appsflyer"][0].get("app_id")
+                    if connectors["appsflyer"][0].get("pull_api_url"):
+                        os.environ["APPSFLYER_PULL_API_URL"] = connectors["appsflyer"][0].get("pull_api_url")
                 if "sendgrid" in connectors and connectors["sendgrid"]:
                     os.environ["SENDGRID_API_KEY"] = connectors["sendgrid"][0].get("api_key")
                 if "bigquery" in connectors and connectors["bigquery"]:
@@ -392,14 +397,16 @@ class BigQueryCredentials(BaseModel):
     project_id: str
 
 class AdjustApiKey(BaseModel):
-    """Request model for setting the Adjust API token."""
+    """Request model for setting Adjust credentials."""
     adjust_api_token: str = Field(..., alias='api_token')
+    api_url: Optional[str] = None
 
 
 class AppsFlyerCredentials(BaseModel):
     """Request model for AppsFlyer pull API credentials."""
     api_token: str
     app_id: str
+    pull_api_url: Optional[str] = None
 
 class SendGridApiKey(BaseModel):
     """Request model for setting the SendGrid API key."""
@@ -594,6 +601,20 @@ async def configure_cloud_churn(config: CloudChurnConfig):
     _add_connector_config("cloud_churn", "Cloud Churn", new_config)
     append_audit_log("connector_configured", {"type": "cloud_churn", "name": "Cloud Churn"})
     return {"message": "Cloud churn provider configured and cached."}
+
+@app.get("/connector-health/{connector_name}")
+async def connector_health(connector_name: str):
+    """Runs connector-level health check using saved connector config."""
+    config, ctype = _get_connector_config(connector_name)
+    if not config or not ctype:
+        raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")
+
+    try:
+        connector = create_connector(ctype, config)
+        return {"connector": connector_name, "type": ctype, "health": connector.health_check()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Connector health check failed: {e}")
+
 
 @app.get("/list-configured-sources")
 async def list_configured_sources():
@@ -790,13 +811,16 @@ async def get_local_observability_events(limit: int = 200):
 @app.post("/configure-adjust-credentials")
 async def configure_adjust_credentials(key: AdjustApiKey):
     """
-    An API endpoint to set the Adjust API token for the session.
+    An API endpoint to set Adjust connector credentials for the session.
     """
     os.environ["ADJUST_API_TOKEN"] = key.adjust_api_token
     new_config = {"api_token": key.adjust_api_token}
+    if key.api_url:
+        os.environ["ADJUST_API_URL"] = key.api_url
+        new_config["api_url"] = key.api_url
     _add_connector_config("adjust", "Adjust", new_config)
     append_audit_log("connector_configured", {"type": "adjust", "name": "Adjust"})
-    return {"message": "Adjust API token has been configured and cached."}
+    return {"message": "Adjust credentials have been configured and cached."}
 
 
 @app.post("/configure-appsflyer")
@@ -805,6 +829,9 @@ async def configure_appsflyer(creds: AppsFlyerCredentials):
     os.environ["APPSFLYER_API_TOKEN"] = creds.api_token
     os.environ["APPSFLYER_APP_ID"] = creds.app_id
     new_config = {"api_token": creds.api_token, "app_id": creds.app_id}
+    if creds.pull_api_url:
+        os.environ["APPSFLYER_PULL_API_URL"] = creds.pull_api_url
+        new_config["pull_api_url"] = creds.pull_api_url
     _add_connector_config("appsflyer", "AppsFlyer", new_config)
     append_audit_log("connector_configured", {"type": "appsflyer", "name": "AppsFlyer"})
     return {"message": "AppsFlyer credentials configured and cached."}

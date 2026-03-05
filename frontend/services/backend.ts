@@ -79,6 +79,10 @@ export const backendService = {
     return request<{ sources: Array<{ id: string; name: string }> }>("/list-configured-sources");
   },
 
+  async connectorHealth(connectorName: string) {
+    return request<{ connector: string; type: string; health: { ok: boolean; message?: string } }>(`/connector-health/${encodeURIComponent(connectorName)}`);
+  },
+
   async deleteConnector(connectorName: string) {
     return request<{ message: string }>(`/connector/${encodeURIComponent(connectorName)}`, "DELETE");
   },
@@ -101,12 +105,12 @@ export const backendService = {
     return request<{ message: string }>("/configure-bigquery", "POST", { project_id: projectId });
   },
 
-  async configureAdjust(apiToken: string) {
-    return request<{ message: string }>("/configure-adjust-credentials", "POST", { api_token: apiToken });
+  async configureAdjust(apiToken: string, apiUrl?: string) {
+    return request<{ message: string }>("/configure-adjust-credentials", "POST", { api_token: apiToken, api_url: apiUrl || undefined });
   },
 
-  async configureAppsflyer(apiToken: string, appId: string) {
-    return request<{ message: string }>("/configure-appsflyer", "POST", { api_token: apiToken, app_id: appId });
+  async configureAppsflyer(apiToken: string, appId: string, pullApiUrl?: string) {
+    return request<{ message: string }>("/configure-appsflyer", "POST", { api_token: apiToken, app_id: appId, pull_api_url: pullApiUrl || undefined });
   },
 
   async configureSendgrid(apiKey: string) {

@@ -4,36 +4,55 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List
 
+import requests
+
+from .normalizer import canonical_attribution_event
+
 
 class AdjustConnector:
     connector_type = "adjust"
 
     def __init__(self, config: Dict[str, Any]):
         self.api_token = config.get("api_token")
+        self.api_url = (config.get("api_url") or os.getenv("ADJUST_API_URL") or "").strip()
 
     def health_check(self) -> Dict[str, Any]:
-        return {"ok": bool(self.api_token), "connector": self.connector_type, "message": "configured" if self.api_token else "missing api_token"}
+        ok = bool(self.api_token)
+        details = "configured" if ok else "missing api_token"
+        if ok and self.api_url:
+            details += f", api_url={self.api_url}"
+        return {"ok": ok, "connector": self.connector_type, "message": details}
+
+    def _mock_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        now = datetime.utcnow().isoformat()
+        raw = {
+            "player_id": "adjust_user_1001",
+            "event_name": "attribution_install",
+            "timestamp": now,
+            "campaign": "ua_campaign_a",
+            "adgroup": "adgroup_1",
+            "network": "meta",
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        return [canonical_attribution_event("adjust", raw)]
 
     def fetch_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        # Local-demo friendly mock payload; replace with real Adjust API ingestion in prod.
         if os.getenv("DATA_BACKEND_MODE", "mock").lower() == "mock":
-            now = datetime.utcnow().isoformat()
-            return [
-                {
-                    "player_id": "adjust_user_1001",
-                    "event_type": "attribution_install",
-                    "event_time": now,
-                    "source": "adjust",
-                    "event_properties": {
-                        "campaign": "ua_campaign_a",
-                        "adgroup": "adgroup_1",
-                        "network": "meta",
-                        "start_date": start_date,
-                        "end_date": end_date,
-                    },
-                }
-            ]
+            return self._mock_events(start_date, end_date)
+
         if not self.api_token:
             raise ValueError("Adjust connector missing api_token")
-        # Placeholder for real API integration path
-        return []
+        if not self.api_url:
+            raise ValueError("Adjust connector missing api_url (set in connector config or ADJUST_API_URL)")
+
+        resp = requests.get(
+            self.api_url,
+            headers={"Authorization": f"Bearer {self.api_token}"},
+            params={"start_date": start_date, "end_date": end_date},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rows = data if isinstance(data, list) else data.get("data", [])
+        return [canonical_attribution_event("adjust", r) for r in rows]
