@@ -2041,94 +2041,100 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
         return []
 
     predictions = []
+    skipped_players = 0
     for player_id in player_ids:
-        profile = modeling_engine.build_player_profile(player_id)
-        if not profile:
-            continue
+        try:
+            profile = modeling_engine.build_player_profile(player_id)
+            if not profile:
+                continue
 
-        churn_estimate, churn_details = await _estimate_churn_with_mode(
-            modeling_engine=modeling_engine,
-            player_id=player_id,
-            profile=profile,
-            prediction_mode=effective_mode,
-        )
-        churn_state = churn_estimate.get("churn_state", profile.get("churn_state", "active")) if churn_estimate else profile.get("churn_state", "active")
-
-        external_match = None
-        if churn_state == "active":
-            external_match = _find_external_churn_match(profile)
-            if external_match:
-                churn_estimate = {
-                    "player_id": player_id,
-                    "churn_state": "active",
-                    "churn_risk": external_match.get("churn_risk", "unknown"),
-                    "reason": external_match.get("reason", "Third-party churn update"),
-                    "top_signals": [{"signal": "external_update", "value": external_match.get("source", "external")}],
-                }
-
-        churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
-        recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
-
-        if churn_state == "churned":
-            policy_eval = {"route": "NO_ACTION", "reason": "Player already churned by inactivity threshold."}
-        else:
-            policy_eval = LLM_POLICY_ENGINE.evaluate(
-                LLM_POLICY_CONFIG,
-                {
-                    "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
-                    "churn_risk": churn_risk,
-                    "confidence_gap": 50.0,
-                    "recency_risk": recency_risk,
-                    "weekly_actions_count": 0,
-                    "blacklisted": False,
-                    "daily_budget_exceeded": False,
-                    "cache_hit": False,
-                },
+            churn_estimate, churn_details = await _estimate_churn_with_mode(
+                modeling_engine=modeling_engine,
+                player_id=player_id,
+                profile=profile,
+                prediction_mode=effective_mode,
             )
+            churn_state = churn_estimate.get("churn_state", profile.get("churn_state", "active")) if churn_estimate else profile.get("churn_state", "active")
 
-        if churn_state == "churned":
-            next_action = {
-                "player_id": player_id,
-                "decision": "NO_ACTION",
-                "reason": "Already churned by inactivity threshold.",
-            }
-        elif policy_eval.get("route") == "NO_LLM":
-            next_action = {
-                "player_id": player_id,
-                "decision": "NO_ACTION",
-                "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
-            }
-        else:
-            next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+            external_match = None
+            if churn_state == "active":
+                external_match = _find_external_churn_match(profile)
+                if external_match:
+                    churn_estimate = {
+                        "player_id": player_id,
+                        "churn_state": "active",
+                        "churn_risk": external_match.get("churn_risk", "unknown"),
+                        "reason": external_match.get("reason", "Third-party churn update"),
+                        "top_signals": [{"signal": "external_update", "value": external_match.get("source", "external")}],
+                    }
 
-        churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
-        prediction_source = "unknown"
-        if churn_state == "churned":
-            prediction_source = "rule"
-        elif external_match:
-            prediction_source = f"external:{external_match.get('source', 'external')}"
-        else:
-            prediction_source = (churn_details or {}).get("selected_source") or (effective_mode if effective_mode != "parallel" else "parallel-selected")
+            churn_risk = churn_estimate.get("churn_risk", "N/A") if churn_estimate else "N/A"
+            recency_risk = min(max(float(profile.get("days_since_last_seen", 0) or 0) * 3.0, 0.0), 100.0)
 
-        predictions.append({
-            "user_id": player_id,
-            "email": profile.get("email"),
-            "ltv": profile.get("total_revenue", "N/A"),
-            "session_count": profile.get("total_sessions", "N/A"),
-            "event_count": profile.get("total_events", "N/A"),
-            "days_since_last_seen": profile.get("days_since_last_seen", "N/A"),
-            "churn_state": churn_state,
-            "churn_inactive_days": int(CHURN_CONFIG.get("churn_inactive_days", 14)),
-            "predicted_churn_risk": churn_risk,
-            "churn_reason": churn_reason,
-            "top_signals": churn_estimate.get("top_signals", []) if churn_estimate else [],
-            "prediction_source": prediction_source,
-            "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
-            "llm_route": policy_eval.get("route"),
-            "policy_reason": policy_eval.get("reason"),
-            "prediction_mode": effective_mode,
-            "prediction_details": churn_details,
-        })
+            if churn_state == "churned":
+                policy_eval = {"route": "NO_ACTION", "reason": "Player already churned by inactivity threshold."}
+            else:
+                policy_eval = LLM_POLICY_ENGINE.evaluate(
+                    LLM_POLICY_CONFIG,
+                    {
+                        "ltv": float(profile.get("total_revenue", 0.0) or 0.0),
+                        "churn_risk": churn_risk,
+                        "confidence_gap": 50.0,
+                        "recency_risk": recency_risk,
+                        "weekly_actions_count": 0,
+                        "blacklisted": False,
+                        "daily_budget_exceeded": False,
+                        "cache_hit": False,
+                    },
+                )
+
+            if churn_state == "churned":
+                next_action = {
+                    "player_id": player_id,
+                    "decision": "NO_ACTION",
+                    "reason": "Already churned by inactivity threshold.",
+                }
+            elif policy_eval.get("route") == "NO_LLM":
+                next_action = {
+                    "player_id": player_id,
+                    "decision": "NO_ACTION",
+                    "reason": policy_eval.get("reason", "Policy routed to NO_LLM."),
+                }
+            else:
+                next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+
+            churn_reason = churn_estimate.get("reason", "N/A") if churn_estimate else "N/A"
+            prediction_source = "unknown"
+            if churn_state == "churned":
+                prediction_source = "rule"
+            elif external_match:
+                prediction_source = f"external:{external_match.get('source', 'external')}"
+            else:
+                prediction_source = (churn_details or {}).get("selected_source") or (effective_mode if effective_mode != "parallel" else "parallel-selected")
+
+            predictions.append({
+                "user_id": player_id,
+                "email": profile.get("email"),
+                "ltv": profile.get("total_revenue", "N/A"),
+                "session_count": profile.get("total_sessions", "N/A"),
+                "event_count": profile.get("total_events", "N/A"),
+                "days_since_last_seen": profile.get("days_since_last_seen", "N/A"),
+                "churn_state": churn_state,
+                "churn_inactive_days": int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+                "predicted_churn_risk": churn_risk,
+                "churn_reason": churn_reason,
+                "top_signals": churn_estimate.get("top_signals", []) if churn_estimate else [],
+                "prediction_source": prediction_source,
+                "suggested_action": next_action.get("content", "No action suggested.") if next_action else "No action suggested.",
+                "llm_route": policy_eval.get("route"),
+                "policy_reason": policy_eval.get("reason"),
+                "prediction_mode": effective_mode,
+                "prediction_details": churn_details,
+            })
+        except Exception as per_player_error:
+            skipped_players += 1
+            print(f"Skipping player {player_id} due to prediction error: {per_player_error}")
+            continue
 
     if predictions:
         print(f"Saving churn predictions to cache: {prediction_cache_file}")
