@@ -1,11 +1,11 @@
-
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Metrics } from '../types';
-import { 
-  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, 
-  Tooltip, ResponsiveContainer, BarChart, Bar, Cell 
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, BarChart, Bar, Cell,
 } from 'recharts';
-import { ArrowUpRight, ArrowDownRight, Users, DollarSign, Target, TrendingUp } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Users, DollarSign, Target, TrendingUp, FlaskConical } from 'lucide-react';
+import { backendService, ExperimentSummary } from '../services/backend.ts';
 
 const mockChartData = [
   { name: 'Mon', active: 11200, ltv: 2.1 },
@@ -38,6 +38,26 @@ const MetricCard = ({ label, value, trend, icon: Icon, suffix = '' }: any) => (
 );
 
 const Dashboard: React.FC<DashboardProps> = ({ metrics }) => {
+  const [exp, setExp] = useState<ExperimentSummary | null>(null);
+  const [expError, setExpError] = useState('');
+
+  useEffect(() => {
+    backendService
+      .getExperimentSummary()
+      .then((data) => setExp(data))
+      .catch((e) => setExpError(e.message || 'Failed to load experiment summary'));
+  }, []);
+
+  const expChart = useMemo(() => {
+    if (!exp?.groups) return [];
+    return Object.entries(exp.groups).map(([group, stats]) => ({
+      group,
+      uplift: (stats.uplift_vs_holdout_return_rate || 0) * 100,
+      returnRate: (stats.return_rate || 0) * 100,
+      n: stats.n,
+    }));
+  }, [exp]);
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <header>
@@ -70,7 +90,7 @@ const Dashboard: React.FC<DashboardProps> = ({ metrics }) => {
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                 <XAxis dataKey="name" stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip 
+                <Tooltip
                   contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '12px', color: '#f3f4f6' }}
                   itemStyle={{ color: '#818cf8' }}
                 />
@@ -97,11 +117,9 @@ const Dashboard: React.FC<DashboardProps> = ({ metrics }) => {
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                 <XAxis dataKey="day" stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '12px' }}
-                />
+                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '12px' }} />
                 <Bar dataKey="val" radius={[4, 4, 0, 0]}>
-                  {[1, 2, 3, 4, 5].map((entry, index) => (
+                  {[1, 2, 3, 4, 5].map((_, index) => (
                     <Cell key={`cell-${index}`} fill={index === 0 ? '#6366f1' : '#4b5563'} />
                   ))}
                 </Bar>
@@ -109,6 +127,35 @@ const Dashboard: React.FC<DashboardProps> = ({ metrics }) => {
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl space-y-4">
+        <h3 className="text-lg font-semibold flex items-center gap-2">
+          <FlaskConical size={18} className="text-indigo-400" /> Experiment Uplift (vs Holdout)
+        </h3>
+        {expError ? <p className="text-red-400 text-sm">{expError}</p> : null}
+        {exp ? (
+          <>
+            <p className="text-xs text-gray-400">Experiment: {exp.experiment_id}</p>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={expChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                  <XAxis dataKey="group" stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '12px' }} />
+                  <Bar dataKey="uplift" radius={[4, 4, 0, 0]}>
+                    {expChart.map((row, idx) => (
+                      <Cell key={`u-${idx}`} fill={row.uplift >= 0 ? '#22c55e' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-500">No experiment data yet.</p>
+        )}
       </div>
     </div>
   );
