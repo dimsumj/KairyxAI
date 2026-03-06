@@ -460,6 +460,26 @@ def _current_import_job(job_name: Optional[str]) -> Optional[Dict[str, Any]]:
     return next((job for job in IMPORT_JOBS if job.get("name") == job_name), None)
 
 
+def _get_import_job_storage_identifier(job: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not job:
+        return None
+
+    warehouse_job_id = job.get("warehouse_job_id")
+    if warehouse_job_id:
+        return str(warehouse_job_id)
+
+    start_date = job.get("start_date")
+    end_date = job.get("end_date")
+    if start_date and end_date:
+        return f"{start_date}_to_{end_date}"
+
+    job_name = job.get("name")
+    if job_name:
+        return str(job_name)
+
+    return None
+
+
 def _current_prediction_job(prediction_job_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not prediction_job_id:
         return None
@@ -2259,8 +2279,9 @@ async def delete_job_cache(job_name: str):
     start_date = job_to_delete.get("start_date")
     end_date = job_to_delete.get("end_date")
 
-    # Construct the base path/identifier for the job's data
-    job_data_identifier = f"{start_date.replace('-', '')}_to_{end_date.replace('-', '')}"
+    # Construct storage identifiers for raw and warehouse-backed artifacts.
+    raw_data_identifier = f"{start_date.replace('-', '')}_to_{end_date.replace('-', '')}"
+    warehouse_job_identifier = _get_import_job_storage_identifier(job_to_delete) or raw_data_identifier
 
     # 1. Delete raw cache file if it exists
     if start_date and end_date:
@@ -2270,10 +2291,10 @@ async def delete_job_cache(job_name: str):
             print(f"Deleted cache file: {cache_filename}")
 
     # 2. Delete data from simulated GCS
-    GCS_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
+    GCS_SERVICE_INSTANCE.delete_data_for_job(raw_data_identifier)
 
     # 3. Delete data from simulated BigQuery
-    BIGQUERY_SERVICE_INSTANCE.delete_data_for_job(job_data_identifier)
+    BIGQUERY_SERVICE_INSTANCE.delete_data_for_job(warehouse_job_identifier)
 
     # 3b. Delete ingestion checkpoints associated with this import job
     delete_ingestion_checkpoints(job_name)
@@ -2307,7 +2328,7 @@ def run_pipeline_background(start_date: str, end_date: str, job_name: str, sourc
 
         start_date = _normalize_date_for_amplitude(start_date)
         end_date = _normalize_date_for_amplitude(end_date)
-        job_identifier = f"{start_date}_to_{end_date}"
+        job_identifier = _get_import_job_storage_identifier(job) or f"{start_date}_to_{end_date}"
 
         source_names = [s.strip() for s in (source or "").split(",") if s.strip()]
         if not source_names:
@@ -2495,7 +2516,8 @@ async def ingest_and_process_data(request: IngestionRequest, background_tasks: B
             "creation_timestamp": job_timestamp.isoformat(),
             "expiration_timestamp": expiration_timestamp.isoformat(),
             "start_date": start_date,
-            "end_date": end_date
+            "end_date": end_date,
+            "warehouse_job_id": job_name,
         })
         append_audit_log(
             "import_job_started",
@@ -2559,7 +2581,7 @@ async def process_after_mapping(job_name: str):
     if not start_date or not end_date:
         raise HTTPException(status_code=400, detail="Job date range metadata missing.")
 
-    job_identifier = f"{start_date}_to_{end_date}"
+    job_identifier = _get_import_job_storage_identifier(job) or f"{start_date}_to_{end_date}"
     aggregate_ingestion = type("AggregateIngestion", (), {"message_queue_topic": pending_notifications})()
 
     append_audit_log(
@@ -2722,6 +2744,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
     job = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
     if not job or job.get("status") != "Ready to Use":
         raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found or not ready.")
+    warehouse_job_id = _get_import_job_storage_identifier(job)
 
     os.makedirs(PREDICTION_CACHE_DIR, exist_ok=True)
     effective_mode = (prediction_mode or "local").lower()
@@ -2745,6 +2768,7 @@ async def _compute_predictions_for_job(job_name: str, force_recalculate: bool, p
             gemini_client=gemini_client,
             bigquery_service=BIGQUERY_SERVICE_INSTANCE,
             churn_inactive_days=int(CHURN_CONFIG.get("churn_inactive_days", 14)),
+            job_id=warehouse_job_id,
         )
     decision_engine = GrowthDecisionEngine(gemini_client)
 

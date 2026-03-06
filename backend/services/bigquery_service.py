@@ -312,8 +312,35 @@ class BigQueryService:
             return []
         return table.to_dict(orient="records")
 
-    def _get_local_events_for_identity(self, player_id: Any, table: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+    def _filter_table_by_job(self, table: pd.DataFrame, job_id: Optional[str] = None) -> pd.DataFrame:
+        if table.empty or not job_id:
+            return table
+
+        match_value = str(job_id)
+        masks = []
+        for column in ("job_id", "job_identifier", "last_job_id"):
+            if column not in table.columns:
+                continue
+            masks.append(table[column].map(lambda value: str(value) == match_value if pd.notna(value) else False))
+
+        if not masks:
+            return table
+
+        combined_mask = masks[0]
+        for mask in masks[1:]:
+            combined_mask = combined_mask | mask
+        return table[combined_mask].copy()
+
+    def _get_local_events_for_identity(
+        self,
+        player_id: Any,
+        table: Optional[pd.DataFrame] = None,
+        job_id: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
         current_table = table if table is not None else self._table
+        if current_table.empty:
+            return None
+        current_table = self._filter_table_by_job(current_table, job_id=job_id)
         if current_table.empty:
             return None
 
@@ -338,20 +365,36 @@ class BigQueryService:
         player_df = player_df.loc[~row_signature.duplicated()].copy()
         return player_df.copy() if not player_df.empty else None
 
-    def _query_rows_by_identity_gcp(self, table_id: str, player_id: Any, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _query_rows_by_identity_gcp(
+        self,
+        table_id: str,
+        player_id: Any,
+        limit: Optional[int] = None,
+        job_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         query = f"""
             SELECT *
             FROM `{table_id}`
-            WHERE CAST(player_id AS STRING) = @player_id
-               OR CAST(canonical_user_id AS STRING) = @player_id
+            WHERE (
+                CAST(player_id AS STRING) = @player_id
+                OR CAST(canonical_user_id AS STRING) = @player_id
+            )
         """
+        if job_id:
+            query += """
+               AND (
+                    CAST(job_id AS STRING) = @job_id
+                    OR CAST(job_identifier AS STRING) = @job_id
+               )
+            """
         if limit is not None:
             query += f"\nLIMIT {max(1, int(limit))}"
-        job_config = self._bigquery.QueryJobConfig(
-            query_parameters=[
-                self._bigquery.ScalarQueryParameter("player_id", "STRING", str(player_id))
-            ]
-        )
+        query_parameters = [
+            self._bigquery.ScalarQueryParameter("player_id", "STRING", str(player_id))
+        ]
+        if job_id:
+            query_parameters.append(self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id)))
+        job_config = self._bigquery.QueryJobConfig(query_parameters=query_parameters)
         try:
             return [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
         except Exception:
@@ -372,20 +415,28 @@ class BigQueryService:
         for row in rows:
             event = dict(row)
             source = str(event.get("source", "unknown"))
+            job_scope = str(event.get("job_identifier") or event.get("job_id") or "unknown_job")
             source_event_id = event.get("source_event_id")
             event_fingerprint = event.get("event_fingerprint")
             key = (
                 "srcid",
+                job_scope,
                 source,
                 str(source_event_id),
             ) if source_event_id not in (None, "", "None") else (
                 "fingerprint",
+                job_scope,
                 str(event_fingerprint or f"{source}:{event.get('canonical_user_id')}:{event.get('event_type')}:{event.get('event_time')}"),
             )
             dedupe_map[key] = event
         return list(dedupe_map.values())
 
-    def _build_latest_state_from_events(self, player_id: Any, player_df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    def _build_latest_state_from_events(
+        self,
+        player_id: Any,
+        player_df: pd.DataFrame,
+        job_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if player_df is None or player_df.empty:
             return None
 
@@ -461,6 +512,7 @@ class BigQueryService:
                 if not non_null_values.empty:
                     last_job_id = str(non_null_values.iloc[-1])
                     break
+        resolved_job_id = str(job_id or last_job_id or "unknown_job")
 
         total_sessions = _count_sessions(df)
         lifetime_events = int(len(df))
@@ -480,7 +532,9 @@ class BigQueryService:
             "days_since_last_seen": int((now - last_seen).days),
             "last_campaign": last_campaign,
             "last_media_source": last_media_source,
-            "last_job_id": last_job_id,
+            "last_job_id": resolved_job_id,
+            "job_id": resolved_job_id,
+            "job_identifier": resolved_job_id,
         }
 
     def write_events_staging(self, rows: List[Dict[str, Any]], job_id: Optional[str] = None):
@@ -547,58 +601,77 @@ class BigQueryService:
             "duplicates_removed": max(0, len(staging_rows) - len(deduped_rows)),
         }
 
-    def get_player_events_curated(self, player_id: Any, limit: int = 1000) -> List[Dict[str, Any]]:
+    def get_player_events_curated(self, player_id: Any, limit: int = 1000, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if self.mode == "gcp":
             rows = self._query_rows_by_identity_gcp(
                 self._curated_table_id,
                 player_id,
                 limit=limit,
+                job_id=job_id,
             )
             return rows
 
-        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table)
+        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table, job_id=job_id)
         if player_df is None or player_df.empty:
             return []
         return player_df.head(max(1, int(limit))).to_dict(orient="records")
 
-    def get_events_for_player(self, player_id: Any) -> Optional[pd.DataFrame]:
+    def get_events_for_player(self, player_id: Any, job_id: Optional[str] = None) -> Optional[pd.DataFrame]:
         if self.mode == "gcp":
-            curated_rows = self._query_rows_by_identity_gcp(self._curated_table_id, player_id)
+            curated_rows = self._query_rows_by_identity_gcp(self._curated_table_id, player_id, job_id=job_id)
             if curated_rows:
                 return pd.DataFrame(curated_rows)
-            staging_rows = self._query_rows_by_identity_gcp(self._table_id, player_id)
+            staging_rows = self._query_rows_by_identity_gcp(self._table_id, player_id, job_id=job_id)
             if staging_rows:
                 return pd.DataFrame(staging_rows)
             return None
 
-        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table)
+        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table, job_id=job_id)
         if player_df is not None and not player_df.empty:
             return player_df
-        return self._get_local_events_for_identity(player_id, table=self._table)
+        return self._get_local_events_for_identity(player_id, table=self._table, job_id=job_id)
 
-    def get_all_player_ids(self) -> List[Any]:
+    def get_all_player_ids(self, job_id: Optional[str] = None) -> List[Any]:
         if self.mode == "gcp":
+            job_filter = ""
+            if job_id:
+                job_filter = """
+                    AND (
+                        CAST(job_id AS STRING) = @job_id
+                        OR CAST(job_identifier AS STRING) = @job_id
+                    )
+                """
             queries = [
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._player_latest_state_table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
+                    {job_filter}
                 """,
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._curated_table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
+                    {job_filter}
                 """,
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
+                    {job_filter}
                 """,
             ]
             for query in queries:
                 try:
+                    job_config = None
+                    if job_id:
+                        job_config = self._bigquery.QueryJobConfig(
+                            query_parameters=[
+                                self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id))
+                            ]
+                        )
                     rows = []
-                    for row in self._client.query(query).result():
+                    for row in self._client.query(query, job_config=job_config).result():
                         value = row["player_id"]
                         if value is not None:
                             rows.append(value)
@@ -609,10 +682,11 @@ class BigQueryService:
             return []
 
         for table in (self._player_latest_state_table, self._curated_table, self._table):
-            if table.empty:
+            filtered_table = self._filter_table_by_job(table, job_id=job_id)
+            if filtered_table.empty:
                 continue
             ids: List[str] = []
-            for row in table.to_dict(orient="records"):
+            for row in filtered_table.to_dict(orient="records"):
                 value = row.get("player_id") or row.get("canonical_user_id")
                 if value is not None:
                     ids.append(str(value))
@@ -639,11 +713,14 @@ class BigQueryService:
             player = row.get("player_id")
             identity_keys.append(str(canonical or player or "unknown_user"))
         curated_df["_identity_key"] = identity_keys
+        curated_df["_job_scope"] = curated_df.apply(
+            lambda row: str(row.get("job_identifier") or row.get("job_id") or "unknown_job"),
+            axis=1,
+        )
 
         latest_state_rows: List[Dict[str, Any]] = []
-        for identity_key in curated_df["_identity_key"].drop_duplicates().tolist():
-            group_df = curated_df[curated_df["_identity_key"] == identity_key].copy()
-            latest_state = self._build_latest_state_from_events(identity_key, group_df)
+        for (job_scope, identity_key), group_df in curated_df.groupby(["_job_scope", "_identity_key"], sort=False):
+            latest_state = self._build_latest_state_from_events(identity_key, group_df.copy(), job_id=job_scope)
             if latest_state:
                 latest_state_rows.append(latest_state)
 
@@ -656,20 +733,20 @@ class BigQueryService:
             "source_curated_rows": len(curated_rows),
         }
 
-    def get_player_latest_state(self, player_id: Any) -> Optional[Dict[str, Any]]:
+    def get_player_latest_state(self, player_id: Any, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if self.mode == "gcp":
-            rows = self._query_rows_by_identity_gcp(self._player_latest_state_table_id, player_id, limit=1)
+            rows = self._query_rows_by_identity_gcp(self._player_latest_state_table_id, player_id, limit=1, job_id=job_id)
             if rows:
                 return rows[0]
         else:
-            latest_state_df = self._get_local_events_for_identity(player_id, table=self._player_latest_state_table)
+            latest_state_df = self._get_local_events_for_identity(player_id, table=self._player_latest_state_table, job_id=job_id)
             if latest_state_df is not None and not latest_state_df.empty:
                 return latest_state_df.iloc[0].to_dict()
 
-        player_df = self.get_events_for_player(player_id)
+        player_df = self.get_events_for_player(player_id, job_id=job_id)
         if player_df is None or player_df.empty:
             return None
-        return self._build_latest_state_from_events(player_id, player_df)
+        return self._build_latest_state_from_events(player_id, player_df, job_id=job_id)
 
     def get_pipeline_dead_letters(self, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         if self.mode == "gcp":

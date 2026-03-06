@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from bigquery_service import BigQueryService
 import main_service
 
 
@@ -360,6 +361,127 @@ def test_action_history_prunes_records_older_than_seven_days(client, monkeypatch
     retained_record = json.loads(retained_lines[0])
     assert retained_record["ts"] == fresh_timestamp
     assert retained_record["detail"]["name"] == "Adjust 1"
+
+
+def test_ingest_jobs_use_unique_warehouse_job_ids(client, monkeypatch):
+    original_jobs = list(main_service.IMPORT_JOBS)
+
+    monkeypatch.setattr(main_service, "save_import_jobs_to_cache", lambda: None)
+    monkeypatch.setattr(main_service, "append_audit_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_service, "run_pipeline_background", lambda *args, **kwargs: None)
+    main_service.IMPORT_JOBS.clear()
+
+    try:
+        resp = client.post(
+            "/ingest-and-process-data",
+            json={
+                "start_date": "20260301",
+                "end_date": "20260301",
+                "source": "Amplitude 1",
+            },
+        )
+        assert resp.status_code == 200
+        assert len(main_service.IMPORT_JOBS) == 1
+        created_job = main_service.IMPORT_JOBS[0]
+        assert created_job["warehouse_job_id"] == created_job["name"]
+    finally:
+        main_service.IMPORT_JOBS[:] = original_jobs
+
+
+def test_predictions_are_scoped_to_selected_import_job(monkeypatch, tmp_path):
+    original_import_jobs = list(main_service.IMPORT_JOBS)
+    original_bigquery_service = main_service.BIGQUERY_SERVICE_INSTANCE
+    original_prediction_cache_dir = main_service.PREDICTION_CACHE_DIR
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setattr(main_service, "PREDICTION_CACHE_DIR", str(tmp_path / "predictions"))
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    service = BigQueryService()
+
+    shared_event_id = "shared-source-event"
+    event_template = {
+        "event_type": "session_started",
+        "event_time": "2026-03-01T12:00:00Z",
+        "event_properties": {},
+        "user_properties": {},
+        "source": "Amplitude 1",
+    }
+    service.write_processed_events(
+        [
+            {
+                **event_template,
+                "player_id": "alpha-user",
+                "canonical_user_id": "alpha-user",
+                "source_event_id": shared_event_id,
+            }
+        ],
+        job_identifier="warehouse-job-alpha",
+    )
+    service.write_processed_events(
+        [
+            {
+                **event_template,
+                "player_id": "beta-user",
+                "canonical_user_id": "beta-user",
+                "source_event_id": shared_event_id,
+            }
+        ],
+        job_identifier="warehouse-job-beta",
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    monkeypatch.setattr(main_service, "BIGQUERY_SERVICE_INSTANCE", service)
+    monkeypatch.setattr(
+        main_service,
+        "_estimate_churn_with_mode",
+        lambda **kwargs: asyncio.sleep(0, result=(
+            {
+                "player_id": kwargs["player_id"],
+                "churn_state": "active",
+                "churn_risk": "medium",
+                "reason": "test",
+                "top_signals": [],
+            },
+            {"selected_source": "local"},
+        )),
+    )
+
+    main_service.IMPORT_JOBS[:] = [
+        {
+            "name": "job-alpha",
+            "status": "Ready to Use",
+            "start_date": "20260301",
+            "end_date": "20260301",
+            "warehouse_job_id": "warehouse-job-alpha",
+        },
+        {
+            "name": "job-beta",
+            "status": "Ready to Use",
+            "start_date": "20260301",
+            "end_date": "20260301",
+            "warehouse_job_id": "warehouse-job-beta",
+        },
+    ]
+
+    try:
+        assert service.get_all_player_ids(job_id="warehouse-job-alpha") == ["alpha-user"]
+        assert service.get_all_player_ids(job_id="warehouse-job-beta") == ["beta-user"]
+
+        predictions = asyncio.run(
+            main_service._compute_predictions_for_job(
+                "job-alpha",
+                force_recalculate=True,
+                prediction_mode="local",
+            )
+        )
+        assert [row["user_id"] for row in predictions] == ["alpha-user"]
+    finally:
+        main_service.IMPORT_JOBS[:] = original_import_jobs
+        main_service.BIGQUERY_SERVICE_INSTANCE = original_bigquery_service
+        main_service.PREDICTION_CACHE_DIR = original_prediction_cache_dir
 
 
 def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):

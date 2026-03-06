@@ -13,7 +13,13 @@ class PlayerModelingEngine:
     Analyzes player event data to build intelligence profiles, including
     summaries, churn state, and churn risk.
     """
-    def __init__(self, gemini_client: Optional[GeminiClient], bigquery_service: BigQueryService, churn_inactive_days: int = 14):
+    def __init__(
+        self,
+        gemini_client: Optional[GeminiClient],
+        bigquery_service: BigQueryService,
+        churn_inactive_days: int = 14,
+        job_id: Optional[str] = None,
+    ):
         """
         Initializes the engine with AI and data warehouse clients.
 
@@ -24,12 +30,15 @@ class PlayerModelingEngine:
         self.ai_client = gemini_client
         self.db_client = bigquery_service
         self.churn_inactive_days = max(1, int(churn_inactive_days))
+        self.job_id = job_id
 
     def _get_player_latest_state(self, player_id: Any) -> Optional[Dict[str, Any]]:
         getter = getattr(self.db_client, "get_player_latest_state", None)
         if not callable(getter):
             return None
         try:
+            return getter(player_id, job_id=self.job_id)
+        except TypeError:
             return getter(player_id)
         except Exception:
             return None
@@ -84,7 +93,10 @@ class PlayerModelingEngine:
 
     def _get_and_preprocess_player_data(self, player_id: Any) -> Optional[pd.DataFrame]:
         """Fetches player data from the warehouse and performs preprocessing."""
-        df = self.db_client.get_events_for_player(player_id)
+        try:
+            df = self.db_client.get_events_for_player(player_id, job_id=self.job_id)
+        except TypeError:
+            df = self.db_client.get_events_for_player(player_id)
         if df is None or df.empty:
             return None
         
@@ -305,4 +317,7 @@ class PlayerModelingEngine:
             A list of unique player IDs.
         """
         print("Fetching all unique player IDs from the data warehouse...")
-        return self.db_client.get_all_player_ids()
+        try:
+            return self.db_client.get_all_player_ids(job_id=self.job_id)
+        except TypeError:
+            return self.db_client.get_all_player_ids()
