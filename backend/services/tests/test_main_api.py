@@ -406,3 +406,80 @@ def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):
         with main_service.PREDICTION_JOB_RUNNERS_LOCK:
             main_service.PREDICTION_JOB_RUNNERS.clear()
             main_service.PREDICTION_JOB_RUNNERS.update(original_runners)
+
+
+def test_delete_job_removes_prediction_artifacts(client, monkeypatch, tmp_path):
+    original_import_jobs = list(main_service.IMPORT_JOBS)
+    original_prediction_jobs = list(main_service.PREDICTION_JOBS)
+    with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+        original_runners = dict(main_service.PREDICTION_JOB_RUNNERS)
+        main_service.PREDICTION_JOB_RUNNERS.clear()
+
+    cache_dir = tmp_path / "cache"
+    prediction_dir = cache_dir / "predictions"
+    prediction_dir.mkdir(parents=True)
+    raw_cache = cache_dir / "20260301_20260301.json"
+    raw_cache.write_text("[]", encoding="utf-8")
+    kept_prediction = prediction_dir / "keep-job_local.json"
+    kept_prediction.write_text("[]", encoding="utf-8")
+
+    target_job = {
+        "name": "cleanup-job",
+        "status": "Ready to Use",
+        "start_date": "20260301",
+        "end_date": "20260301",
+    }
+    main_service.IMPORT_JOBS[:] = [target_job]
+    main_service.PREDICTION_JOBS[:] = [
+        {
+            "id": "cleanup-prediction-job",
+            "import_job_name": "cleanup-job",
+            "status": "Ready",
+        },
+        {
+            "id": "keep-prediction-job",
+            "import_job_name": "keep-job",
+            "status": "Ready",
+        },
+    ]
+    with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+        main_service.PREDICTION_JOB_RUNNERS["cleanup-prediction-job"] = object()
+        main_service.PREDICTION_JOB_RUNNERS["keep-prediction-job"] = object()
+
+    (prediction_dir / "cleanup-job_local.json").write_text("[]", encoding="utf-8")
+    (prediction_dir / "cleanup-job_parallel.json").write_text("[]", encoding="utf-8")
+
+    deleted_gcs = []
+    deleted_bigquery = []
+    deleted_checkpoints = []
+
+    monkeypatch.setattr(main_service, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(main_service, "PREDICTION_CACHE_DIR", str(prediction_dir))
+    monkeypatch.setattr(main_service, "save_import_jobs_to_cache", lambda: None)
+    monkeypatch.setattr(main_service, "save_prediction_jobs_to_cache", lambda: None)
+    monkeypatch.setattr(main_service.GCS_SERVICE_INSTANCE, "delete_data_for_job", lambda job_id: deleted_gcs.append(job_id))
+    monkeypatch.setattr(main_service.BIGQUERY_SERVICE_INSTANCE, "delete_data_for_job", lambda job_id: deleted_bigquery.append(job_id))
+    monkeypatch.setattr(main_service, "delete_ingestion_checkpoints", lambda job_id: deleted_checkpoints.append(job_id))
+
+    try:
+        response = client.delete("/job/cleanup-job")
+        assert response.status_code == 200
+
+        assert deleted_gcs == ["20260301_to_20260301"]
+        assert deleted_bigquery == ["20260301_to_20260301"]
+        assert deleted_checkpoints == ["cleanup-job"]
+        assert not raw_cache.exists()
+        assert not (prediction_dir / "cleanup-job_local.json").exists()
+        assert not (prediction_dir / "cleanup-job_parallel.json").exists()
+        assert kept_prediction.exists()
+        assert main_service.IMPORT_JOBS == []
+        assert [job["id"] for job in main_service.PREDICTION_JOBS] == ["keep-prediction-job"]
+        with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+            assert "cleanup-prediction-job" not in main_service.PREDICTION_JOB_RUNNERS
+            assert "keep-prediction-job" in main_service.PREDICTION_JOB_RUNNERS
+    finally:
+        main_service.IMPORT_JOBS[:] = original_import_jobs
+        main_service.PREDICTION_JOBS[:] = original_prediction_jobs
+        with main_service.PREDICTION_JOB_RUNNERS_LOCK:
+            main_service.PREDICTION_JOB_RUNNERS.clear()
+            main_service.PREDICTION_JOB_RUNNERS.update(original_runners)

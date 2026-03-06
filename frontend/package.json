@@ -7,9 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed",
-    "test:e2e:debug": "playwright test --debug"
+    "test:e2e": "node ./scripts/run-e2e-with-cleanup.mjs",
+    "test:e2e:headed": "node ./scripts/run-e2e-with-cleanup.mjs --headed",
+    "test:e2e:debug": "node ./scripts/run-e2e-with-cleanup.mjs --debug"
   },
   "dependencies": {
     "@google/genai": "^1.36.0",

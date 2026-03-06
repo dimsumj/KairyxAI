@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const managedServices = process.env.KAIRYX_E2E_MANAGED_SERVICES === '1';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -11,12 +13,16 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:3000',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 3000 --strictPort',
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
+  ...(managedServices
+    ? {}
+    : {
+        webServer: {
+          command: 'npm run dev -- --host 127.0.0.1 --port 3000 --strictPort',
+          url: 'http://127.0.0.1:3000',
+          reuseExistingServer: !process.env.CI,
+          timeout: 120 * 1000,
+        },
+      }),
   projects: [
     {
       name: 'chromium',

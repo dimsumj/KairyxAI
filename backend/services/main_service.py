@@ -2214,7 +2214,7 @@ async def delete_job_cache(job_name: str):
     """
     Deletes a job from the import list and removes its associated cache file.
     """
-    global IMPORT_JOBS
+    global IMPORT_JOBS, PREDICTION_JOBS
     job_to_delete = next((j for j in IMPORT_JOBS if j["name"] == job_name), None)
 
     if not job_to_delete:
@@ -2242,11 +2242,23 @@ async def delete_job_cache(job_name: str):
     # 3b. Delete ingestion checkpoints associated with this import job
     delete_ingestion_checkpoints(job_name)
 
-    # 4. Delete prediction cache file if it exists
-    prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, f"{job_name}.json")
-    if os.path.exists(prediction_cache_file):
-        os.remove(prediction_cache_file)
-        print(f"Deleted prediction cache file: {prediction_cache_file}")
+    # 4. Delete all prediction cache variants for this import job.
+    if os.path.isdir(PREDICTION_CACHE_DIR):
+        prefix = f"{job_name}_"
+        for filename in os.listdir(PREDICTION_CACHE_DIR):
+            if filename == f"{job_name}.json" or filename.startswith(prefix):
+                prediction_cache_file = os.path.join(PREDICTION_CACHE_DIR, filename)
+                os.remove(prediction_cache_file)
+                print(f"Deleted prediction cache file: {prediction_cache_file}")
+
+    # 5. Remove prediction job records tied to this import job.
+    removed_prediction_jobs = [j for j in PREDICTION_JOBS if j.get("import_job_name") == job_name]
+    if removed_prediction_jobs:
+        PREDICTION_JOBS = [j for j in PREDICTION_JOBS if j.get("import_job_name") != job_name]
+        with PREDICTION_JOB_RUNNERS_LOCK:
+            for prediction_job in removed_prediction_jobs:
+                PREDICTION_JOB_RUNNERS.pop(prediction_job.get("id"), None)
+        save_prediction_jobs_to_cache()
 
     IMPORT_JOBS = [j for j in IMPORT_JOBS if j["name"] != job_name]
     save_import_jobs_to_cache()
