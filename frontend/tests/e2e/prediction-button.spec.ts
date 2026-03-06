@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const backendUrl = process.env.KAIRYX_E2E_BACKEND_URL || 'http://127.0.0.1:8000';
+
 test('uses a single churn button that switches to stop while prediction is running', async ({ page }) => {
   let stopRequested = false;
   let stopCallCount = 0;
@@ -9,7 +11,11 @@ test('uses a single churn button that switches to stop while prediction is runni
     await dialog.accept();
   });
 
-  await page.route('http://127.0.0.1:8000/**', async (route) => {
+  await page.addInitScript((url) => {
+    Object.assign(window, { KAIRYX_BACKEND_URL: url });
+  }, backendUrl);
+
+  await page.route(`${backendUrl}/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
 

@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const backendUrl = process.env.KAIRYX_E2E_BACKEND_URL || 'http://127.0.0.1:8000';
+
 test('paginates action history with configurable page size', async ({ page }) => {
   const history = Array.from({ length: 60 }, (_, index) => ({
     timestamp: new Date(Date.UTC(2026, 2, 5, 12, index, 0)).toISOString(),
@@ -12,7 +14,11 @@ test('paginates action history with configurable page size', async ({ page }) =>
     await dialog.accept();
   });
 
-  await page.route('http://127.0.0.1:8000/**', async (route) => {
+  await page.addInitScript((url) => {
+    Object.assign(window, { KAIRYX_BACKEND_URL: url });
+  }, backendUrl);
+
+  await page.route(`${backendUrl}/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
 

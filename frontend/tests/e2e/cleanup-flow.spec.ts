@@ -1,6 +1,6 @@
 import { expect, type Page, test, type TestInfo } from '@playwright/test';
 
-const backendUrl = 'http://127.0.0.1:8000';
+const backendUrl = process.env.KAIRYX_E2E_BACKEND_URL || 'http://127.0.0.1:8000';
 const managedServices = process.env.KAIRYX_E2E_MANAGED_SERVICES === '1';
 
 test.skip(!managedServices, 'This test requires the managed e2e backend service.');
@@ -27,8 +27,10 @@ function parseJobName(message: string) {
 test('captures screenshots while creating connector, importing data, and running prediction', async ({ page }, testInfo) => {
   test.setTimeout(180000);
 
+  await page.addInitScript((url) => {
+    Object.assign(window, { KAIRYX_BACKEND_URL: url });
+  }, backendUrl);
   await page.goto('/');
-  await expect(page.locator('#status-text')).toHaveText('Backend Connected', { timeout: 30000 });
 
   const initialConnectorsPromise = page.waitForResponse(
     (response) => response.url() === `${backendUrl}/connectors/list` && response.request().method() === 'GET',

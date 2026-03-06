@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const managedServices = process.env.KAIRYX_E2E_MANAGED_SERVICES === '1';
+const frontendPort = Number(process.env.KAIRYX_E2E_FRONTEND_PORT || 3000);
+const baseURL = process.env.KAIRYX_E2E_BASE_URL || `http://127.0.0.1:${frontendPort}`;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -10,15 +12,15 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL,
     trace: 'on-first-retry',
   },
   ...(managedServices
     ? {}
     : {
         webServer: {
-          command: 'npm run dev -- --host 127.0.0.1 --port 3000 --strictPort',
-          url: 'http://127.0.0.1:3000',
+          command: `npm run dev -- --host 127.0.0.1 --port ${frontendPort} --strictPort`,
+          url: baseURL,
           reuseExistingServer: !process.env.CI,
           timeout: 120 * 1000,
         },

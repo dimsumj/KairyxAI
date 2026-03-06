@@ -11,8 +11,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendDir = path.resolve(scriptDir, '..');
 const repoRoot = path.resolve(frontendDir, '..');
 const backendDir = path.join(repoRoot, 'backend', 'services');
-const backendPort = Number(process.env.KAIRYX_E2E_BACKEND_PORT || 8000);
-const frontendPort = Number(process.env.KAIRYX_E2E_FRONTEND_PORT || 3000);
+const backendPort = Number(process.env.KAIRYX_E2E_BACKEND_PORT || 8001);
+const frontendPort = Number(process.env.KAIRYX_E2E_FRONTEND_PORT || 3001);
 const backendUrl = `http://127.0.0.1:${backendPort}`;
 const frontendUrl = `http://127.0.0.1:${frontendPort}`;
 const predictionCacheDir = path.join(backendDir, '.cache', 'predictions');
@@ -236,6 +236,11 @@ async function stopService(service) {
   }
 }
 
+async function verifyServicesStopped() {
+  await assertPortAvailable(frontendPort);
+  await assertPortAvailable(backendPort);
+}
+
 async function main() {
   await assertPortAvailable(backendPort);
   await assertPortAvailable(frontendPort);
@@ -281,6 +286,10 @@ async function main() {
         env: {
           ...process.env,
           KAIRYX_E2E_MANAGED_SERVICES: '1',
+          KAIRYX_E2E_FRONTEND_PORT: String(frontendPort),
+          KAIRYX_E2E_BACKEND_PORT: String(backendPort),
+          KAIRYX_E2E_BASE_URL: frontendUrl,
+          KAIRYX_E2E_BACKEND_URL: backendUrl,
         },
         stdio: 'inherit',
       });
@@ -299,6 +308,13 @@ async function main() {
 
     await stopService(frontend);
     await stopService(backend);
+
+    try {
+      await verifyServicesStopped();
+    } catch (error) {
+      console.error(`[e2e] Service shutdown verification failed: ${error.message}`);
+      exitCode = exitCode || 1;
+    }
 
     try {
       if (baseline) {
