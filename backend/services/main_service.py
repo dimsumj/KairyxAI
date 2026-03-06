@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from datetime import (
     datetime,
     timedelta,
+    timezone,
 )
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +74,8 @@ CACHE_DIR = ".cache"
 LLM_POLICY_CACHE_FILE = ".llm_policy.json"
 SAFETY_RAILS_CACHE_FILE = ".safety_rails.json"
 AUDIT_LOG_FILE = ".audit.log.jsonl"
+ACTION_HISTORY_RETENTION_DAYS = 7
+ACTION_HISTORY_RETENTION = timedelta(days=ACTION_HISTORY_RETENTION_DAYS)
 CONNECTOR_STATUS_CACHE_FILE = ".connector_status.json"
 EXTERNAL_CHURN_CACHE_FILE = ".external_churn_updates.json"
 DEFAULT_SAFETY_RAILS = {
@@ -353,8 +356,9 @@ def append_audit_log(action: str, detail: Dict[str, Any]):
         "action": action,
         "detail": detail,
     }
-    with open(AUDIT_LOG_FILE, "a") as f:
-        f.write(json.dumps(record) + "\n")
+    retained_records = _read_retained_audit_records()
+    retained_records.append(record)
+    _write_audit_records(retained_records)
 
 
 def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
@@ -373,6 +377,50 @@ def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
         except Exception:
             continue
     return None
+
+
+def _normalize_history_datetime(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _write_audit_records(records: list[Dict[str, Any]]) -> None:
+    with open(AUDIT_LOG_FILE, "w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+
+def _read_retained_audit_records(now: Optional[datetime] = None) -> list[Dict[str, Any]]:
+    if not os.path.exists(AUDIT_LOG_FILE):
+        return []
+
+    reference_time = _normalize_history_datetime(now or datetime.utcnow()) or datetime.utcnow()
+    cutoff = reference_time - ACTION_HISTORY_RETENTION
+    retained_records: list[Dict[str, Any]] = []
+    changed = False
+
+    with open(AUDIT_LOG_FILE, "r") as f:
+        for line in f:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                changed = True
+                continue
+
+            timestamp = _normalize_history_datetime(_parse_history_timestamp(record.get("ts")))
+            if timestamp is None or timestamp < cutoff:
+                changed = True
+                continue
+
+            retained_records.append(record)
+
+    if changed:
+        _write_audit_records(retained_records)
+
+    return retained_records
 
 
 def _history_sort_key(item: Dict[str, Any]) -> datetime:
@@ -425,22 +473,14 @@ def _normalize_status_label(status: Optional[str]) -> Optional[str]:
 
 
 def _parse_audit_history(limit: int = 200) -> list[Dict[str, Any]]:
-    if not os.path.exists(AUDIT_LOG_FILE):
-        return []
-
     items: list[Dict[str, Any]] = []
-    with open(AUDIT_LOG_FILE, "r") as f:
-        for line in f:
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            action = record.get("action")
-            detail = record.get("detail") or {}
-            ts = record.get("ts")
-            item = _audit_record_to_history_item(action, detail, ts)
-            if item:
-                items.append(item)
+    for record in _read_retained_audit_records():
+        action = record.get("action")
+        detail = record.get("detail") or {}
+        ts = record.get("ts")
+        item = _audit_record_to_history_item(action, detail, ts)
+        if item:
+            items.append(item)
 
     items.sort(key=_history_sort_key, reverse=True)
     return items[: max(1, int(limit))]
@@ -1286,12 +1326,8 @@ async def get_local_observability_events(limit: int = 200):
     events = []
 
     if os.path.exists(AUDIT_LOG_FILE):
-        with open(AUDIT_LOG_FILE, "r") as f:
-            for line in f.readlines()[-limit:]:
-                try:
-                    events.append({"stream": "audit", "record": json.loads(line)})
-                except json.JSONDecodeError:
-                    continue
+        for record in _read_retained_audit_records()[-limit:]:
+            events.append({"stream": "audit", "record": record})
 
     dlq_file = os.getenv("INGEST_DLQ_FILE", ".cache/ingest_dlq.jsonl")
     if os.path.exists(dlq_file):

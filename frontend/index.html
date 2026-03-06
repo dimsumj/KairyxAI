@@ -438,6 +438,16 @@
             <h1>Action History</h1>
             <div class="card">
                 <p>A timeline of human-triggered actions such as imports, manual mapping updates, prediction runs, and audience exports.</p>
+                <div id="action-history-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="action-history-items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
+                        <select id="action-history-items-per-page" style="padding: 0.5rem; border-radius: 4px;">
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                </div>
                 <table>
                     <thead>
                         <tr>
@@ -449,6 +459,9 @@
                     </thead>
                     <tbody id="action-history-results"></tbody>
                 </table>
+                <div id="action-history-pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
+                    <!-- Pagination buttons will be injected here -->
+                </div>
             </div>
         </section>
 
@@ -1330,6 +1343,11 @@
 
             // Action History Page Logic
             const actionHistoryResults = document.getElementById('action-history-results');
+            const actionHistoryItemsPerPageSelect = document.getElementById('action-history-items-per-page');
+            const actionHistoryPaginationControls = document.getElementById('action-history-pagination-controls');
+            let allActionHistoryItems = [];
+            let actionHistoryCurrentPage = 1;
+            let actionHistoryItemsPerPage = 25;
 
             function getActionHistoryStatusColor(status) {
                 const normalized = String(status || '').toLowerCase();
@@ -1349,44 +1367,110 @@
                     .replace(/'/g, '&#39;');
             }
 
+            function renderActionHistoryPaginationControls() {
+                if (!actionHistoryPaginationControls) return;
+                actionHistoryPaginationControls.innerHTML = '';
+
+                const totalPages = Math.ceil(allActionHistoryItems.length / actionHistoryItemsPerPage);
+                if (totalPages <= 1) return;
+
+                const prevButton = document.createElement('button');
+                prevButton.textContent = 'Previous';
+                prevButton.disabled = actionHistoryCurrentPage === 1;
+                prevButton.addEventListener('click', () => {
+                    if (actionHistoryCurrentPage > 1) {
+                        actionHistoryCurrentPage--;
+                        renderActionHistoryTable();
+                    }
+                });
+
+                const pageInfo = document.createElement('span');
+                pageInfo.textContent = `Page ${actionHistoryCurrentPage} of ${totalPages}`;
+                pageInfo.style.margin = '0 1rem';
+
+                const nextButton = document.createElement('button');
+                nextButton.textContent = 'Next';
+                nextButton.disabled = actionHistoryCurrentPage === totalPages;
+                nextButton.addEventListener('click', () => {
+                    if (actionHistoryCurrentPage < totalPages) {
+                        actionHistoryCurrentPage++;
+                        renderActionHistoryTable();
+                    }
+                });
+
+                actionHistoryPaginationControls.appendChild(prevButton);
+                actionHistoryPaginationControls.appendChild(pageInfo);
+                actionHistoryPaginationControls.appendChild(nextButton);
+            }
+
+            function renderActionHistoryTable() {
+                if (!actionHistoryResults) return;
+
+                if (allActionHistoryItems.length === 0) {
+                    actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">No recorded actions yet.</td></tr>';
+                    if (actionHistoryPaginationControls) {
+                        actionHistoryPaginationControls.innerHTML = '';
+                    }
+                    return;
+                }
+
+                const totalPages = Math.max(1, Math.ceil(allActionHistoryItems.length / actionHistoryItemsPerPage));
+                actionHistoryCurrentPage = Math.min(actionHistoryCurrentPage, totalPages);
+                const startIndex = (actionHistoryCurrentPage - 1) * actionHistoryItemsPerPage;
+                const endIndex = startIndex + actionHistoryItemsPerPage;
+                const paginatedItems = allActionHistoryItems.slice(startIndex, endIndex);
+
+                actionHistoryResults.innerHTML = '';
+                paginatedItems.forEach((item) => {
+                    const row = document.createElement('tr');
+                    const timestamp = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
+                    const summary = item.summary || '-';
+                    const status = item.status || '-';
+                    const details = item.details || '-';
+                    const statusColor = getActionHistoryStatusColor(status);
+
+                    row.innerHTML = `
+                        <td>${escapeHtml(timestamp)}</td>
+                        <td>${escapeHtml(summary)}</td>
+                        <td><span style="display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; color: ${statusColor}; border: 1px solid ${statusColor}; text-transform: capitalize;">${escapeHtml(status)}</span></td>
+                        <td style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(details)}</td>
+                    `;
+                    actionHistoryResults.appendChild(row);
+                });
+
+                renderActionHistoryPaginationControls();
+            }
+
             async function loadActionHistory() {
                 if (!actionHistoryResults) return;
                 actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">Loading action history...</td></tr>';
+                if (actionHistoryPaginationControls) {
+                    actionHistoryPaginationControls.innerHTML = '';
+                }
                 try {
-                    const response = await fetch(`${backendUrl}/action-history?limit=150`);
+                    const response = await fetch(`${backendUrl}/action-history?limit=1000`);
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({}));
                         throw new Error(errorData.detail || 'Failed to load action history.');
                     }
                     const data = await response.json();
-                    const history = data.action_history || [];
-
-                    if (history.length === 0) {
-                        actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">No recorded actions yet.</td></tr>';
-                        return;
-                    }
-
-                    actionHistoryResults.innerHTML = '';
-                    history.forEach((item) => {
-                        const row = document.createElement('tr');
-                        const timestamp = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
-                        const summary = item.summary || '-';
-                        const status = item.status || '-';
-                        const details = item.details || '-';
-                        const statusColor = getActionHistoryStatusColor(status);
-
-                        row.innerHTML = `
-                            <td>${escapeHtml(timestamp)}</td>
-                            <td>${escapeHtml(summary)}</td>
-                            <td><span style="display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; color: ${statusColor}; border: 1px solid ${statusColor}; text-transform: capitalize;">${escapeHtml(status)}</span></td>
-                            <td style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(details)}</td>
-                        `;
-                        actionHistoryResults.appendChild(row);
-                    });
+                    allActionHistoryItems = data.action_history || [];
+                    actionHistoryCurrentPage = 1;
+                    renderActionHistoryTable();
                 } catch (error) {
+                    allActionHistoryItems = [];
                     actionHistoryResults.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
+                    if (actionHistoryPaginationControls) {
+                        actionHistoryPaginationControls.innerHTML = '';
+                    }
                 }
             }
+
+            actionHistoryItemsPerPageSelect.addEventListener('change', (event) => {
+                actionHistoryItemsPerPage = Number(event.target.value) || 25;
+                actionHistoryCurrentPage = 1;
+                renderActionHistoryTable();
+            });
 
             function getActionButtonsHTML(job) {
                 if (job.status === 'Processing') {

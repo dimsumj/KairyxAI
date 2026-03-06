@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -321,6 +322,44 @@ def test_action_history_only_includes_human_triggered_actions(client, monkeypatc
     assert items[2]["summary"] == "Start Import from Amplitude 1"
     assert items[2]["status"] == "started"
     assert "range=20260301 to 20260304" in items[2]["details"]
+
+
+def test_action_history_prunes_records_older_than_seven_days(client, monkeypatch, tmp_path):
+    audit_log = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(main_service, "AUDIT_LOG_FILE", str(audit_log))
+
+    old_timestamp = (datetime.utcnow() - timedelta(days=8)).isoformat()
+    fresh_timestamp = (datetime.utcnow() - timedelta(days=2)).isoformat()
+
+    with audit_log.open("w") as f:
+        f.write(json.dumps({
+            "ts": old_timestamp,
+            "action": "field_mapping_updated",
+            "detail": {
+                "connector": "Amplitude 1",
+                "keys": ["canonical_user_id"],
+            },
+        }) + "\n")
+        f.write(json.dumps({
+            "ts": fresh_timestamp,
+            "action": "connector_configured",
+            "detail": {
+                "type": "adjust",
+                "name": "Adjust 1",
+            },
+        }) + "\n")
+
+    resp = client.get("/action-history?limit=10")
+    assert resp.status_code == 200
+    items = resp.json()["action_history"]
+    assert len(items) == 1
+    assert items[0]["summary"] == "Configure Connector: Adjust 1"
+
+    retained_lines = audit_log.read_text().strip().splitlines()
+    assert len(retained_lines) == 1
+    retained_record = json.loads(retained_lines[0])
+    assert retained_record["ts"] == fresh_timestamp
+    assert retained_record["detail"]["name"] == "Adjust 1"
 
 
 def test_prediction_job_stop_transitions_to_stopped(client, monkeypatch):
