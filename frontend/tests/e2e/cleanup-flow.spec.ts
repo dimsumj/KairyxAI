@@ -93,8 +93,10 @@ test('captures screenshots while creating connector, importing data, and running
   await page.locator('#dataset-select').selectOption({ label: jobName! });
 
   await page.locator('#predict-churn-btn').click();
+  await expect(page.locator('#predict-churn-btn')).toHaveText('Stop');
   await expect(page.locator('#prediction-progress-info')).toContainText('Prediction job:', { timeout: 10000 });
   await expect(page.locator('#prediction-progress-info')).toContainText('Ready', { timeout: 60000 });
+  await expect(page.locator('#predict-churn-btn')).toHaveText('Predict Churn');
   await expect(page.locator('#operator-hub-results tr').first()).not.toContainText('No player data available');
   await captureStep(page, testInfo, 'prediction-ran');
 });

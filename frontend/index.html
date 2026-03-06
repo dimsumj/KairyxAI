@@ -323,7 +323,6 @@
                 </div>
                 <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
                     <button id="predict-churn-btn">Predict Churn</button>
-                    <button id="stop-predict-btn" style="background: var(--red);" disabled>Stop</button>
                     <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
                 </div>
                 <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
@@ -849,7 +848,6 @@
             // Operator Hub Logic
             const datasetSelect = document.getElementById('dataset-select');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
-            const stopPredictBtn = document.getElementById('stop-predict-btn');
             const predictionProgressInfo = document.getElementById('prediction-progress-info');
             const campaignProviderSelect = document.getElementById('campaign-provider-select');
             const campaignChannelSelect = document.getElementById('campaign-channel-select');
@@ -868,6 +866,29 @@
             let itemsPerPage = 25;
             let activePredictionJobId = null;
             let predictionStopRequested = false;
+
+            function setPredictionActionState(state = 'idle') {
+                if (state === 'running') {
+                    predictChurnBtn.textContent = 'Stop';
+                    predictChurnBtn.style.background = 'var(--red)';
+                    predictChurnBtn.disabled = false;
+                    datasetSelect.disabled = true;
+                    return;
+                }
+
+                if (state === 'stopping') {
+                    predictChurnBtn.textContent = 'Stopping...';
+                    predictChurnBtn.style.background = 'var(--subtle-text)';
+                    predictChurnBtn.disabled = true;
+                    datasetSelect.disabled = true;
+                    return;
+                }
+
+                predictChurnBtn.textContent = 'Predict Churn';
+                predictChurnBtn.style.background = '';
+                predictChurnBtn.disabled = false;
+                datasetSelect.disabled = false;
+            }
 
             function renderPredictionProgress(job = {}) {
                 const processed = job.processed_count || 0;
@@ -922,21 +943,24 @@
                         // User must explicitly click Predict Churn.
                         allChurnPredictionPlayers = [];
                         renderChurnTable();
-                        predictChurnBtn.disabled = false;
-                        stopPredictBtn.disabled = true;
+                        setPredictionActionState('idle');
                         pushAudienceBtn.disabled = false;
                         predictionStopRequested = false;
                         predictionProgressInfo.textContent = '';
                         setCampaignExportStatus('');
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
+                        setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
+                        datasetSelect.disabled = true;
                         pushAudienceBtn.disabled = true;
                         setCampaignExportStatus('');
                     }
                 } catch (error) {
                     datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
+                    setPredictionActionState('idle');
                     predictChurnBtn.disabled = true;
+                    datasetSelect.disabled = true;
                     pushAudienceBtn.disabled = true;
                     console.error('Error loading datasets for Operator Hub:', error);
                 }
@@ -950,8 +974,7 @@
                 }
 
                 operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
-                predictChurnBtn.disabled = true;
-                stopPredictBtn.disabled = false;
+                setPredictionActionState('running');
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = 'Prediction job: starting...';
                 allChurnPredictionPlayers = [];
@@ -997,8 +1020,7 @@
                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 } finally {
                     activePredictionJobId = null;
-                    predictChurnBtn.disabled = false;
-                    stopPredictBtn.disabled = true;
+                    setPredictionActionState('idle');
                 }
             }
 
@@ -1113,32 +1135,33 @@
                 renderChurnTable();
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = '';
+                setPredictionActionState('idle');
                 setCampaignExportStatus('');
             });
 
-            predictChurnBtn.addEventListener('click', () => {
+            predictChurnBtn.addEventListener('click', async () => {
+                if (activePredictionJobId) {
+                    try {
+                        predictionStopRequested = true;
+                        setPredictionActionState('stopping');
+                        predictionProgressInfo.textContent = 'Prediction job: stopping...';
+                        const stopResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
+                        if (!stopResp.ok) {
+                            throw new Error('Failed to stop prediction job.');
+                        }
+                        const stopData = await stopResp.json().catch(() => ({}));
+                        if (stopData.prediction_job) {
+                            renderPredictionProgress(stopData.prediction_job);
+                        }
+                    } catch (e) {
+                        setPredictionActionState('running');
+                        console.error('Failed to stop prediction job', e);
+                    }
+                    return;
+                }
+
                 const jobName = datasetSelect.value;
                 fetchAndRenderPredictions(jobName, true);
-            });
-
-            stopPredictBtn.addEventListener('click', async () => {
-                if (!activePredictionJobId) return;
-                try {
-                    predictionStopRequested = true;
-                    stopPredictBtn.disabled = true;
-                    predictionProgressInfo.textContent = 'Prediction job: stopping...';
-                    const stopResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
-                    if (!stopResp.ok) {
-                        throw new Error('Failed to stop prediction job.');
-                    }
-                    const stopData = await stopResp.json().catch(() => ({}));
-                    if (stopData.prediction_job) {
-                        renderPredictionProgress(stopData.prediction_job);
-                    }
-                } catch (e) {
-                    stopPredictBtn.disabled = false;
-                    console.error('Failed to stop prediction job', e);
-                }
             });
 
             campaignProviderSelect.addEventListener('change', updateCampaignProviderFields);
