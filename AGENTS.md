@@ -16,11 +16,11 @@ These instructions apply to the entire repository.
 
 ## Git Workflow
 
-- Unless the user explicitly says not to commit, the agent may create a git commit after completing the requested code changes.
+- Unless the user explicitly says not to commit, the agent should automatically create a git commit after completing the requested changes and passing relevant local verification.
 - Only commit when the changes for the request are complete enough to hand off.
 - Do not include unrelated modified files in the commit.
 - Do not create empty commits unless the user explicitly asks for one.
-- Unless the user explicitly says not to push, the agent may push the completed commit after relevant local verification passes.
+- Unless the user explicitly says not to push, the agent should automatically push the completed commit to the current checked-out branch after relevant local verification passes.
 - Do not push if tests or validation fail, or if the working tree still contains unrelated changes that should not be published.
 - Do not merge, rebase, or rewrite history unless the user explicitly asks.
 
