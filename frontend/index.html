@@ -470,9 +470,11 @@
                         <option value="">--Please choose an option--</option>
                         <option value="amplitude">Amplitude</option>
                         <option value="adjust">Adjust</option>
+                        <option value="appsflyer">AppsFlyer</option>
                         <option value="google">Google Gemini</option>
                         <option value="bigquery">Google BigQuery</option>
                         <option value="sendgrid">SendGrid</option>
+                        <option value="braze">Braze</option>
                     </select>
                 </div>
                 <div id="connector-fields">
@@ -633,8 +635,9 @@
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
 
-            // Define the backend URL in one place for easy configuration
-            const backendUrl = 'http://localhost:8000';
+            // Default to the current host so connector saves work from localhost, 127.0.0.1,
+            // or a LAN IP without editing the page.
+            const backendUrl = window.KAIRYX_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8000`;
 
             async function loadSavedConnectors() {
                 connectorListDiv.innerHTML = ''; // Clear existing list
@@ -692,6 +695,23 @@
                     <div class="form-group">
                         <label for="adjust_api_token">Adjust API Token</label>
                         <input type="password" id="adjust_api_token" placeholder="Enter your Adjust API Token">
+                    </div>
+                    <div class="form-group">
+                        <label for="adjust_api_url">Adjust API URL (optional)</label>
+                        <input type="text" id="adjust_api_url" placeholder="https://...">
+                    </div>`,
+                appsflyer: `
+                    <div class="form-group">
+                        <label for="appsflyer_api_token">AppsFlyer API Token</label>
+                        <input type="password" id="appsflyer_api_token" placeholder="Enter your AppsFlyer API Token">
+                    </div>
+                    <div class="form-group">
+                        <label for="appsflyer_app_id">AppsFlyer App ID</label>
+                        <input type="text" id="appsflyer_app_id" placeholder="Enter your AppsFlyer App ID">
+                    </div>
+                    <div class="form-group">
+                        <label for="appsflyer_pull_api_url">AppsFlyer Pull API URL (optional)</label>
+                        <input type="text" id="appsflyer_pull_api_url" placeholder="https://...">
                     </div>`,
                 google: `
                     <div class="form-group">
@@ -717,6 +737,15 @@
                     <div class="form-group">
                         <label for="sendgrid_api_key">SendGrid API Key</label>
                         <input type="password" id="sendgrid_api_key" placeholder="Enter your SendGrid API Key">
+                    </div>`,
+                braze: `
+                    <div class="form-group">
+                        <label for="braze_api_key">Braze API Key</label>
+                        <input type="password" id="braze_api_key" placeholder="Enter your Braze API Key">
+                    </div>
+                    <div class="form-group">
+                        <label for="braze_rest_endpoint">Braze REST Endpoint</label>
+                        <input type="text" id="braze_rest_endpoint" placeholder="https://rest.iad-01.braze.com">
                     </div>`
             };
 
@@ -758,7 +787,15 @@
                 } else if (type === 'adjust') {
                     endpoint = `${backendUrl}/configure-adjust-credentials`;
                     payload = {
-                        api_token: document.getElementById('adjust_api_token').value
+                        api_token: document.getElementById('adjust_api_token').value,
+                        api_url: document.getElementById('adjust_api_url').value || undefined
+                    };
+                } else if (type === 'appsflyer') {
+                    endpoint = `${backendUrl}/configure-appsflyer`;
+                    payload = {
+                        api_token: document.getElementById('appsflyer_api_token').value,
+                        app_id: document.getElementById('appsflyer_app_id').value,
+                        pull_api_url: document.getElementById('appsflyer_pull_api_url').value || undefined
                     };
                 } else if (type === 'google') {
                     endpoint = `${backendUrl}/configure-google-key`;
@@ -775,6 +812,12 @@
                     endpoint = `${backendUrl}/configure-sendgrid-key`;
                     payload = {
                         api_key: document.getElementById('sendgrid_api_key').value
+                    };
+                } else if (type === 'braze') {
+                    endpoint = `${backendUrl}/configure-braze`;
+                    payload = {
+                        api_key: document.getElementById('braze_api_key').value,
+                        rest_endpoint: document.getElementById('braze_rest_endpoint').value
                     };
                 }
 
