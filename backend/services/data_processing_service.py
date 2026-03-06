@@ -1,6 +1,7 @@
 # data_processing_service.py
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -47,6 +48,15 @@ class DataProcessingService:
         seen_canonical: Dict[tuple, Dict[str, Any]],
         rejected_events: List[Dict[str, Any]],
     ) -> int:
+        def _is_missing_key_part(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, float) and math.isnan(value):
+                return True
+            if isinstance(value, str) and value.strip() in {"", "None", "nan", "NaN"}:
+                return True
+            return False
+
         source = str(event.get("source", "unknown"))
         player_id = str(event.get("player_id", "unknown_user"))
         canonical_user_id = resolve_or_create_canonical_user_id(source, player_id)
@@ -66,7 +76,7 @@ class DataProcessingService:
             "srcid",
             str(source),
             str(source_event_id),
-        ) if source_event_id else (
+        ) if not _is_missing_key_part(source_event_id) else (
             "fallback",
             str(canonical_user_id),
             str(event.get("event_type")),

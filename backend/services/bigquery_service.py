@@ -410,6 +410,19 @@ class BigQueryService:
                 return []
         return self._get_local_rows(target)
 
+    @staticmethod
+    def _is_missing_key_part(value: Any) -> bool:
+        if value is None:
+            return True
+        try:
+            if pd.isna(value):
+                return True
+        except Exception:
+            pass
+        if isinstance(value, str) and value.strip() in {"", "None", "nan", "NaN"}:
+            return True
+        return False
+
     def _dedupe_events(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         dedupe_map: Dict[tuple, Dict[str, Any]] = {}
         for row in rows:
@@ -423,10 +436,14 @@ class BigQueryService:
                 job_scope,
                 source,
                 str(source_event_id),
-            ) if source_event_id not in (None, "", "None") else (
+            ) if not self._is_missing_key_part(source_event_id) else (
                 "fingerprint",
                 job_scope,
-                str(event_fingerprint or f"{source}:{event.get('canonical_user_id')}:{event.get('event_type')}:{event.get('event_time')}"),
+                str(
+                    event_fingerprint
+                    if not self._is_missing_key_part(event_fingerprint)
+                    else f"{source}:{event.get('canonical_user_id')}:{event.get('event_type')}:{event.get('event_time')}"
+                ),
             )
             dedupe_map[key] = event
         return list(dedupe_map.values())
