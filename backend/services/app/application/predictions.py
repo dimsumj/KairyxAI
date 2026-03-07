@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -13,10 +14,68 @@ from player_modeling_engine import PlayerModelingEngine
 from pubsub_service import PubSubService
 
 
+logger = logging.getLogger(__name__)
+
+
 class PredictionService:
     def __init__(self, repository, settings):
         self.repository = repository
         self.settings = settings
+
+    def _commit_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def rollback_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.rollback()
+
+    def _safe_get_prediction_job(self, job_id: str) -> Dict[str, Any] | None:
+        try:
+            return self.repository.get_prediction_job(job_id)
+        except Exception:
+            self.rollback_session()
+            return None
+
+    def _is_stop_requested(self, job_id: str) -> bool:
+        job = self.repository.get_prediction_job(job_id)
+        if job is None:
+            return False
+        return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
+
+    def _mark_stopped(self, job_id: str, reason: str = "Stopped by user.") -> Dict[str, Any]:
+        job = self.repository.get_prediction_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if str(job.get("status") or "").lower() == JobStatus.STOPPED.value:
+            return job
+
+        progress = job.get("progress") or {}
+        details = dict(progress.get("details") or {})
+        details.pop("stop_requested", None)
+        details["stop_reason"] = reason
+        stopped = self.repository.update_prediction_job(
+            job_id,
+            {
+                "status": JobStatus.STOPPED.value,
+                "error": None,
+                "progress": {
+                    "current": int(progress.get("current", 0) or 0),
+                    "total": int(progress.get("total", 0) or 0),
+                    "pct": float(progress.get("pct", 0.0) or 0.0),
+                    "details": details,
+                },
+            },
+        )
+        self.repository.record_action("prediction_job_stopped", "prediction_job", job_id, stopped)
+        self._commit_session()
+        return stopped
 
     def create_job(self, import_job_id: str, prediction_mode: str = "local") -> Dict[str, Any]:
         import_job = self.repository.get_import_job(import_job_id)
@@ -48,41 +107,119 @@ class PredictionService:
         service = BigQueryService()
         return service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
 
+    def stop_job(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_prediction_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+
+        status = str(job.get("status") or "").lower()
+        if status == JobStatus.STOPPED.value:
+            return job
+        if status == JobStatus.QUEUED.value:
+            return self._mark_stopped(job_id)
+        if status == JobStatus.RUNNING.value:
+            progress = job.get("progress") or {}
+            details = dict(progress.get("details") or {})
+            details["stop_requested"] = True
+            stopping = self.repository.update_prediction_job(
+                job_id,
+                {
+                    "status": JobStatus.STOPPING.value,
+                    "progress": {
+                        "current": int(progress.get("current", 0) or 0),
+                        "total": int(progress.get("total", 0) or 0),
+                        "pct": float(progress.get("pct", 0.0) or 0.0),
+                        "details": details,
+                    },
+                },
+            )
+            self.repository.record_action("prediction_job_stop_requested", "prediction_job", job_id, stopping)
+            self._commit_session()
+            return stopping
+        if status == JobStatus.STOPPING.value:
+            return job
+        raise ValueError("Only queued or running prediction jobs can be stopped.")
+
     def run_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_prediction_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        if str(job.get("status") or "").lower() == JobStatus.STOPPED.value:
+            return job
+        if str(job.get("status") or "").lower() == JobStatus.STOPPING.value:
+            return self._mark_stopped(job_id)
         import_job_id = job["spec"]["import_job_id"]
         import_job = self.repository.get_import_job(import_job_id)
         if import_job is None:
             raise KeyError(import_job_id)
 
         mode = str(job["spec"].get("prediction_mode", "local")).lower()
-        self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value})
+        self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value, "error": None})
+        self._commit_session()
 
-        gemini_client = self._build_gemini_client()
+        try:
+            gemini_client = self._build_gemini_client()
+            bigquery_service = BigQueryService()
+            bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
 
-        bigquery_service = BigQueryService()
-        modeling_engine = PlayerModelingEngine(
-            gemini_client=gemini_client,
-            bigquery_service=bigquery_service,
-            job_id=import_job_id,
-        )
-        decision_engine = GrowthDecisionEngine(gemini_client)
-        player_ids = modeling_engine.get_all_player_ids()
+            modeling_engine = PlayerModelingEngine(
+                gemini_client=gemini_client,
+                bigquery_service=bigquery_service,
+                job_id=import_job_id,
+            )
+            decision_engine = GrowthDecisionEngine(gemini_client)
+            player_ids = modeling_engine.get_all_player_ids()
+            total = len(player_ids)
+            rows_written = 0
 
-        rows: List[Dict[str, Any]] = []
-        total = len(player_ids)
-        for index, player_id in enumerate(player_ids, start=1):
-            profile = modeling_engine.build_player_profile(player_id)
-            if not profile:
-                continue
-            churn_estimate, prediction_source = self._estimate_prediction(mode, modeling_engine, player_id, profile)
-            next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn") or {
-                "content": "No action suggested.",
-            }
-            rows.append(
+            self.repository.update_prediction_job(
+                job_id,
                 {
+                    "progress": {
+                        "current": 0,
+                        "total": total,
+                        "pct": 0.0,
+                        "details": {"rows_written": 0, "import_job_id": import_job_id},
+                    }
+                },
+            )
+            self._commit_session()
+
+            for index, player_id in enumerate(player_ids, start=1):
+                if self._is_stop_requested(job_id):
+                    return self._mark_stopped(job_id)
+
+                profile = modeling_engine.build_player_profile(player_id)
+                if not profile:
+                    self.repository.update_prediction_job(
+                        job_id,
+                        {
+                            "progress": {
+                                "current": index,
+                                "total": total,
+                                "pct": (index / total * 100.0) if total else 100.0,
+                                "details": {
+                                    "rows_written": rows_written,
+                                    "import_job_id": import_job_id,
+                                    "last_user_id": str(player_id),
+                                },
+                            }
+                        },
+                    )
+                    self._commit_session()
+                    continue
+
+                churn_estimate, prediction_source = self._estimate_prediction(mode, modeling_engine, player_id, profile)
+                if self._is_stop_requested(job_id):
+                    return self._mark_stopped(job_id)
+
+                next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn") or {
+                    "content": "No action suggested.",
+                }
+                if self._is_stop_requested(job_id):
+                    return self._mark_stopped(job_id)
+
+                row = {
                     "prediction_job_id": job_id,
                     "import_job_id": import_job_id,
                     "user_id": str(player_id),
@@ -98,34 +235,71 @@ class PredictionService:
                     "prediction_source": prediction_source,
                     "suggested_action": next_action.get("content", "No action suggested."),
                 }
-            )
-            self.repository.update_prediction_job(
+                bigquery_service.append_prediction_results(job_id=job_id, rows=[row])
+                rows_written += 1
+                self.repository.update_prediction_job(
+                    job_id,
+                    {
+                        "progress": {
+                            "current": index,
+                            "total": total,
+                            "pct": (index / total * 100.0) if total else 100.0,
+                            "details": {
+                                "rows_written": rows_written,
+                                "import_job_id": import_job_id,
+                                "last_user_id": str(player_id),
+                            },
+                        }
+                    },
+                )
+                self._commit_session()
+
+            completed = self.repository.update_prediction_job(
                 job_id,
                 {
+                    "status": JobStatus.COMPLETED.value,
                     "progress": {
-                        "current": index,
+                        "current": total,
                         "total": total,
-                        "pct": (index / total * 100.0) if total else 100.0,
-                        "details": {"rows_buffered": len(rows)},
-                    }
+                        "pct": 100.0,
+                        "details": {"rows_written": rows_written, "import_job_id": import_job_id},
+                    },
                 },
             )
-
-        bigquery_service.replace_prediction_results(job_id=job_id, rows=rows)
-        completed = self.repository.update_prediction_job(
-            job_id,
-            {
-                "status": JobStatus.COMPLETED.value,
-                "progress": {
-                    "current": total,
-                    "total": total,
-                    "pct": 100.0,
-                    "details": {"rows_written": len(rows), "import_job_id": import_job_id},
-                },
-            },
-        )
-        self.repository.record_action("prediction_job_completed", "prediction_job", job_id, completed)
-        return completed
+            self.repository.record_action("prediction_job_completed", "prediction_job", job_id, completed)
+            self._commit_session()
+            return completed
+        except Exception as exc:
+            self.rollback_session()
+            try:
+                if self._is_stop_requested(job_id):
+                    return self._mark_stopped(job_id)
+            except Exception:
+                self.rollback_session()
+            failed_job = self._safe_get_prediction_job(job_id) or job
+            progress = failed_job.get("progress") or {}
+            progress_details = dict(progress.get("details") or {})
+            progress_details["failure_reason"] = str(exc)
+            try:
+                failed = self.repository.update_prediction_job(
+                    job_id,
+                    {
+                        "status": JobStatus.FAILED.value,
+                        "error": str(exc),
+                        "progress": {
+                            "current": int(progress.get("current", 0) or 0),
+                            "total": int(progress.get("total", 0) or 0),
+                            "pct": float(progress.get("pct", 0.0) or 0.0),
+                            "details": progress_details,
+                        },
+                    },
+                )
+                self.repository.record_action("prediction_job_failed", "prediction_job", job_id, failed)
+                self._commit_session()
+            except Exception:
+                self.rollback_session()
+                logger.exception("Unable to mark prediction job %s failed.", job_id)
+            raise
 
     def _build_gemini_client(self) -> GeminiClient | None:
         connector = self._select_google_connector()

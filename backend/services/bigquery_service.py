@@ -855,6 +855,17 @@ class BigQueryService:
         self._prediction_results_table = table
         self._persist_mock_table(table, self._prediction_results_cache_path)
 
+    def append_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):
+        resolved_job_id = str(job_id)
+        prepared_rows = []
+        for row in rows:
+            row_copy = dict(row)
+            row_copy.setdefault("prediction_job_id", resolved_job_id)
+            prepared_rows.append(row_copy)
+        if not prepared_rows:
+            return
+        self._append_rows(prepared_rows, target="prediction_results")
+
     def list_prediction_results(self, job_id: str, page: int = 1, page_size: int = 100) -> Dict[str, Any]:
         page = max(1, int(page))
         page_size = max(1, int(page_size))
