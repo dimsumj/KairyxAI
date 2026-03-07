@@ -24,6 +24,10 @@ These instructions apply to the entire repository.
 - Unless the user explicitly says not to push, the agent should automatically push the completed commit to the current checked-out branch after relevant local verification passes.
 - Do not push if tests or validation fail, or if the working tree still contains unrelated changes that should not be published.
 - Do not merge, rebase, or rewrite history unless the user explicitly asks.
+- Never alter git history or the git log without explicit user confirmation. This includes rebases, resets, amends, history rewrites, or deleting commits.
+- Never use force push (`git push --force`, `git push --force-with-lease`) without explicit user confirmation.
+- Never delete the `main` branch without explicit user confirmation.
+- Never delete merge commits, undo merges, or delete merged branches without explicit user confirmation.
 
 ## Commit Messages
 
