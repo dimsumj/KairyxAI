@@ -671,6 +671,8 @@
             // or host. Allow an explicit override for split frontend/backend setups.
             const backendUrl = window.KAIRYX_BACKEND_URL || window.location.origin;
             const apiBaseUrl = `${backendUrl}/api/v1`;
+            const HEALTH_CHECK_INTERVAL_MS = 30000;
+            const HEALTH_CACHE_TTL_MS = 30000;
             const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
             const connectorTypeLabels = {
                 amplitude: 'Amplitude',
@@ -686,6 +688,9 @@
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedExportJobs = [];
+            let cachedHealthState = null;
+            let cachedHealthStateFetchedAt = 0;
+            let healthStateRequest = null;
 
             async function apiRequest(path, options = {}) {
                 const { method = 'GET', body } = options;
@@ -907,10 +912,33 @@
                 });
             }
 
-            async function ensureHealthState() {
-                const payload = await apiRequest('/health');
-                backendMode = payload.mode || backendMode;
-                return payload;
+            async function ensureHealthState(forceRefresh = false) {
+                const now = Date.now();
+                if (!forceRefresh && cachedHealthState && (now - cachedHealthStateFetchedAt) < HEALTH_CACHE_TTL_MS) {
+                    return cachedHealthState;
+                }
+                if (!forceRefresh && healthStateRequest) {
+                    return healthStateRequest;
+                }
+
+                healthStateRequest = apiRequest('/health')
+                    .then((payload) => {
+                        backendMode = payload.mode || backendMode;
+                        cachedHealthState = payload;
+                        cachedHealthStateFetchedAt = Date.now();
+                        return payload;
+                    })
+                    .catch((error) => {
+                        if (forceRefresh) {
+                            cachedHealthState = null;
+                            cachedHealthStateFetchedAt = 0;
+                        }
+                        throw error;
+                    })
+                    .finally(() => {
+                        healthStateRequest = null;
+                    });
+                return healthStateRequest;
             }
 
             async function createConnectorRecord(type, config) {
@@ -2851,7 +2879,7 @@
 
             async function checkBackendStatus() {
                 try {
-                    await ensureHealthState();
+                    await ensureHealthState(true);
                     
                     healthStatusDiv.classList.add('connected');
                     statusTextSpan.textContent = `Backend Connected (${backendMode})`;
@@ -2862,9 +2890,9 @@
                 }
             }
 
-            // Check status on page load and then every 5 seconds
+            // Check status on page load and then every 30 seconds.
             checkBackendStatus();
-            setInterval(checkBackendStatus, 5000);
+            setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
             loadReadyImportsForOperatorHub();
 
             // Theme Toggle Logic
