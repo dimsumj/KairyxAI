@@ -11,6 +11,7 @@ from app.api.routers import connectors, experiments, exports, health, imports, m
 from app.application.imports import ImportService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
+from app.core.logging import configure_access_log_filters
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
     frontend_index = frontend_dir / "index.html"
+    configure_access_log_filters()
     app = FastAPI(title=settings.app_name)
     app.add_middleware(
         CORSMiddleware,
