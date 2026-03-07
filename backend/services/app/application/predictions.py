@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 from app.domain.jobs import JobStatus
@@ -59,11 +60,7 @@ class PredictionService:
         mode = str(job["spec"].get("prediction_mode", "local")).lower()
         self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value})
 
-        gemini_client = None
-        try:
-            gemini_client = GeminiClient()
-        except Exception:
-            gemini_client = None
+        gemini_client = self._build_gemini_client()
 
         bigquery_service = BigQueryService()
         modeling_engine = PlayerModelingEngine(
@@ -129,6 +126,45 @@ class PredictionService:
         )
         self.repository.record_action("prediction_job_completed", "prediction_job", job_id, completed)
         return completed
+
+    def _build_gemini_client(self) -> GeminiClient | None:
+        connector = self._select_google_connector()
+        if connector is not None:
+            config = connector.get("config") or {}
+            api_key = str(config.get("api_key") or "").strip()
+            model_name = str(config.get("model_name") or "").strip() or None
+            if api_key:
+                try:
+                    return GeminiClient(api_key=api_key, model_name=model_name)
+                except Exception:
+                    return None
+
+        try:
+            return GeminiClient()
+        except Exception:
+            return None
+
+    def _select_google_connector(self) -> Dict[str, Any] | None:
+        google_connectors = [
+            connector
+            for connector in self.repository.list_connectors()
+            if str(connector.get("type") or "").lower() == "google"
+            and str((connector.get("config") or {}).get("api_key") or "").strip()
+        ]
+        if not google_connectors:
+            return None
+        return max(google_connectors, key=self._connector_sort_key)
+
+    def _connector_sort_key(self, connector: Dict[str, Any]) -> datetime:
+        for field in ("updated_at", "created_at"):
+            raw_value = connector.get(field)
+            if not raw_value:
+                continue
+            try:
+                return datetime.fromisoformat(str(raw_value))
+            except ValueError:
+                continue
+        return datetime.min
 
     def _estimate_prediction(
         self,

@@ -13,17 +13,17 @@ class GeminiClient:
     A client to interact with the Google Gemini API.
     """
 
-    def __init__(self):
+    def __init__(self, api_key: str | None = None, model_name: str | None = None):
         """
         Initializes the Gemini client and configures it with an API key.
         """
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.api_key = (api_key or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY environment variable must be set.")
         
         genai.configure(api_key=self.api_key)
         # Use the model from environment variable, or default to 'gemini-2.5-flash'
-        model_name = os.getenv("GOOGLE_GEMINI_MODEL", 'gemini-2.5-flash')
+        model_name = (model_name or os.getenv("GOOGLE_GEMINI_MODEL") or "gemini-2.5-flash").strip()
         self.model_name = model_name
         self.model = genai.GenerativeModel(model_name)
         self._cache_path = ".cache/llm_response_cache.json"

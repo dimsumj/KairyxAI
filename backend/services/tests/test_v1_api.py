@@ -155,6 +155,118 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     assert captured["json"]["count"] >= 1
 
 
+def test_prediction_uses_saved_google_connector(client, monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GEMINI_MODEL", raising=False)
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    gemini_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Google Gemini 1",
+            "type": "google",
+            "config": {
+                "api_key": "google-api-key-from-connector",
+                "model_name": "gemini-2.5-flash",
+            },
+        },
+    )
+    assert gemini_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    captured = {}
+
+    class FakeGeminiClient:
+        def __init__(self, api_key=None, model_name=None):
+            captured["api_key"] = api_key
+            captured["model_name"] = model_name
+
+        def get_ai_response(self, prompt: str):
+            if "Provide JSON with keys" in prompt:
+                return '{"churn_risk":"high","reason":"Gemini connector used","top_signals":[{"signal":"recent_drop","value":3}]}'
+            return '{"decision":"ACT","channel":"push_notification","content":"Gemini save offer"}'
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            captured["gemini_client_present"] = gemini_client is not None
+            captured["job_id"] = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": "player-1@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            captured["estimate_called"] = True
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "high",
+                "reason": "Gemini connector used",
+                "top_signals": [{"signal": "recent_drop", "value": 3}],
+            }
+
+    monkeypatch.setattr("app.application.predictions.GeminiClient", FakeGeminiClient)
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["churn_reason"] == "Gemini connector used"
+    assert payload["items"][0]["suggested_action"] == "Gemini save offer"
+    assert captured["api_key"] == "google-api-key-from-connector"
+    assert captured["model_name"] == "gemini-2.5-flash"
+    assert captured["gemini_client_present"] is True
+    assert captured["estimate_called"] is True
+    assert captured["job_id"] == import_job["id"]
+
+
 def test_import_failure_marks_job_failed(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
