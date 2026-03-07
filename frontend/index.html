@@ -1006,6 +1006,13 @@
                 }) || null;
             }
 
+            function getLatestActivePredictionJob(importJobId) {
+                return cachedPredictionJobs.find((job) => (
+                    String((job.spec || {}).import_job_id || '') === String(importJobId)
+                    && isPredictionJobActive(job)
+                )) || null;
+            }
+
             function getLatestCompletedPredictionJob(importJobId, excludeJobId = null) {
                 return cachedPredictionJobs.find((job) => {
                     if (excludeJobId && String(job.id || '') === String(excludeJobId)) {
@@ -1852,10 +1859,30 @@
                 try {
                     await ensureHealthState();
                     await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
-                    const existingRows = await loadBaselinePredictionRows(importJobId);
+                    predictionJob = !forceRecalculate ? getLatestActivePredictionJob(importJobId) : null;
+                    if (!predictionJob && !forceRecalculate) {
+                        const completedJob = getLatestCompletedPredictionJob(importJobId);
+                        if (completedJob) {
+                            const existingRows = await loadBaselinePredictionRows(importJobId);
+                            activePredictionJobId = null;
+                            clearPersistedActivePredictionJob();
+                            predictionStopRequested = false;
+                            allChurnPredictionPlayers = [...existingRows];
+                            renderChurnTable(existingRows.length > 0 ? undefined : 'No prediction results available.');
+                            renderPredictionProgress({
+                                status: 'Ready',
+                                progress: completedJob.progress,
+                            });
+                            setPredictionActionState('idle');
+                            pushAudienceBtn.disabled = existingRows.length === 0;
+                            return;
+                        }
+                    }
+
+                    const existingRows = await loadBaselinePredictionRows(importJobId, predictionJob ? predictionJob.id : null);
                     allChurnPredictionPlayers = [...existingRows];
                     renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
-                    predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
+
                     if (!predictionJob) {
                         predictionJob = await createPredictionRecord(importJobId, 'local');
                     }
@@ -2058,7 +2085,7 @@
                     return;
                 }
                 const jobName = datasetSelect.value;
-                fetchAndRenderPredictions(jobName, true);
+                fetchAndRenderPredictions(jobName, false);
             });
 
             campaignProviderSelect.addEventListener('change', updateCampaignProviderFields);
