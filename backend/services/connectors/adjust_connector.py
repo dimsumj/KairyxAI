@@ -58,3 +58,29 @@ class AdjustConnector:
         data = resp.json()
         rows = extract_rows(data)
         return [canonical_attribution_event("adjust", r, self.field_mapping) for r in rows]
+
+    def fetch_events_page(
+        self,
+        start_date: str,
+        end_date: str,
+        cursor: str | None = None,
+        page_size: int | None = None,
+    ) -> Dict[str, Any]:
+        page_number = int(cursor or "0")
+        rows = self.fetch_events(start_date, end_date)
+        size = max(1, int(page_size or len(rows) or 1))
+        start = page_number * size
+        page = rows[start:start + size]
+        next_cursor = str(page_number + 1) if (start + size) < len(rows) else None
+        return {"events": page, "next_cursor": next_cursor, "has_more": next_cursor is not None}
+
+    def iter_event_pages(self, start_date: str, end_date: str, page_size: int | None = None):
+        cursor = None
+        while True:
+            page = self.fetch_events_page(start_date, end_date, cursor=cursor, page_size=page_size)
+            if not page["events"]:
+                break
+            yield page["events"]
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
