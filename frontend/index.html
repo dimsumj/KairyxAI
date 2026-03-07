@@ -967,6 +967,11 @@
                 }) || null;
             }
 
+            function isPredictionJobActive(job) {
+                const status = String((job && job.status) || '').toLowerCase();
+                return ['queued', 'running', 'stopping'].includes(status);
+            }
+
             async function fetchPredictionRows(jobId) {
                 const rows = [];
                 let page = 1;
@@ -1488,6 +1493,7 @@
                 datasetSelect.innerHTML = '<option>Loading...</option>';
                 try {
                     const jobs = await refreshImportsState();
+                    await refreshPredictionJobsState();
                     const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
                     datasetSelect.innerHTML = ''; // Clear loading message
@@ -1499,12 +1505,39 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
+                        const activePredictionJob = cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
+                        const activeImportJobId = String(((activePredictionJob || {}).spec || {}).import_job_id || '');
                         const selectedDataset = readyJobs.some(job => job.id === previousSelection)
                             ? previousSelection
-                            : readyJobs[0].id;
+                            : (readyJobs.some(job => job.id === activeImportJobId) ? activeImportJobId : readyJobs[0].id);
                         datasetSelect.value = selectedDataset;
+                        const selectedActiveJob = [activePredictionJob, getLatestPredictionJob(selectedDataset, false)]
+                            .find((job) => job && isPredictionJobActive(job) && String((job.spec || {}).import_job_id || '') === String(selectedDataset))
+                            || null;
+
+                        if (selectedActiveJob) {
+                            activePredictionJobId = selectedActiveJob.id;
+                            predictionStopRequested = String(selectedActiveJob.status || '').toLowerCase() === 'stopping';
+                            await syncPredictionRows(activePredictionJobId);
+                            renderPredictionProgress({
+                                status: mapPredictionStatus(selectedActiveJob.status),
+                                progress: selectedActiveJob.progress,
+                            });
+                            if (String(selectedActiveJob.status || '').toLowerCase() === 'stopping') {
+                                setPredictionActionState('stopping');
+                            } else if (String(selectedActiveJob.status || '').toLowerCase() === 'queued') {
+                                setPredictionActionState('starting');
+                            } else {
+                                setPredictionActionState('running');
+                            }
+                            pushAudienceBtn.disabled = true;
+                            setCampaignExportStatus('');
+                            return;
+                        }
+
                         // Do not auto-run predictions on tab switch/load.
                         // User must explicitly click Predict Churn.
+                        activePredictionJobId = null;
                         allChurnPredictionPlayers = [];
                         renderChurnTable();
                         setPredictionActionState('idle');
@@ -1514,6 +1547,7 @@
                         setCampaignExportStatus('');
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
+                        activePredictionJobId = null;
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
