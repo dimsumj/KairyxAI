@@ -220,6 +220,8 @@ class SqlAlchemyControlPlaneRepository:
     def get_experiment_config(self, key: str = "default") -> Dict[str, Any]:
         row = self.session.get(ExperimentConfigModel, key)
         if row is None:
+            if key != "default":
+                return {}
             return {
                 "experiment_id": "churn_engagement_v1",
                 "enabled": True,
