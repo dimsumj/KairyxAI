@@ -341,7 +341,7 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     assert payload["progress"]["details"]["stop_reason"] == "Stopped by user."
 
 
-def test_restart_reconciles_stopping_import_to_stopped_and_allows_delete(client):
+def test_restart_discards_stopping_import_job(client):
     connector_resp = client.post(
         "/api/v1/connectors",
         json={
@@ -388,20 +388,10 @@ def test_restart_reconciles_stopping_import_to_stopped_and_allows_delete(client)
     restarted_app = create_app()
     with TestClient(restarted_app) as restarted_client:
         import_state = restarted_client.get(import_job["links"]["self"])
-        assert import_state.status_code == 200
-        payload = import_state.json()
-        assert payload["status"] == "stopped"
-        assert payload["progress"]["details"]["stop_reason"] == "Stopped after server restart."
-        assert "stop_requested" not in payload["progress"]["details"]
-
-        delete_import = restarted_client.delete(import_job["links"]["self"])
-        assert delete_import.status_code == 204
-
-        get_deleted = restarted_client.get(import_job["links"]["self"])
-        assert get_deleted.status_code == 404
+        assert import_state.status_code == 404
 
 
-def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
+def test_restart_discards_running_import_and_keeps_completed_import(client):
     connector_resp = client.post(
         "/api/v1/connectors",
         json={
@@ -412,7 +402,7 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
     )
     assert connector_resp.status_code == 201
 
-    create_import = client.post(
+    create_running_import = client.post(
         "/api/v1/imports",
         json={
             "source_name": "Amplitude 1",
@@ -420,8 +410,19 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
             "end_date": "20260302",
         },
     )
-    assert create_import.status_code == 201
-    import_job = create_import.json()
+    assert create_running_import.status_code == 201
+    running_job = create_running_import.json()
+
+    create_completed_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260303",
+            "end_date": "20260304",
+        },
+    )
+    assert create_completed_import.status_code == 201
+    completed_job = create_completed_import.json()
 
     gcs_service = GcsService()
     shard_payloads = [
@@ -464,7 +465,7 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
     try:
         repository = SqlAlchemyControlPlaneRepository(session)
         repository.update_import_job(
-            import_job["id"],
+            running_job["id"],
             {
                 "status": "running",
                 "progress": {
@@ -480,12 +481,29 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
                 },
             },
         )
+        repository.update_import_job(
+            completed_job["id"],
+            {
+                "status": "completed",
+                "progress": {
+                    "current": 2,
+                    "total": 2,
+                    "pct": 100.0,
+                    "details": {
+                        "source": "Amplitude 1",
+                        "connector_type": "amplitude",
+                        "events_staged": 2,
+                        "shards_created": 1,
+                    },
+                },
+            },
+        )
 
         for index, shard_events in enumerate(shard_payloads, start=1):
-            blob_name = f"raw/source=amplitude/job={import_job['id']}/part-{index:05d}.jsonl"
+            blob_name = f"raw/source=amplitude/job={running_job['id']}/part-{index:05d}.jsonl"
             gcs_uri = gcs_service.upload_raw_events(shard_events, blob_name)
             manifest = {
-                "job_id": import_job["id"],
+                "job_id": running_job["id"],
                 "source": "amplitude",
                 "gcs_uri": gcs_uri,
                 "event_count": len(shard_events),
@@ -497,7 +515,7 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
             }
             repository.upsert_checkpoint(
                 {
-                    "job_id": import_job["id"],
+                    "job_id": running_job["id"],
                     "shard_index": index,
                     "source_name": "Amplitude 1",
                     "status": "published",
@@ -513,10 +531,11 @@ def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
 
     restarted_app = create_app()
     with TestClient(restarted_app) as restarted_client:
-        import_state = restarted_client.get(import_job["links"]["self"])
-        assert import_state.status_code == 200
-        payload = import_state.json()
+        import_state = restarted_client.get(running_job["links"]["self"])
+        assert import_state.status_code == 404
+
+        completed_state = restarted_client.get(completed_job["links"]["self"])
+        assert completed_state.status_code == 200
+        payload = completed_state.json()
         assert payload["status"] == "completed"
-        assert payload["progress"]["current"] == 4
-        assert payload["progress"]["details"]["processing"]["manifests_processed"] == 2
-        assert payload["progress"]["details"]["processing"]["events_staging_written"] == 4
+        assert payload["progress"]["current"] == 2
