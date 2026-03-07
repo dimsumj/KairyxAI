@@ -20,12 +20,7 @@ The project is best described today as a local-first growth operations workbench
 
 ## Source Of Truth In This Repo
 
-The repository currently contains two frontend implementations:
-
-- `frontend/index.html`: the active operator console served by FastAPI and exercised by Playwright
-- `frontend/App.tsx` and related React files: a parallel UI implementation that is not wired into the served app
-
-For product and roadmap purposes, the current source of truth is the FastAPI backend plus the static frontend in `frontend/index.html`.
+The source of truth is the FastAPI backend plus the operator console in `frontend/index.html`, which is served directly by the backend and exercised by Playwright.
 
 ## Problem Statement
 
@@ -60,7 +55,7 @@ KairyxAI aims to reduce that operational gap by providing one operator-facing su
 - strong secret management
 - real-time streaming decisioning
 - fully automated closed-loop optimization from real downstream outcomes
-- a single finalized frontend architecture
+- a frontend rewrite
 
 ## Current User Flows
 
@@ -251,13 +246,13 @@ The served operator console is `frontend/index.html` with inline JavaScript. It 
 - Safety Rails
 - Service Health
 
-The React frontend is currently a secondary implementation and should not be treated as the production UI contract without an explicit migration decision.
+The frontend is currently implemented as one backend-served static operator console with a large inline script. It is the only supported UI path in the repository.
 
 ## Current Constraints And Risks
 
-### 1. Frontend duplication
+### 1. Frontend maintainability
 
-There are two competing UIs in the repository, and only one is wired into the shipped path. This makes feature work easy to duplicate and hard to finish.
+There is now one supported UI path, but it is still implemented as a large static page with substantial inline JavaScript. That keeps the demo path simple, but it raises maintenance and regression risk as features grow.
 
 ### 2. Monolithic backend orchestration
 
@@ -279,22 +274,21 @@ Exposure and outcome tracking exist, but downstream engagement outcomes are not 
 
 The codebase has strong production-shaped abstractions for GCS, Pub/Sub, Dataflow, and BigQuery, but the default operational mode remains local mock, and some production semantics are still simulated.
 
-### 7. Browser-side Gemini usage exists in the unused React app
+### 7. Frontend and backend contracts still need tightening
 
-The React frontend includes direct Gemini client usage from the browser. Even though that UI is not the served product today, it is a risky pattern and should not be carried forward.
+The frontend now targets `/api/v1`, but parts of the UI still synthesize operational views client-side from backend job records rather than consuming dedicated backend endpoints. That is acceptable for the current operator console, but it should be tightened as workflows mature.
 
 ## Recommended Next Phases
 
-### Phase 1: Product Consolidation
+### Phase 1: Frontend Hardening
 
-Goal: remove ambiguity about what the product is.
+Goal: keep the single operator console maintainable as backend workflows mature.
 
 Scope:
 
-- choose one frontend architecture and retire the other
 - define the operator console information architecture formally
 - align Playwright coverage, backend contracts, and UI components to the same surface
-- move any remaining frontend-direct AI calls behind the backend
+- move UI-only synthesized operational views behind clearer backend contracts where needed
 
 Exit criteria:
 
@@ -393,4 +387,3 @@ Reasoning:
 - the biggest current risk is not missing infrastructure, it is product ambiguity
 - reliable operator workflows create a better base for real usage than deeper infra simulation
 - measurement and downstream outcomes matter before scaling the data plane further
-

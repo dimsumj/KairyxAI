@@ -148,7 +148,7 @@ Test locally (no full infra required):
 ```
 This starts:
 - Backend: `http://localhost:8000`
-- Frontend: `http://localhost:5173`
+- Frontend (served by backend): `http://localhost:8000`
 
 Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
 
@@ -164,7 +164,8 @@ Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
    - `export GCS_BUCKET_NAME=<your_bucket_name>`
    - configure ADC (Application Default Credentials)
 6. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
-7. run frontend in `/frontend`: `npm install && npm run dev`
+
+The frontend is served directly by the backend at `/`.
 
 Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
 
