@@ -50,6 +50,14 @@ def test_v1_connectors_and_mappings_persist(client):
     assert len(listed.json()) == 1
 
 
+def test_root_serves_frontend_shell(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "window.location.origin" in resp.text
+    assert "/api/v1" in resp.text
+
+
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
