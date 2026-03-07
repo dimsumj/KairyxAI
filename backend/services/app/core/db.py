@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .settings import get_settings
+from runtime_paths import normalize_sqlite_database_url
 
 
 Base = declarative_base()
@@ -16,8 +17,9 @@ Base = declarative_base()
 @lru_cache(maxsize=1)
 def get_engine():
     settings = get_settings()
-    connect_args = {"check_same_thread": False} if settings.control_plane_database_url.startswith("sqlite") else {}
-    return create_engine(settings.control_plane_database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
+    database_url = normalize_sqlite_database_url(settings.control_plane_database_url)
+    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    return create_engine(database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
 
 
 @lru_cache(maxsize=1)

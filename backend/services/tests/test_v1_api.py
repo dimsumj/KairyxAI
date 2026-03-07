@@ -7,7 +7,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.imports import ImportService
 from app.core import db as db_module
+from app.infrastructure.db_models import ImportJobModel
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 
 
@@ -193,6 +196,52 @@ def test_import_failure_marks_job_failed(client, monkeypatch):
     assert payload["progress"]["details"]["failure_reason"] == "Adjust API rate limit exceeded"
 
 
+def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def poison_session_and_fail(self, job_id: str):
+        self.repository.session.add(
+            ImportJobModel(
+                id=job_id,
+                source_name="Adjust Source",
+                status="queued",
+                spec_json="{}",
+                progress_json="{}",
+            )
+        )
+        with pytest.raises(Exception):
+            self.repository.session.flush()
+        raise RuntimeError("unable to open database file")
+
+    monkeypatch.setattr(ImportService, "run_job", poison_session_and_fail)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    payload = run_import.json()
+    assert payload["detail"] == "unable to open database file"
+    assert payload["job"]["id"] == import_job["id"]
+    assert payload["job"]["status"] == "queued"
+
+
 def test_stop_and_delete_queued_import_job(client):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -296,3 +345,63 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     payload = import_state.json()
     assert payload["status"] == "stopped"
     assert payload["progress"]["details"]["stop_reason"] == "Stopped by user."
+
+
+def test_restart_reconciles_stopping_import_to_stopped_and_allows_delete(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    session = db_module.get_session_factory()()
+    try:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.update_import_job(
+            import_job["id"],
+            {
+                "status": "stopping",
+                "progress": {
+                    "current": 125,
+                    "total": 200,
+                    "pct": 62.5,
+                    "details": {
+                        "source": "Adjust Source",
+                        "stop_requested": True,
+                    },
+                },
+            },
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    restarted_app = create_app()
+    with TestClient(restarted_app) as restarted_client:
+        import_state = restarted_client.get(import_job["links"]["self"])
+        assert import_state.status_code == 200
+        payload = import_state.json()
+        assert payload["status"] == "stopped"
+        assert payload["progress"]["details"]["stop_reason"] == "Stopped after server restart."
+        assert "stop_requested" not in payload["progress"]["details"]
+
+        delete_import = restarted_client.delete(import_job["links"]["self"])
+        assert delete_import.status_code == 204
+
+        get_deleted = restarted_client.get(import_job["links"]["self"])
+        assert get_deleted.status_code == 404

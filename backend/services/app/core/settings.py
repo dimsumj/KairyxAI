@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from runtime_paths import default_control_plane_database_url, normalize_sqlite_database_url
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -22,10 +24,10 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    database_url = (
+    database_url = normalize_sqlite_database_url(
         os.getenv("CONTROL_PLANE_DATABASE_URL")
         or os.getenv("DATABASE_URL")
-        or "sqlite:///./.kairyx_control_plane.db"
+        or default_control_plane_database_url()
     )
     return Settings(
         control_plane_database_url=database_url,

@@ -56,7 +56,12 @@ def run_import(job_id: str, service: ImportService = Depends(get_import_service)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
     except Exception as exc:
-        failed_job = service.get_job(job_id)
+        service.rollback_session()
+        failed_job = None
+        try:
+            failed_job = service.get_job(job_id)
+        except Exception:
+            service.rollback_session()
         payload = {"detail": str(exc)}
         if failed_job is not None:
             payload["job"] = build_job_response(
