@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 
 from app.api.schemas.jobs import build_job_response
 from app.api.schemas.predictions import PredictionJobCreateRequest, PredictionResultsPage
@@ -48,6 +49,32 @@ def run_prediction_job(job_id: str, service: PredictionService = Depends(get_pre
         job = service.run_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Prediction job '{job_id}' not found.")
+    except Exception as exc:
+        service.rollback_session()
+        failed_job = None
+        try:
+            failed_job = service.get_job(job_id)
+        except Exception:
+            service.rollback_session()
+        payload = {"detail": str(exc)}
+        if failed_job is not None:
+            payload["job"] = build_job_response(
+                failed_job,
+                base_path="/api/v1/predictions",
+                extra_links={"results": f"/api/v1/predictions/{failed_job['id']}/results"},
+            ).model_dump(mode="json")
+        return JSONResponse(status_code=500, content=payload)
+    return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
+
+
+@router.post("/{job_id}/stop")
+def stop_prediction_job(job_id: str, service: PredictionService = Depends(get_prediction_service)):
+    try:
+        job = service.stop_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Prediction job '{job_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
 
 

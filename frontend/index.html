@@ -745,6 +745,8 @@
                 if (normalized === 'completed') return 'Ready';
                 if (normalized === 'running') return 'Processing';
                 if (normalized === 'queued') return 'Queued';
+                if (normalized === 'stopping') return 'Stopping';
+                if (normalized === 'stopped') return 'Stopped';
                 if (normalized === 'failed') return 'Failed';
                 return normalized ? normalized.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Queued';
             }
@@ -873,6 +875,27 @@
                     }));
             }
 
+            function hasConfiguredGeminiConnector() {
+                return cachedConnectors.some((connector) => (
+                    String(connector.type || '').toLowerCase() === 'google'
+                    && Boolean((connector.config || {}).api_key)
+                ));
+            }
+
+            function getPredictionStartStatusMessage() {
+                return formatPredictionProgressText({
+                    status: backendMode !== 'mock' ? 'Queued' : 'Starting',
+                    progress: {
+                        current: 0,
+                        total: 0,
+                        pct: 0,
+                        details: {
+                            execution_label: hasConfiguredGeminiConnector() ? 'AI' : 'Local',
+                        },
+                    },
+                });
+            }
+
             async function ensureHealthState() {
                 const payload = await apiRequest('/health');
                 backendMode = payload.mode || backendMode;
@@ -944,6 +967,11 @@
                 }) || null;
             }
 
+            function isPredictionJobActive(job) {
+                const status = String((job && job.status) || '').toLowerCase();
+                return ['queued', 'running', 'stopping'].includes(status);
+            }
+
             async function fetchPredictionRows(jobId) {
                 const rows = [];
                 let page = 1;
@@ -976,9 +1004,23 @@
                     },
                 });
                 if (backendMode === 'mock') {
-                    return apiRequest(`/predictions/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                    queueMockPredictionRun(created.id);
                 }
                 return created;
+            }
+
+            async function queueMockPredictionRun(jobId) {
+                try {
+                    await apiRequest(`/predictions/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
+                } catch (error) {
+                    console.error(`Prediction job ${jobId} failed:`, error);
+                }
+            }
+
+            async function stopPredictionRecord(jobId) {
+                const job = await apiRequest(`/predictions/${encodeURIComponent(jobId)}/stop`, { method: 'POST' });
+                await refreshPredictionJobsState();
+                return cachedPredictionJobs.find((item) => item.id === jobId) || job;
             }
 
             async function createExportRecord(predictionJobId, payload) {
@@ -1382,10 +1424,18 @@
             let predictionStopRequested = false;
 
             function setPredictionActionState(state = 'idle') {
-                if (state === 'running') {
-                    predictChurnBtn.textContent = 'Running...';
+                if (state === 'starting') {
+                    predictChurnBtn.textContent = 'Starting...';
                     predictChurnBtn.style.background = 'var(--primary-color)';
                     predictChurnBtn.disabled = true;
+                    datasetSelect.disabled = true;
+                    return;
+                }
+
+                if (state === 'running') {
+                    predictChurnBtn.textContent = 'Stop';
+                    predictChurnBtn.style.background = 'var(--red)';
+                    predictChurnBtn.disabled = false;
                     datasetSelect.disabled = true;
                     return;
                 }
@@ -1405,12 +1455,24 @@
             }
 
             function renderPredictionProgress(job = {}) {
+                predictionProgressInfo.textContent = formatPredictionProgressText(job);
+            }
+
+            function formatPredictionProgressText(job = {}) {
                 const progress = job.progress || {};
                 const processed = job.processed_count ?? progress.current ?? 0;
                 const total = job.total_count ?? progress.total ?? 0;
                 const pct = job.progress_pct ?? progress.pct ?? 0;
                 const rawStatus = job.status || 'Processing';
-                predictionProgressInfo.textContent = `Prediction job: ${rawStatus} · ${processed}/${total} (${Math.round(Number(pct || 0))}%)`;
+                const details = progress.details || {};
+                const executionLabel = String(
+                    details.execution_label
+                    || details.execution_mode
+                    || (hasConfiguredGeminiConnector() ? 'AI' : 'Local')
+                )
+                    .trim()
+                    .replace(/\b\w/g, (c) => c.toUpperCase());
+                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)`;
             }
 
             function setCampaignExportStatus(message = '', isError = false) {
@@ -1431,6 +1493,7 @@
                 datasetSelect.innerHTML = '<option>Loading...</option>';
                 try {
                     const jobs = await refreshImportsState();
+                    await refreshPredictionJobsState();
                     const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
                     datasetSelect.innerHTML = ''; // Clear loading message
@@ -1442,12 +1505,39 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
+                        const activePredictionJob = cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
+                        const activeImportJobId = String(((activePredictionJob || {}).spec || {}).import_job_id || '');
                         const selectedDataset = readyJobs.some(job => job.id === previousSelection)
                             ? previousSelection
-                            : readyJobs[0].id;
+                            : (readyJobs.some(job => job.id === activeImportJobId) ? activeImportJobId : readyJobs[0].id);
                         datasetSelect.value = selectedDataset;
+                        const selectedActiveJob = [activePredictionJob, getLatestPredictionJob(selectedDataset, false)]
+                            .find((job) => job && isPredictionJobActive(job) && String((job.spec || {}).import_job_id || '') === String(selectedDataset))
+                            || null;
+
+                        if (selectedActiveJob) {
+                            activePredictionJobId = selectedActiveJob.id;
+                            predictionStopRequested = String(selectedActiveJob.status || '').toLowerCase() === 'stopping';
+                            await syncPredictionRows(activePredictionJobId);
+                            renderPredictionProgress({
+                                status: mapPredictionStatus(selectedActiveJob.status),
+                                progress: selectedActiveJob.progress,
+                            });
+                            if (String(selectedActiveJob.status || '').toLowerCase() === 'stopping') {
+                                setPredictionActionState('stopping');
+                            } else if (String(selectedActiveJob.status || '').toLowerCase() === 'queued') {
+                                setPredictionActionState('starting');
+                            } else {
+                                setPredictionActionState('running');
+                            }
+                            pushAudienceBtn.disabled = true;
+                            setCampaignExportStatus('');
+                            return;
+                        }
+
                         // Do not auto-run predictions on tab switch/load.
                         // User must explicitly click Predict Churn.
+                        activePredictionJobId = null;
                         allChurnPredictionPlayers = [];
                         renderChurnTable();
                         setPredictionActionState('idle');
@@ -1457,6 +1547,7 @@
                         setCampaignExportStatus('');
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
+                        activePredictionJobId = null;
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
@@ -1473,57 +1564,94 @@
                 }
             }
 
-            async function fetchAndRenderPredictions(jobName, forceRecalculate = false) {
-                if (!jobName) {
+            async function syncPredictionRows(jobId) {
+                if (!jobId) {
+                    return;
+                }
+                allChurnPredictionPlayers = await fetchPredictionRows(jobId);
+                renderChurnTable(activePredictionJobId ? 'Waiting for prediction results...' : undefined);
+            }
+
+            async function requestPredictionStop() {
+                if (!activePredictionJobId || predictionStopRequested) {
+                    return;
+                }
+                predictionStopRequested = true;
+                setPredictionActionState('stopping');
+                try {
+                    const stoppedJob = await stopPredictionRecord(activePredictionJobId);
+                    renderPredictionProgress({
+                        status: mapPredictionStatus(stoppedJob.status),
+                        progress: stoppedJob.progress,
+                    });
+                } catch (error) {
+                    predictionStopRequested = false;
+                    setPredictionActionState('running');
+                    predictionProgressInfo.textContent = error.message || 'Unable to stop prediction job.';
+                }
+            }
+
+            async function fetchAndRenderPredictions(importJobId, forceRecalculate = false) {
+                if (!importJobId) {
                     allChurnPredictionPlayers = [];
                     renderChurnTable();
                     return;
                 }
 
                 operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
-                setPredictionActionState('running');
+                setPredictionActionState('starting');
                 predictionStopRequested = false;
-                predictionProgressInfo.textContent = 'Prediction job: starting...';
+                predictionProgressInfo.textContent = getPredictionStartStatusMessage();
                 allChurnPredictionPlayers = [];
-                renderChurnTable();
+                renderChurnTable('Waiting for prediction results...');
 
                 try {
                     await ensureHealthState();
                     await refreshPredictionJobsState();
-                    let predictionJob = !forceRecalculate ? getLatestPredictionJob(jobName, true) : null;
+                    let predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
                     if (!predictionJob) {
-                        predictionProgressInfo.textContent = backendMode === 'mock'
-                            ? 'Prediction job: running locally...'
-                            : 'Prediction job: queued...';
-                        predictionJob = await createPredictionRecord(jobName, 'local');
+                        predictionProgressInfo.textContent = getPredictionStartStatusMessage();
+                        predictionJob = await createPredictionRecord(importJobId, 'local');
                     }
                     activePredictionJobId = predictionJob.id;
+                    setPredictionActionState('running');
 
-                    if (backendMode !== 'mock') {
-                        const deadline = Date.now() + 90000;
-                        while (Date.now() < deadline) {
-                            await new Promise((resolve) => setTimeout(resolve, 800));
-                            predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
-                            renderPredictionProgress({
-                                status: mapPredictionStatus(predictionJob.status),
-                                progress: predictionJob.progress,
-                            });
-                            if (predictionJob.status === 'completed' || predictionJob.status === 'failed') {
-                                break;
-                            }
+                    const deadline = Date.now() + 90000;
+                    while (Date.now() < deadline) {
+                        predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
+                        await syncPredictionRows(activePredictionJobId);
+                        renderPredictionProgress({
+                            status: mapPredictionStatus(predictionJob.status),
+                            progress: predictionJob.progress,
+                        });
+                        if (['completed', 'failed', 'stopped'].includes(String(predictionJob.status || '').toLowerCase())) {
+                            break;
                         }
+                        await new Promise((resolve) => setTimeout(resolve, 800));
                     }
 
                     predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
+                    await syncPredictionRows(activePredictionJobId);
                     if (predictionJob.status === 'failed') {
                         throw new Error(predictionJob.error || 'Prediction failed.');
+                    }
+                    if (predictionJob.status === 'stopped') {
+                        renderPredictionProgress({
+                            status: 'Stopped',
+                            progress: predictionJob.progress,
+                        });
+                        if (allChurnPredictionPlayers.length === 0) {
+                            renderChurnTable('Prediction stopped before any rows completed.');
+                        }
+                        return;
                     }
                     if (predictionJob.status !== 'completed') {
                         throw new Error('Prediction job is still queued. Start a worker or use mock mode for local execution.');
                     }
 
-                    allChurnPredictionPlayers = await fetchPredictionRows(activePredictionJobId);
-                    renderChurnTable();
+                    if (allChurnPredictionPlayers.length === 0) {
+                        renderChurnTable();
+                    }
                     renderPredictionProgress({
                         status: 'Ready',
                         processed_count: allChurnPredictionPlayers.length,
@@ -1534,6 +1662,7 @@
                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 } finally {
                     activePredictionJobId = null;
+                    predictionStopRequested = false;
                     setPredictionActionState('idle');
                 }
             }
@@ -1583,7 +1712,7 @@
                 }
             }
 
-            function renderChurnTable() {
+            function renderChurnTable(emptyMessage = 'No players found in this dataset.') {
                 operatorHubResults.innerHTML = '';
                 const startIndex = (currentPage - 1) * itemsPerPage;
                 const endIndex = startIndex + itemsPerPage;
@@ -1602,7 +1731,7 @@
                         operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${p.predicted_churn_risk}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
                     });
                 } else {
-                     operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">No players found in this dataset.</td></tr>';
+                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center;">${emptyMessage}</td></tr>`;
                 }
                 renderPaginationControls();
             }
@@ -1654,6 +1783,10 @@
             });
 
             predictChurnBtn.addEventListener('click', async () => {
+                if (activePredictionJobId) {
+                    requestPredictionStop();
+                    return;
+                }
                 const jobName = datasetSelect.value;
                 fetchAndRenderPredictions(jobName, true);
             });

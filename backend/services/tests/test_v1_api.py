@@ -12,6 +12,7 @@ from app.core import db as db_module
 from app.infrastructure.db_models import ImportJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
+from bigquery_service import BigQueryService
 from gcs_service import GcsService
 
 
@@ -110,6 +111,8 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
@@ -253,6 +256,8 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "AI"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
@@ -265,6 +270,136 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     assert captured["gemini_client_present"] is True
     assert captured["estimate_called"] is True
     assert captured["job_id"] == import_job["id"]
+
+
+def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    first_row_written = threading.Event()
+    release_remaining_players = threading.Event()
+    call_count = {"value": 0}
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            self.job_id = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1", "player-2", "player-3"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": f"{player_id}@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            call_count["value"] += 1
+            if call_count["value"] >= 2:
+                release_remaining_players.wait(timeout=5)
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "medium",
+                "reason": f"scored {player_id}",
+                "top_signals": [{"signal": "sessions", "value": 4}],
+            }
+
+    class FakeDecisionEngine:
+        def __init__(self, gemini_client):
+            self.gemini_client = gemini_client
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            return {"content": f"message for {player_profile['player_id']}"}
+
+    original_append = BigQueryService.append_prediction_results
+
+    def tracking_append(self, job_id, rows):
+        result = original_append(self, job_id, rows)
+        if rows:
+            first_row_written.set()
+        return result
+
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr("bigquery_service.BigQueryService.append_prediction_results", tracking_append)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_result = {}
+
+    def run_prediction_request():
+        with TestClient(client.app) as runner_client:
+            run_result["response"] = runner_client.post(prediction_job["links"]["self"] + "/run")
+
+    thread = threading.Thread(target=run_prediction_request)
+    thread.start()
+    assert first_row_written.wait(timeout=5)
+
+    partial_results = client.get(prediction_job["links"]["results"])
+    assert partial_results.status_code == 200
+    partial_payload = partial_results.json()
+    assert partial_payload["total"] == 1
+    assert partial_payload["items"][0]["user_id"] == "player-1"
+
+    running_state = client.get(prediction_job["links"]["self"])
+    assert running_state.status_code == 200
+    assert running_state.json()["status"] in {"running", "stopping"}
+    assert running_state.json()["progress"]["current"] >= 1
+
+    stop_prediction = client.post(prediction_job["links"]["self"] + "/stop")
+    assert stop_prediction.status_code == 200
+    assert stop_prediction.json()["status"] in {"stopping", "stopped"}
+
+    release_remaining_players.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert run_result["response"].status_code == 200
+    assert run_result["response"].json()["status"] == "stopped"
+
+    stopped_state = client.get(prediction_job["links"]["self"])
+    assert stopped_state.status_code == 200
+    assert stopped_state.json()["status"] == "stopped"
+
+    final_results = client.get(prediction_job["links"]["results"])
+    assert final_results.status_code == 200
+    final_payload = final_results.json()
+    assert final_payload["total"] == 1
+    assert final_payload["items"][0]["suggested_action"] == "message for player-1"
 
 
 def test_import_failure_marks_job_failed(client, monkeypatch):
