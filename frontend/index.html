@@ -208,6 +208,26 @@
         .status-ok { background-color: var(--green); }
         .status-error { background-color: var(--red); }
         .status-warning { background-color: var(--yellow); }
+        .status-neutral { background-color: var(--primary-color); }
+        .status-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            vertical-align: middle;
+        }
+        .status-help {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+            font-size: 0.7rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: help;
+        }
         .service-name {
             font-weight: 600;
         }
@@ -699,10 +719,23 @@
                 return connectorTypeLabels[type] || String(type || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
             }
 
+            function formatImportTimestamp(value) {
+                const parsed = parseIsoDate(value);
+                const pad = (part) => String(part).padStart(2, '0');
+                return `${parsed.getFullYear()}${pad(parsed.getMonth() + 1)}${pad(parsed.getDate())}-${pad(parsed.getHours())}${pad(parsed.getMinutes())}${pad(parsed.getSeconds())}`;
+            }
+
+            function formatImportDisplayName(sourceName, createdAt) {
+                const safeSourceName = String(sourceName || 'Import').trim() || 'Import';
+                return `${safeSourceName}-${formatImportTimestamp(createdAt)}`;
+            }
+
             function mapImportStatus(status) {
                 const normalized = String(status || '').toLowerCase();
                 if (normalized === 'completed') return 'Ready to Use';
                 if (normalized === 'running' || normalized === 'queued') return 'Processing';
+                if (normalized === 'stopping') return 'Stopping';
+                if (normalized === 'stopped') return 'Stopped';
                 if (normalized === 'failed') return 'Failed';
                 return normalized ? normalized.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Processing';
             }
@@ -748,9 +781,10 @@
                 const details = progress.details || {};
                 const sourceName = spec.source_name || '';
                 const connector = cachedConnectors.find((item) => item.name === sourceName) || null;
+                const displayName = formatImportDisplayName(sourceName || job.id, job.created_at);
                 return {
                     id: job.id,
-                    name: job.id,
+                    name: displayName,
                     status: mapImportStatus(job.status),
                     raw_status: job.status,
                     current_step: mapImportStatus(job.status),
@@ -773,6 +807,31 @@
                     spec,
                     progress,
                 };
+            }
+
+            function getImportFailureReason(job) {
+                return String(
+                    job.error
+                    || ((job.progress || {}).details || {}).failure_reason
+                    || ((((job.source_stats || [])[0] || {}).error))
+                    || ''
+                ).trim();
+            }
+
+            function getImportStatusClass(job) {
+                if (job.status === 'Ready to Use') return 'status-ok';
+                if (job.status === 'Stopped') return 'status-neutral';
+                if (job.status === 'Processing' || job.status === 'Queued' || job.status === 'Stopping') return 'status-warning';
+                return 'status-error';
+            }
+
+            function renderImportStatus(job, statusClass) {
+                const status = escapeHtml(job.status || 'Processing');
+                const reason = getImportFailureReason(job);
+                const statusText = reason
+                    ? `<span class="status-label" title="${escapeHtml(reason)}">${status}<span class="status-help" title="${escapeHtml(reason)}" aria-label="Failure reason">?</span></span>`
+                    : status;
+                return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
 
             function latestByCreatedAt(items) {
@@ -845,10 +904,28 @@
                     },
                 });
                 if (backendMode === 'mock') {
-                    await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                    try {
+                        await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                    } catch (error) {
+                        await refreshImportsState();
+                        const failedJob = cachedImports.find((job) => job.id === created.id);
+                        const failureReason = getImportFailureReason(failedJob || {});
+                        throw new Error(failureReason || error.message);
+                    }
                 }
                 await refreshImportsState();
-                return cachedImports.find((job) => job.name === created.id) || normalizeImportJob(created);
+                return cachedImports.find((job) => job.id === created.id) || normalizeImportJob(created);
+            }
+
+            async function stopImportRecord(jobId) {
+                const job = await apiRequest(`/imports/${encodeURIComponent(jobId)}/stop`, { method: 'POST' });
+                await refreshImportsState();
+                return cachedImports.find((item) => item.id === jobId) || normalizeImportJob(job);
+            }
+
+            async function deleteImportRecord(jobId) {
+                await apiRequest(`/imports/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+                await refreshImportsState();
             }
 
             function getLatestPredictionJob(importJobId, completedOnly = false) {
@@ -949,6 +1026,14 @@
                             summary: `Import Failed: ${job.name}`,
                             status: 'failed',
                             details: job.error || 'Import failed.',
+                        });
+                    }
+                    if (job.raw_status === 'stopped') {
+                        items.push({
+                            timestamp: job.updated_at || job.timestamp,
+                            summary: `Import Stopped: ${job.name}`,
+                            status: 'stopped',
+                            details: ((job.progress || {}).details || {}).stop_reason || 'Stopped by user.',
                         });
                     }
                 });
@@ -1346,13 +1431,13 @@
                     if (readyJobs.length > 0) {
                         readyJobs.forEach(job => {
                             const option = document.createElement('option');
-                            option.value = job.name;
+                            option.value = job.id;
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
-                        const selectedDataset = readyJobs.some(job => job.name === previousSelection)
+                        const selectedDataset = readyJobs.some(job => job.id === previousSelection)
                             ? previousSelection
-                            : readyJobs[0].name;
+                            : readyJobs[0].id;
                         datasetSelect.value = selectedDataset;
                         // Do not auto-run predictions on tab switch/load.
                         // User must explicitly click Predict Churn.
@@ -1669,21 +1754,28 @@
                         table = importListContainer.querySelector('table');
                     }
                     const tbody = table.querySelector('tbody');
+                    const activeRowIds = new Set(imports.map((job) => `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`));
+                    Array.from(tbody.querySelectorAll('tr')).forEach((row) => {
+                        if (!activeRowIds.has(row.id)) {
+                            row.remove();
+                        }
+                    });
 
                     // Update rows in place
                     imports.forEach(job => {
-                        const statusClass = job.status === 'Ready to Use' ? 'status-ok' : ((job.status === 'Processing' || job.status === 'Queued') ? 'status-warning' : 'status-error');
-                        const expirationId = `expires-in-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
-                        const rowId = `job-row-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
-                        const actionsCellId = `actions-cell-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        const statusClass = getImportStatusClass(job);
+                        const expirationId = `expires-in-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        const rowId = `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                        const actionsCellId = `actions-cell-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
                         let row = document.getElementById(rowId);
                         
                         if (row) {
                             // If row exists, just update the status if it changed
-                            const newStatusHTML = `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}`;
+                            const newStatusHTML = renderImportStatus(job, statusClass);
                             const statusCell = row.cells[2];
-                            if (statusCell.innerHTML !== newStatusHTML) {
+                            if (statusCell.innerHTML !== newStatusHTML || row.cells[0].textContent !== job.name) {
                                 // Update status and actions if status changed
+                                row.cells[0].textContent = job.name;
                                 statusCell.innerHTML = newStatusHTML;
                                 const actionsCell = document.getElementById(actionsCellId);
                                 actionsCell.innerHTML = getActionButtonsHTML(job);
@@ -1710,7 +1802,7 @@
                             newRow.innerHTML = `
                                 <td>${job.name}</td>
                                 <td>${new Date(job.timestamp).toLocaleString()}</td>
-                                <td><span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}</td>
+                                <td>${renderImportStatus(job, statusClass)}</td>
                                 ${expirationCellHtml}
                                 ${actionsCellHtml}
                             `;
@@ -1857,11 +1949,46 @@
             });
 
             function getActionButtonsHTML(job) {
+                if (job.raw_status === 'stopped') {
+                    return `<button type="button" data-import-action="delete" data-job-id="${escapeHtml(job.id)}" style="background-color: var(--subtle-text);">Delete</button>`;
+                }
+                if (job.raw_status === 'stopping') {
+                    return `<button type="button" disabled style="background-color: var(--subtle-text); cursor: not-allowed;">Stopping...</button>`;
+                }
+                if (job.raw_status === 'queued' || job.raw_status === 'running') {
+                    return `<button type="button" data-import-action="stop" data-job-id="${escapeHtml(job.id)}">Stop</button>`;
+                }
                 return '';
             }
 
             function addActionListeners(rowElement, job) {
-                return rowElement && job;
+                if (!rowElement || !job) return rowElement;
+                const actionButton = rowElement.querySelector('[data-import-action]');
+                if (!actionButton) return rowElement;
+
+                actionButton.addEventListener('click', async () => {
+                    const action = actionButton.dataset.importAction;
+                    const jobId = actionButton.dataset.jobId;
+                    if (!action || !jobId) return;
+
+                    actionButton.disabled = true;
+                    try {
+                        if (action === 'stop') {
+                            await stopImportRecord(jobId);
+                        } else if (action === 'delete') {
+                            if (!confirm(`Delete import '${job.name}'?`)) {
+                                actionButton.disabled = false;
+                                return;
+                            }
+                            await deleteImportRecord(jobId);
+                        }
+                        await loadImportedDataList();
+                    } catch (error) {
+                        actionButton.disabled = false;
+                        alert(`Unable to ${action} import: ${error.message}`);
+                    }
+                });
+                return rowElement;
             }
 
             function startCountdownTimers() {
@@ -1916,12 +2043,15 @@
 
                 try {
                     const result = await createImportRecord(payload.source, payload.start_date, payload.end_date);
-                    const modeSuffix = backendMode === 'mock'
+                    const modeSuffix = result.raw_status === 'stopped'
+                        ? 'was stopped.'
+                        : backendMode === 'mock'
                         ? 'completed locally and is ready to use.'
                         : 'queued. A worker must run it to completion.';
                     alert(`Import job '${result.name}' ${modeSuffix}`);
                     loadImportedDataList(); // Refresh the list
                 } catch (error) {
+                    await loadImportedDataList();
                     alert(`Error starting import: ${error.message}`);
                 }
             });
@@ -2045,8 +2175,8 @@
             }
 
             function getSelectedAwaitingJob() {
-                const selectedName = dataSandboxAwaitingJobSelect.value;
-                return dataSandboxAwaitingJobs.find((job) => job.name === selectedName) || null;
+                const selectedJobId = dataSandboxAwaitingJobSelect.value;
+                return dataSandboxAwaitingJobs.find((job) => job.id === selectedJobId) || null;
             }
 
             async function loadDataSandboxMappingControls() {
@@ -2091,16 +2221,16 @@
 
                         dataSandboxAwaitingJobs.forEach((job) => {
                             const option = document.createElement('option');
-                            option.value = job.name;
+                            option.value = job.id;
                             option.textContent = `${job.name} (${job.current_step || job.status})`;
                             option.dataset.source = job.source_stats?.[0]?.source || '';
                             dataSandboxAwaitingJobSelect.appendChild(option);
                         });
 
-                        if (dataSandboxAwaitingJobs.some((job) => job.name === previousJob)) {
+                        if (dataSandboxAwaitingJobs.some((job) => job.id === previousJob)) {
                             dataSandboxAwaitingJobSelect.value = previousJob;
                         } else {
-                            dataSandboxAwaitingJobSelect.value = dataSandboxAwaitingJobs[0].name;
+                            dataSandboxAwaitingJobSelect.value = dataSandboxAwaitingJobs[0].id;
                         }
                     } else {
                         dataSandboxAwaitingJobSelect.innerHTML = '<option value="">No paused import job</option>';

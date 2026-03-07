@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.orm import Session
 
 from app.infrastructure.db_models import (
@@ -104,6 +104,15 @@ class SqlAlchemyControlPlaneRepository:
         self._apply_job_patch(row, patch)
         self.session.flush()
         return self._job_to_dict(row, "import")
+
+    def delete_import_job(self, job_id: str) -> bool:
+        row = self.session.get(ImportJobModel, job_id)
+        if row is None:
+            return False
+        self.session.execute(delete(IngestionCheckpointModel).where(IngestionCheckpointModel.job_id == job_id))
+        self.session.delete(row)
+        self.session.flush()
+        return True
 
     def create_prediction_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         row = PredictionJobModel(
