@@ -883,12 +883,17 @@
             }
 
             function getPredictionStartStatusMessage() {
-                if (backendMode !== 'mock') {
-                    return 'Prediction job: queued...';
-                }
-                return hasConfiguredGeminiConnector()
-                    ? 'Prediction job: running with Gemini...'
-                    : 'Prediction job: running locally...';
+                return formatPredictionProgressText({
+                    status: backendMode !== 'mock' ? 'Queued' : 'Starting',
+                    progress: {
+                        current: 0,
+                        total: 0,
+                        pct: 0,
+                        details: {
+                            execution_label: hasConfiguredGeminiConnector() ? 'AI' : 'Local',
+                        },
+                    },
+                });
             }
 
             async function ensureHealthState() {
@@ -1445,12 +1450,24 @@
             }
 
             function renderPredictionProgress(job = {}) {
+                predictionProgressInfo.textContent = formatPredictionProgressText(job);
+            }
+
+            function formatPredictionProgressText(job = {}) {
                 const progress = job.progress || {};
                 const processed = job.processed_count ?? progress.current ?? 0;
                 const total = job.total_count ?? progress.total ?? 0;
                 const pct = job.progress_pct ?? progress.pct ?? 0;
                 const rawStatus = job.status || 'Processing';
-                predictionProgressInfo.textContent = `Prediction job: ${rawStatus} · ${processed}/${total} (${Math.round(Number(pct || 0))}%)`;
+                const details = progress.details || {};
+                const executionLabel = String(
+                    details.execution_label
+                    || details.execution_mode
+                    || (hasConfiguredGeminiConnector() ? 'AI' : 'Local')
+                )
+                    .trim()
+                    .replace(/\b\w/g, (c) => c.toUpperCase());
+                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)`;
             }
 
             function setCampaignExportStatus(message = '', isError = false) {
@@ -1550,7 +1567,7 @@
                 operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
                 setPredictionActionState('starting');
                 predictionStopRequested = false;
-                predictionProgressInfo.textContent = 'Prediction job: starting...';
+                predictionProgressInfo.textContent = getPredictionStartStatusMessage();
                 allChurnPredictionPlayers = [];
                 renderChurnTable('Waiting for prediction results...');
 

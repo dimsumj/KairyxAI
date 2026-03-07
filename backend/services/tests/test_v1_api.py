@@ -104,6 +104,8 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
@@ -247,6 +249,8 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "AI"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200

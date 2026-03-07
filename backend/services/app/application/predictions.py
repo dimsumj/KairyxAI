@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -81,6 +82,10 @@ class PredictionService:
         import_job = self.repository.get_import_job(import_job_id)
         if import_job is None:
             raise KeyError(import_job_id)
+        execution_details = self._prediction_execution_details(
+            prediction_mode,
+            gemini_available=self._has_configured_gemini(),
+        )
         job = self.repository.create_prediction_job(
             {
                 "id": f"pred_{uuid.uuid4().hex[:20]}",
@@ -90,7 +95,16 @@ class PredictionService:
                     "import_job_id": import_job_id,
                     "prediction_mode": prediction_mode,
                 },
-                "progress": {"current": 0, "total": 0, "pct": 0.0, "details": {}},
+                "progress": {
+                    "current": 0,
+                    "total": 0,
+                    "pct": 0.0,
+                    "details": {
+                        "import_job_id": import_job_id,
+                        "prediction_mode": str(prediction_mode or "local").lower(),
+                        **execution_details,
+                    },
+                },
             }
         )
         self.repository.record_action("prediction_job_created", "prediction_job", job["id"], job)
@@ -161,6 +175,7 @@ class PredictionService:
             gemini_client = self._build_gemini_client()
             bigquery_service = BigQueryService()
             bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
+            execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
 
             modeling_engine = PlayerModelingEngine(
                 gemini_client=gemini_client,
@@ -179,7 +194,12 @@ class PredictionService:
                         "current": 0,
                         "total": total,
                         "pct": 0.0,
-                        "details": {"rows_written": 0, "import_job_id": import_job_id},
+                        "details": {
+                            "rows_written": 0,
+                            "import_job_id": import_job_id,
+                            "prediction_mode": mode,
+                            **execution_details,
+                        },
                     }
                 },
             )
@@ -201,7 +221,9 @@ class PredictionService:
                                 "details": {
                                     "rows_written": rows_written,
                                     "import_job_id": import_job_id,
+                                    "prediction_mode": mode,
                                     "last_user_id": str(player_id),
+                                    **execution_details,
                                 },
                             }
                         },
@@ -247,7 +269,9 @@ class PredictionService:
                             "details": {
                                 "rows_written": rows_written,
                                 "import_job_id": import_job_id,
+                                "prediction_mode": mode,
                                 "last_user_id": str(player_id),
+                                **execution_details,
                             },
                         }
                     },
@@ -262,7 +286,12 @@ class PredictionService:
                         "current": total,
                         "total": total,
                         "pct": 100.0,
-                        "details": {"rows_written": rows_written, "import_job_id": import_job_id},
+                        "details": {
+                            "rows_written": rows_written,
+                            "import_job_id": import_job_id,
+                            "prediction_mode": mode,
+                            **execution_details,
+                        },
                     },
                 },
             )
@@ -300,6 +329,24 @@ class PredictionService:
                 self.rollback_session()
                 logger.exception("Unable to mark prediction job %s failed.", job_id)
             raise
+
+    def _has_configured_gemini(self) -> bool:
+        if self._select_google_connector() is not None:
+            return True
+        return bool(str(os.getenv("GOOGLE_API_KEY") or "").strip())
+
+    def _prediction_execution_details(self, mode: str, *, gemini_available: bool) -> Dict[str, str]:
+        normalized_mode = str(mode or "local").lower()
+        if normalized_mode == "cloud":
+            return {"execution_mode": "cloud", "execution_label": "Cloud"}
+        if normalized_mode == "parallel":
+            return {
+                "execution_mode": "parallel",
+                "execution_label": "AI + Cloud" if gemini_available else "Parallel",
+            }
+        if gemini_available:
+            return {"execution_mode": "ai", "execution_label": "AI"}
+        return {"execution_mode": "local", "execution_label": "Local"}
 
     def _build_gemini_client(self) -> GeminiClient | None:
         connector = self._select_google_connector()
