@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
 from app.main import create_app
+import local_job_store
 from local_job_store import list_identity_links, resolve_or_create_canonical_user_id
 
 
@@ -53,3 +56,38 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
         response = client.get("/api/v1/health")
 
     assert response.status_code == 200
+
+
+def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
+    target = tmp_path / "tracked" / "local_jobs.db"
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(target))
+
+    real_connect = sqlite3.connect
+    open_count = 0
+    close_count = 0
+
+    class TrackingConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def close(self):
+            nonlocal close_count
+            close_count += 1
+            return self._conn.close()
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    def tracking_connect(*args, **kwargs):
+        nonlocal open_count
+        open_count += 1
+        return TrackingConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(local_job_store.sqlite3, "connect", tracking_connect)
+
+    resolve_or_create_canonical_user_id("amplitude", "user-1")
+    resolve_or_create_canonical_user_id("amplitude", "user-2")
+    list_identity_links(limit=10)
+
+    assert open_count > 0
+    assert close_count == open_count
