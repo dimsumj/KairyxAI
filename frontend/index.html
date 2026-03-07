@@ -875,6 +875,22 @@
                     }));
             }
 
+            function hasConfiguredGeminiConnector() {
+                return cachedConnectors.some((connector) => (
+                    String(connector.type || '').toLowerCase() === 'google'
+                    && Boolean((connector.config || {}).api_key)
+                ));
+            }
+
+            function getPredictionStartStatusMessage() {
+                if (backendMode !== 'mock') {
+                    return 'Prediction job: queued...';
+                }
+                return hasConfiguredGeminiConnector()
+                    ? 'Prediction job: running with Gemini...'
+                    : 'Prediction job: running locally...';
+            }
+
             async function ensureHealthState() {
                 const payload = await apiRequest('/health');
                 backendMode = payload.mode || backendMode;
@@ -1543,9 +1559,7 @@
                     await refreshPredictionJobsState();
                     let predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
                     if (!predictionJob) {
-                        predictionProgressInfo.textContent = backendMode === 'mock'
-                            ? 'Prediction job: running locally...'
-                            : 'Prediction job: queued...';
+                        predictionProgressInfo.textContent = getPredictionStartStatusMessage();
                         predictionJob = await createPredictionRecord(importJobId, 'local');
                     }
                     activePredictionJobId = predictionJob.id;
