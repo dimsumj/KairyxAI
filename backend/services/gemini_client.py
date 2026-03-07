@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime
 import google.generativeai as genai
 
+from app.core.runtime import is_shutdown_requested
+
 class GeminiClient:
     """
     A client to interact with the Google Gemini API.
@@ -54,6 +56,8 @@ class GeminiClient:
         Returns:
             The generated text response from the model.
         """
+        if is_shutdown_requested():
+            raise RuntimeError("Service shutdown requested before Gemini call.")
         prompt_hash = self._prompt_hash(prompt)
         cached = self._get_cached_response(prompt_hash)
         if cached is not None:

@@ -781,9 +781,10 @@
                 const spec = job.spec || {};
                 const progress = job.progress || {};
                 const details = progress.details || {};
-                const sourceName = spec.source_name || '';
+                const createdAt = job.created_at || job.timestamp || new Date().toISOString();
+                const sourceName = spec.source_name || job.source_name || details.source || '';
                 const connector = cachedConnectors.find((item) => item.name === sourceName) || null;
-                const displayName = formatImportDisplayName(sourceName || job.id, job.created_at);
+                const displayName = String(spec.display_name || '').trim() || formatImportDisplayName(sourceName || 'Import', createdAt);
                 return {
                     id: job.id,
                     name: displayName,
@@ -791,12 +792,12 @@
                     raw_status: job.status,
                     current_step: mapImportStatus(job.status),
                     progress_pct: Number(progress.pct || 0),
-                    timestamp: job.created_at,
-                    created_at: job.created_at,
+                    timestamp: createdAt,
+                    created_at: createdAt,
                     updated_at: job.updated_at,
                     start_date: spec.start_date || '',
                     end_date: spec.end_date || '',
-                    expiration_timestamp: addDaysIso(job.updated_at || job.created_at, 7),
+                    expiration_timestamp: addDaysIso(job.updated_at || createdAt, 7),
                     source_stats: sourceName ? [{
                         source: sourceName,
                         type: spec.connector_type || (connector && connector.type) || '',
@@ -882,7 +883,13 @@
                 ));
             }
 
-            function getPredictionStartStatusMessage() {
+            function getPredictionStartStatusMessage(job = null) {
+                if (job) {
+                    return formatPredictionProgressText({
+                        status: mapPredictionStatus(job.status),
+                        progress: job.progress,
+                    });
+                }
                 return formatPredictionProgressText({
                     status: backendMode !== 'mock' ? 'Queued' : 'Starting',
                     progress: {
@@ -1014,6 +1021,12 @@
                     await apiRequest(`/predictions/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
                 } catch (error) {
                     console.error(`Prediction job ${jobId} failed:`, error);
+                } finally {
+                    try {
+                        await refreshPredictionJobsState();
+                    } catch (refreshError) {
+                        console.error(`Unable to refresh prediction jobs for ${jobId}:`, refreshError);
+                    }
                 }
             }
 
@@ -1492,8 +1505,12 @@
             async function loadReadyImportsForOperatorHub() {
                 datasetSelect.innerHTML = '<option>Loading...</option>';
                 try {
-                    const jobs = await refreshImportsState();
-                    await refreshPredictionJobsState();
+                    await Promise.all([
+                        refreshConnectorsState(),
+                        refreshImportsState(),
+                        refreshPredictionJobsState(),
+                    ]);
+                    const jobs = cachedImports;
                     const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
                     datasetSelect.innerHTML = ''; // Clear loading message
@@ -1525,8 +1542,6 @@
                             });
                             if (String(selectedActiveJob.status || '').toLowerCase() === 'stopping') {
                                 setPredictionActionState('stopping');
-                            } else if (String(selectedActiveJob.status || '').toLowerCase() === 'queued') {
-                                setPredictionActionState('starting');
                             } else {
                                 setPredictionActionState('running');
                             }
@@ -1569,6 +1584,9 @@
                     return;
                 }
                 allChurnPredictionPlayers = await fetchPredictionRows(jobId);
+                if (activePredictionJobId === jobId) {
+                    currentPage = 1;
+                }
                 renderChurnTable(activePredictionJobId ? 'Waiting for prediction results...' : undefined);
             }
 
@@ -1603,31 +1621,46 @@
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = getPredictionStartStatusMessage();
                 allChurnPredictionPlayers = [];
+                currentPage = 1;
                 renderChurnTable('Waiting for prediction results...');
 
+                let predictionJob = null;
                 try {
                     await ensureHealthState();
-                    await refreshPredictionJobsState();
-                    let predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
+                    await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
+                    predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
                     if (!predictionJob) {
-                        predictionProgressInfo.textContent = getPredictionStartStatusMessage();
                         predictionJob = await createPredictionRecord(importJobId, 'local');
                     }
                     activePredictionJobId = predictionJob.id;
-                    setPredictionActionState('running');
+                    predictionStopRequested = String(predictionJob.status || '').toLowerCase() === 'stopping';
+                    renderPredictionProgress({
+                        status: mapPredictionStatus(predictionJob.status),
+                        progress: predictionJob.progress,
+                    });
+                    if (String(predictionJob.status || '').toLowerCase() === 'stopping') {
+                        setPredictionActionState('stopping');
+                    } else {
+                        setPredictionActionState('running');
+                    }
 
-                    const deadline = Date.now() + 90000;
-                    while (Date.now() < deadline) {
+                    while (activePredictionJobId === predictionJob.id) {
                         predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
                         await syncPredictionRows(activePredictionJobId);
                         renderPredictionProgress({
                             status: mapPredictionStatus(predictionJob.status),
                             progress: predictionJob.progress,
                         });
-                        if (['completed', 'failed', 'stopped'].includes(String(predictionJob.status || '').toLowerCase())) {
+                        const normalizedStatus = String(predictionJob.status || '').toLowerCase();
+                        if (normalizedStatus === 'stopping') {
+                            setPredictionActionState('stopping');
+                        } else if (normalizedStatus === 'queued' || normalizedStatus === 'running') {
+                            setPredictionActionState('running');
+                        }
+                        if (['completed', 'failed', 'stopped'].includes(normalizedStatus)) {
                             break;
                         }
-                        await new Promise((resolve) => setTimeout(resolve, 800));
+                        await new Promise((resolve) => setTimeout(resolve, 300));
                     }
 
                     predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
@@ -1654,16 +1687,17 @@
                     }
                     renderPredictionProgress({
                         status: 'Ready',
-                        processed_count: allChurnPredictionPlayers.length,
-                        total_count: allChurnPredictionPlayers.length,
-                        progress_pct: 100,
+                        progress: predictionJob.progress,
                     });
                 } catch (error) {
                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 } finally {
-                    activePredictionJobId = null;
-                    predictionStopRequested = false;
-                    setPredictionActionState('idle');
+                    const finalStatus = String((predictionJob || {}).status || '').toLowerCase();
+                    if (!predictionJob || ['completed', 'failed', 'stopped'].includes(finalStatus)) {
+                        activePredictionJobId = null;
+                        predictionStopRequested = false;
+                        setPredictionActionState('idle');
+                    }
                 }
             }
 
@@ -1868,9 +1902,11 @@
                     const imports = await refreshImportsState();
 
                     if (!imports || imports.length === 0) {
-                        if (!importListContainer.querySelector('p') || importListContainer.querySelector('p').textContent !== 'No data has been imported yet.') {
-                            importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        if (countdownInterval) {
+                            clearInterval(countdownInterval);
+                            countdownInterval = null;
                         }
+                        importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
                         return;
                     }
 

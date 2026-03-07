@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.application.imports import ImportService
 from app.core import db as db_module
+from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.infrastructure.db_models import ImportJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
@@ -93,6 +94,7 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    assert import_job["spec"]["display_name"].startswith("Adjust Source-")
 
     run_import = client.post(import_job["links"]["self"] + "/run")
     assert run_import.status_code == 200
@@ -400,6 +402,178 @@ def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch)
     final_payload = final_results.json()
     assert final_payload["total"] == 1
     assert final_payload["items"][0]["suggested_action"] == "message for player-1"
+
+
+def test_prediction_results_are_returned_newest_first(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            self.job_id = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1", "player-2", "player-3"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": f"{player_id}@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "medium",
+                "reason": f"scored {player_id}",
+                "top_signals": [{"signal": "sessions", "value": 4}],
+            }
+
+    class FakeDecisionEngine:
+        def __init__(self, gemini_client):
+            self.gemini_client = gemini_client
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            return {"content": f"message for {player_profile['player_id']}"}
+
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert [item["user_id"] for item in payload["items"]] == ["player-3", "player-2", "player-1"]
+
+
+def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            self.job_id = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1", "player-2", "player-3"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": f"{player_id}@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "medium",
+                "reason": f"scored {player_id}",
+                "top_signals": [{"signal": "sessions", "value": 4}],
+            }
+
+    class ShutdownAfterFirstDecisionEngine:
+        def __init__(self, gemini_client):
+            self.gemini_client = gemini_client
+            self.calls = 0
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            self.calls += 1
+            if self.calls == 1:
+                mark_shutdown_requested()
+            return {"content": f"message for {player_profile['player_id']}"}
+
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", ShutdownAfterFirstDecisionEngine)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    try:
+        run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    finally:
+        clear_shutdown_requested()
+
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "stopped"
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 0
 
 
 def test_import_failure_marks_job_failed(client, monkeypatch):

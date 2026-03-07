@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 from app.domain.jobs import JobStatus
+from app.core.runtime import is_shutdown_requested
 from bigquery_service import BigQueryService
 from cloud_churn_service import CloudChurnService
 from gemini_client import GeminiClient
@@ -49,6 +50,14 @@ class PredictionService:
         if job is None:
             return False
         return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
+
+    def _should_stop(self, job_id: str) -> bool:
+        return self._is_stop_requested(job_id) or is_shutdown_requested()
+
+    def _stop_reason(self, default_reason: str = "Stopped by user.") -> str:
+        if is_shutdown_requested():
+            return "Stopped during server shutdown."
+        return default_reason
 
     def _mark_stopped(self, job_id: str, reason: str = "Stopped by user.") -> Dict[str, Any]:
         job = self.repository.get_prediction_job(job_id)
@@ -158,10 +167,12 @@ class PredictionService:
         job = self.repository.get_prediction_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        if is_shutdown_requested():
+            return self._mark_stopped(job_id, self._stop_reason())
         if str(job.get("status") or "").lower() == JobStatus.STOPPED.value:
             return job
         if str(job.get("status") or "").lower() == JobStatus.STOPPING.value:
-            return self._mark_stopped(job_id)
+            return self._mark_stopped(job_id, self._stop_reason())
         import_job_id = job["spec"]["import_job_id"]
         import_job = self.repository.get_import_job(import_job_id)
         if import_job is None:
@@ -206,8 +217,8 @@ class PredictionService:
             self._commit_session()
 
             for index, player_id in enumerate(player_ids, start=1):
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
 
                 profile = modeling_engine.build_player_profile(player_id)
                 if not profile:
@@ -232,18 +243,19 @@ class PredictionService:
                     continue
 
                 churn_estimate, prediction_source = self._estimate_prediction(mode, modeling_engine, player_id, profile)
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
 
                 next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn") or {
                     "content": "No action suggested.",
                 }
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
 
                 row = {
                     "prediction_job_id": job_id,
                     "import_job_id": import_job_id,
+                    "completed_at": datetime.utcnow().isoformat(),
                     "user_id": str(player_id),
                     "email": profile.get("email"),
                     "ltv": profile.get("total_revenue", 0.0),
@@ -301,8 +313,8 @@ class PredictionService:
         except Exception as exc:
             self.rollback_session()
             try:
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
             except Exception:
                 self.rollback_session()
             failed_job = self._safe_get_prediction_job(job_id) or job
@@ -414,4 +426,6 @@ class PredictionService:
     def _run_local_estimate(self, modeling_engine: PlayerModelingEngine, player_id: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
         import asyncio
 
+        if is_shutdown_requested():
+            raise RuntimeError("Prediction interrupted by server shutdown.")
         return asyncio.run(modeling_engine.estimate_churn_risk(player_id, profile))

@@ -54,7 +54,13 @@ echo "[KairyxAI] Local identity/checkpoint DB: $KAIRYX_LOCAL_DB_PATH"
 
 action_cleanup() {
   echo "[KairyxAI] Stopping local demo..."
-  kill ${BACKEND_PID:-0} >/dev/null 2>&1 || true
+  if [[ -n "${BACKEND_PID:-}" ]] && kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
+    pkill -TERM -P "$BACKEND_PID" >/dev/null 2>&1 || true
+    kill "$BACKEND_PID" >/dev/null 2>&1 || true
+    sleep 1
+    pkill -KILL -P "$BACKEND_PID" >/dev/null 2>&1 || true
+    kill -KILL "$BACKEND_PID" >/dev/null 2>&1 || true
+  fi
 }
 trap action_cleanup EXIT INT TERM
 

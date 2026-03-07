@@ -2,6 +2,7 @@
 
 import os
 import json
+from datetime import datetime
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
@@ -866,6 +867,17 @@ class BigQueryService:
             return
         self._append_rows(prepared_rows, target="prediction_results")
 
+    def _sort_prediction_result_dicts(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def _sort_key(item: Dict[str, Any]):
+            raw_completed_at = item.get("completed_at")
+            try:
+                completed_at = datetime.fromisoformat(str(raw_completed_at))
+            except (TypeError, ValueError):
+                completed_at = datetime.min
+            return (completed_at, str(item.get("user_id") or ""))
+
+        return sorted(items, key=_sort_key, reverse=True)
+
     def list_prediction_results(self, job_id: str, page: int = 1, page_size: int = 100) -> Dict[str, Any]:
         page = max(1, int(page))
         page_size = max(1, int(page_size))
@@ -883,11 +895,11 @@ class BigQueryService:
             )
             row_query = (
                 f"SELECT * FROM `{self._prediction_results_table_id}` "
-                "WHERE CAST(prediction_job_id AS STRING) = @job_id "
-                f"LIMIT {page_size} OFFSET {offset}"
+                "WHERE CAST(prediction_job_id AS STRING) = @job_id"
             )
             total = int(next(iter(self._client.query(count_query, job_config=job_config).result()))["total"])
             items = [self._deserialize_prediction_row(dict(row.items())) for row in self._client.query(row_query, job_config=job_config).result()]
+            items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
             return {"page": page, "page_size": page_size, "total": total, "items": items}
 
         if self._prediction_results_table.empty:
@@ -901,7 +913,8 @@ class BigQueryService:
         if table.empty:
             return {"page": page, "page_size": page_size, "total": 0, "items": []}
         total = len(table)
-        items = [self._deserialize_prediction_row(row) for row in table.iloc[offset: offset + page_size].to_dict(orient="records")]
+        items = [self._deserialize_prediction_row(row) for row in table.to_dict(orient="records")]
+        items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
         return {"page": page, "page_size": page_size, "total": total, "items": items}
 
     def _deserialize_prediction_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
