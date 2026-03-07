@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const managedServices = process.env.KAIRYX_E2E_MANAGED_SERVICES === '1';
-const frontendPort = Number(process.env.KAIRYX_E2E_FRONTEND_PORT || 3000);
-const baseURL = process.env.KAIRYX_E2E_BASE_URL || `http://127.0.0.1:${frontendPort}`;
+const backendPort = Number(process.env.KAIRYX_E2E_BACKEND_PORT || 8000);
+const baseURL = process.env.KAIRYX_E2E_BASE_URL || `http://127.0.0.1:${backendPort}`;
+const backendCommand =
+  process.env.KAIRYX_E2E_BACKEND_COMMAND ||
+  `cd ../backend/services && DATA_BACKEND_MODE=mock python3 -m uvicorn main_service:app --host 127.0.0.1 --port ${backendPort}`;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -19,8 +22,8 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: `npm run dev -- --host 127.0.0.1 --port ${frontendPort} --strictPort`,
-          url: baseURL,
+          command: backendCommand,
+          url: `${baseURL}/health`,
           reuseExistingServer: !process.env.CI,
           timeout: 120 * 1000,
         },

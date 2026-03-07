@@ -22,6 +22,11 @@ test('paginates action history with configurable page size', async ({ page }) =>
     const request = route.request();
     const url = new URL(request.url());
 
+    if (request.resourceType() === 'document' || url.pathname === '/') {
+      await route.continue();
+      return;
+    }
+
     if (url.pathname === '/health') {
       await route.fulfill({
         status: 200,

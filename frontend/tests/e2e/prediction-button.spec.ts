@@ -19,6 +19,11 @@ test('uses a single churn button that switches to stop while prediction is runni
     const request = route.request();
     const url = new URL(request.url());
 
+    if (request.resourceType() === 'document' || url.pathname === '/') {
+      await route.continue();
+      return;
+    }
+
     if (url.pathname === '/health') {
       await route.fulfill({
         status: 200,

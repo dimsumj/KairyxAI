@@ -19,6 +19,11 @@ test('saves an AppsFlyer connector against the current backend host', async ({ p
     const request = route.request();
     const url = new URL(request.url());
 
+    if (request.resourceType() === 'document' || url.pathname === '/') {
+      await route.continue();
+      return;
+    }
+
     if (url.pathname === '/configure-appsflyer' && request.method() === 'POST') {
       capturedUrl = request.url();
       capturedPayload = request.postDataJSON() as Record<string, unknown>;

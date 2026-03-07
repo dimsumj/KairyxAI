@@ -12,9 +12,7 @@ const frontendDir = path.resolve(scriptDir, '..');
 const repoRoot = path.resolve(frontendDir, '..');
 const backendDir = path.join(repoRoot, 'backend', 'services');
 const backendPort = Number(process.env.KAIRYX_E2E_BACKEND_PORT || 8001);
-const frontendPort = Number(process.env.KAIRYX_E2E_FRONTEND_PORT || 3001);
 const backendUrl = `http://127.0.0.1:${backendPort}`;
-const frontendUrl = `http://127.0.0.1:${frontendPort}`;
 const predictionCacheDir = path.join(backendDir, '.cache', 'predictions');
 const predictionJobsFile = path.join(backendDir, '.prediction_jobs.json');
 const sqliteDbPath = path.join(backendDir, '.kairyx_local.db');
@@ -24,10 +22,6 @@ const pythonBin = existsSync(path.join(repoRoot, '.venv', 'bin', 'python'))
 
 function log(message) {
   console.log(`[e2e] ${message}`);
-}
-
-function npmCommand() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
 function npxCommand() {
@@ -237,13 +231,11 @@ async function stopService(service) {
 }
 
 async function verifyServicesStopped() {
-  await assertPortAvailable(frontendPort);
   await assertPortAvailable(backendPort);
 }
 
 async function main() {
   await assertPortAvailable(backendPort);
-  await assertPortAvailable(frontendPort);
 
   const backend = startService('backend', pythonBin, ['-m', 'uvicorn', 'main_service:app', '--host', '127.0.0.1', '--port', String(backendPort)], {
     cwd: backendDir,
@@ -253,16 +245,10 @@ async function main() {
     },
   });
 
-  const frontend = startService('frontend', npmCommand(), ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(frontendPort), '--strictPort'], {
-    cwd: frontendDir,
-    env: {},
-  });
-
   let baseline = null;
   let exitCode = 1;
   const handleSignal = async (signal) => {
     log(`Received ${signal}, shutting down test services`);
-    await stopService(frontend);
     await stopService(backend);
     process.exit(1);
   };
@@ -273,8 +259,6 @@ async function main() {
   try {
     log('Waiting for backend service');
     await waitForHttpOk('backend', `${backendUrl}/health`, backend);
-    log('Waiting for frontend service');
-    await waitForHttpOk('frontend', frontendUrl, frontend);
 
     baseline = await snapshotBaseline();
 
@@ -286,9 +270,8 @@ async function main() {
         env: {
           ...process.env,
           KAIRYX_E2E_MANAGED_SERVICES: '1',
-          KAIRYX_E2E_FRONTEND_PORT: String(frontendPort),
           KAIRYX_E2E_BACKEND_PORT: String(backendPort),
-          KAIRYX_E2E_BASE_URL: frontendUrl,
+          KAIRYX_E2E_BASE_URL: backendUrl,
           KAIRYX_E2E_BACKEND_URL: backendUrl,
         },
         stdio: 'inherit',
@@ -306,7 +289,6 @@ async function main() {
       exitCode = exitCode || 1;
     }
 
-    await stopService(frontend);
     await stopService(backend);
 
     try {
