@@ -12,6 +12,7 @@ These instructions apply to the entire repository.
 
 - After making code changes, run the relevant local tests for the affected area before handoff.
 - If no dedicated tests exist for the changed area, run the closest meaningful local validation instead.
+- After any test session or local smoke run, terminate every process spawned for that session even if the test failed or was interrupted, and clean up transient runtime artifacts left by the session when practical.
 - If verification cannot be run, say so clearly in the final response.
 
 ## Git Workflow
