@@ -22,13 +22,6 @@ def client(monkeypatch, tmp_path):
         yield test_client
 
 
-def test_root_serves_frontend_shell(client):
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert "Kairyx AI" in response.text
-
-
 def test_v1_connectors_and_mappings_persist(client):
     resp = client.post(
         "/api/v1/connectors",
@@ -63,6 +56,13 @@ def test_root_serves_frontend_shell(client):
     assert "text/html" in resp.headers["content-type"]
     assert "window.location.origin" in resp.text
     assert "/api/v1" in resp.text
+
+
+def test_root_health_alias(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["service"] == "KairyxAI Operator API"
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):

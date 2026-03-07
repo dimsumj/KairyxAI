@@ -36,6 +36,10 @@ def create_app() -> FastAPI:
         response.headers["Expires"] = "0"
         return response
 
+    @app.get("/health")
+    def root_health():
+        return health.health()
+
     app.include_router(health.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
     app.include_router(mappings.router, prefix=settings.api_v1_prefix)
