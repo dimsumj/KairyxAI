@@ -12,6 +12,7 @@ from app.core import db as db_module
 from app.infrastructure.db_models import ImportJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
+from gcs_service import GcsService
 
 
 @pytest.fixture
@@ -398,3 +399,124 @@ def test_restart_reconciles_stopping_import_to_stopped_and_allows_delete(client)
 
         get_deleted = restarted_client.get(import_job["links"]["self"])
         assert get_deleted.status_code == 404
+
+
+def test_restart_resumes_running_import_from_checkpoints_in_mock_mode(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    gcs_service = GcsService()
+    shard_payloads = [
+        [
+            {
+                "source": "amplitude",
+                "player_id": "player-1",
+                "event_name": "session_start",
+                "timestamp": "2026-03-05T00:00:00",
+                "source_event_id": "evt-1",
+            },
+            {
+                "source": "amplitude",
+                "player_id": "player-2",
+                "event_name": "session_start",
+                "timestamp": "2026-03-05T00:05:00",
+                "source_event_id": "evt-2",
+            },
+        ],
+        [
+            {
+                "source": "amplitude",
+                "player_id": "player-1",
+                "event_name": "purchase",
+                "timestamp": "2026-03-05T00:10:00",
+                "source_event_id": "evt-3",
+                "event_properties": {"revenue": "4.99"},
+            },
+            {
+                "source": "amplitude",
+                "player_id": "player-3",
+                "event_name": "session_start",
+                "timestamp": "2026-03-05T00:15:00",
+                "source_event_id": "evt-4",
+            },
+        ],
+    ]
+
+    session = db_module.get_session_factory()()
+    try:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.update_import_job(
+            import_job["id"],
+            {
+                "status": "running",
+                "progress": {
+                    "current": 4,
+                    "total": 4,
+                    "pct": 100.0,
+                    "details": {
+                        "source": "Amplitude 1",
+                        "connector_type": "amplitude",
+                        "events_staged": 4,
+                        "shards_created": 2,
+                    },
+                },
+            },
+        )
+
+        for index, shard_events in enumerate(shard_payloads, start=1):
+            blob_name = f"raw/source=amplitude/job={import_job['id']}/part-{index:05d}.jsonl"
+            gcs_uri = gcs_service.upload_raw_events(shard_events, blob_name)
+            manifest = {
+                "job_id": import_job["id"],
+                "source": "amplitude",
+                "gcs_uri": gcs_uri,
+                "event_count": len(shard_events),
+                "start_date": "20260301",
+                "end_date": "20260302",
+                "shard_index": index,
+                "source_config_id": "Amplitude 1",
+                "schema_version": "v1",
+            }
+            repository.upsert_checkpoint(
+                {
+                    "job_id": import_job["id"],
+                    "shard_index": index,
+                    "source_name": "Amplitude 1",
+                    "status": "published",
+                    "cursor": str(index),
+                    "gcs_uri": gcs_uri,
+                    "message_id": f"mock-{index}",
+                    "manifest": manifest,
+                }
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    restarted_app = create_app()
+    with TestClient(restarted_app) as restarted_client:
+        import_state = restarted_client.get(import_job["links"]["self"])
+        assert import_state.status_code == 200
+        payload = import_state.json()
+        assert payload["status"] == "completed"
+        assert payload["progress"]["current"] == 4
+        assert payload["progress"]["details"]["processing"]["manifests_processed"] == 2
+        assert payload["progress"]["details"]["processing"]["events_staging_written"] == 4

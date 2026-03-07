@@ -28,6 +28,8 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def _startup() -> None:
+        if getattr(app.state, "restart_reconciliation_complete", False):
+            return
         init_db()
         session = get_session_factory()()
         try:
@@ -35,6 +37,7 @@ def create_app() -> FastAPI:
             ImportService(repository, settings).reconcile_jobs_after_restart()
         finally:
             session.close()
+        app.state.restart_reconciliation_complete = True
 
     @app.get("/")
     def root():
