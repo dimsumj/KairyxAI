@@ -53,9 +53,6 @@ wheels/
 # Environment variables
 .env
 .venv/
-frontend/playwright-report/
-frontend/test-results/
-frontend/.playwright/
 
 # IDE / Editor specific files
 .vscode/
@@ -89,3 +86,6 @@ backend/services/.prediction_jobs.json
 backend/services/.kairyx_local.db
 backend/services/.kairyx_local.db-shm
 backend/services/.kairyx_local.db-wal
+backend/services/.kairyx_control_plane.db
+backend/services/.kairyx_control_plane.db-shm
+backend/services/.kairyx_control_plane.db-wal

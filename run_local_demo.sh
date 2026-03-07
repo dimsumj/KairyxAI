@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend/services"
 VENV_DIR="$ROOT_DIR/.venv"
+APP_HOST="${KAIRYX_HOST:-0.0.0.0}"
+APP_PORT="${KAIRYX_PORT:-8000}"
+DISPLAY_HOST="${KAIRYX_DISPLAY_HOST:-localhost}"
 
 export DATA_BACKEND_MODE=${DATA_BACKEND_MODE:-mock}
 export PYTHONUNBUFFERED=1
@@ -53,11 +56,11 @@ trap action_cleanup EXIT INT TERM
 
 cd "$BACKEND_DIR"
 "$VENV_PYTHON" -m pip install -r requirements.txt >/dev/null
-"$VENV_UVICORN" main_service:app --host 0.0.0.0 --port 8000 --reload --reload-dir ../../frontend &
+"$VENV_UVICORN" main_service:app --host "$APP_HOST" --port "$APP_PORT" --reload --reload-dir ../../frontend &
 BACKEND_PID=$!
 
-echo "[KairyxAI] Backend: http://localhost:8000"
-echo "[KairyxAI] Frontend (served by backend): http://localhost:8000"
+echo "[KairyxAI] Backend: http://$DISPLAY_HOST:$APP_PORT"
+echo "[KairyxAI] Frontend (served by backend): http://$DISPLAY_HOST:$APP_PORT"
 echo "[KairyxAI] Press Ctrl+C to stop."
 
 wait $BACKEND_PID

@@ -647,22 +647,451 @@
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
 
-            // Default to the current host so connector saves work from localhost, 127.0.0.1,
-            // or a LAN IP without editing the page.
-            const backendUrl = window.KAIRYX_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8000`;
+            // Default to the current origin so the backend-served frontend works on any port
+            // or host. Allow an explicit override for split frontend/backend setups.
+            const backendUrl = window.KAIRYX_BACKEND_URL || window.location.origin;
+            const apiBaseUrl = `${backendUrl}/api/v1`;
+            const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
+            const connectorTypeLabels = {
+                amplitude: 'Amplitude',
+                adjust: 'Adjust',
+                appsflyer: 'AppsFlyer',
+                google: 'Google Gemini',
+                bigquery: 'BigQuery',
+                sendgrid: 'SendGrid',
+                braze: 'Braze',
+            };
+            let backendMode = 'mock';
+            let cachedConnectors = [];
+            let cachedImports = [];
+            let cachedPredictionJobs = [];
+            let cachedExportJobs = [];
+
+            async function apiRequest(path, options = {}) {
+                const { method = 'GET', body } = options;
+                const response = await fetch(`${apiBaseUrl}${path}`, {
+                    method,
+                    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+                    body: body ? JSON.stringify(body) : undefined,
+                });
+                if (response.status === 204) {
+                    return null;
+                }
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(payload.detail || payload.message || `Request failed (${response.status})`);
+                }
+                return payload;
+            }
+
+            function parseIsoDate(value) {
+                const parsed = new Date(value || Date.now());
+                return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+            }
+
+            function addDaysIso(value, days) {
+                const parsed = parseIsoDate(value);
+                parsed.setDate(parsed.getDate() + days);
+                return parsed.toISOString();
+            }
+
+            function formatConnectorLabel(type) {
+                return connectorTypeLabels[type] || String(type || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            }
+
+            function mapImportStatus(status) {
+                const normalized = String(status || '').toLowerCase();
+                if (normalized === 'completed') return 'Ready to Use';
+                if (normalized === 'running' || normalized === 'queued') return 'Processing';
+                if (normalized === 'failed') return 'Failed';
+                return normalized ? normalized.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Processing';
+            }
+
+            function mapPredictionStatus(status) {
+                const normalized = String(status || '').toLowerCase();
+                if (normalized === 'completed') return 'Ready';
+                if (normalized === 'running') return 'Processing';
+                if (normalized === 'queued') return 'Queued';
+                if (normalized === 'failed') return 'Failed';
+                return normalized ? normalized.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Queued';
+            }
+
+            function nextConnectorName(type) {
+                const label = formatConnectorLabel(type);
+                let maxIndex = 0;
+                cachedConnectors.forEach((connector) => {
+                    const name = String(connector.name || '');
+                    if (!name.startsWith(label)) return;
+                    const suffix = name.slice(label.length).trim();
+                    if (!suffix) {
+                        maxIndex = Math.max(maxIndex, 1);
+                        return;
+                    }
+                    const parsed = parseInt(suffix, 10);
+                    if (!Number.isNaN(parsed)) {
+                        maxIndex = Math.max(maxIndex, parsed);
+                    }
+                });
+                return `${label} ${Math.max(1, maxIndex + 1)}`;
+            }
+
+            function normalizeConnector(connector) {
+                return {
+                    ...connector,
+                    details: 'Configured',
+                };
+            }
+
+            function normalizeImportJob(job) {
+                const spec = job.spec || {};
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const sourceName = spec.source_name || '';
+                const connector = cachedConnectors.find((item) => item.name === sourceName) || null;
+                return {
+                    id: job.id,
+                    name: job.id,
+                    status: mapImportStatus(job.status),
+                    raw_status: job.status,
+                    current_step: mapImportStatus(job.status),
+                    progress_pct: Number(progress.pct || 0),
+                    timestamp: job.created_at,
+                    created_at: job.created_at,
+                    updated_at: job.updated_at,
+                    start_date: spec.start_date || '',
+                    end_date: spec.end_date || '',
+                    expiration_timestamp: addDaysIso(job.updated_at || job.created_at, 7),
+                    source_stats: sourceName ? [{
+                        source: sourceName,
+                        type: spec.connector_type || (connector && connector.type) || '',
+                        ingested_events: Number(details.events_staged || progress.current || 0),
+                        status: mapImportStatus(job.status),
+                        error: job.error || null,
+                    }] : [],
+                    processing_stats: details.processing || null,
+                    error: job.error || null,
+                    spec,
+                    progress,
+                };
+            }
+
+            function latestByCreatedAt(items) {
+                return [...items].sort((a, b) => parseIsoDate(b.created_at).getTime() - parseIsoDate(a.created_at).getTime());
+            }
+
+            async function refreshConnectorsState() {
+                const connectors = await apiRequest('/connectors');
+                cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                return cachedConnectors;
+            }
+
+            async function refreshImportsState() {
+                const payload = await apiRequest('/imports');
+                const items = Array.isArray(payload.items) ? payload.items : [];
+                cachedImports = items.map(normalizeImportJob);
+                return cachedImports;
+            }
+
+            async function refreshPredictionJobsState() {
+                const payload = await apiRequest('/predictions');
+                cachedPredictionJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedPredictionJobs;
+            }
+
+            async function refreshExportJobsState() {
+                const payload = await apiRequest('/exports');
+                cachedExportJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedExportJobs;
+            }
+
+            function getConfiguredSourcesFromState() {
+                return cachedConnectors
+                    .filter((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()))
+                    .map((connector) => ({
+                        id: connector.name,
+                        name: connector.name,
+                        type: connector.type,
+                    }));
+            }
+
+            async function ensureHealthState() {
+                const payload = await apiRequest('/health');
+                backendMode = payload.mode || backendMode;
+                return payload;
+            }
+
+            async function createConnectorRecord(type, config) {
+                const name = nextConnectorName(type);
+                const connector = await apiRequest('/connectors', {
+                    method: 'POST',
+                    body: {
+                        name,
+                        type,
+                        config,
+                    },
+                });
+                await refreshConnectorsState();
+                return connector;
+            }
+
+            async function createImportRecord(sourceName, startDate, endDate) {
+                await ensureHealthState();
+                const created = await apiRequest('/imports', {
+                    method: 'POST',
+                    body: {
+                        source_name: sourceName,
+                        start_date: startDate,
+                        end_date: endDate,
+                    },
+                });
+                if (backendMode === 'mock') {
+                    await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                }
+                await refreshImportsState();
+                return cachedImports.find((job) => job.name === created.id) || normalizeImportJob(created);
+            }
+
+            function getLatestPredictionJob(importJobId, completedOnly = false) {
+                return cachedPredictionJobs.find((job) => {
+                    const matchesImport = String((job.spec || {}).import_job_id || '') === String(importJobId);
+                    if (!matchesImport) return false;
+                    if (!completedOnly) return true;
+                    return String(job.status || '').toLowerCase() === 'completed';
+                }) || null;
+            }
+
+            async function fetchPredictionRows(jobId) {
+                const rows = [];
+                let page = 1;
+                let total = null;
+                do {
+                    const payload = await apiRequest(`/predictions/${encodeURIComponent(jobId)}/results?page=${page}&page_size=500`);
+                    const items = Array.isArray(payload.items) ? payload.items : [];
+                    rows.push(...items.map((item) => ({
+                        ...item,
+                        ltv: Number(item.ltv || 0),
+                        session_count: Number(item.session_count || 0),
+                        event_count: Number(item.event_count || 0),
+                    })));
+                    total = Number(payload.total || 0);
+                    if (rows.length >= total || items.length === 0) {
+                        break;
+                    }
+                    page += 1;
+                } while (true);
+                return rows;
+            }
+
+            async function createPredictionRecord(importJobId, predictionMode = 'local') {
+                await ensureHealthState();
+                const created = await apiRequest('/predictions', {
+                    method: 'POST',
+                    body: {
+                        import_job_id: importJobId,
+                        prediction_mode: predictionMode,
+                    },
+                });
+                if (backendMode === 'mock') {
+                    return apiRequest(`/predictions/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                }
+                return created;
+            }
+
+            async function createExportRecord(predictionJobId, payload) {
+                await ensureHealthState();
+                const created = await apiRequest('/exports', {
+                    method: 'POST',
+                    body: {
+                        prediction_job_id: predictionJobId,
+                        provider: payload.provider,
+                        channel: payload.channel,
+                        include_churned: payload.include_churned,
+                        include_risks: payload.include_risks,
+                        audience_name: payload.audience_name,
+                        webhook_url: payload.webhook_url,
+                        webhook_token: payload.webhook_token,
+                    },
+                });
+                if (backendMode === 'mock') {
+                    return apiRequest(`/exports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                }
+                return created;
+            }
+
+            function buildActionHistoryItems() {
+                const items = [];
+                cachedConnectors.forEach((connector) => {
+                    items.push({
+                        timestamp: connector.created_at || connector.updated_at,
+                        summary: `Configure Connector: ${connector.name}`,
+                        status: 'saved',
+                        details: `type=${connector.type}`,
+                    });
+                });
+                cachedImports.forEach((job) => {
+                    items.push({
+                        timestamp: job.created_at || job.timestamp,
+                        summary: `Start Import from ${job.source_stats?.[0]?.source || job.name}`,
+                        status: 'started',
+                        details: `range=${job.start_date || '-'} to ${job.end_date || '-'}`,
+                    });
+                    if (job.raw_status === 'completed') {
+                        items.push({
+                            timestamp: job.updated_at || job.timestamp,
+                            summary: `Import Ready: ${job.name}`,
+                            status: 'completed',
+                            details: `events=${job.source_stats?.[0]?.ingested_events || 0}`,
+                        });
+                    }
+                    if (job.raw_status === 'failed') {
+                        items.push({
+                            timestamp: job.updated_at || job.timestamp,
+                            summary: `Import Failed: ${job.name}`,
+                            status: 'failed',
+                            details: job.error || 'Import failed.',
+                        });
+                    }
+                });
+                cachedPredictionJobs.forEach((job) => {
+                    items.push({
+                        timestamp: job.created_at,
+                        summary: `Run Prediction for ${(job.spec || {}).import_job_id || job.id}`,
+                        status: 'started',
+                        details: `mode=${(job.spec || {}).prediction_mode || 'local'}`,
+                    });
+                    if (String(job.status || '').toLowerCase() === 'completed') {
+                        items.push({
+                            timestamp: job.updated_at,
+                            summary: `Prediction Ready for ${(job.spec || {}).import_job_id || job.id}`,
+                            status: 'completed',
+                            details: `rows=${(((job.progress || {}).details || {}).rows_written || (job.progress || {}).current || 0)}`,
+                        });
+                    }
+                });
+                cachedExportJobs.forEach((job) => {
+                    const details = (job.progress || {}).details || {};
+                    const spec = job.spec || {};
+                    items.push({
+                        timestamp: job.created_at,
+                        summary: `Queue Audience Export to ${String(spec.provider || 'webhook').replace(/\b\w/g, (c) => c.toUpperCase())}`,
+                        status: 'started',
+                        details: `channel=${spec.channel || 'push_notification'}`,
+                    });
+                    if (String(job.status || '').toLowerCase() === 'completed') {
+                        items.push({
+                            timestamp: job.updated_at,
+                            summary: `Push Audience to ${String(details.provider || spec.provider || 'webhook').replace(/\b\w/g, (c) => c.toUpperCase())}`,
+                            status: 'completed',
+                            details: `count=${details.count || 0}, channel=${spec.channel || 'push_notification'}`,
+                        });
+                    }
+                });
+                return items.sort((a, b) => parseIsoDate(b.timestamp).getTime() - parseIsoDate(a.timestamp).getTime());
+            }
+
+            function getPathValue(raw, path) {
+                if (!path) return null;
+                let current = raw;
+                for (const part of String(path).split('.')) {
+                    if (!current || typeof current !== 'object') return null;
+                    current = current[part];
+                }
+                return current;
+            }
+
+            function pickValue(raw, keys, overridePath) {
+                if (overridePath) {
+                    const overrideValue = getPathValue(raw, overridePath);
+                    if (overrideValue !== null && overrideValue !== undefined && overrideValue !== '') {
+                        return overrideValue;
+                    }
+                }
+                for (const key of keys) {
+                    const value = raw[key];
+                    if (value !== null && value !== undefined && value !== '') {
+                        return value;
+                    }
+                }
+                return null;
+            }
+
+            function toIsoTimestamp(value) {
+                if (value === null || value === undefined || value === '') {
+                    return new Date().toISOString();
+                }
+                if (typeof value === 'number') {
+                    return new Date(value > 1e12 ? value : value * 1000).toISOString();
+                }
+                const text = String(value).endsWith('Z') ? String(value).slice(0, -1) : String(value);
+                const parsed = new Date(text);
+                if (Number.isNaN(parsed.getTime())) {
+                    return new Date().toISOString();
+                }
+                return parsed.toISOString();
+            }
+
+            function previewMappedEvent(source, raw, mapping = {}) {
+                const eventTime = toIsoTimestamp(pickValue(raw, ['event_time', 'timestamp', 'install_time', 'time'], mapping.event_time));
+                return {
+                    player_id: String(pickValue(raw, ['player_id', 'user_id', 'uid', 'PID', 'customer_user_id', 'appsflyer_id', 'idfa', 'adid'], mapping.canonical_user_id) || 'unknown_user'),
+                    event_type: String(pickValue(raw, ['event_type', 'event_name', 'name'], mapping.event_name) || 'attribution_event'),
+                    event_time: eventTime,
+                    event_date: eventTime.slice(0, 10),
+                    source,
+                    source_event_id: pickValue(raw, ['event_id', 'id', 'insert_id', 'uuid'], mapping.source_event_id) || null,
+                    schema_version: 'v1',
+                    event_properties: {
+                        campaign: pickValue(raw, ['campaign', 'campaign_name'], mapping.campaign),
+                        adset: pickValue(raw, ['adset', 'adset_name', 'adgroup'], mapping.adset),
+                        media_source: pickValue(raw, ['media_source', 'network', 'channel'], mapping.media_source),
+                        raw,
+                    },
+                };
+            }
+
+            function buildMappingCoverage(mapping = {}, sampleRecords = []) {
+                const fields = ['canonical_user_id', 'event_name', 'event_time', 'source_event_id', 'campaign', 'adset', 'media_source'];
+                const coverage = {};
+                const requiredScores = [];
+                fields.forEach((field) => {
+                    const path = mapping[field];
+                    let hits = 0;
+                    sampleRecords.forEach((record) => {
+                        const value = getPathValue(record, path);
+                        if (value !== null && value !== undefined && value !== '') {
+                            hits += 1;
+                        }
+                    });
+                    const total = sampleRecords.length;
+                    const hitRate = total > 0 ? hits / total : 0;
+                    coverage[field] = {
+                        path: path || '',
+                        hits,
+                        total,
+                        hit_rate: hitRate,
+                    };
+                    if (['canonical_user_id', 'event_name', 'event_time'].includes(field)) {
+                        requiredScores.push(hitRate);
+                    }
+                });
+                return {
+                    coverage,
+                    required_coverage_score: requiredScores.length > 0
+                        ? requiredScores.reduce((sum, value) => sum + value, 0) / requiredScores.length
+                        : 0,
+                };
+            }
 
             async function loadSavedConnectors() {
                 connectorListDiv.innerHTML = ''; // Clear existing list
                 try {
-                    const response = await fetch(`${backendUrl}/connectors/list`);
-                    if (!response.ok) throw new Error('Failed to load connectors.');
-                    const data = await response.json();
+                    const connectors = await refreshConnectorsState();
 
-                    if (data.connectors && data.connectors.length > 0) {
-                        data.connectors.forEach(connector => {
+                    if (connectors.length > 0) {
+                        connectors.forEach(connector => {
                             const card = document.createElement('div');
                             card.className = 'card';
-                            card.innerHTML = `<span><strong>${connector.name}</strong>: Configured</span>`;
+                            card.innerHTML = `<span><strong>${connector.name}</strong>: ${formatConnectorLabel(connector.type)}</span>`;
 
                             const deleteButton = document.createElement('button');
                             deleteButton.textContent = 'Delete';
@@ -676,8 +1105,7 @@
                                     return;
                                 }
                                 try {
-                                    const deleteResponse = await fetch(`${backendUrl}/connector/${nameToDelete}`, { method: 'DELETE' });
-                                    if (!deleteResponse.ok) throw new Error(`Failed to delete ${nameToDelete} connector.`);
+                                    await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
                                     loadSavedConnectors(); // Refresh the list
                                 } catch (error) {
                                     alert(`Error: ${error.message}`);
@@ -787,68 +1215,49 @@
 
             saveConnectorBtn.addEventListener('click', async () => {
                 const type = connectorTypeSelect.value;
-                let endpoint = '';
                 let payload = {};
 
                 if (type === 'amplitude') {
-                    endpoint = `${backendUrl}/configure-amplitude-keys`;
                     payload = {
                         api_key: document.getElementById('amplitude_api_key').value,
                         secret_key: document.getElementById('amplitude_secret_key').value
                     };
                 } else if (type === 'adjust') {
-                    endpoint = `${backendUrl}/configure-adjust-credentials`;
                     payload = {
                         api_token: document.getElementById('adjust_api_token').value,
                         api_url: document.getElementById('adjust_api_url').value || undefined
                     };
                 } else if (type === 'appsflyer') {
-                    endpoint = `${backendUrl}/configure-appsflyer`;
                     payload = {
                         api_token: document.getElementById('appsflyer_api_token').value,
                         app_id: document.getElementById('appsflyer_app_id').value,
                         pull_api_url: document.getElementById('appsflyer_pull_api_url').value || undefined
                     };
                 } else if (type === 'google') {
-                    endpoint = `${backendUrl}/configure-google-key`;
                     payload = {
                         api_key: document.getElementById('google_api_key').value,
                         model_name: document.getElementById('model_name').value || null
                     };
                 } else if (type === 'bigquery') {
-                    endpoint = `${backendUrl}/configure-bigquery`;
                     payload = {
                         project_id: document.getElementById('bigquery_project_id').value
                     };
                 } else if (type === 'sendgrid') {
-                    endpoint = `${backendUrl}/configure-sendgrid-key`;
                     payload = {
                         api_key: document.getElementById('sendgrid_api_key').value
                     };
                 } else if (type === 'braze') {
-                    endpoint = `${backendUrl}/configure-braze`;
                     payload = {
                         api_key: document.getElementById('braze_api_key').value,
                         rest_endpoint: document.getElementById('braze_rest_endpoint').value
                     };
                 }
 
-                if (!endpoint) return;
+                if (!type) return;
 
                 try {
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Failed to save connector.');
-                    }
-
-                    const result = await response.json();
-                    alert(result.message); // Show success message
+                    const connector = await createConnectorRecord(type, payload);
+                    alert(`${formatConnectorLabel(connector.type)} connector '${connector.name}' saved.`);
 
                     loadSavedConnectors(); // Refresh the list of connectors
                     cancelBtn.click(); // Reset form
@@ -882,9 +1291,9 @@
 
             function setPredictionActionState(state = 'idle') {
                 if (state === 'running') {
-                    predictChurnBtn.textContent = 'Stop';
-                    predictChurnBtn.style.background = 'var(--red)';
-                    predictChurnBtn.disabled = false;
+                    predictChurnBtn.textContent = 'Running...';
+                    predictChurnBtn.style.background = 'var(--primary-color)';
+                    predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
                     return;
                 }
@@ -904,16 +1313,12 @@
             }
 
             function renderPredictionProgress(job = {}) {
-                const processed = job.processed_count || 0;
-                const total = job.total_count || 0;
-                const pct = job.progress_pct || 0;
+                const progress = job.progress || {};
+                const processed = job.processed_count ?? progress.current ?? 0;
+                const total = job.total_count ?? progress.total ?? 0;
+                const pct = job.progress_pct ?? progress.pct ?? 0;
                 const rawStatus = job.status || 'Processing';
-                const displayStatus = rawStatus === 'Stopped'
-                    ? 'Stopped'
-                    : ((job.stop_requested || predictionStopRequested) && rawStatus === 'Processing'
-                        ? 'Stopping'
-                        : rawStatus);
-                predictionProgressInfo.textContent = `Prediction job: ${displayStatus} · ${processed}/${total} (${pct}%)`;
+                predictionProgressInfo.textContent = `Prediction job: ${rawStatus} · ${processed}/${total} (${Math.round(Number(pct || 0))}%)`;
             }
 
             function setCampaignExportStatus(message = '', isError = false) {
@@ -933,11 +1338,8 @@
             async function loadReadyImportsForOperatorHub() {
                 datasetSelect.innerHTML = '<option>Loading...</option>';
                 try {
-                    const response = await fetch(`${backendUrl}/list-imports`);
-                    if (!response.ok) throw new Error('Failed to fetch import list.');
-                    const data = await response.json();
-
-                    const readyJobs = data.imports.filter(job => job.status === 'Ready to Use');
+                    const jobs = await refreshImportsState();
+                    const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
                     datasetSelect.innerHTML = ''; // Clear loading message
 
@@ -994,41 +1396,48 @@
                 renderChurnTable();
 
                 try {
-                    const startResp = await fetch(`${backendUrl}/predict-churn-for-import-async`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ job_name: jobName, force_recalculate: forceRecalculate, prediction_mode: 'local' })
-                    });
-                    if (!startResp.ok) {
-                        const errorData = await startResp.json();
-                        throw new Error(errorData.detail || 'Prediction start failed.');
+                    await ensureHealthState();
+                    await refreshPredictionJobsState();
+                    let predictionJob = !forceRecalculate ? getLatestPredictionJob(jobName, true) : null;
+                    if (!predictionJob) {
+                        predictionProgressInfo.textContent = backendMode === 'mock'
+                            ? 'Prediction job: running locally...'
+                            : 'Prediction job: queued...';
+                        predictionJob = await createPredictionRecord(jobName, 'local');
                     }
-                    const startData = await startResp.json();
-                    activePredictionJobId = startData.prediction_job_id;
+                    activePredictionJobId = predictionJob.id;
 
-                    let done = false;
-                    while (!done && activePredictionJobId) {
-                        await new Promise(r => setTimeout(r, 800));
-                        const statusResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}`);
-                        if (!statusResp.ok) {
-                            throw new Error('Failed to fetch prediction job status.');
-                        }
-                        const statusData = await statusResp.json();
-                        const job = statusData.prediction_job || {};
-
-                        allChurnPredictionPlayers = job.predictions || [];
-                        renderChurnTable();
-
-                        renderPredictionProgress(job);
-
-                        if (job.status === 'Ready' || job.status === 'Failed' || job.status === 'Stopped') {
-                            predictionStopRequested = false;
-                            done = true;
-                            if (job.status === 'Failed') {
-                                throw new Error(job.error || 'Prediction failed.');
+                    if (backendMode !== 'mock') {
+                        const deadline = Date.now() + 90000;
+                        while (Date.now() < deadline) {
+                            await new Promise((resolve) => setTimeout(resolve, 800));
+                            predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
+                            renderPredictionProgress({
+                                status: mapPredictionStatus(predictionJob.status),
+                                progress: predictionJob.progress,
+                            });
+                            if (predictionJob.status === 'completed' || predictionJob.status === 'failed') {
+                                break;
                             }
                         }
                     }
+
+                    predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
+                    if (predictionJob.status === 'failed') {
+                        throw new Error(predictionJob.error || 'Prediction failed.');
+                    }
+                    if (predictionJob.status !== 'completed') {
+                        throw new Error('Prediction job is still queued. Start a worker or use mock mode for local execution.');
+                    }
+
+                    allChurnPredictionPlayers = await fetchPredictionRows(activePredictionJobId);
+                    renderChurnTable();
+                    renderPredictionProgress({
+                        status: 'Ready',
+                        processed_count: allChurnPredictionPlayers.length,
+                        total_count: allChurnPredictionPlayers.length,
+                        progress_pct: 100,
+                    });
                 } catch (error) {
                     operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                 } finally {
@@ -1054,9 +1463,12 @@
                 pushAudienceBtn.disabled = true;
                 setCampaignExportStatus(`Pushing audience to ${provider}...`);
                 try {
+                    await refreshPredictionJobsState();
+                    const predictionJob = getLatestPredictionJob(jobName, true);
+                    if (!predictionJob) {
+                        throw new Error('Run churn prediction for this dataset before exporting an audience.');
+                    }
                     const payload = {
-                        job_name: jobName,
-                        prediction_mode: 'local',
                         include_churned: campaignIncludeChurnedCheckbox.checked,
                         include_risks: includeRisks.length > 0 ? includeRisks : ['high', 'medium'],
                         provider,
@@ -1065,16 +1477,13 @@
                         webhook_url: provider === 'webhook' ? ((campaignWebhookUrlInput.value || '').trim() || null) : null,
                         webhook_token: provider === 'webhook' ? ((campaignWebhookTokenInput.value || '').trim() || null) : null,
                     };
-                    const response = await fetch(`${backendUrl}/campaigns/export-audience`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
-                    });
-                    const result = await response.json().catch(() => ({}));
-                    if (!response.ok) {
-                        throw new Error(result.detail || result.message || 'Failed to push audience to provider.');
+                    const result = await createExportRecord(predictionJob.id, payload);
+                    const details = (result && result.progress && result.progress.details) || {};
+                    if (String(result.status || '').toLowerCase() === 'failed') {
+                        throw new Error(result.error || 'Failed to push audience to provider.');
                     }
-                    setCampaignExportStatus(`${result.message || 'Audience pushed.'} ${result.count || 0} row(s) exported.`);
+                    await refreshExportJobsState();
+                    setCampaignExportStatus(`Audience pushed to ${details.provider || provider}. ${details.count || 0} row(s) exported.`);
                 } catch (error) {
                     setCampaignExportStatus(error.message || 'Failed to push audience to provider.', true);
                 } finally {
@@ -1098,7 +1507,7 @@
                     };
 
                     paginatedItems.forEach(p => {
-                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${p.ltv.toFixed(2)}</td><td>${p.session_count}</td><td>${p.event_count}</td><td class="${getRiskClass(p.predicted_churn_risk)}">${p.predicted_churn_risk}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
+                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${p.predicted_churn_risk}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
                     });
                 } else {
                      operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">No players found in this dataset.</td></tr>';
@@ -1153,26 +1562,6 @@
             });
 
             predictChurnBtn.addEventListener('click', async () => {
-                if (activePredictionJobId) {
-                    try {
-                        predictionStopRequested = true;
-                        setPredictionActionState('stopping');
-                        predictionProgressInfo.textContent = 'Prediction job: stopping...';
-                        const stopResp = await fetch(`${backendUrl}/prediction-job/${activePredictionJobId}/stop`, { method: 'POST' });
-                        if (!stopResp.ok) {
-                            throw new Error('Failed to stop prediction job.');
-                        }
-                        const stopData = await stopResp.json().catch(() => ({}));
-                        if (stopData.prediction_job) {
-                            renderPredictionProgress(stopData.prediction_job);
-                        }
-                    } catch (e) {
-                        setPredictionActionState('running');
-                        console.error('Failed to stop prediction job', e);
-                    }
-                    return;
-                }
-
                 const jobName = datasetSelect.value;
                 fetchAndRenderPredictions(jobName, true);
             });
@@ -1201,13 +1590,10 @@
                 const endDateGroup = document.getElementById('end-date-cohort').parentElement;
 
                 try {
-                    // Add a cache-busting query parameter to ensure the latest data is fetched
-                    const url = new URL(`${backendUrl}/list-configured-sources`);
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error('Failed to fetch configured sources.');
-                    const data = await response.json();
+                    await refreshConnectorsState();
+                    const sources = getConfiguredSourcesFromState();
 
-                    if (!data.sources || data.sources.length === 0) {
+                    if (!sources || sources.length === 0) {
                         // Hide form elements and show message
                         sourceGroup.style.display = 'none';
                         startDateGroup.style.display = 'none';
@@ -1223,7 +1609,7 @@
                         }
                     } else {
                         sourceSelect.innerHTML = ''; // Clear existing options
-                        data.sources.forEach(source => {
+                        sources.forEach(source => {
                             const option = document.createElement('option');
                             option.value = source.id;
                             option.textContent = source.name;
@@ -1254,11 +1640,9 @@
                 }
 
                 try {
-                    const response = await fetch(`${backendUrl}/list-imports`);
-                    if (!response.ok) throw new Error('Failed to fetch import list.');
-                    const data = await response.json();
+                    const imports = await refreshImportsState();
 
-                    if (!data.imports || data.imports.length === 0) {
+                    if (!imports || imports.length === 0) {
                         if (!importListContainer.querySelector('p') || importListContainer.querySelector('p').textContent !== 'No data has been imported yet.') {
                             importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
                         }
@@ -1287,8 +1671,8 @@
                     const tbody = table.querySelector('tbody');
 
                     // Update rows in place
-                    data.imports.forEach(job => {
-                        const statusClass = job.status === 'Ready to Use' ? 'status-ok' : (job.status === 'Processing' ? 'status-warning' : 'status-error');
+                    imports.forEach(job => {
+                        const statusClass = job.status === 'Ready to Use' ? 'status-ok' : ((job.status === 'Processing' || job.status === 'Queued') ? 'status-warning' : 'status-error');
                         const expirationId = `expires-in-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
                         const rowId = `job-row-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
                         const actionsCellId = `actions-cell-${job.name.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -1305,7 +1689,7 @@
                                 actionsCell.innerHTML = getActionButtonsHTML(job);
                                 addActionListeners(row, job);
 
-                                if (job.status === 'Ready to Use') {
+                                if (job.status === 'Ready to Use' && job.expiration_timestamp) {
                                     const expirationCell = row.cells[3];
                                     expirationCell.id = expirationId;
                                     expirationCell.dataset.expiration = job.expiration_timestamp;
@@ -1317,7 +1701,7 @@
                             const newRow = tbody.insertRow();
                             newRow.id = rowId;
                             
-                            const expirationCellHtml = job.status === 'Ready to Use' 
+                            const expirationCellHtml = job.status === 'Ready to Use' && job.expiration_timestamp
                                 ? `<td id="${expirationId}" data-expiration="${job.expiration_timestamp}">-</td>`
                                 : `<td>-</td>`;
                             
@@ -1448,13 +1832,13 @@
                     actionHistoryPaginationControls.innerHTML = '';
                 }
                 try {
-                    const response = await fetch(`${backendUrl}/action-history?limit=1000`);
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to load action history.');
-                    }
-                    const data = await response.json();
-                    allActionHistoryItems = data.action_history || [];
+                    await Promise.all([
+                        refreshConnectorsState(),
+                        refreshImportsState(),
+                        refreshPredictionJobsState(),
+                        refreshExportJobsState(),
+                    ]);
+                    allActionHistoryItems = buildActionHistoryItems();
                     actionHistoryCurrentPage = 1;
                     renderActionHistoryTable();
                 } catch (error) {
@@ -1473,44 +1857,11 @@
             });
 
             function getActionButtonsHTML(job) {
-                if (job.status === 'Processing') {
-                    return `<button class="stop-job-btn" data-job-name="${job.name}" style="background-color: var(--yellow);">Stop</button>`;
-                } else if (['Ready to Use', 'Failed', 'Interrupted'].includes(job.status)) {
-                    return `<button class="delete-job-btn" data-job-name="${job.name}" style="background-color: var(--red);">Delete</button>`;
-                }
-                return ''; // No actions for other states
+                return '';
             }
 
             function addActionListeners(rowElement, job) {
-                const stopButton = rowElement.querySelector('.stop-job-btn');
-                if (stopButton) {
-                    stopButton.addEventListener('click', async (e) => {
-                        const jobName = e.target.dataset.jobName;
-                        if (!confirm(`Are you sure you want to stop the import job '${jobName}'?`)) return;
-                        try {
-                            const response = await fetch(`${backendUrl}/job/${jobName}/stop`, { method: 'POST' });
-                            if (!response.ok) throw new Error('Failed to stop job.');
-                            loadImportedDataList(); // Refresh the list to show new status
-                        } catch (error) {
-                            alert(`Error: ${error.message}`);
-                        }
-                    });
-                }
-
-                const deleteButton = rowElement.querySelector('.delete-job-btn');
-                if (deleteButton) {
-                    deleteButton.addEventListener('click', async (e) => {
-                        const jobName = e.target.dataset.jobName;
-                        if (!confirm(`Are you sure you want to permanently delete the import job '${jobName}' and its data? This cannot be undone.`)) return;
-                        try {
-                            const response = await fetch(`${backendUrl}/job/${jobName}`, { method: 'DELETE' });
-                            if (!response.ok) throw new Error('Failed to delete job.');
-                            e.target.closest('tr').remove(); // Immediately remove row from UI
-                        } catch (error) {
-                            alert(`Error: ${error.message}`);
-                        }
-                    });
-                }
+                return rowElement && job;
             }
 
             function startCountdownTimers() {
@@ -1528,22 +1879,8 @@
                         const distance = expirationTime - now;
 
                         if (distance < 0) {
-                            // Only act if the status is not already 'Deleted'
-                            if (el.textContent !== "Deleted") {
-                                el.textContent = "Deleted";
-                                const row = el.closest('tr');
-                                const jobName = row.cells[0].textContent;
-                                const statusCell = row.cells[2];
-                                
-                                // Update status in UI
-                                statusCell.innerHTML = `<span class="status-indicator status-error" style="display: inline-block; vertical-align: middle;"></span> Deleted`;
-                                
-                                // Call backend to delete the file
-                                fetch(`${backendUrl}/job/${jobName}`, { method: 'DELETE' })
-                                    .then(response => response.json())
-                                    .then(data => console.log(data.message))
-                                    .catch(err => console.error(`Failed to delete job ${jobName}:`, err));
-                            }
+                            el.textContent = "Expired";
+                            return;
                         }
 
                         const days = Math.floor(distance / (1000 * 60 * 60 * 24));
@@ -1578,13 +1915,11 @@
                 };
 
                 try {
-                    const response = await fetch(`${backendUrl}/ingest-and-process-data`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    const result = await response.json();
-                    alert(result.message);
+                    const result = await createImportRecord(payload.source, payload.start_date, payload.end_date);
+                    const modeSuffix = backendMode === 'mock'
+                        ? 'completed locally and is ready to use.'
+                        : 'queued. A worker must run it to completion.';
+                    alert(`Import job '${result.name}' ${modeSuffix}`);
                     loadImportedDataList(); // Refresh the list
                 } catch (error) {
                     alert(`Error starting import: ${error.message}`);
@@ -1597,10 +1932,30 @@
             async function loadServiceHealthStatus() {
                 serviceStatusListDiv.innerHTML = '<p>Checking service status...</p>';
                 try {
-                    const response = await fetch(`${backendUrl}/services-health`);
-                    if (!response.ok) throw new Error('Could not fetch service health.');
-
-                    const statuses = await response.json();
+                    const health = await ensureHealthState();
+                    await Promise.all([
+                        refreshConnectorsState(),
+                        refreshImportsState(),
+                        refreshPredictionJobsState(),
+                    ]);
+                    const statuses = {
+                        operator_api: {
+                            status: 'ok',
+                            details: `${health.service} (${health.mode})`,
+                        },
+                        connectors: {
+                            status: cachedConnectors.length > 0 ? 'ok' : 'warning',
+                            details: `${cachedConnectors.length} configured`,
+                        },
+                        imports: {
+                            status: cachedImports.some((job) => job.raw_status === 'failed') ? 'error' : 'ok',
+                            details: `${cachedImports.length} job(s)`,
+                        },
+                        predictions: {
+                            status: cachedPredictionJobs.some((job) => String(job.status || '').toLowerCase() === 'failed') ? 'error' : 'ok',
+                            details: `${cachedPredictionJobs.length} job(s)`,
+                        },
+                    };
                     serviceStatusListDiv.innerHTML = ''; // Clear loading message
 
                     for (const serviceKey in statuses) {
@@ -1696,17 +2051,12 @@
 
             async function loadDataSandboxMappingControls() {
                 try {
-                    const [sourcesResponse, importsResponse] = await Promise.all([
-                        fetch(`${backendUrl}/list-configured-sources`),
-                        fetch(`${backendUrl}/list-imports`),
+                    const [connectors, imports] = await Promise.all([
+                        refreshConnectorsState(),
+                        refreshImportsState(),
                     ]);
-                    if (!sourcesResponse.ok) throw new Error('Failed to fetch connectors for field mapping.');
-                    if (!importsResponse.ok) throw new Error('Failed to fetch import jobs for field mapping.');
-
-                    const sourcesData = await sourcesResponse.json();
-                    const importsData = await importsResponse.json();
-                    const sources = sourcesData.sources || [];
-                    dataSandboxAwaitingJobs = (importsData.imports || []).filter((job) => job.status === 'Awaiting Mapping');
+                    const sources = connectors.map((source) => ({ id: source.name, name: source.name }));
+                    dataSandboxAwaitingJobs = imports.filter((job) => job.status === 'Awaiting Mapping');
 
                     const previousConnector = dataSandboxMappingConnectorSelect.value;
                     dataSandboxMappingConnectorSelect.innerHTML = '';
@@ -1773,7 +2123,7 @@
                     if (dataSandboxAwaitingJobs.length > 0) {
                         setDataSandboxMappingStatus(`Paused import job detected: ${dataSandboxAwaitingJobs[0].name}. Review the mapping, then click "Process After Mapping".`);
                     } else {
-                        setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings.');
+                        setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings locally.');
                     }
                 } catch (error) {
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
@@ -1788,12 +2138,7 @@
                 }
 
                 try {
-                    const response = await fetch(`${backendUrl}/field-mapping/${encodeURIComponent(connectorName)}`);
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to load field mapping.');
-                    }
-                    const data = await response.json();
+                    const data = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}`);
                     dataSandboxMappingJson.value = JSON.stringify(data.mapping || {}, null, 2);
                     if (!silent) {
                         setDataSandboxMappingStatus(`Loaded field mapping for ${connectorName}.`);
@@ -1812,16 +2157,10 @@
 
                 try {
                     const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
-                    const response = await fetch(`${backendUrl}/field-mapping/${encodeURIComponent(connectorName)}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ mapping }),
+                    await apiRequest(`/mappings/${encodeURIComponent(connectorName)}`, {
+                        method: 'PUT',
+                        body: { mapping },
                     });
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to save field mapping.');
-                    }
-                    await response.json();
                     setDataSandboxMappingStatus(`Saved field mapping for ${connectorName}.`);
                 } catch (error) {
                     setDataSandboxMappingStatus(error.message || 'Failed to save field mapping.', true);
@@ -1837,17 +2176,9 @@
 
                 try {
                     const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
-                    const response = await fetch(`${backendUrl}/field-mapping/preview`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ connector_name: connectorName, sample_record: sampleRecord }),
-                    });
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to preview field mapping.');
-                    }
-                    const data = await response.json();
-                    dataSandboxPreviewResult.textContent = JSON.stringify(data.preview || {}, null, 2);
+                    const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
+                    const preview = previewMappedEvent(connectorName, sampleRecord, mapping);
+                    dataSandboxPreviewResult.textContent = JSON.stringify(preview || {}, null, 2);
                     setDataSandboxMappingStatus(`Preview generated for ${connectorName}.`);
                 } catch (error) {
                     dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
@@ -1863,23 +2194,9 @@
                 }
 
                 try {
-                    const selectedJob = getSelectedAwaitingJob();
-                    let response;
-                    if (selectedJob) {
-                        response = await fetch(`${backendUrl}/job/${encodeURIComponent(selectedJob.name)}/mapping-coverage?connector_name=${encodeURIComponent(connectorName)}`);
-                    } else {
-                        const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
-                        response = await fetch(`${backendUrl}/field-mapping/coverage`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ connector_name: connectorName, sample_records: [sampleRecord] }),
-                        });
-                    }
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to calculate mapping coverage.');
-                    }
-                    const data = await response.json();
+                    const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
+                    const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
+                    const data = buildMappingCoverage(mapping, sampleRecord ? [sampleRecord] : []);
                     renderDataSandboxCoverage(data);
                     setDataSandboxMappingStatus(`Coverage calculated for ${connectorName}.`);
                 } catch (error) {
@@ -1891,48 +2208,53 @@
             async function processDataSandboxAwaitingJob() {
                 const selectedJob = getSelectedAwaitingJob();
                 if (!selectedJob) {
-                    setDataSandboxMappingStatus('Select a paused import job first.', true);
+                    setDataSandboxMappingStatus('Import pause/resume is not available on /api/v1.', true);
                     return;
                 }
 
-                try {
-                    const response = await fetch(`${backendUrl}/job/${encodeURIComponent(selectedJob.name)}/process-after-mapping`, {
-                        method: 'POST',
-                    });
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.detail || 'Failed to process paused import job.');
-                    }
-                    const data = await response.json();
-                    setDataSandboxMappingStatus(data.message || `Processed ${selectedJob.name} after manual mapping.`);
-                    await loadDataSandboxMappingControls();
-                    await loadReadyImportsForOperatorHub();
-                } catch (error) {
-                    setDataSandboxMappingStatus(error.message || 'Failed to process paused import job.', true);
-                }
+                setDataSandboxMappingStatus(`Manual mapping is saved, but processing paused jobs is not available on /api/v1 yet.`, true);
             }
 
             async function loadDataSandboxGlance() {
                 dataSandboxContentDiv.innerHTML = '<p>Loading data glance...</p>';
                 try {
-                    const response = await fetch(`${backendUrl}/data-sandbox/glance`);
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Failed to load data glance.');
+                    const imports = await refreshImportsState();
+                    const latestImport = imports[0];
+                    if (!latestImport) {
+                        dataSandboxContentDiv.innerHTML = '<p>No imported datasets available yet.</p>';
+                        return;
                     }
-                    const data = await response.json();
+                    const processing = latestImport.processing_stats || {};
+                    const eventCounts = {
+                        'Raw Normalized': Number(processing.raw_normalized_events || 0),
+                        'Deduped': Number(processing.deduped_events || 0),
+                        'Duplicates Removed': Number(processing.duplicates_removed || 0),
+                    };
+                    const data = {
+                        filename: latestImport.name,
+                        sample: [{
+                            import_job: latestImport.name,
+                            source: latestImport.source_stats?.[0]?.source || '-',
+                            start_date: latestImport.start_date,
+                            end_date: latestImport.end_date,
+                            status: latestImport.status,
+                            source_stats: latestImport.source_stats || [],
+                            processing_stats: latestImport.processing_stats || {},
+                        }],
+                        event_counts: eventCounts,
+                    };
 
                     // Build the HTML for the glance
                     const sampleHtml = JSON.stringify(data.sample, null, 2);
                     const contentHtml = `
                         <details>
                             <summary style="cursor: pointer; font-weight: 600;">
-                                Raw Data Glance: ${data.filename}
+                                Latest Import Glance: ${data.filename}
                             </summary>
                             <pre><code style="font-size: 0.8rem; white-space: pre-wrap;">${sampleHtml}</code></pre>
                         </details>
                         <div style="margin-top: 2rem; height: 500px;">
-                            <h2>Event Distribution</h2>
+                            <h2>Import Metrics</h2>
                             <canvas id="event-chart"></canvas>
                         </div>
                     `;
@@ -2006,11 +2328,10 @@
 
             async function checkBackendStatus() {
                 try {
-                    const response = await fetch(`${backendUrl}/health`); // Assumes backend is at root
-                    if (!response.ok) throw new Error('Backend not healthy');
+                    await ensureHealthState();
                     
                     healthStatusDiv.classList.add('connected');
-                    statusTextSpan.textContent = 'Backend Connected';
+                    statusTextSpan.textContent = `Backend Connected (${backendMode})`;
                 } catch (error) {
                     healthStatusDiv.classList.remove('connected');
                     statusTextSpan.textContent = 'Backend Disconnected';
