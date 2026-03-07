@@ -1123,9 +1123,11 @@ def legacy_predict_for_import_async(
     request: LegacyPredictionRequest,
     service: ImportService = Depends(get_import_service),
     prediction_service: PredictionService = Depends(get_prediction_service),
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ):
     _lookup_import_job(service, request.job_name)
     job = prediction_service.create_job(request.job_name, request.prediction_mode)
+    repository.session.commit()
     _start_prediction_runner(job["id"])
     return {"prediction_job_id": job["id"]}
 
