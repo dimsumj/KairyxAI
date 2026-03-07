@@ -22,6 +22,13 @@ def client(monkeypatch, tmp_path):
         yield test_client
 
 
+def test_root_serves_frontend_shell(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Kairyx AI" in response.text
+
+
 def test_v1_connectors_and_mappings_persist(client):
     resp = client.post(
         "/api/v1/connectors",
