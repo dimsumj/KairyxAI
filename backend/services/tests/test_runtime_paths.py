@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.core import db as db_module
 from app.main import create_app
+from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 import local_job_store
 from local_job_store import list_identity_links, resolve_or_create_canonical_user_id
 
@@ -91,3 +92,23 @@ def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
 
     assert open_count > 0
     assert close_count == open_count
+
+
+def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, monkeypatch):
+    clear_shared_bigquery_service_cache()
+
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+
+    monkeypatch.chdir(workspace_a)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    service_a1 = get_shared_bigquery_service()
+    service_a2 = get_shared_bigquery_service()
+
+    monkeypatch.chdir(workspace_b)
+    service_b = get_shared_bigquery_service()
+
+    assert service_a1 is service_a2
+    assert service_a1 is not service_b
