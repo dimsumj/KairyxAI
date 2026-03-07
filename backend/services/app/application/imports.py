@@ -55,77 +55,98 @@ class ImportService:
             raise KeyError(job["spec"]["source_name"])
 
         self.repository.update_import_job(job_id, {"status": JobStatus.RUNNING.value})
-        gcs_service = GcsService()
-        raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
-        ingestion_service = IngestionService(
-            gcs_service=gcs_service,
-            connector_config=connector_record["config"],
-            connector_type=connector_record["type"],
-            source_config_id=connector_record["name"],
-            pubsub_service=raw_pubsub,
-        )
-
-        staged = ingestion_service.fetch_and_stage_events(
-            job["spec"]["start_date"],
-            job["spec"]["end_date"],
-            job_id=job_id,
-        )
-
-        manifests: List[Dict[str, Any]] = []
-        for manifest in staged["shard_manifests"]:
-            notification = {
-                "gcs_path": manifest["gcs_uri"],
-                "event_count": manifest["event_count"],
-                "source": manifest["source"],
-                "job_id": manifest["job_id"],
-                "schema_version": manifest["schema_version"],
-                "shard_index": manifest["shard_index"],
-                "source_config_id": manifest["source_config_id"],
-            }
-            message_id = raw_pubsub.publish(
-                notification,
-                attributes={
-                    "job_id": manifest["job_id"],
-                    "source": manifest["source"],
-                    "shard_index": manifest["shard_index"],
-                    "schema_version": manifest["schema_version"],
-                },
+        try:
+            gcs_service = GcsService()
+            raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
+            ingestion_service = IngestionService(
+                gcs_service=gcs_service,
+                connector_config=connector_record["config"],
+                connector_type=connector_record["type"],
+                source_config_id=connector_record["name"],
+                pubsub_service=raw_pubsub,
             )
-            checkpoint_payload = {
-                "job_id": job_id,
-                "shard_index": manifest["shard_index"],
-                "source_name": connector_record["name"],
-                "status": CheckpointStatus.PUBLISHED.value,
-                "cursor": str(manifest["shard_index"]),
-                "gcs_uri": manifest["gcs_uri"],
-                "message_id": message_id,
-                "manifest": manifest,
-            }
-            self.repository.upsert_checkpoint(checkpoint_payload)
-            manifests.append(notification)
+            staged = ingestion_service.fetch_and_stage_events(
+                job["spec"]["start_date"],
+                job["spec"]["end_date"],
+                job_id=job_id,
+            )
 
-        processing_stats: Dict[str, Any] = {}
-        if self.settings.data_backend_mode == "mock":
-            runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=BigQueryService())
-            processing_stats = runner.process_notifications(manifests)
+            manifests: List[Dict[str, Any]] = []
+            for manifest in staged["shard_manifests"]:
+                notification = {
+                    "gcs_path": manifest["gcs_uri"],
+                    "event_count": manifest["event_count"],
+                    "source": manifest["source"],
+                    "job_id": manifest["job_id"],
+                    "schema_version": manifest["schema_version"],
+                    "shard_index": manifest["shard_index"],
+                    "source_config_id": manifest["source_config_id"],
+                }
+                message_id = raw_pubsub.publish(
+                    notification,
+                    attributes={
+                        "job_id": manifest["job_id"],
+                        "source": manifest["source"],
+                        "shard_index": manifest["shard_index"],
+                        "schema_version": manifest["schema_version"],
+                    },
+                )
+                checkpoint_payload = {
+                    "job_id": job_id,
+                    "shard_index": manifest["shard_index"],
+                    "source_name": connector_record["name"],
+                    "status": CheckpointStatus.PUBLISHED.value,
+                    "cursor": str(manifest["shard_index"]),
+                    "gcs_uri": manifest["gcs_uri"],
+                    "message_id": message_id,
+                    "manifest": manifest,
+                }
+                self.repository.upsert_checkpoint(checkpoint_payload)
+                manifests.append(notification)
 
-        completed = self.repository.update_import_job(
-            job_id,
-            {
-                "status": JobStatus.COMPLETED.value,
-                "progress": {
-                    "current": int(staged["events_staged"]),
-                    "total": int(staged["events_staged"]),
-                    "pct": 100.0,
-                    "details": {
-                        "source": connector_record["name"],
-                        "connector_type": connector_record["type"],
-                        "events_staged": staged["events_staged"],
-                        "shards_created": staged["shards_created"],
-                        "processing": processing_stats,
+            processing_stats: Dict[str, Any] = {}
+            if self.settings.data_backend_mode == "mock":
+                runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=BigQueryService())
+                processing_stats = runner.process_notifications(manifests)
+
+            completed = self.repository.update_import_job(
+                job_id,
+                {
+                    "status": JobStatus.COMPLETED.value,
+                    "error": None,
+                    "progress": {
+                        "current": int(staged["events_staged"]),
+                        "total": int(staged["events_staged"]),
+                        "pct": 100.0,
+                        "details": {
+                            "source": connector_record["name"],
+                            "connector_type": connector_record["type"],
+                            "events_staged": staged["events_staged"],
+                            "shards_created": staged["shards_created"],
+                            "processing": processing_stats,
+                        },
                     },
                 },
-            },
-        )
-        self.repository.record_action("import_job_completed", "import_job", job_id, completed)
-        return completed
+            )
+            self.repository.record_action("import_job_completed", "import_job", job_id, completed)
+            return completed
+        except Exception as exc:
+            failed_job = self.repository.get_import_job(job_id) or job
+            progress = failed_job.get("progress") or {}
+            progress_details = dict(progress.get("details") or {})
+            progress_details["failure_reason"] = str(exc)
+            failed = self.repository.update_import_job(
+                job_id,
+                {
+                    "status": JobStatus.FAILED.value,
+                    "error": str(exc),
+                    "progress": {
+                        "current": int(progress.get("current", 0) or 0),
+                        "total": int(progress.get("total", 0) or 0),
+                        "pct": float(progress.get("pct", 0.0) or 0.0),
+                        "details": progress_details,
+                    },
+                },
+            )
+            self.repository.record_action("import_job_failed", "import_job", job_id, failed)
+            raise

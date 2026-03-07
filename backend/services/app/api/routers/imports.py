@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.schemas.jobs import build_job_response
@@ -54,6 +55,16 @@ def run_import(job_id: str, service: ImportService = Depends(get_import_service)
         job = service.run_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except Exception as exc:
+        failed_job = service.get_job(job_id)
+        payload = {"detail": str(exc)}
+        if failed_job is not None:
+            payload["job"] = build_job_response(
+                failed_job,
+                base_path="/api/v1/imports",
+                extra_links={"checkpoints": f"/api/v1/imports/{failed_job['id']}/checkpoints"},
+            ).model_dump(mode="json")
+        return JSONResponse(status_code=500, content=payload)
     return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
 
 

@@ -208,6 +208,25 @@
         .status-ok { background-color: var(--green); }
         .status-error { background-color: var(--red); }
         .status-warning { background-color: var(--yellow); }
+        .status-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            vertical-align: middle;
+        }
+        .status-help {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+            font-size: 0.7rem;
+            font-weight: 700;
+            line-height: 1;
+            cursor: help;
+        }
         .service-name {
             font-weight: 600;
         }
@@ -775,6 +794,24 @@
                 };
             }
 
+            function getImportFailureReason(job) {
+                return String(
+                    job.error
+                    || ((job.progress || {}).details || {}).failure_reason
+                    || ((((job.source_stats || [])[0] || {}).error))
+                    || ''
+                ).trim();
+            }
+
+            function renderImportStatus(job, statusClass) {
+                const status = escapeHtml(job.status || 'Processing');
+                const reason = getImportFailureReason(job);
+                const statusText = reason
+                    ? `<span class="status-label" title="${escapeHtml(reason)}">${status}<span class="status-help" title="${escapeHtml(reason)}" aria-label="Failure reason">?</span></span>`
+                    : status;
+                return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
+            }
+
             function latestByCreatedAt(items) {
                 return [...items].sort((a, b) => parseIsoDate(b.created_at).getTime() - parseIsoDate(a.created_at).getTime());
             }
@@ -845,7 +882,14 @@
                     },
                 });
                 if (backendMode === 'mock') {
-                    await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                    try {
+                        await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
+                    } catch (error) {
+                        await refreshImportsState();
+                        const failedJob = cachedImports.find((job) => job.name === created.id);
+                        const failureReason = getImportFailureReason(failedJob || {});
+                        throw new Error(failureReason || error.message);
+                    }
                 }
                 await refreshImportsState();
                 return cachedImports.find((job) => job.name === created.id) || normalizeImportJob(created);
@@ -1680,7 +1724,7 @@
                         
                         if (row) {
                             // If row exists, just update the status if it changed
-                            const newStatusHTML = `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}`;
+                            const newStatusHTML = renderImportStatus(job, statusClass);
                             const statusCell = row.cells[2];
                             if (statusCell.innerHTML !== newStatusHTML) {
                                 // Update status and actions if status changed
@@ -1710,7 +1754,7 @@
                             newRow.innerHTML = `
                                 <td>${job.name}</td>
                                 <td>${new Date(job.timestamp).toLocaleString()}</td>
-                                <td><span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${job.status}</td>
+                                <td>${renderImportStatus(job, statusClass)}</td>
                                 ${expirationCellHtml}
                                 ${actionsCellHtml}
                             `;
@@ -1922,6 +1966,7 @@
                     alert(`Import job '${result.name}' ${modeSuffix}`);
                     loadImportedDataList(); // Refresh the list
                 } catch (error) {
+                    await loadImportedDataList();
                     alert(`Error starting import: ${error.message}`);
                 }
             });

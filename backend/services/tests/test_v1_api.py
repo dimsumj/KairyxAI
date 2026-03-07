@@ -140,3 +140,45 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     assert run_export.json()["status"] == "completed"
     assert captured["url"] == "https://example.com/hook"
     assert captured["json"]["count"] >= 1
+
+
+def test_import_failure_marks_job_failed(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fail_fetch_and_stage_events(*args, **kwargs):
+        raise RuntimeError("Adjust API rate limit exceeded")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fail_fetch_and_stage_events,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    assert run_import.json()["detail"] == "Adjust API rate limit exceeded"
+
+    import_state = client.get(import_job["links"]["self"])
+    assert import_state.status_code == 200
+    payload = import_state.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Adjust API rate limit exceeded"
+    assert payload["progress"]["details"]["failure_reason"] == "Adjust API rate limit exceeded"
