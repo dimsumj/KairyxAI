@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 from app.domain.jobs import JobStatus
 from app.core.runtime import is_shutdown_requested
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, get_shared_bigquery_service
 from cloud_churn_service import CloudChurnService
 from gemini_client import GeminiClient
 from growth_decision_engine import GrowthDecisionEngine
@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 class PredictionService:
-    def __init__(self, repository, settings):
+    def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.settings = settings
+        self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -127,8 +128,7 @@ class PredictionService:
         return self.repository.get_prediction_job(job_id)
 
     def list_results(self, job_id: str, page: int, page_size: int) -> Dict[str, Any]:
-        service = BigQueryService()
-        return service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
+        return self.bigquery_service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
 
     def _parse_timestamp(self, value: Any) -> datetime | None:
         if not value:
@@ -141,7 +141,6 @@ class PredictionService:
     def cleanup_expired_jobs(self) -> int:
         cutoff = datetime.utcnow() - timedelta(days=max(1, int(self.settings.job_retention_days)))
         removed_count = 0
-        bigquery_service = BigQueryService()
 
         for job in self.repository.list_prediction_jobs():
             status = str(job.get("status") or "").lower()
@@ -152,7 +151,7 @@ class PredictionService:
                 continue
 
             try:
-                bigquery_service.delete_prediction_results(job["id"])
+                self.bigquery_service.delete_prediction_results(job["id"])
                 if self.repository.delete_prediction_job(job["id"]):
                     payload = {
                         "id": job["id"],
@@ -223,13 +222,12 @@ class PredictionService:
 
         try:
             gemini_client = self._build_gemini_client()
-            bigquery_service = BigQueryService()
-            bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
+            self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
 
             modeling_engine = PlayerModelingEngine(
                 gemini_client=gemini_client,
-                bigquery_service=bigquery_service,
+                bigquery_service=self.bigquery_service,
                 job_id=import_job_id,
             )
             decision_engine = GrowthDecisionEngine(gemini_client)
@@ -308,7 +306,7 @@ class PredictionService:
                     "prediction_source": prediction_source,
                     "suggested_action": next_action.get("content", "No action suggested."),
                 }
-                bigquery_service.append_prediction_results(job_id=job_id, rows=[row])
+                self.bigquery_service.append_prediction_results(job_id=job_id, rows=[row])
                 rows_written += 1
                 self.repository.update_prediction_job(
                     job_id,

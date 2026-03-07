@@ -14,6 +14,7 @@ from app.core.db import get_session_factory, init_db
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
+from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 
 
 logger = logging.getLogger(__name__)
@@ -37,14 +38,16 @@ def create_app() -> FastAPI:
         if getattr(app.state, "restart_reconciliation_complete", False):
             return
         clear_shutdown_requested()
+        clear_shared_bigquery_service_cache()
         init_db()
         session = get_session_factory()()
         try:
             repository = SqlAlchemyControlPlaneRepository(session)
+            bigquery_service = get_shared_bigquery_service()
             try:
-                ImportService(repository, settings).reconcile_jobs_after_restart()
-                ImportService(repository, settings).cleanup_expired_jobs()
-                PredictionService(repository, settings).cleanup_expired_jobs()
+                ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
+                ImportService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
+                PredictionService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
             except Exception:
                 logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
         finally:

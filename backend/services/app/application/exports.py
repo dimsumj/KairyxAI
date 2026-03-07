@@ -6,14 +6,15 @@ from typing import Any, Dict, List
 import requests
 
 from app.domain.jobs import JobStatus
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, get_shared_bigquery_service
 from pubsub_service import PubSubService
 
 
 class ExportService:
-    def __init__(self, repository, settings):
+    def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.settings = settings
+        self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     def create_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         prediction_job = self.repository.get_prediction_job(payload["prediction_job_id"])
@@ -48,7 +49,11 @@ class ExportService:
         page = 1
         all_rows: List[Dict[str, Any]] = []
         while True:
-            batch = BigQueryService().list_prediction_results(job_id=spec["prediction_job_id"], page=page, page_size=self.settings.export_batch_size)
+            batch = self.bigquery_service.list_prediction_results(
+                job_id=spec["prediction_job_id"],
+                page=page,
+                page_size=self.settings.export_batch_size,
+            )
             rows = batch["items"]
             if not rows:
                 break

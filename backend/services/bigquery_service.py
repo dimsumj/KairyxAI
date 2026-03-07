@@ -1,7 +1,9 @@
 # bigquery_service.py
 
+from functools import lru_cache
 import os
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -40,6 +42,39 @@ def _sanitize_for_storage(data: Any) -> Any:
     return data
 
 
+def _shared_service_cache_key() -> tuple[Any, ...]:
+    mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+    if mode == "gcp":
+        return (
+            mode,
+            os.getenv("BIGQUERY_PROJECT_ID", ""),
+            os.getenv("BIGQUERY_DATASET_ID", "kairyx"),
+            os.getenv("BIGQUERY_TABLE_NAME", "processed_events"),
+            os.getenv("BIGQUERY_TABLE_ID", ""),
+            os.getenv("BIGQUERY_EVENTS_CURATED_TABLE_ID", ""),
+            os.getenv("BIGQUERY_PLAYER_LATEST_STATE_TABLE_ID", ""),
+            os.getenv("BIGQUERY_PIPELINE_DEAD_LETTERS_TABLE_ID", ""),
+            os.getenv("BIGQUERY_PREDICTION_RESULTS_TABLE_ID", ""),
+        )
+    return (
+        mode,
+        os.getcwd(),
+    )
+
+
+@lru_cache(maxsize=8)
+def _get_shared_service(cache_key: tuple[Any, ...]) -> "BigQueryService":
+    return BigQueryService()
+
+
+def get_shared_bigquery_service() -> "BigQueryService":
+    return _get_shared_service(_shared_service_cache_key())
+
+
+def clear_shared_bigquery_service_cache() -> None:
+    _get_shared_service.cache_clear()
+
+
 class BigQueryService:
     """
     BigQuery service with dual backend support:
@@ -48,6 +83,7 @@ class BigQueryService:
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self.mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
         if self.mode not in {"mock", "gcp"}:
             raise ValueError("DATA_BACKEND_MODE must be 'mock' or 'gcp'.")
@@ -259,6 +295,10 @@ class BigQueryService:
             return
 
     def _append_rows(self, rows: List[Dict[str, Any]], target: str = "events_staging"):
+        with self._lock:
+            self._append_rows_unlocked(rows, target=target)
+
+    def _append_rows_unlocked(self, rows: List[Dict[str, Any]], target: str = "events_staging"):
         prepared_events = []
         for event in rows:
             event_copy = _sanitize_for_storage(dict(event))
@@ -298,6 +338,10 @@ class BigQueryService:
         self._persist_mock_table(current_table, cache_path)
 
     def _replace_rows(self, rows: List[Dict[str, Any]], target: str):
+        with self._lock:
+            self._replace_rows_unlocked(rows, target=target)
+
+    def _replace_rows_unlocked(self, rows: List[Dict[str, Any]], target: str):
         prepared_rows = [_sanitize_for_storage(dict(row)) for row in rows]
         meta = self._target_meta(target)
 
@@ -320,10 +364,11 @@ class BigQueryService:
         self._persist_mock_table(table, meta["cache_path"])
 
     def _get_local_rows(self, target: str) -> List[Dict[str, Any]]:
-        table = getattr(self, self._target_meta(target)["table_attr"])
-        if table.empty:
-            return []
-        return table.to_dict(orient="records")
+        with self._lock:
+            table = getattr(self, self._target_meta(target)["table_attr"])
+            if table.empty:
+                return []
+            return table.to_dict(orient="records")
 
     def _filter_table_by_job(self, table: pd.DataFrame, job_id: Optional[str] = None) -> pd.DataFrame:
         if table.empty or not job_id:
@@ -619,17 +664,18 @@ class BigQueryService:
         self.write_events_staging(prepared_events, job_id=job_identifier)
 
     def run_events_curation(self, job_id: Optional[str] = None, event_date: Optional[str] = None) -> Dict[str, Any]:
-        staging_rows = self._load_all_rows_from_target("events_staging")
-        deduped_rows = self._dedupe_events(staging_rows)
-        self._replace_rows(deduped_rows, target="events_curated")
-        return {
-            "job_id": job_id,
-            "event_date": event_date,
-            "full_recompute": True,
-            "staging_rows": len(staging_rows),
-            "curated_rows": len(deduped_rows),
-            "duplicates_removed": max(0, len(staging_rows) - len(deduped_rows)),
-        }
+        with self._lock:
+            staging_rows = self._load_all_rows_from_target("events_staging")
+            deduped_rows = self._dedupe_events(staging_rows)
+            self._replace_rows_unlocked(deduped_rows, target="events_curated")
+            return {
+                "job_id": job_id,
+                "event_date": event_date,
+                "full_recompute": True,
+                "staging_rows": len(staging_rows),
+                "curated_rows": len(deduped_rows),
+                "duplicates_removed": max(0, len(staging_rows) - len(deduped_rows)),
+            }
 
     def get_player_events_curated(self, player_id: Any, limit: int = 1000, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if self.mode == "gcp":
@@ -725,43 +771,44 @@ class BigQueryService:
         return []
 
     def refresh_player_latest_state(self, job_id: Optional[str] = None, event_date: Optional[str] = None) -> Dict[str, Any]:
-        curated_rows = self._load_all_rows_from_target("events_curated")
-        if not curated_rows:
-            self._replace_rows([], target="player_latest_state")
+        with self._lock:
+            curated_rows = self._load_all_rows_from_target("events_curated")
+            if not curated_rows:
+                self._replace_rows_unlocked([], target="player_latest_state")
+                return {
+                    "job_id": job_id,
+                    "event_date": event_date,
+                    "full_recompute": True,
+                    "players_aggregated": 0,
+                    "source_curated_rows": 0,
+                }
+
+            curated_df = pd.DataFrame(curated_rows)
+            identity_keys = []
+            for row in curated_df.to_dict(orient="records"):
+                canonical = row.get("canonical_user_id")
+                player = row.get("player_id")
+                identity_keys.append(str(canonical or player or "unknown_user"))
+            curated_df["_identity_key"] = identity_keys
+            curated_df["_job_scope"] = curated_df.apply(
+                lambda row: str(row.get("job_identifier") or row.get("job_id") or "unknown_job"),
+                axis=1,
+            )
+
+            latest_state_rows: List[Dict[str, Any]] = []
+            for (job_scope, identity_key), group_df in curated_df.groupby(["_job_scope", "_identity_key"], sort=False):
+                latest_state = self._build_latest_state_from_events(identity_key, group_df.copy(), job_id=job_scope)
+                if latest_state:
+                    latest_state_rows.append(latest_state)
+
+            self._replace_rows_unlocked(latest_state_rows, target="player_latest_state")
             return {
                 "job_id": job_id,
                 "event_date": event_date,
                 "full_recompute": True,
-                "players_aggregated": 0,
-                "source_curated_rows": 0,
+                "players_aggregated": len(latest_state_rows),
+                "source_curated_rows": len(curated_rows),
             }
-
-        curated_df = pd.DataFrame(curated_rows)
-        identity_keys = []
-        for row in curated_df.to_dict(orient="records"):
-            canonical = row.get("canonical_user_id")
-            player = row.get("player_id")
-            identity_keys.append(str(canonical or player or "unknown_user"))
-        curated_df["_identity_key"] = identity_keys
-        curated_df["_job_scope"] = curated_df.apply(
-            lambda row: str(row.get("job_identifier") or row.get("job_id") or "unknown_job"),
-            axis=1,
-        )
-
-        latest_state_rows: List[Dict[str, Any]] = []
-        for (job_scope, identity_key), group_df in curated_df.groupby(["_job_scope", "_identity_key"], sort=False):
-            latest_state = self._build_latest_state_from_events(identity_key, group_df.copy(), job_id=job_scope)
-            if latest_state:
-                latest_state_rows.append(latest_state)
-
-        self._replace_rows(latest_state_rows, target="player_latest_state")
-        return {
-            "job_id": job_id,
-            "event_date": event_date,
-            "full_recompute": True,
-            "players_aggregated": len(latest_state_rows),
-            "source_curated_rows": len(curated_rows),
-        }
 
     def get_player_latest_state(self, player_id: Any, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if self.mode == "gcp":
@@ -841,21 +888,22 @@ class BigQueryService:
             self._append_rows(prepared_rows, target="prediction_results")
             return
 
-        table = self._prediction_results_table.copy()
-        if not table.empty and "prediction_job_id" in table.columns:
-            table = table[
-                table["prediction_job_id"].map(
-                    lambda value: str(value) != resolved_job_id if pd.notna(value) else True
-                )
-            ].copy()
-        if prepared_rows:
-            new_rows = pd.DataFrame(prepared_rows)
-            if table.empty:
-                table = new_rows
-            else:
-                table = pd.concat([table, new_rows], ignore_index=True)
-        self._prediction_results_table = table
-        self._persist_mock_table(table, self._prediction_results_cache_path)
+        with self._lock:
+            table = self._prediction_results_table.copy()
+            if not table.empty and "prediction_job_id" in table.columns:
+                table = table[
+                    table["prediction_job_id"].map(
+                        lambda value: str(value) != resolved_job_id if pd.notna(value) else True
+                    )
+                ].copy()
+            if prepared_rows:
+                new_rows = pd.DataFrame(prepared_rows)
+                if table.empty:
+                    table = new_rows
+                else:
+                    table = pd.concat([table, new_rows], ignore_index=True)
+            self._prediction_results_table = table
+            self._persist_mock_table(table, self._prediction_results_cache_path)
 
     def append_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):
         resolved_job_id = str(job_id)
@@ -883,16 +931,17 @@ class BigQueryService:
                 "size_bytes": int(path.stat().st_size) if path.exists() else 0,
             }
 
-        return {
-            "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
-            "tables": {
-                "events_staging": _table_stats(self._table, self._cache_path),
-                "events_curated": _table_stats(self._curated_table, self._curated_cache_path),
-                "player_latest_state": _table_stats(self._player_latest_state_table, self._player_latest_state_cache_path),
-                "pipeline_dead_letters": _table_stats(self._dead_letter_table, self._dead_letter_cache_path),
-                "prediction_results": _table_stats(self._prediction_results_table, self._prediction_results_cache_path),
-            },
-        }
+        with self._lock:
+            return {
+                "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
+                "tables": {
+                    "events_staging": _table_stats(self._table, self._cache_path),
+                    "events_curated": _table_stats(self._curated_table, self._curated_cache_path),
+                    "player_latest_state": _table_stats(self._player_latest_state_table, self._player_latest_state_cache_path),
+                    "pipeline_dead_letters": _table_stats(self._dead_letter_table, self._dead_letter_cache_path),
+                    "prediction_results": _table_stats(self._prediction_results_table, self._prediction_results_cache_path),
+                },
+            }
 
     def _sort_prediction_result_dicts(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         def _sort_key(item: Dict[str, Any]):
@@ -929,20 +978,21 @@ class BigQueryService:
             items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
             return {"page": page, "page_size": page_size, "total": total, "items": items}
 
-        if self._prediction_results_table.empty:
-            return {"page": page, "page_size": page_size, "total": 0, "items": []}
-        table = self._prediction_results_table.copy()
-        if "prediction_job_id" not in table.columns:
-            return {"page": page, "page_size": page_size, "total": 0, "items": []}
-        table = table[
-            table["prediction_job_id"].map(lambda value: str(value) == str(job_id) if pd.notna(value) else False)
-        ].copy()
-        if table.empty:
-            return {"page": page, "page_size": page_size, "total": 0, "items": []}
-        total = len(table)
-        items = [self._deserialize_prediction_row(row) for row in table.to_dict(orient="records")]
-        items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
-        return {"page": page, "page_size": page_size, "total": total, "items": items}
+        with self._lock:
+            if self._prediction_results_table.empty:
+                return {"page": page, "page_size": page_size, "total": 0, "items": []}
+            table = self._prediction_results_table.copy()
+            if "prediction_job_id" not in table.columns:
+                return {"page": page, "page_size": page_size, "total": 0, "items": []}
+            table = table[
+                table["prediction_job_id"].map(lambda value: str(value) == str(job_id) if pd.notna(value) else False)
+            ].copy()
+            if table.empty:
+                return {"page": page, "page_size": page_size, "total": 0, "items": []}
+            total = len(table)
+            items = [self._deserialize_prediction_row(row) for row in table.to_dict(orient="records")]
+            items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
+            return {"page": page, "page_size": page_size, "total": total, "items": items}
 
     def _deserialize_prediction_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         parsed = dict(row)
@@ -981,34 +1031,35 @@ class BigQueryService:
             print(f"Deleted rows from BigQuery for job '{job_identifier}'.")
             return
 
-        target_tables = [
-            ("_table", self._cache_path, "events_staging"),
-            ("_dead_letter_table", self._dead_letter_cache_path, "pipeline_dead_letters"),
-        ]
-        for table_attr, cache_path, target_name in target_tables:
-            table = getattr(self, table_attr)
-            if table.empty:
-                continue
+        with self._lock:
+            target_tables = [
+                ("_table", self._cache_path, "events_staging"),
+                ("_dead_letter_table", self._dead_letter_cache_path, "pipeline_dead_letters"),
+            ]
+            for table_attr, cache_path, target_name in target_tables:
+                table = getattr(self, table_attr)
+                if table.empty:
+                    continue
 
-            masks = []
-            if "job_identifier" in table.columns:
-                masks.append(table["job_identifier"].map(lambda value: str(value) == str(job_identifier) if pd.notna(value) else False))
-            if "job_id" in table.columns:
-                masks.append(table["job_id"].map(lambda value: str(value) == str(job_identifier) if pd.notna(value) else False))
-            if not masks:
-                continue
+                masks = []
+                if "job_identifier" in table.columns:
+                    masks.append(table["job_identifier"].map(lambda value: str(value) == str(job_identifier) if pd.notna(value) else False))
+                if "job_id" in table.columns:
+                    masks.append(table["job_id"].map(lambda value: str(value) == str(job_identifier) if pd.notna(value) else False))
+                if not masks:
+                    continue
 
-            combined_mask = masks[0]
-            for mask in masks[1:]:
-                combined_mask = combined_mask | mask
+                combined_mask = masks[0]
+                for mask in masks[1:]:
+                    combined_mask = combined_mask | mask
 
-            initial_rows = len(table)
-            filtered = table[~combined_mask].copy()
-            rows_deleted = initial_rows - len(filtered)
-            if rows_deleted > 0:
-                setattr(self, table_attr, filtered)
-                print(f"Deleted {rows_deleted} rows from local BigQuery mock target '{target_name}' for job '{job_identifier}'.")
-                self._persist_mock_table(filtered, cache_path)
+                initial_rows = len(table)
+                filtered = table[~combined_mask].copy()
+                rows_deleted = initial_rows - len(filtered)
+                if rows_deleted > 0:
+                    setattr(self, table_attr, filtered)
+                    print(f"Deleted {rows_deleted} rows from local BigQuery mock target '{target_name}' for job '{job_identifier}'.")
+                    self._persist_mock_table(filtered, cache_path)
 
-        self.run_events_curation()
-        self.refresh_player_latest_state()
+            self.run_events_curation()
+            self.refresh_player_latest_state()

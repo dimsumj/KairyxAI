@@ -10,16 +10,17 @@ from dataflow.pipeline import DataflowNormalizationRunner
 from gcs_service import GcsService
 from ingestion_service import IngestionService
 from pubsub_service import PubSubService
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
 logger = logging.getLogger(__name__)
 
 
 class ImportService:
-    def __init__(self, repository, settings):
+    def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.settings = settings
+        self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -168,7 +169,6 @@ class ImportService:
     def cleanup_expired_jobs(self) -> int:
         cutoff = datetime.utcnow() - timedelta(days=max(1, int(self.settings.job_retention_days)))
         removed_count = 0
-        bigquery_service = BigQueryService()
 
         for job in self.repository.list_import_jobs():
             status = str(job.get("status") or "").lower()
@@ -179,7 +179,7 @@ class ImportService:
                 continue
 
             try:
-                bigquery_service.delete_data_for_job(job["id"])
+                self.bigquery_service.delete_data_for_job(job["id"])
                 if self.repository.delete_import_job(job["id"]):
                     payload = {
                         "id": job["id"],
@@ -401,7 +401,7 @@ class ImportService:
             if self._is_stop_requested(job_id):
                 return self._mark_stopped(job_id)
             if self.settings.data_backend_mode == "mock":
-                runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=BigQueryService())
+                runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=self.bigquery_service)
                 processing_stats = runner.process_notifications(
                     manifests,
                     progress_callback=lambda processed_manifests, total_manifests, summary: self._update_processing_progress(
