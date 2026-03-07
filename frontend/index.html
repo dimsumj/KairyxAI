@@ -673,6 +673,7 @@
             const apiBaseUrl = `${backendUrl}/api/v1`;
             const HEALTH_CHECK_INTERVAL_MS = 30000;
             const HEALTH_CACHE_TTL_MS = 30000;
+            const PREDICTION_POLL_INTERVAL_MS = 1000;
             const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
             const connectorTypeLabels = {
                 amplitude: 'Amplitude',
@@ -1918,7 +1919,7 @@
                         if (['completed', 'failed', 'stopped'].includes(normalizedStatus)) {
                             break;
                         }
-                        await new Promise((resolve) => setTimeout(resolve, 300));
+                        await new Promise((resolve) => setTimeout(resolve, PREDICTION_POLL_INTERVAL_MS));
                     }
 
                     predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);

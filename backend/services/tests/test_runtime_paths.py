@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 import local_job_store
@@ -112,3 +114,23 @@ def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, m
 
     assert service_a1 is service_a2
     assert service_a1 is not service_b
+
+
+def test_prediction_polling_access_filter_logs_only_first_request_per_job():
+    log_filter = PredictionPollingAccessFilter()
+
+    def build_record(path: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg='%s - "%s %s HTTP/%s" %s',
+            args=("127.0.0.1:12345", "GET", path, "1.1", 200),
+            exc_info=None,
+        )
+
+    assert log_filter.filter(build_record("/api/v1/predictions/pred_abc123")) is True
+    assert log_filter.filter(build_record("/api/v1/predictions/pred_abc123/results?page=1&page_size=500")) is False
+    assert log_filter.filter(build_record("/api/v1/predictions/pred_other/results?page=1&page_size=500")) is True
+    assert log_filter.filter(build_record("/api/v1/health")) is True
