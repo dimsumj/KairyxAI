@@ -132,152 +132,40 @@ class ImportService:
         PubSubService(topic_name=self.settings.import_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "import"})
         return job
 
-    def _build_terminal_progress(
-        self,
-        job: Dict[str, Any],
-        *,
-        current: int,
-        total: int,
-        pct: float,
-        extra_details: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        spec = job.get("spec") or {}
-        progress = job.get("progress") or {}
-        details = dict(progress.get("details") or {})
-        details.setdefault("source", spec.get("source_name", ""))
-        details.setdefault("connector_type", spec.get("connector_type", ""))
-        if extra_details:
-            details.update(extra_details)
-        details = {key: value for key, value in details.items() if value is not None}
-        return {
-            "current": int(current),
-            "total": int(total),
-            "pct": float(pct),
-            "details": details,
+    def _discard_job_after_restart(self, job: Dict[str, Any], reason: str) -> None:
+        deleted = self.repository.delete_import_job(job["id"])
+        if not deleted:
+            return
+        payload = {
+            "id": job["id"],
+            "type": job["type"],
+            "status": job["status"],
+            "spec": job.get("spec") or {},
+            "progress": job.get("progress") or {},
+            "error": reason,
+            "discard_reason": reason,
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
         }
-
-    def _mark_failed(self, job: Dict[str, Any], reason: str, action_type: str = "import_job_failed") -> Dict[str, Any]:
-        failed = self.repository.update_import_job(
-            job["id"],
-            {
-                "status": JobStatus.FAILED.value,
-                "error": reason,
-                "progress": self._build_terminal_progress(
-                    job,
-                    current=int((job.get("progress") or {}).get("current", 0) or 0),
-                    total=int((job.get("progress") or {}).get("total", 0) or 0),
-                    pct=float((job.get("progress") or {}).get("pct", 0.0) or 0.0),
-                    extra_details={"failure_reason": reason},
-                ),
-            },
-        )
-        self.repository.record_action(action_type, "import_job", job["id"], failed)
+        self.repository.record_action("import_job_discarded_after_restart", "import_job", job["id"], payload)
         self._commit_session()
-        return failed
-
-    def _resume_mock_job_after_restart(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        checkpoints = self.repository.list_checkpoints(job["id"])
-        manifests: List[Dict[str, Any]] = []
-        total_events = 0
-        for checkpoint in checkpoints:
-            manifest = dict(checkpoint.get("manifest") or {})
-            if not manifest:
-                continue
-            manifests.append(
-                {
-                    "gcs_path": manifest["gcs_uri"],
-                    "event_count": int(manifest.get("event_count") or 0),
-                    "source": manifest["source"],
-                    "job_id": manifest["job_id"],
-                    "schema_version": manifest["schema_version"],
-                    "shard_index": int(manifest["shard_index"]),
-                    "source_config_id": manifest["source_config_id"],
-                }
-            )
-            total_events += int(manifest.get("event_count") or 0)
-
-        if not manifests:
-            return self._mark_failed(
-                job,
-                "Import interrupted by server restart before manifest processing completed.",
-                action_type="import_job_failed_after_restart",
-            )
-
-        gcs_service = GcsService()
-        bigquery_service = BigQueryService()
-        bigquery_service.delete_data_for_job(job["id"])
-        runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=bigquery_service)
-        processing_stats = runner.process_notifications(manifests)
-
-        completed = self.repository.update_import_job(
-            job["id"],
-            {
-                "status": JobStatus.COMPLETED.value,
-                "error": None,
-                "progress": self._build_terminal_progress(
-                    job,
-                    current=total_events,
-                    total=total_events,
-                    pct=100.0,
-                    extra_details={
-                        "events_staged": total_events,
-                        "shards_created": len(manifests),
-                        "processing": processing_stats,
-                    },
-                ),
-            },
-        )
-        self.repository.record_action("import_job_completed_after_restart", "import_job", job["id"], completed)
-        self._commit_session()
-        return completed
 
     def reconcile_jobs_after_restart(self) -> int:
         reconciled_count = 0
         for job in self.repository.list_import_jobs():
             status = str(job.get("status") or "").lower()
-            if status == JobStatus.STOPPING.value:
-                progress = job.get("progress") or {}
-                details = dict(progress.get("details") or {})
-                details.pop("stop_requested", None)
-                details["stop_reason"] = details.get("stop_reason") or "Stopped after server restart."
-                stopped = self.repository.update_import_job(
-                    job["id"],
-                    {
-                        "status": JobStatus.STOPPED.value,
-                        "error": None,
-                        "progress": self._build_terminal_progress(
-                            job,
-                            current=int(progress.get("current", 0) or 0),
-                            total=int(progress.get("total", 0) or 0),
-                            pct=float(progress.get("pct", 0.0) or 0.0),
-                            extra_details={**details, "stop_requested": None},
-                        ),
-                    },
-                )
-                self.repository.record_action("import_job_reconciled_after_restart", "import_job", job["id"], stopped)
-                self._commit_session()
-                reconciled_count += 1
-                continue
-
-            if status != JobStatus.RUNNING.value or self.settings.data_backend_mode != "mock":
+            if status not in {JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.STOPPING.value}:
                 continue
 
             try:
-                self._resume_mock_job_after_restart(job)
+                self._discard_job_after_restart(job, "Discarded after server restart before completion.")
             except Exception as exc:
                 self.rollback_session()
-                try:
-                    self._mark_failed(
-                        job,
-                        f"Import interrupted by server restart: {exc}",
-                        action_type="import_job_failed_after_restart",
-                    )
-                except Exception:
-                    self.rollback_session()
-                    logger.exception(
-                        "Unable to mark import job %s failed during restart reconciliation.",
-                        job["id"],
-                    )
+                logger.exception(
+                    "Unable to discard incomplete import job %s during restart reconciliation. error=%s",
+                    job["id"],
+                    exc,
+                )
             reconciled_count += 1
 
         return reconciled_count
