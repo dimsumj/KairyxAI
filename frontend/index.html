@@ -904,17 +904,24 @@
                     },
                 });
                 if (backendMode === 'mock') {
-                    try {
-                        await apiRequest(`/imports/${encodeURIComponent(created.id)}/run`, { method: 'POST' });
-                    } catch (error) {
-                        await refreshImportsState();
-                        const failedJob = cachedImports.find((job) => job.id === created.id);
-                        const failureReason = getImportFailureReason(failedJob || {});
-                        throw new Error(failureReason || error.message);
-                    }
+                    queueMockImportRun(created.id);
                 }
                 await refreshImportsState();
                 return cachedImports.find((job) => job.id === created.id) || normalizeImportJob(created);
+            }
+
+            async function queueMockImportRun(jobId) {
+                try {
+                    await apiRequest(`/imports/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
+                } catch (error) {
+                    console.error(`Import job ${jobId} failed:`, error);
+                } finally {
+                    try {
+                        await loadImportedDataList();
+                    } catch (refreshError) {
+                        console.error(`Unable to refresh import list for ${jobId}:`, refreshError);
+                    }
+                }
             }
 
             async function stopImportRecord(jobId) {
@@ -2046,7 +2053,7 @@
                     const modeSuffix = result.raw_status === 'stopped'
                         ? 'was stopped.'
                         : backendMode === 'mock'
-                        ? 'completed locally and is ready to use.'
+                        ? 'started locally. Status will update below.'
                         : 'queued. A worker must run it to completion.';
                     alert(`Import job '${result.name}' ${modeSuffix}`);
                     loadImportedDataList(); // Refresh the list
