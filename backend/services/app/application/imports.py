@@ -19,7 +19,23 @@ class ImportService:
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
         if session is not None:
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def rollback_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.rollback()
+
+    def _safe_get_import_job(self, job_id: str) -> Dict[str, Any] | None:
+        try:
+            return self.repository.get_import_job(job_id)
+        except Exception:
+            self.rollback_session()
+            return None
 
     def _is_stop_requested(self, job_id: str) -> bool:
         job = self.repository.get_import_job(job_id)
@@ -280,25 +296,32 @@ class ImportService:
             self._commit_session()
             return completed
         except Exception as exc:
-            if self._is_stop_requested(job_id):
-                return self._mark_stopped(job_id)
-            failed_job = self.repository.get_import_job(job_id) or job
+            self.rollback_session()
+            try:
+                if self._is_stop_requested(job_id):
+                    return self._mark_stopped(job_id)
+            except Exception:
+                self.rollback_session()
+            failed_job = self._safe_get_import_job(job_id) or job
             progress = failed_job.get("progress") or {}
             progress_details = dict(progress.get("details") or {})
             progress_details["failure_reason"] = str(exc)
-            failed = self.repository.update_import_job(
-                job_id,
-                {
-                    "status": JobStatus.FAILED.value,
-                    "error": str(exc),
-                    "progress": {
-                        "current": int(progress.get("current", 0) or 0),
-                        "total": int(progress.get("total", 0) or 0),
-                        "pct": float(progress.get("pct", 0.0) or 0.0),
-                        "details": progress_details,
+            try:
+                failed = self.repository.update_import_job(
+                    job_id,
+                    {
+                        "status": JobStatus.FAILED.value,
+                        "error": str(exc),
+                        "progress": {
+                            "current": int(progress.get("current", 0) or 0),
+                            "total": int(progress.get("total", 0) or 0),
+                            "pct": float(progress.get("pct", 0.0) or 0.0),
+                            "details": progress_details,
+                        },
                     },
-                },
-            )
-            self.repository.record_action("import_job_failed", "import_job", job_id, failed)
-            self._commit_session()
+                )
+                self.repository.record_action("import_job_failed", "import_job", job_id, failed)
+                self._commit_session()
+            except Exception:
+                self.rollback_session()
             raise

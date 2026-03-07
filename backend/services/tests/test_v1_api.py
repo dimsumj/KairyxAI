@@ -7,7 +7,9 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.imports import ImportService
 from app.core import db as db_module
+from app.infrastructure.db_models import ImportJobModel
 from app.main import create_app
 
 
@@ -184,6 +186,52 @@ def test_import_failure_marks_job_failed(client, monkeypatch):
     assert payload["status"] == "failed"
     assert payload["error"] == "Adjust API rate limit exceeded"
     assert payload["progress"]["details"]["failure_reason"] == "Adjust API rate limit exceeded"
+
+
+def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def poison_session_and_fail(self, job_id: str):
+        self.repository.session.add(
+            ImportJobModel(
+                id=job_id,
+                source_name="Adjust Source",
+                status="queued",
+                spec_json="{}",
+                progress_json="{}",
+            )
+        )
+        with pytest.raises(Exception):
+            self.repository.session.flush()
+        raise RuntimeError("unable to open database file")
+
+    monkeypatch.setattr(ImportService, "run_job", poison_session_and_fail)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    payload = run_import.json()
+    assert payload["detail"] == "unable to open database file"
+    assert payload["job"]["id"] == import_job["id"]
+    assert payload["job"]["status"] == "queued"
 
 
 def test_stop_and_delete_queued_import_job(client):
