@@ -1956,7 +1956,7 @@
             });
 
             function getActionButtonsHTML(job) {
-                if (job.raw_status === 'stopped') {
+                if (['completed', 'failed', 'stopped'].includes(job.raw_status)) {
                     return `<button type="button" data-import-action="delete" data-job-id="${escapeHtml(job.id)}" style="background-color: var(--subtle-text);">Delete</button>`;
                 }
                 if (job.raw_status === 'stopping') {
@@ -1983,7 +1983,7 @@
                         if (action === 'stop') {
                             await stopImportRecord(jobId);
                         } else if (action === 'delete') {
-                            if (!confirm(`Delete import '${job.name}'?`)) {
+                            if (!confirm(`Delete import '${job.name}'? This cannot be undone.`)) {
                                 actionButton.disabled = false;
                                 return;
                             }
