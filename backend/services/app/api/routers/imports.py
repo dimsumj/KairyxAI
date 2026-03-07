@@ -68,6 +68,28 @@ def run_import(job_id: str, service: ImportService = Depends(get_import_service)
     return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
 
 
+@router.post("/{job_id}/stop")
+def stop_import(job_id: str, service: ImportService = Depends(get_import_service)):
+    try:
+        job = service.stop_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_import(job_id: str, service: ImportService = Depends(get_import_service)):
+    try:
+        service.delete_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return None
+
+
 @router.get("/{job_id}/checkpoints")
 def get_import_checkpoints(job_id: str, service: ImportService = Depends(get_import_service)):
     job = service.get_job(job_id)

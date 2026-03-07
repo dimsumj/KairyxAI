@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional, Iterable, List
+from typing import Callable, Dict, Any, Optional, Iterable, List
 from datetime import datetime
 
 from gcs_service import GcsService
@@ -77,12 +77,12 @@ class IngestionService:
         self._record_dead_letter(start_date, end_date, str(last_error))
         raise RuntimeError(f"Ingestion failed after retries: {last_error}")
 
-    def _iter_event_pages(self, start_date: str, end_date: str) -> Iterable[List[Dict[str, Any]]]:
-        page_size = self.local_shard_event_count
+    def _iter_event_pages(self, start_date: str, end_date: str, page_size: Optional[int] = None) -> Iterable[List[Dict[str, Any]]]:
+        resolved_page_size = max(1, int(page_size or self.local_shard_event_count))
         if hasattr(self.connector, "iter_event_pages"):
             try:
                 yielded = False
-                for page in self.connector.iter_event_pages(start_date, end_date, page_size=page_size):
+                for page in self.connector.iter_event_pages(start_date, end_date, page_size=resolved_page_size):
                     yielded = True
                     if page:
                         yield page
@@ -98,7 +98,7 @@ class IngestionService:
                     start_date,
                     end_date,
                     cursor=cursor,
-                    page_size=page_size,
+                    page_size=resolved_page_size,
                 )
                 events = page.get("events") or []
                 if not events:
@@ -139,7 +139,15 @@ class IngestionService:
             checkpoint,
         )
 
-    def fetch_and_stage_events(self, start_date: str, end_date: str, job_id: Optional[str] = None) -> Dict[str, Any]:
+    def fetch_and_stage_events(
+        self,
+        start_date: str,
+        end_date: str,
+        job_id: Optional[str] = None,
+        page_size: Optional[int] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         """
         Fetches events from the connector, writes them to raw storage, and returns
         shard metadata without publishing queue notifications.
@@ -150,7 +158,19 @@ class IngestionService:
         shard_manifests = []
         total_events = 0
 
-        for index, shard_events in enumerate(self._iter_event_pages(start_date, end_date), start=1):
+        if callable(should_stop) and should_stop():
+            return {
+                "job_id": resolved_job_id,
+                "source": self.connector_type,
+                "shards_created": 0,
+                "events_staged": 0,
+                "last_checkpoint": None,
+                "shard_manifests": [],
+                "stopped": True,
+                "stop_reason": "Stopped by user.",
+            }
+
+        for index, shard_events in enumerate(self._iter_event_pages(start_date, end_date, page_size=page_size), start=1):
             total_events += len(shard_events)
             blob_name = (
                 f"raw/source={self.connector_type}/job={resolved_job_id}/"
@@ -171,6 +191,24 @@ class IngestionService:
             self.staged_shards.append(manifest_dict)
             shard_manifests.append(manifest_dict)
             self._save_checkpoint(manifest_dict, publish_status="staged")
+            if callable(progress_callback):
+                progress_callback(total_events, len(shard_manifests), manifest_dict)
+            if callable(should_stop) and should_stop():
+                return {
+                    "job_id": resolved_job_id,
+                    "source": self.connector_type,
+                    "shards_created": len(shard_manifests),
+                    "events_staged": total_events,
+                    "last_checkpoint": {
+                        "gcs_uri": manifest_dict["gcs_uri"],
+                        "event_count": manifest_dict["event_count"],
+                        "start_date": start_date,
+                        "end_date": end_date,
+                    },
+                    "shard_manifests": shard_manifests,
+                    "stopped": True,
+                    "stop_reason": "Stopped by user.",
+                }
 
         if shard_manifests:
             return {
@@ -185,6 +223,7 @@ class IngestionService:
                     "end_date": end_date,
                 },
                 "shard_manifests": shard_manifests,
+                "stopped": False,
             }
 
         return {
@@ -194,6 +233,7 @@ class IngestionService:
             "events_staged": 0,
             "last_checkpoint": None,
             "shard_manifests": [],
+            "stopped": False,
         }
 
     def fetch_and_publish_events(self, start_date: str, end_date: str, job_id: Optional[str] = None) -> int:
