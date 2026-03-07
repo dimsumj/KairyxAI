@@ -151,20 +151,22 @@ This starts:
 - Frontend (served by backend): `http://localhost:8000`
 
 Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
+The local demo now requires Python `3.14` and will create/use `.venv` automatically.
 
 ### Manual start
 1. Checkout the project
 2. browse to `/backend/services/`
-3. run: `pip install -r requirements.txt`
-4. choose data backend mode:
+3. create a Python 3.14 virtualenv from the repo root: `python3.14 -m venv .venv && source .venv/bin/activate`
+4. run: `pip install -r requirements.txt`
+5. choose data backend mode:
    - Mock mode (dev/qa): `export DATA_BACKEND_MODE=mock`
    - GCP mode (prod-like): `export DATA_BACKEND_MODE=gcp`
-5. for GCP mode, set:
+6. for GCP mode, set:
    - `export BIGQUERY_PROJECT_ID=<your_project_id>`
    - `export GCS_BUCKET_NAME=<your_bucket_name>`
    - configure ADC (Application Default Credentials)
-6. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
-7. open the app at `http://localhost:8000`
+7. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
+8. open the app at `http://localhost:8000`
 
 Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
 
