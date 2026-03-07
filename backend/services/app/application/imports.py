@@ -128,6 +128,37 @@ class ImportService:
         PubSubService(topic_name=self.settings.import_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "import"})
         return job
 
+    def reconcile_jobs_after_restart(self) -> int:
+        reconciled_count = 0
+        for job in self.repository.list_import_jobs():
+            status = str(job.get("status") or "").lower()
+            if status != JobStatus.STOPPING.value:
+                continue
+
+            progress = job.get("progress") or {}
+            details = dict(progress.get("details") or {})
+            details.pop("stop_requested", None)
+            details["stop_reason"] = details.get("stop_reason") or "Stopped after server restart."
+            stopped = self.repository.update_import_job(
+                job["id"],
+                {
+                    "status": JobStatus.STOPPED.value,
+                    "error": None,
+                    "progress": {
+                        "current": int(progress.get("current", 0) or 0),
+                        "total": int(progress.get("total", 0) or 0),
+                        "pct": float(progress.get("pct", 0.0) or 0.0),
+                        "details": details,
+                    },
+                },
+            )
+            self.repository.record_action("import_job_reconciled_after_restart", "import_job", job["id"], stopped)
+            reconciled_count += 1
+
+        if reconciled_count:
+            self._commit_session()
+        return reconciled_count
+
     def list_jobs(self) -> List[Dict[str, Any]]:
         return self.repository.list_import_jobs()
 

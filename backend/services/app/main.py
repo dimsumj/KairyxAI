@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 
 from app.api.routers import connectors, experiments, exports, health, imports, mappings, predictions
-from app.core.db import init_db
+from app.application.imports import ImportService
+from app.core.db import get_session_factory, init_db
 from app.core.settings import get_settings
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 
 
 def create_app() -> FastAPI:
@@ -27,6 +29,12 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def _startup() -> None:
         init_db()
+        session = get_session_factory()()
+        try:
+            repository = SqlAlchemyControlPlaneRepository(session)
+            ImportService(repository, settings).reconcile_jobs_after_restart()
+        finally:
+            session.close()
 
     @app.get("/")
     def root():
