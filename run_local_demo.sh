@@ -10,6 +10,8 @@ DISPLAY_HOST="${KAIRYX_DISPLAY_HOST:-localhost}"
 
 export DATA_BACKEND_MODE=${DATA_BACKEND_MODE:-mock}
 export PYTHONUNBUFFERED=1
+export CONTROL_PLANE_DATABASE_URL=${CONTROL_PLANE_DATABASE_URL:-sqlite:///$BACKEND_DIR/.kairyx_control_plane.db}
+export KAIRYX_LOCAL_DB_PATH=${KAIRYX_LOCAL_DB_PATH:-$BACKEND_DIR/.kairyx_local.db}
 PYTHON_BIN=${KAIRYX_PYTHON_BIN:-python3.14}
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
@@ -47,6 +49,8 @@ if [[ "$VENV_VERSION" != "3.14" ]]; then
 fi
 
 echo "[KairyxAI] Starting local demo in DATA_BACKEND_MODE=$DATA_BACKEND_MODE using $("$VENV_PYTHON" --version)"
+echo "[KairyxAI] Control plane DB: $CONTROL_PLANE_DATABASE_URL"
+echo "[KairyxAI] Local identity/checkpoint DB: $KAIRYX_LOCAL_DB_PATH"
 
 action_cleanup() {
   echo "[KairyxAI] Stopping local demo..."
