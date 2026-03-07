@@ -10,6 +10,7 @@ from starlette.responses import FileResponse
 from app.api.routers import connectors, experiments, exports, health, imports, mappings, predictions
 from app.application.imports import ImportService
 from app.core.db import get_session_factory, init_db
+from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     def _startup() -> None:
         if getattr(app.state, "restart_reconciliation_complete", False):
             return
+        clear_shutdown_requested()
         init_db()
         session = get_session_factory()()
         try:
@@ -45,6 +47,10 @@ def create_app() -> FastAPI:
         finally:
             session.close()
         app.state.restart_reconciliation_complete = True
+
+    @app.on_event("shutdown")
+    def _shutdown() -> None:
+        mark_shutdown_requested()
 
     @app.get("/")
     def root():

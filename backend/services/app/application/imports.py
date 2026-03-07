@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List
 
 from app.domain.jobs import CheckpointStatus, JobStatus
@@ -120,6 +121,7 @@ class ImportService:
                 "status": JobStatus.QUEUED.value,
                 "spec": {
                     "source_name": source_name,
+                    "display_name": f"{source_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     "connector_type": connector["type"],
                     "start_date": start_date,
                     "end_date": end_date,
