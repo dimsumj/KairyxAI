@@ -1,8 +1,9 @@
+from contextlib import contextmanager
 import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from runtime_paths import default_local_job_store_path, resolve_sqlite_file_path
 
@@ -15,15 +16,23 @@ def _db_path() -> Path:
     return resolve_sqlite_file_path(override or DB_PATH, ensure_parent=True)
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
     db_path = _db_path()
     try:
         conn = sqlite3.connect(db_path)
     except sqlite3.OperationalError as exc:
         raise sqlite3.OperationalError(f"unable to open local SQLite store at {db_path}") from exc
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
