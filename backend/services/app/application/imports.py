@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.domain.jobs import CheckpointStatus, JobStatus
@@ -82,6 +82,7 @@ class ImportService:
         connector_record: Dict[str, Any],
         current_events: int,
         shards_created: int,
+        page_size: int,
     ) -> Dict[str, Any]:
         current_job = self.repository.get_import_job(job_id)
         if current_job is None:
@@ -94,6 +95,8 @@ class ImportService:
                 "connector_type": connector_record["type"],
                 "events_staged": int(current_events),
                 "shards_created": int(shards_created),
+                "page_size": int(page_size),
+                "phase": "staging",
             }
         )
         updated = self.repository.update_import_job(
@@ -101,7 +104,7 @@ class ImportService:
             {
                 "progress": {
                     "current": int(current_events),
-                    "total": max(int(progress.get("total", 0) or 0), int(current_events)),
+                    "total": int(progress.get("total", 0) or 0),
                     "pct": float(progress.get("pct", 0.0) or 0.0),
                     "details": details,
                 }
@@ -109,6 +112,89 @@ class ImportService:
         )
         self._commit_session()
         return updated
+
+    def _update_processing_progress(
+        self,
+        job_id: str,
+        connector_record: Dict[str, Any],
+        total_events: int,
+        processed_manifests: int,
+        total_manifests: int,
+        summary: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        current_job = self.repository.get_import_job(job_id)
+        if current_job is None:
+            raise KeyError(job_id)
+        progress = current_job.get("progress") or {}
+        details = dict(progress.get("details") or {})
+        details.update(
+            {
+                "source": connector_record["name"],
+                "connector_type": connector_record["type"],
+                "phase": "processing",
+                "events_staged": int(total_events),
+                "normalized_events": int(summary.get("raw_normalized_events", 0) or 0),
+                "events_written": int(summary.get("events_staging_written", 0) or 0),
+                "dead_letters_written": int(summary.get("pipeline_dead_letters_written", 0) or 0),
+                "processed_manifests": int(processed_manifests),
+                "total_manifests": int(total_manifests),
+            }
+        )
+        current = int(summary.get("raw_normalized_events", 0) or 0)
+        total = max(0, int(total_events or 0))
+        pct = (current / total * 100.0) if total else 0.0
+        updated = self.repository.update_import_job(
+            job_id,
+            {
+                "progress": {
+                    "current": current,
+                    "total": total,
+                    "pct": pct,
+                    "details": details,
+                }
+            },
+        )
+        self._commit_session()
+        return updated
+
+    def _parse_timestamp(self, value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    def cleanup_expired_jobs(self) -> int:
+        cutoff = datetime.utcnow() - timedelta(days=max(1, int(self.settings.job_retention_days)))
+        removed_count = 0
+        bigquery_service = BigQueryService()
+
+        for job in self.repository.list_import_jobs():
+            status = str(job.get("status") or "").lower()
+            if status not in {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.STOPPED.value}:
+                continue
+            updated_at = self._parse_timestamp(job.get("updated_at"))
+            if updated_at is None or updated_at > cutoff:
+                continue
+
+            try:
+                bigquery_service.delete_data_for_job(job["id"])
+                if self.repository.delete_import_job(job["id"]):
+                    payload = {
+                        "id": job["id"],
+                        "status": job.get("status"),
+                        "cleanup_reason": f"Removed after {self.settings.job_retention_days} day retention window.",
+                        "updated_at": job.get("updated_at"),
+                    }
+                    self.repository.record_action("import_job_retention_deleted", "import_job", job["id"], payload)
+                    self._commit_session()
+                    removed_count += 1
+            except Exception as exc:
+                self.rollback_session()
+                logger.exception("Unable to delete expired import job %s. error=%s", job.get("id"), exc)
+
+        return removed_count
 
     def create_job(self, source_name: str, start_date: str, end_date: str, page_size: int | None = None) -> Dict[str, Any]:
         connector = self.repository.get_connector(source_name)
@@ -269,6 +355,7 @@ class ImportService:
                     connector_record,
                     current_events,
                     shards_created,
+                    page_size,
                 ),
             )
             if staged.get("stopped"):
@@ -315,7 +402,17 @@ class ImportService:
                 return self._mark_stopped(job_id)
             if self.settings.data_backend_mode == "mock":
                 runner = DataflowNormalizationRunner(gcs_service=gcs_service, bigquery_service=BigQueryService())
-                processing_stats = runner.process_notifications(manifests)
+                processing_stats = runner.process_notifications(
+                    manifests,
+                    progress_callback=lambda processed_manifests, total_manifests, summary: self._update_processing_progress(
+                        job_id,
+                        connector_record,
+                        int(staged["events_staged"]),
+                        processed_manifests,
+                        total_manifests,
+                        summary,
+                    ),
+                )
 
             completed = self.repository.update_import_job(
                 job_id,

@@ -151,7 +151,12 @@ class DataflowNormalizationRunner:
         self.bigquery_service.write_pipeline_dead_letters(result["dead_letters"], job_id=manifest["job_id"])
         return result["stats"]
 
-    def process_manifests(self, manifest_payloads: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    def process_manifests(
+        self,
+        manifest_payloads: Iterable[Dict[str, Any]],
+        progress_callback: Optional[callable] = None,
+    ) -> Dict[str, Any]:
+        manifests = list(manifest_payloads)
         summary = {
             "manifests_processed": 0,
             "raw_normalized_events": 0,
@@ -160,7 +165,8 @@ class DataflowNormalizationRunner:
             "flag_counts": {},
             "warehouse_stats": {},
         }
-        for payload in manifest_payloads:
+        total_manifests = len(manifests)
+        for payload in manifests:
             stats = self.process_manifest(payload)
             summary["manifests_processed"] += 1
             summary["raw_normalized_events"] += stats["raw_normalized_events"]
@@ -168,6 +174,8 @@ class DataflowNormalizationRunner:
             summary["pipeline_dead_letters_written"] += stats["pipeline_dead_letters_written"]
             for flag, count in stats["flag_counts"].items():
                 summary["flag_counts"][flag] = summary["flag_counts"].get(flag, 0) + count
+            if callable(progress_callback):
+                progress_callback(summary["manifests_processed"], total_manifests, dict(summary))
         if summary["manifests_processed"] > 0:
             summary["warehouse_stats"] = {
                 "curation": self.bigquery_service.run_events_curation(),
@@ -175,8 +183,15 @@ class DataflowNormalizationRunner:
             }
         return summary
 
-    def process_notifications(self, notifications: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-        return self.process_manifests(_coerce_manifest(notification) for notification in notifications)
+    def process_notifications(
+        self,
+        notifications: Iterable[Dict[str, Any]],
+        progress_callback: Optional[callable] = None,
+    ) -> Dict[str, Any]:
+        return self.process_manifests(
+            (_coerce_manifest(notification) for notification in notifications),
+            progress_callback=progress_callback,
+        )
 
 
 def _load_jsonl(path: str) -> List[Dict[str, Any]]:

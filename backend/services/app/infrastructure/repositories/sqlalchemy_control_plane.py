@@ -143,6 +143,15 @@ class SqlAlchemyControlPlaneRepository:
         self.session.flush()
         return self._job_to_dict(row, "prediction")
 
+    def delete_prediction_job(self, job_id: str) -> bool:
+        row = self.session.get(PredictionJobModel, job_id)
+        if row is None:
+            return False
+        self.session.execute(delete(ExportJobModel).where(ExportJobModel.prediction_job_id == job_id))
+        self.session.delete(row)
+        self.session.flush()
+        return True
+
     def create_export_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         row = ExportJobModel(
             id=payload["id"],

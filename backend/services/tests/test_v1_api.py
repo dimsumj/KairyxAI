@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 import time
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.application.imports import ImportService
 from app.core import db as db_module
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
-from app.infrastructure.db_models import ImportJobModel
+from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 from bigquery_service import BigQueryService
@@ -64,6 +65,16 @@ def test_root_serves_frontend_shell(client):
     assert "text/html" in resp.headers["content-type"]
     assert "window.location.origin" in resp.text
     assert "/api/v1" in resp.text
+
+
+def test_health_reports_local_cache_stats(client):
+    health = client.get("/api/v1/health")
+    assert health.status_code == 200
+    payload = health.json()
+    assert payload["mode"] == "mock"
+    assert payload["local_cache"]["retention_days"] == 7
+    assert payload["local_cache"]["tables"]["events_staging"]["rows"] >= 0
+    assert payload["local_cache"]["tables"]["prediction_results"]["rows"] >= 0
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
@@ -611,6 +622,136 @@ def test_import_failure_marks_job_failed(client, monkeypatch):
     assert payload["progress"]["details"]["failure_reason"] == "Adjust API rate limit exceeded"
 
 
+def test_import_processing_progress_reports_event_counts(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    first_processing_update = threading.Event()
+    release_processing = threading.Event()
+    run_result = {}
+
+    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                },
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 2,
+                    "source_config_id": "Amplitude 1",
+                },
+            ],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(
+                1,
+                2,
+                {
+                    "manifests_processed": 1,
+                    "raw_normalized_events": 1000,
+                    "events_staging_written": 750,
+                    "pipeline_dead_letters_written": 250,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                },
+            )
+            first_processing_update.set()
+            release_processing.wait(timeout=5)
+            progress_callback(
+                2,
+                2,
+                {
+                    "manifests_processed": 2,
+                    "raw_normalized_events": 2000,
+                    "events_staging_written": 1500,
+                    "pipeline_dead_letters_written": 500,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                },
+            )
+        return {
+            "manifests_processed": 2,
+            "raw_normalized_events": 2000,
+            "events_staging_written": 1500,
+            "pipeline_dead_letters_written": 500,
+            "flag_counts": {},
+            "warehouse_stats": {},
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    def run_import_request():
+        with TestClient(client.app) as runner_client:
+            run_result["response"] = runner_client.post(import_job["links"]["self"] + "/run")
+
+    thread = threading.Thread(target=run_import_request)
+    thread.start()
+    assert first_processing_update.wait(timeout=5)
+
+    import_state = client.get(import_job["links"]["self"])
+    assert import_state.status_code == 200
+    payload = import_state.json()
+    assert payload["status"] == "running"
+    assert payload["progress"]["current"] == 1000
+    assert payload["progress"]["total"] == 2000
+    assert payload["progress"]["details"]["phase"] == "processing"
+    assert payload["progress"]["details"]["processed_manifests"] == 1
+    assert payload["progress"]["details"]["total_manifests"] == 2
+
+    release_processing.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert run_result["response"].status_code == 200
+    assert run_result["response"].json()["status"] == "completed"
+
+
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -960,3 +1101,103 @@ def test_restart_discards_running_import_and_keeps_completed_import(client):
         payload = completed_state.json()
         assert payload["status"] == "completed"
         assert payload["progress"]["current"] == 2
+
+
+def test_startup_retention_cleanup_removes_expired_import_and_prediction_cache(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    bigquery_service = BigQueryService()
+    bigquery_service.write_events_staging(
+        [
+            {
+                "job_id": import_job["id"],
+                "job_identifier": import_job["id"],
+                "source": "adjust",
+                "player_id": "player-1",
+                "canonical_user_id": "uid:player-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-01T00:00:00",
+                "event_date": "2026-03-01",
+                "source_config_id": "Adjust Source",
+                "raw_gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                "shard_index": 1,
+                "schema_version": "v1",
+                "event_fingerprint": "fp-1",
+                "data_quality_flags": [],
+            }
+        ],
+        job_id=import_job["id"],
+    )
+    bigquery_service.append_prediction_results(
+        job_id=prediction_job["id"],
+        rows=[
+            {
+                "prediction_job_id": prediction_job["id"],
+                "import_job_id": import_job["id"],
+                "completed_at": "2026-02-01T00:00:00",
+                "user_id": "player-1",
+                "predicted_churn_risk": "high",
+                "churn_reason": "expired",
+                "prediction_source": "local",
+                "suggested_action": "cleanup me",
+            }
+        ],
+    )
+
+    expired_timestamp = datetime.utcnow() - timedelta(days=8)
+    session = db_module.get_session_factory()()
+    try:
+        import_row = session.get(ImportJobModel, import_job["id"])
+        prediction_row = session.get(PredictionJobModel, prediction_job["id"])
+        assert import_row is not None
+        assert prediction_row is not None
+        import_row.status = "completed"
+        import_row.updated_at = expired_timestamp
+        prediction_row.status = "completed"
+        prediction_row.updated_at = expired_timestamp
+        session.commit()
+    finally:
+        session.close()
+
+    restarted_app = create_app()
+    with TestClient(restarted_app) as restarted_client:
+        expired_import = restarted_client.get(import_job["links"]["self"])
+        assert expired_import.status_code == 404
+
+        expired_prediction = restarted_client.get(prediction_job["links"]["self"])
+        assert expired_prediction.status_code == 404
+
+    cleaned_service = BigQueryService()
+    prediction_results = cleaned_service.list_prediction_results(prediction_job["id"])
+    assert prediction_results["total"] == 0
+    if not cleaned_service._table.empty:
+        assert import_job["id"] not in set(cleaned_service._table.get("job_id", []))

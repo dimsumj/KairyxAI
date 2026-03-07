@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.core.settings import get_settings
+from bigquery_service import BigQueryService
 
 
 router = APIRouter(tags=["health"])
@@ -11,8 +12,11 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 def health():
     settings = get_settings()
-    return {
+    payload = {
         "status": "ok",
         "service": settings.app_name,
         "mode": settings.data_backend_mode,
     }
+    if settings.data_backend_mode == "mock":
+        payload["local_cache"] = BigQueryService().get_local_cache_stats()
+    return payload
