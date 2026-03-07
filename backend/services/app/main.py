@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -11,6 +12,9 @@ from app.application.imports import ImportService
 from app.core.db import get_session_factory, init_db
 from app.core.settings import get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -34,7 +38,10 @@ def create_app() -> FastAPI:
         session = get_session_factory()()
         try:
             repository = SqlAlchemyControlPlaneRepository(session)
-            ImportService(repository, settings).reconcile_jobs_after_restart()
+            try:
+                ImportService(repository, settings).reconcile_jobs_after_restart()
+            except Exception:
+                logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
         finally:
             session.close()
         app.state.restart_reconciliation_complete = True

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Dict, List
 
@@ -9,6 +10,9 @@ from gcs_service import GcsService
 from ingestion_service import IngestionService
 from pubsub_service import PubSubService
 from bigquery_service import BigQueryService
+
+
+logger = logging.getLogger(__name__)
 
 
 class ImportService:
@@ -262,11 +266,18 @@ class ImportService:
                 self._resume_mock_job_after_restart(job)
             except Exception as exc:
                 self.rollback_session()
-                self._mark_failed(
-                    job,
-                    f"Import interrupted by server restart: {exc}",
-                    action_type="import_job_failed_after_restart",
-                )
+                try:
+                    self._mark_failed(
+                        job,
+                        f"Import interrupted by server restart: {exc}",
+                        action_type="import_job_failed_after_restart",
+                    )
+                except Exception:
+                    self.rollback_session()
+                    logger.exception(
+                        "Unable to mark import job %s failed during restart reconciliation.",
+                        job["id"],
+                    )
             reconciled_count += 1
 
         return reconciled_count

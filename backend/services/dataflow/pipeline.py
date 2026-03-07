@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import sqlite3
 from typing import Any, Dict, Iterable, List, Optional
 
 from bigquery_service import BigQueryService
@@ -9,6 +11,9 @@ from event_semantic_normalizer import EventSemanticNormalizer
 from gcs_service import GcsService
 from local_job_store import resolve_or_create_canonical_user_id
 from pipeline_models import PIPELINE_SCHEMA_VERSION, build_event_fingerprint, derive_event_date
+
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_manifest(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -52,14 +57,22 @@ class DataflowNormalizationRunner:
             if use_local_identity_store is None
             else bool(use_local_identity_store)
         )
+        self._local_identity_store_degraded = False
 
     def _blob_name_from_gcs_uri(self, gcs_uri: str) -> str:
         return gcs_uri.replace(f"gs://{self.gcs_service.bucket_name}/", "")
 
     def _resolve_canonical_user_id(self, source: str, player_id: Any) -> str:
         player_text = str(player_id or "unknown_user")
-        if self.use_local_identity_store:
-            return resolve_or_create_canonical_user_id(source, player_text)
+        if self.use_local_identity_store and not self._local_identity_store_degraded:
+            try:
+                return resolve_or_create_canonical_user_id(source, player_text)
+            except sqlite3.OperationalError as exc:
+                self._local_identity_store_degraded = True
+                logger.warning(
+                    "Local identity store unavailable during normalization; falling back to deterministic IDs. error=%s",
+                    exc,
+                )
         return f"uid:{player_text}"
 
     def _build_dead_letter_row(self, event: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
