@@ -831,9 +831,13 @@
             function renderImportStatus(job, statusClass) {
                 const status = escapeHtml(job.status || 'Processing');
                 const reason = getImportFailureReason(job);
-                const statusText = reason
-                    ? `<span class="status-label" title="${escapeHtml(reason)}">${status}<span class="status-help" title="${escapeHtml(reason)}" aria-label="Failure reason">?</span></span>`
+                const progressText = getImportProgressText(job);
+                const statusLabel = progressText
+                    ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
+                const statusText = reason
+                    ? `<span class="status-label" title="${escapeHtml(reason)}">${statusLabel}<span class="status-help" title="${escapeHtml(reason)}" aria-label="Failure reason">?</span></span>`
+                    : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
 
@@ -974,9 +978,45 @@
                 }) || null;
             }
 
+            function getLatestCompletedPredictionJob(importJobId, excludeJobId = null) {
+                return cachedPredictionJobs.find((job) => {
+                    if (excludeJobId && String(job.id || '') === String(excludeJobId)) {
+                        return false;
+                    }
+                    return (
+                        String((job.spec || {}).import_job_id || '') === String(importJobId)
+                        && String(job.status || '').toLowerCase() === 'completed'
+                    );
+                }) || null;
+            }
+
             function isPredictionJobActive(job) {
                 const status = String((job && job.status) || '').toLowerCase();
                 return ['queued', 'running', 'stopping'].includes(status);
+            }
+
+            function clearBaselinePredictionRows() {
+                baselinePredictionPlayers = [];
+                baselinePredictionJobId = null;
+                baselinePredictionImportJobId = null;
+            }
+
+            function mergePredictionRows(priorityRows = [], existingRows = []) {
+                const combined = [];
+                const seenUserIds = new Set();
+
+                const appendUniqueRow = (row, index, prefix) => {
+                    const key = String(row.user_id || row.player_id || `${prefix}-${index}`);
+                    if (seenUserIds.has(key)) {
+                        return;
+                    }
+                    seenUserIds.add(key);
+                    combined.push(row);
+                };
+
+                priorityRows.forEach((row, index) => appendUniqueRow(row, index, 'priority'));
+                existingRows.forEach((row, index) => appendUniqueRow(row, index, 'existing'));
+                return combined;
             }
 
             async function fetchPredictionRows(jobId) {
@@ -999,6 +1039,33 @@
                     page += 1;
                 } while (true);
                 return rows;
+            }
+
+            async function loadBaselinePredictionRows(importJobId, excludeJobId = null) {
+                const normalizedImportJobId = String(importJobId || '');
+                if (!normalizedImportJobId) {
+                    clearBaselinePredictionRows();
+                    return [];
+                }
+
+                const latestCompletedJob = getLatestCompletedPredictionJob(normalizedImportJobId, excludeJobId);
+                if (!latestCompletedJob) {
+                    clearBaselinePredictionRows();
+                    baselinePredictionImportJobId = normalizedImportJobId;
+                    return [];
+                }
+
+                if (
+                    baselinePredictionImportJobId === normalizedImportJobId
+                    && baselinePredictionJobId === String(latestCompletedJob.id || '')
+                ) {
+                    return baselinePredictionPlayers;
+                }
+
+                baselinePredictionPlayers = await fetchPredictionRows(latestCompletedJob.id);
+                baselinePredictionImportJobId = normalizedImportJobId;
+                baselinePredictionJobId = String(latestCompletedJob.id || '');
+                return baselinePredictionPlayers;
             }
 
             async function createPredictionRecord(importJobId, predictionMode = 'local') {
@@ -1431,10 +1498,76 @@
             const operatorHubResults = document.getElementById('operator-hub-results');
 
             let allChurnPredictionPlayers = [];
+            let baselinePredictionPlayers = [];
+            let baselinePredictionJobId = null;
+            let baselinePredictionImportJobId = null;
             let currentPage = 1;
             let itemsPerPage = 25;
             let activePredictionJobId = null;
             let predictionStopRequested = false;
+            const ACTIVE_PREDICTION_STORAGE_KEY = 'kairyx.activePredictionJob';
+
+            function getPredictionImportJobId(job) {
+                return String(((job || {}).spec || {}).import_job_id || '');
+            }
+
+            function readPersistedActivePredictionJob() {
+                try {
+                    const raw = window.sessionStorage.getItem(ACTIVE_PREDICTION_STORAGE_KEY);
+                    if (!raw) return null;
+                    const parsed = JSON.parse(raw);
+                    if (!parsed || !parsed.job_id) return null;
+                    return parsed;
+                } catch (error) {
+                    return null;
+                }
+            }
+
+            function persistActivePredictionJob(jobId, importJobId) {
+                if (!jobId || !importJobId) return;
+                try {
+                    window.sessionStorage.setItem(
+                        ACTIVE_PREDICTION_STORAGE_KEY,
+                        JSON.stringify({
+                            job_id: String(jobId),
+                            import_job_id: String(importJobId),
+                        }),
+                    );
+                } catch (error) {
+                    console.warn('Unable to persist active prediction state:', error);
+                }
+            }
+
+            function clearPersistedActivePredictionJob() {
+                try {
+                    window.sessionStorage.removeItem(ACTIVE_PREDICTION_STORAGE_KEY);
+                } catch (error) {
+                    console.warn('Unable to clear active prediction state:', error);
+                }
+            }
+
+            async function getPersistedActivePredictionJob() {
+                const persisted = readPersistedActivePredictionJob();
+                if (!persisted) {
+                    return null;
+                }
+
+                let job = cachedPredictionJobs.find((item) => String(item.id || '') === String(persisted.job_id)) || null;
+                if (!job) {
+                    try {
+                        job = await apiRequest(`/predictions/${encodeURIComponent(persisted.job_id)}`);
+                    } catch (error) {
+                        clearPersistedActivePredictionJob();
+                        return null;
+                    }
+                }
+
+                if (!isPredictionJobActive(job)) {
+                    clearPersistedActivePredictionJob();
+                    return null;
+                }
+                return job;
+            }
 
             function setPredictionActionState(state = 'idle') {
                 if (state === 'starting') {
@@ -1488,6 +1621,58 @@
                 return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)`;
             }
 
+            function formatCount(value) {
+                return Number(value || 0).toLocaleString();
+            }
+
+            function getImportProgressText(job) {
+                const rawStatus = String(job.raw_status || '').toLowerCase();
+                if (!['queued', 'running', 'stopping'].includes(rawStatus)) {
+                    return '';
+                }
+
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const phase = String(details.phase || '').toLowerCase();
+                const current = Number(
+                    progress.current
+                    || details.normalized_events
+                    || details.events_staged
+                    || 0
+                );
+                const total = Number(progress.total || 0);
+                const processedManifests = Number(details.processed_manifests || 0);
+                const totalManifests = Number(details.total_manifests || details.shards_created || 0);
+                const pageSize = Number(details.page_size || 0);
+
+                if (phase === 'processing') {
+                    let label = total > 0
+                        ? `${formatCount(current)}/${formatCount(total)} events`
+                        : `${formatCount(current)} events`;
+                    if (totalManifests > 0) {
+                        label += ` · ${formatCount(processedManifests)}/${formatCount(totalManifests)} shards`;
+                    }
+                    return label;
+                }
+
+                if (current > 0) {
+                    let label = total > 0 && total !== current
+                        ? `${formatCount(current)}/${formatCount(total)} events`
+                        : `${formatCount(current)} events`;
+                    if (total <= 0 && pageSize > 0) {
+                        label = current <= pageSize
+                            ? `${formatCount(current)}/${formatCount(pageSize)} events`
+                            : `${formatCount(current)} events · pages of ${formatCount(pageSize)}`;
+                    }
+                    if (totalManifests > 0) {
+                        label += ` · ${formatCount(totalManifests)} shard${totalManifests === 1 ? '' : 's'}`;
+                    }
+                    return `${label} staged`;
+                }
+
+                return '';
+            }
+
             function setCampaignExportStatus(message = '', isError = false) {
                 campaignExportStatus.textContent = message;
                 campaignExportStatus.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
@@ -1513,6 +1698,8 @@
                     const jobs = cachedImports;
                     const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
+                    const persistedActiveJob = await getPersistedActivePredictionJob();
+                    const persistedImportJobId = getPredictionImportJobId(persistedActiveJob) || String((readPersistedActivePredictionJob() || {}).import_job_id || '');
                     datasetSelect.innerHTML = ''; // Clear loading message
 
                     if (readyJobs.length > 0) {
@@ -1522,20 +1709,21 @@
                             option.textContent = job.name;
                             datasetSelect.appendChild(option);
                         });
-                        const activePredictionJob = cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
-                        const activeImportJobId = String(((activePredictionJob || {}).spec || {}).import_job_id || '');
-                        const selectedDataset = readyJobs.some(job => job.id === previousSelection)
-                            ? previousSelection
-                            : (readyJobs.some(job => job.id === activeImportJobId) ? activeImportJobId : readyJobs[0].id);
+                        const activePredictionJob = persistedActiveJob || cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
+                        const activeImportJobId = getPredictionImportJobId(activePredictionJob) || persistedImportJobId;
+                        const selectedDataset = readyJobs.some(job => job.id === activeImportJobId)
+                            ? activeImportJobId
+                            : (readyJobs.some(job => job.id === previousSelection) ? previousSelection : readyJobs[0].id);
                         datasetSelect.value = selectedDataset;
-                        const selectedActiveJob = [activePredictionJob, getLatestPredictionJob(selectedDataset, false)]
+                        const selectedActiveJob = [persistedActiveJob, activePredictionJob, getLatestPredictionJob(selectedDataset, false)]
                             .find((job) => job && isPredictionJobActive(job) && String((job.spec || {}).import_job_id || '') === String(selectedDataset))
                             || null;
 
                         if (selectedActiveJob) {
                             activePredictionJobId = selectedActiveJob.id;
+                            persistActivePredictionJob(activePredictionJobId, selectedDataset);
                             predictionStopRequested = String(selectedActiveJob.status || '').toLowerCase() === 'stopping';
-                            await syncPredictionRows(activePredictionJobId);
+                            await syncPredictionRows(activePredictionJobId, selectedDataset);
                             renderPredictionProgress({
                                 status: mapPredictionStatus(selectedActiveJob.status),
                                 progress: selectedActiveJob.progress,
@@ -1553,6 +1741,8 @@
                         // Do not auto-run predictions on tab switch/load.
                         // User must explicitly click Predict Churn.
                         activePredictionJobId = null;
+                        clearPersistedActivePredictionJob();
+                        clearBaselinePredictionRows();
                         allChurnPredictionPlayers = [];
                         renderChurnTable();
                         setPredictionActionState('idle');
@@ -1563,6 +1753,8 @@
                     } else {
                         datasetSelect.innerHTML = '<option>No processed datasets available</option>';
                         activePredictionJobId = null;
+                        clearPersistedActivePredictionJob();
+                        clearBaselinePredictionRows();
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
@@ -1570,6 +1762,7 @@
                         setCampaignExportStatus('');
                     }
                 } catch (error) {
+                    clearBaselinePredictionRows();
                     datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
                     setPredictionActionState('idle');
                     predictChurnBtn.disabled = true;
@@ -1579,11 +1772,16 @@
                 }
             }
 
-            async function syncPredictionRows(jobId) {
+            async function syncPredictionRows(jobId, importJobId = '') {
                 if (!jobId) {
                     return;
                 }
-                allChurnPredictionPlayers = await fetchPredictionRows(jobId);
+                const normalizedImportJobId = String(importJobId || datasetSelect.value || '');
+                const [activeRows, existingRows] = await Promise.all([
+                    fetchPredictionRows(jobId),
+                    loadBaselinePredictionRows(normalizedImportJobId, jobId),
+                ]);
+                allChurnPredictionPlayers = mergePredictionRows(activeRows, existingRows);
                 if (activePredictionJobId === jobId) {
                     currentPage = 1;
                 }
@@ -1611,28 +1809,30 @@
 
             async function fetchAndRenderPredictions(importJobId, forceRecalculate = false) {
                 if (!importJobId) {
+                    clearBaselinePredictionRows();
                     allChurnPredictionPlayers = [];
                     renderChurnTable();
                     return;
                 }
 
-                operatorHubResults.innerHTML = '<tr><td colspan="7" style="text-align: center;">Starting prediction...</td></tr>';
                 setPredictionActionState('starting');
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = getPredictionStartStatusMessage();
-                allChurnPredictionPlayers = [];
                 currentPage = 1;
-                renderChurnTable('Waiting for prediction results...');
 
                 let predictionJob = null;
                 try {
                     await ensureHealthState();
                     await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
+                    const existingRows = await loadBaselinePredictionRows(importJobId);
+                    allChurnPredictionPlayers = [...existingRows];
+                    renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
                     predictionJob = !forceRecalculate ? getLatestPredictionJob(importJobId, false) : null;
                     if (!predictionJob) {
                         predictionJob = await createPredictionRecord(importJobId, 'local');
                     }
                     activePredictionJobId = predictionJob.id;
+                    persistActivePredictionJob(activePredictionJobId, importJobId);
                     predictionStopRequested = String(predictionJob.status || '').toLowerCase() === 'stopping';
                     renderPredictionProgress({
                         status: mapPredictionStatus(predictionJob.status),
@@ -1646,7 +1846,10 @@
 
                     while (activePredictionJobId === predictionJob.id) {
                         predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
-                        await syncPredictionRows(activePredictionJobId);
+                        if (isPredictionJobActive(predictionJob)) {
+                            persistActivePredictionJob(predictionJob.id, importJobId);
+                        }
+                        await syncPredictionRows(activePredictionJobId, importJobId);
                         renderPredictionProgress({
                             status: mapPredictionStatus(predictionJob.status),
                             progress: predictionJob.progress,
@@ -1664,7 +1867,7 @@
                     }
 
                     predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
-                    await syncPredictionRows(activePredictionJobId);
+                    await syncPredictionRows(activePredictionJobId, importJobId);
                     if (predictionJob.status === 'failed') {
                         throw new Error(predictionJob.error || 'Prediction failed.');
                     }
@@ -1682,6 +1885,9 @@
                         throw new Error('Prediction job is still queued. Start a worker or use mock mode for local execution.');
                     }
 
+                    baselinePredictionPlayers = [...allChurnPredictionPlayers];
+                    baselinePredictionImportJobId = String(importJobId);
+                    baselinePredictionJobId = String(predictionJob.id || '');
                     if (allChurnPredictionPlayers.length === 0) {
                         renderChurnTable();
                     }
@@ -1695,6 +1901,7 @@
                     const finalStatus = String((predictionJob || {}).status || '').toLowerCase();
                     if (!predictionJob || ['completed', 'failed', 'stopped'].includes(finalStatus)) {
                         activePredictionJobId = null;
+                        clearPersistedActivePredictionJob();
                         predictionStopRequested = false;
                         setPredictionActionState('idle');
                     }
@@ -1808,6 +2015,7 @@
 
             datasetSelect.addEventListener('change', () => {
                 // Selection alone should not trigger prediction.
+                clearBaselinePredictionRows();
                 allChurnPredictionPlayers = [];
                 renderChurnTable();
                 predictionStopRequested = false;
@@ -2262,6 +2470,15 @@
                             details: `${cachedPredictionJobs.length} job(s)`,
                         },
                     };
+                    if (health.local_cache && health.local_cache.tables) {
+                        const predictionRows = Number((((health.local_cache || {}).tables || {}).prediction_results || {}).rows || 0);
+                        const stagingRows = Number((((health.local_cache || {}).tables || {}).events_staging || {}).rows || 0);
+                        const retentionDays = Number((health.local_cache || {}).retention_days || 7);
+                        statuses.local_cache = {
+                            status: 'ok',
+                            details: `${stagingRows.toLocaleString()} staging row(s) · ${predictionRows.toLocaleString()} prediction row(s) · ${retentionDays}-day retention`,
+                        };
+                    }
                     serviceStatusListDiv.innerHTML = ''; // Clear loading message
 
                     for (const serviceKey in statuses) {

@@ -21,6 +21,7 @@ class Settings:
     worker_page_size: int = 1000
     export_batch_size: int = 500
     export_retry_attempts: int = 3
+    job_retention_days: int = 7
 
 
 def get_settings() -> Settings:
@@ -41,4 +42,5 @@ def get_settings() -> Settings:
         worker_page_size=max(1, int(os.getenv("WORKER_PAGE_SIZE", "1000"))),
         export_batch_size=max(1, int(os.getenv("EXPORT_BATCH_SIZE", "500"))),
         export_retry_attempts=max(1, int(os.getenv("EXPORT_RETRY_ATTEMPTS", "3"))),
+        job_retention_days=max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
     )

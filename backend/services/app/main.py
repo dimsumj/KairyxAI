@@ -9,6 +9,7 @@ from starlette.responses import FileResponse
 
 from app.api.routers import connectors, experiments, exports, health, imports, mappings, predictions
 from app.application.imports import ImportService
+from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
@@ -42,6 +43,8 @@ def create_app() -> FastAPI:
             repository = SqlAlchemyControlPlaneRepository(session)
             try:
                 ImportService(repository, settings).reconcile_jobs_after_restart()
+                ImportService(repository, settings).cleanup_expired_jobs()
+                PredictionService(repository, settings).cleanup_expired_jobs()
             except Exception:
                 logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
         finally:

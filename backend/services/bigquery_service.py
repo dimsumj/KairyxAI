@@ -3,6 +3,7 @@
 import os
 import json
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
@@ -866,6 +867,32 @@ class BigQueryService:
         if not prepared_rows:
             return
         self._append_rows(prepared_rows, target="prediction_results")
+
+    def delete_prediction_results(self, job_id: str) -> None:
+        self.replace_prediction_results(job_id=job_id, rows=[])
+
+    def get_local_cache_stats(self) -> Dict[str, Any]:
+        if self.mode != "mock":
+            return {}
+
+        def _table_stats(table: pd.DataFrame, cache_path: str) -> Dict[str, Any]:
+            path = Path(cache_path)
+            return {
+                "rows": int(len(table.index)) if table is not None else 0,
+                "cache_path": str(path),
+                "size_bytes": int(path.stat().st_size) if path.exists() else 0,
+            }
+
+        return {
+            "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
+            "tables": {
+                "events_staging": _table_stats(self._table, self._cache_path),
+                "events_curated": _table_stats(self._curated_table, self._curated_cache_path),
+                "player_latest_state": _table_stats(self._player_latest_state_table, self._player_latest_state_cache_path),
+                "pipeline_dead_letters": _table_stats(self._dead_letter_table, self._dead_letter_cache_path),
+                "prediction_results": _table_stats(self._prediction_results_table, self._prediction_results_cache_path),
+            },
+        }
 
     def _sort_prediction_result_dicts(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         def _sort_key(item: Dict[str, Any]):

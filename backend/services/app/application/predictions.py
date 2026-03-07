@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
 from app.domain.jobs import JobStatus
@@ -129,6 +129,45 @@ class PredictionService:
     def list_results(self, job_id: str, page: int, page_size: int) -> Dict[str, Any]:
         service = BigQueryService()
         return service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
+
+    def _parse_timestamp(self, value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    def cleanup_expired_jobs(self) -> int:
+        cutoff = datetime.utcnow() - timedelta(days=max(1, int(self.settings.job_retention_days)))
+        removed_count = 0
+        bigquery_service = BigQueryService()
+
+        for job in self.repository.list_prediction_jobs():
+            status = str(job.get("status") or "").lower()
+            if status not in {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.STOPPED.value}:
+                continue
+            updated_at = self._parse_timestamp(job.get("updated_at"))
+            if updated_at is None or updated_at > cutoff:
+                continue
+
+            try:
+                bigquery_service.delete_prediction_results(job["id"])
+                if self.repository.delete_prediction_job(job["id"]):
+                    payload = {
+                        "id": job["id"],
+                        "status": job.get("status"),
+                        "cleanup_reason": f"Removed after {self.settings.job_retention_days} day retention window.",
+                        "updated_at": job.get("updated_at"),
+                    }
+                    self.repository.record_action("prediction_job_retention_deleted", "prediction_job", job["id"], payload)
+                    self._commit_session()
+                    removed_count += 1
+            except Exception as exc:
+                self.rollback_session()
+                logger.exception("Unable to delete expired prediction job %s. error=%s", job.get("id"), exc)
+
+        return removed_count
 
     def stop_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_prediction_job(job_id)
