@@ -10,3 +10,6 @@ google-cloud-storage
 google-cloud-pubsub
 pytest
 httpx
+sqlalchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.2

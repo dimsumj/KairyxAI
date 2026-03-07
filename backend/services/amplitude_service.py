@@ -76,3 +76,35 @@ class AmplitudeService:
         except Exception as err:
             print(f"An other error occurred: {err}")
             raise
+
+    def iter_export_event_pages(self, start_date: str, end_date: str, page_size: int = 1000):
+        """
+        Streams Amplitude export data and yields bounded pages without materializing
+        the full payload in memory first.
+        """
+        print(f"Streaming data export from {start_date} to {end_date} in pages of {page_size}...")
+        params = {
+            "start": f"{start_date}T00",
+            "end": f"{end_date}T23",
+        }
+        response = requests.get(
+            self.API_URL,
+            params=params,
+            auth=(self.api_key, self.secret_key),
+            stream=True,
+        )
+        response.raise_for_status()
+
+        page = []
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            for filename in archive.namelist():
+                with gzip.open(archive.open(filename), "rt") as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        page.append(json.loads(line))
+                        if len(page) >= max(1, int(page_size)):
+                            yield page
+                            page = []
+        if page:
+            yield page

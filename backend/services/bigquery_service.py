@@ -84,6 +84,10 @@ class BigQueryService:
             "BIGQUERY_PIPELINE_DEAD_LETTERS_TABLE_ID",
             f"{project_id}.{dataset_id}.pipeline_dead_letters",
         )
+        self._prediction_results_table_id = os.getenv(
+            "BIGQUERY_PREDICTION_RESULTS_TABLE_ID",
+            f"{project_id}.{dataset_id}.prediction_results",
+        )
 
         self._bigquery = bigquery
         self._client = bigquery.Client(project=project_id)
@@ -93,10 +97,12 @@ class BigQueryService:
         self._curated_cache_path = ".cache/events_curated.parquet"
         self._player_latest_state_cache_path = ".cache/player_latest_state.parquet"
         self._dead_letter_cache_path = ".cache/pipeline_dead_letters.parquet"
+        self._prediction_results_cache_path = ".cache/prediction_results.parquet"
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)
         self._dead_letter_table = self._load_mock_table(self._dead_letter_cache_path)
+        self._prediction_results_table = self._load_mock_table(self._prediction_results_cache_path)
         os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
 
     def _load_mock_table(self, cache_path: str) -> pd.DataFrame:
@@ -216,6 +222,11 @@ class BigQueryService:
                 "table_attr": "_dead_letter_table",
                 "cache_path": getattr(self, "_dead_letter_cache_path", ""),
                 "table_id": getattr(self, "_dead_letter_table_id", ""),
+            },
+            "prediction_results": {
+                "table_attr": "_prediction_results_table",
+                "cache_path": getattr(self, "_prediction_results_cache_path", ""),
+                "table_id": getattr(self, "_prediction_results_table_id", ""),
             },
         }
         if target not in mapping:
@@ -803,6 +814,97 @@ class BigQueryService:
 
         rows = table.head(max(1, int(limit))).to_dict(orient="records")
         return rows
+
+    def replace_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):
+        resolved_job_id = str(job_id)
+        prepared_rows = []
+        for row in rows:
+            row_copy = dict(row)
+            row_copy.setdefault("prediction_job_id", resolved_job_id)
+            prepared_rows.append(row_copy)
+
+        if self.mode == "gcp":
+            job_config = self._bigquery.QueryJobConfig(
+                query_parameters=[
+                    self._bigquery.ScalarQueryParameter("job_id", "STRING", resolved_job_id)
+                ]
+            )
+            try:
+                self._client.query(
+                    f"DELETE FROM `{self._prediction_results_table_id}` WHERE CAST(prediction_job_id AS STRING) = @job_id",
+                    job_config=job_config,
+                ).result()
+            except Exception:
+                pass
+            self._append_rows(prepared_rows, target="prediction_results")
+            return
+
+        table = self._prediction_results_table.copy()
+        if not table.empty and "prediction_job_id" in table.columns:
+            table = table[
+                table["prediction_job_id"].map(
+                    lambda value: str(value) != resolved_job_id if pd.notna(value) else True
+                )
+            ].copy()
+        if prepared_rows:
+            new_rows = pd.DataFrame(prepared_rows)
+            if table.empty:
+                table = new_rows
+            else:
+                table = pd.concat([table, new_rows], ignore_index=True)
+        self._prediction_results_table = table
+        self._persist_mock_table(table, self._prediction_results_cache_path)
+
+    def list_prediction_results(self, job_id: str, page: int = 1, page_size: int = 100) -> Dict[str, Any]:
+        page = max(1, int(page))
+        page_size = max(1, int(page_size))
+        offset = (page - 1) * page_size
+
+        if self.mode == "gcp":
+            job_config = self._bigquery.QueryJobConfig(
+                query_parameters=[
+                    self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id))
+                ]
+            )
+            count_query = (
+                f"SELECT COUNT(*) AS total FROM `{self._prediction_results_table_id}` "
+                "WHERE CAST(prediction_job_id AS STRING) = @job_id"
+            )
+            row_query = (
+                f"SELECT * FROM `{self._prediction_results_table_id}` "
+                "WHERE CAST(prediction_job_id AS STRING) = @job_id "
+                f"LIMIT {page_size} OFFSET {offset}"
+            )
+            total = int(next(iter(self._client.query(count_query, job_config=job_config).result()))["total"])
+            items = [self._deserialize_prediction_row(dict(row.items())) for row in self._client.query(row_query, job_config=job_config).result()]
+            return {"page": page, "page_size": page_size, "total": total, "items": items}
+
+        if self._prediction_results_table.empty:
+            return {"page": page, "page_size": page_size, "total": 0, "items": []}
+        table = self._prediction_results_table.copy()
+        if "prediction_job_id" not in table.columns:
+            return {"page": page, "page_size": page_size, "total": 0, "items": []}
+        table = table[
+            table["prediction_job_id"].map(lambda value: str(value) == str(job_id) if pd.notna(value) else False)
+        ].copy()
+        if table.empty:
+            return {"page": page, "page_size": page_size, "total": 0, "items": []}
+        total = len(table)
+        items = [self._deserialize_prediction_row(row) for row in table.iloc[offset: offset + page_size].to_dict(orient="records")]
+        return {"page": page, "page_size": page_size, "total": total, "items": items}
+
+    def _deserialize_prediction_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        parsed = dict(row)
+        for key, value in list(parsed.items()):
+            if not isinstance(value, str):
+                continue
+            if not value.startswith("{") and not value.startswith("["):
+                continue
+            try:
+                parsed[key] = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        return parsed
 
     def delete_data_for_job(self, job_identifier: str):
         if self.mode == "gcp":

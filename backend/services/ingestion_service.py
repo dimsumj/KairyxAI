@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Iterable, List
 from datetime import datetime
 
 from gcs_service import GcsService
@@ -77,6 +77,42 @@ class IngestionService:
         self._record_dead_letter(start_date, end_date, str(last_error))
         raise RuntimeError(f"Ingestion failed after retries: {last_error}")
 
+    def _iter_event_pages(self, start_date: str, end_date: str) -> Iterable[List[Dict[str, Any]]]:
+        page_size = self.local_shard_event_count
+        if hasattr(self.connector, "iter_event_pages"):
+            try:
+                yielded = False
+                for page in self.connector.iter_event_pages(start_date, end_date, page_size=page_size):
+                    yielded = True
+                    if page:
+                        yield page
+                if yielded:
+                    return
+            except TypeError:
+                pass
+
+        if hasattr(self.connector, "fetch_events_page"):
+            cursor = None
+            while True:
+                page = self.connector.fetch_events_page(
+                    start_date,
+                    end_date,
+                    cursor=cursor,
+                    page_size=page_size,
+                )
+                events = page.get("events") or []
+                if not events:
+                    break
+                yield events
+                if not page.get("has_more"):
+                    break
+                cursor = page.get("next_cursor")
+            return
+
+        raw_events = self._fetch_events_with_retry(start_date, end_date)
+        for chunk in self._chunk_events(raw_events):
+            yield chunk
+
     def _chunk_events(self, raw_events):
         if self.gcs_service.mode != "mock":
             return [raw_events]
@@ -109,48 +145,45 @@ class IngestionService:
         shard metadata without publishing queue notifications.
         """
         print(f"Fetching events from {self.connector_type} for {start_date} to {end_date}...")
-        raw_events = self._fetch_events_with_retry(start_date, end_date)
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         resolved_job_id = job_id or f"{self.connector_type}_{start_date}_{end_date}_{timestamp}"
         shard_manifests = []
+        total_events = 0
 
-        if raw_events:
-            event_shards = self._chunk_events(raw_events)
-            for index, shard_events in enumerate(event_shards, start=1):
-                blob_name = (
-                    f"raw_events/{self.connector_type}/{start_date}_to_{end_date}/"
-                    f"{timestamp}/part-{index:05d}.jsonl"
-                )
-                gcs_path = self.gcs_service.upload_raw_events(shard_events, blob_name)
-                manifest = ShardManifest(
-                    job_id=resolved_job_id,
-                    source=self.connector_type,
-                    gcs_uri=gcs_path,
-                    event_count=len(shard_events),
-                    start_date=start_date,
-                    end_date=end_date,
-                    shard_index=index,
-                    source_config_id=self.source_config_id,
-                )
-                manifest_dict = manifest.to_dict()
-                self.staged_shards.append(manifest_dict)
-                shard_manifests.append(manifest_dict)
-                self._save_checkpoint(manifest_dict, publish_status="staged")
+        for index, shard_events in enumerate(self._iter_event_pages(start_date, end_date), start=1):
+            total_events += len(shard_events)
+            blob_name = (
+                f"raw/source={self.connector_type}/job={resolved_job_id}/"
+                f"part-{index:05d}.jsonl"
+            )
+            gcs_path = self.gcs_service.upload_raw_events(shard_events, blob_name)
+            manifest = ShardManifest(
+                job_id=resolved_job_id,
+                source=self.connector_type,
+                gcs_uri=gcs_path,
+                event_count=len(shard_events),
+                start_date=start_date,
+                end_date=end_date,
+                shard_index=index,
+                source_config_id=self.source_config_id,
+            )
+            manifest_dict = manifest.to_dict()
+            self.staged_shards.append(manifest_dict)
+            shard_manifests.append(manifest_dict)
+            self._save_checkpoint(manifest_dict, publish_status="staged")
+
+        if shard_manifests:
             return {
                 "job_id": resolved_job_id,
                 "source": self.connector_type,
                 "shards_created": len(shard_manifests),
-                "events_staged": len(raw_events),
-                "last_checkpoint": (
-                    {
-                        "gcs_uri": shard_manifests[-1]["gcs_uri"],
-                        "event_count": shard_manifests[-1]["event_count"],
-                        "start_date": start_date,
-                        "end_date": end_date,
-                    }
-                    if shard_manifests
-                    else None
-                ),
+                "events_staged": total_events,
+                "last_checkpoint": {
+                    "gcs_uri": shard_manifests[-1]["gcs_uri"],
+                    "event_count": shard_manifests[-1]["event_count"],
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
                 "shard_manifests": shard_manifests,
             }
 
