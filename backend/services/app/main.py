@@ -70,7 +70,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def root_health():
-        return health.health()
+        session = get_session_factory()()
+        try:
+            repository = SqlAlchemyControlPlaneRepository(session)
+            return health.health(repository=repository)
+        finally:
+            session.close()
 
     app.include_router(health.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)

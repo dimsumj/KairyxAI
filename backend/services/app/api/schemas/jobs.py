@@ -10,6 +10,7 @@ def build_job_response(job: Dict[str, Any], *, base_path: str, extra_links: Dict
     if extra_links:
         links.update(extra_links)
     progress = job.get("progress") or {}
+    details = progress.get("details") or {}
     return JobResponse(
         id=job["id"],
         type=job["type"],
@@ -20,9 +21,12 @@ def build_job_response(job: Dict[str, Any], *, base_path: str, extra_links: Dict
             current=int(progress.get("current", 0) or 0),
             total=int(progress.get("total", 0) or 0),
             pct=float(progress.get("pct", 0.0) or 0.0),
-            details=progress.get("details") or {},
+            details=details,
         ),
         error=job.get("error"),
         links=links,
         spec=job.get("spec") or {},
+        quality_report=details.get("quality_report") or {},
+        checkpoint_state=details.get("checkpoint_state") or {},
+        mapping_coverage=float(details.get("mapping_coverage") or 0.0),
     )

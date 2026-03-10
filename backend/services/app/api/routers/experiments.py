@@ -8,6 +8,7 @@ from app.api.schemas.experiments import (
     ExperimentDecisionResponse,
     ExperimentEventPage,
     ExperimentLifecycleRequest,
+    ExperimentOutcomeIngestRequest,
 )
 from app.application.experiments import ExperimentConfigService
 from app.core.deps import get_experiment_service
@@ -61,6 +62,15 @@ def get_experiment_exposures(experiment_id: str, service: ExperimentConfigServic
 @router.get("/{experiment_id}/outcomes", response_model=ExperimentEventPage)
 def get_experiment_outcomes(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return {"items": service.list_outcomes(experiment_id)}
+
+
+@router.post("/{experiment_id}/outcomes:ingest")
+def ingest_experiment_outcomes(
+    experiment_id: str,
+    request: ExperimentOutcomeIngestRequest,
+    service: ExperimentConfigService = Depends(get_experiment_service),
+):
+    return service.ingest_outcomes(experiment_id, [item.model_dump() for item in request.outcomes])
 
 
 @router.post("/{experiment_id}/decision", response_model=ExperimentDecisionResponse)

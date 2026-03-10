@@ -10,13 +10,17 @@ class JobType(str, Enum):
 
 
 class JobStatus(str, Enum):
+    CREATED = "created"
     QUEUED = "queued"
+    READY = "ready"
     RUNNING = "running"
     AWAITING_MAPPING = "awaiting_mapping"
+    PAUSED = "paused"
     STOPPING = "stopping"
     STOPPED = "stopped"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class CheckpointStatus(str, Enum):

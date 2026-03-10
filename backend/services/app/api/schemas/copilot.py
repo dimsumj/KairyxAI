@@ -29,8 +29,12 @@ class CopilotReportRequest(BaseModel):
 
 class CopilotResponse(BaseModel):
     conclusion: str
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
     key_evidence: List[Dict[str, Any]] = Field(default_factory=list)
     impact_scope: Dict[str, Any] = Field(default_factory=dict)
+    recommended_action: Dict[str, Any] = Field(default_factory=dict)
     suggested_action: Dict[str, Any] = Field(default_factory=dict)
     confidence: str = "medium"
+    metric_window: str = "7d"
+    risk_notes: List[str] = Field(default_factory=list)
     methodology: Dict[str, Any] = Field(default_factory=dict)

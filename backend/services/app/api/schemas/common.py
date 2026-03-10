@@ -22,6 +22,9 @@ class JobResponse(BaseModel):
     error: Optional[str] = None
     links: Dict[str, str] = Field(default_factory=dict)
     spec: Dict[str, Any] = Field(default_factory=dict)
+    quality_report: Dict[str, Any] = Field(default_factory=dict)
+    checkpoint_state: Dict[str, Any] = Field(default_factory=dict)
+    mapping_coverage: float = 0.0
 
 
 class PaginatedResponse(BaseModel):

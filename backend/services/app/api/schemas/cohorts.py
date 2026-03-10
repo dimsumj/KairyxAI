@@ -27,12 +27,15 @@ class CohortResponse(BaseModel):
     refresh_mode: str
     owner: str
     version: int
+    version_id: int
     member_count: int = 0
     last_refreshed_at: str | None = None
     definition: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
     preview_members: List[Dict[str, Any]] = Field(default_factory=list)
     delta: Dict[str, int] = Field(default_factory=dict)
+    refresh_policy: Dict[str, Any] = Field(default_factory=dict)
+    activation_preflight: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 
@@ -41,4 +44,8 @@ class CohortMemberPage(BaseModel):
     page: int
     page_size: int
     total: int
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CohortVersionListResponse(BaseModel):
     items: List[Dict[str, Any]] = Field(default_factory=list)

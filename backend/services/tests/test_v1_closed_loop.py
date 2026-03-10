@@ -212,39 +212,221 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert run.json()["triggered"] == 1
     assert run.json()["success"] == 1
 
+    pre_exposures = client.get("/api/v1/experiments/churn_rescue_v1/exposures")
+    assert pre_exposures.status_code == 200
+    assert pre_exposures.json()["items"] == []
+
+    scheduled = client.post(
+        "/api/v1/orchestrator/run-due",
+        json={"reference_time": "2026-03-10T10:00:00", "limit_per_workflow": 5},
+    )
+    assert scheduled.status_code == 200
+    assert len(scheduled.json()["items"]) == 1
+    assert scheduled.json()["items"][0]["success"] == 1
+
+    duplicate_run = client.post(
+        "/api/v1/orchestrator/run-due",
+        json={"reference_time": "2026-03-10T12:00:00", "limit_per_workflow": 5},
+    )
+    assert duplicate_run.status_code == 200
+    assert duplicate_run.json()["items"] == []
+
     executions = client.get(f"/api/v1/workflows/{workflow_id}/executions")
     assert executions.status_code == 200
     assert len(executions.json()["items"]) >= 1
-
-    summary = client.get("/api/v1/experiments/churn_rescue_v1/summary")
-    assert summary.status_code == 200
-    assert summary.json()["decision"] in {"winner", "neutral", "inconclusive", "invalid"}
-    assert summary.json()["total_exposures"] >= 1
 
     exposures = client.get("/api/v1/experiments/churn_rescue_v1/exposures")
     assert exposures.status_code == 200
     assert len(exposures.json()["items"]) >= 1
 
+    exposure_item = exposures.json()["items"][0]
+    ingest = client.post(
+        "/api/v1/experiments/churn_rescue_v1/outcomes:ingest",
+        json={
+            "outcomes": [
+                {
+                    "workflow_id": workflow_id,
+                    "cohort_id": cohort_id,
+                    "experiment_id": "churn_rescue_v1",
+                    "user_id": exposure_item["user_id"],
+                    "group": exposure_item.get("group") or "treatment",
+                    "action_execution_id": exposure_item.get("action_execution_id"),
+                    "occurred_at": "2026-03-10T11:00:00",
+                    "outcome_name": "returned",
+                    "source": "internal_writeback",
+                    "metadata": {"channel": "push_notification"},
+                }
+            ]
+        },
+    )
+    assert ingest.status_code == 200
+    assert ingest.json()["ingested"] == 1
+
     outcomes = client.get("/api/v1/experiments/churn_rescue_v1/outcomes")
     assert outcomes.status_code == 200
     assert len(outcomes.json()["items"]) >= 1
 
+    summary = client.get("/api/v1/experiments/churn_rescue_v1/summary")
+    assert summary.status_code == 200
+    assert summary.json()["decision"] in {"winner", "neutral", "inconclusive", "invalid"}
+    assert summary.json()["sample_size"] >= 1
+    assert summary.json()["srm_status"] in {"ok", "detected"}
+    assert summary.json()["decision_reason"]
+
     decision = client.post("/api/v1/experiments/churn_rescue_v1/decision", json={"decided_by": "tester"})
     assert decision.status_code == 200
     assert decision.json()["next_step"]
+    assert decision.json()["decision_reason"]
+
+    counters = client.get(f"/api/v1/workflows/{workflow_id}/policy-counters")
+    assert counters.status_code == 200
+    assert counters.json()["policy_state"]
+    assert counters.json()["budget_state"][0]["consumed"] >= 1
 
     copilot_query = client.post("/api/v1/copilot/query", json={"question": "how many high risk users do we have in 7d?"})
     assert copilot_query.status_code == 200
     assert "conclusion" in copilot_query.json()
+    assert "evidence" in copilot_query.json()
+    assert "recommended_action" in copilot_query.json()
 
     copilot_explain = client.post("/api/v1/copilot/explain", json={"metric_id": "active_users", "time_window": "7d"})
     assert copilot_explain.status_code == 200
     assert "key_evidence" in copilot_explain.json()
+    assert copilot_explain.json()["metric_window"] == "7d"
 
     copilot_recommend = client.post("/api/v1/copilot/recommend", json={"metric_context": {"metric_id": "high_risk_users"}})
     assert copilot_recommend.status_code == 200
-    assert copilot_recommend.json()["suggested_action"]["cohort_draft"]["member_count"] >= 0
+    assert copilot_recommend.json()["recommended_action"]["cohort_draft"]["member_count"] >= 0
 
     copilot_report = client.post("/api/v1/copilot/report", json={"report_type": "daily", "time_window": "7d"})
     assert copilot_report.status_code == 200
     assert copilot_report.json()["methodology"]["report_type"] == "daily"
+    assert len(copilot_report.json()["evidence"]) == 3
+
+    health_after = client.get("/api/v1/health")
+    assert health_after.status_code == 200
+    assert "operational_metrics" in health_after.json()
+
+
+def test_import_quality_resume_and_replay(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    mapping_resp = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id", "event_time": "timestamp"}},
+    )
+    assert mapping_resp.status_code == 200
+    assert mapping_resp.json()["required_coverage"] < 95.0
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    blocked = client.post(import_job["links"]["self"] + "/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    quality = client.get(import_job["links"]["self"] + "/quality")
+    assert quality.status_code == 200
+    assert quality.json()["mapping_coverage"] < 95.0
+    assert quality.json()["checkpoint_state"]["total"] == 0
+
+    mapping_fix = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id", "event_name": "event_name", "event_time": "timestamp"}},
+    )
+    assert mapping_fix.status_code == 200
+    assert mapping_fix.json()["required_coverage"] == 100.0
+
+    resumed = client.post(import_job["links"]["self"] + "/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["quality_report"]["required_mapping_coverage"] == 100.0
+
+    service = get_shared_bigquery_service()
+    service.write_pipeline_dead_letters(
+        [
+            {
+                "job_id": import_job["id"],
+                "normalized_event": {
+                    "job_id": import_job["id"],
+                    "job_identifier": import_job["id"],
+                    "source": "adjust",
+                    "player_id": "replay_u_1",
+                    "canonical_user_id": "replay_u_1",
+                    "event_type": "session_start",
+                    "event_time": "2026-03-10T10:30:00",
+                    "event_fingerprint": "fp_replay_u_1",
+                    "data_quality_flags": [],
+                },
+            }
+        ],
+        job_id=import_job["id"],
+    )
+    replay = client.post(import_job["links"]["self"] + "/replay")
+    assert replay.status_code == 200
+    assert replay.json()["replayed_rows"] == 1
+
+
+def test_cohort_lifecycle_and_failed_daily_refresh_auto_pause(client, monkeypatch):
+    _seed_mock_warehouse()
+
+    cohort = client.post(
+        "/api/v1/cohorts",
+        json={
+            "name": "phase2_daily_cohort",
+            "type": "sql",
+            "definition": {"sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"},
+            "refresh_mode": "daily",
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    versions = client.get(f"/api/v1/cohorts/{cohort_id}/versions")
+    assert versions.status_code == 200
+    assert len(versions.json()["items"]) == 1
+
+    rollback = client.post(f"/api/v1/cohorts/{cohort_id}/rollback?version=1")
+    assert rollback.status_code == 200
+    assert rollback.json()["version_id"] == 2
+
+    archived = client.post(f"/api/v1/cohorts/{cohort_id}/archive")
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "archived"
+
+    restored = client.post(f"/api/v1/cohorts/{cohort_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "draft"
+
+    service = get_shared_bigquery_service()
+
+    def fail_query(*args, **kwargs):
+        raise RuntimeError("sql workspace unavailable")
+
+    monkeypatch.setattr(service, "run_readonly_query", fail_query)
+
+    first_refresh = client.post(f"/api/v1/cohorts/{cohort_id}/refresh")
+    assert first_refresh.status_code == 409
+
+    second_refresh = client.post(f"/api/v1/cohorts/{cohort_id}/refresh")
+    assert second_refresh.status_code == 409
+
+    final_state = client.get(f"/api/v1/cohorts/{cohort_id}")
+    assert final_state.status_code == 200
+    assert final_state.json()["status"] == "paused"

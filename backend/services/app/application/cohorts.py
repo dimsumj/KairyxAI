@@ -12,6 +12,11 @@ class CohortService:
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
+    def _commit_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.commit()
+
     def create_cohort(
         self,
         *,
@@ -26,24 +31,32 @@ class CohortService:
         if any(item.get("name") == name for item in self.repository.list_resources("cohort")):
             raise ValueError(f"Cohort '{name}' already exists.")
         cohort_id = f"cohort_{uuid.uuid4().hex[:20]}"
+        refresh_policy = self._build_refresh_policy(refresh_mode)
         payload = {
             "cohort_id": cohort_id,
             "name": name,
             "type": str(cohort_type).lower(),
             "status": "draft",
             "refresh_mode": refresh_mode,
+            "refresh_policy": refresh_policy,
             "owner": owner,
             "version": 1,
+            "version_id": 1,
             "definition": definition,
             "tags": list(tags or []),
             "member_count": 0,
             "preview_members": [],
             "latest_members": [],
+            "latest_snapshot_id": None,
             "delta": {"added": 0, "removed": 0, "unchanged": 0},
             "last_refreshed_at": None,
+            "last_refresh_status": "not_started",
+            "last_refresh_error": None,
+            "refresh_failures": 0,
+            "activation_preflight": self._build_activation_preflight([], False, None),
         }
         record = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=name, payload=payload)
-        self.repository.create_resource_version("cohort", cohort_id, version=1, payload=payload)
+        self._create_definition_version(cohort_id, 1, payload)
         self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_created", payload=payload)
         self.repository.record_action("cohort_created", "cohort", cohort_id, payload)
         refreshed = self.refresh_cohort(cohort_id, force=True)
@@ -57,6 +70,12 @@ class CohortService:
     def get_cohort(self, cohort_id: str) -> Dict[str, Any] | None:
         record = self.repository.get_resource("cohort", cohort_id)
         return self._to_response(record) if record else None
+
+    def list_versions(self, cohort_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource("cohort", cohort_id)
+        if record is None:
+            raise KeyError(cohort_id)
+        return {"items": self.repository.list_resource_versions("cohort", cohort_id)}
 
     def list_members(self, cohort_id: str, *, page: int = 1, page_size: int = 100) -> Dict[str, Any]:
         cohort = self.get_cohort(cohort_id)
@@ -79,24 +98,67 @@ class CohortService:
             raise KeyError(cohort_id)
         payload = dict(record.get("payload") or {})
         previous_members = list(payload.get("latest_members") or [])
-        members = self._materialize_members(payload.get("type") or "rule", payload.get("definition") or {})
+        attempts = 2 if str(payload.get("refresh_mode") or "").lower() == "daily" else 1
+        last_error: Exception | None = None
+        members: List[Dict[str, Any]] = []
+        for _ in range(attempts):
+            try:
+                members = self._materialize_members(payload.get("type") or "rule", payload.get("definition") or {})
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            failures = int(payload.get("refresh_failures") or 0) + 1
+            payload["refresh_failures"] = failures
+            payload["last_refresh_status"] = "failed"
+            payload["last_refresh_error"] = str(last_error)
+            if failures >= int((payload.get("refresh_policy") or {}).get("auto_pause_after_failures") or 2):
+                payload["status"] = "paused"
+            payload["activation_preflight"] = self._build_activation_preflight(
+                previous_members,
+                False,
+                payload.get("latest_snapshot_id"),
+                refresh_error=str(last_error),
+            )
+            saved = self.repository.upsert_resource(
+                "cohort",
+                cohort_id,
+                status=payload.get("status") or "draft",
+                name=payload.get("name"),
+                payload=payload,
+            )
+            self.repository.record_resource_event(
+                "cohort",
+                cohort_id,
+                event_type="cohort_refresh_failed",
+                payload={"error": str(last_error), "refresh_failures": failures, "force": force},
+            )
+            self._commit_session()
+            raise ValueError(str(last_error)) from last_error
+
         previous_ids = {self._member_identity(item) for item in previous_members if self._member_identity(item)}
         current_ids = {self._member_identity(item) for item in members if self._member_identity(item)}
+        snapshot_id = self._persist_snapshot(cohort_id, payload, members)
         payload["latest_members"] = members
         payload["preview_members"] = members[:20]
         payload["member_count"] = len(members)
+        payload["latest_snapshot_id"] = snapshot_id
         payload["last_refreshed_at"] = datetime.utcnow().isoformat()
+        payload["last_refresh_status"] = "success"
+        payload["last_refresh_error"] = None
+        payload["refresh_failures"] = 0
         payload["delta"] = {
             "added": len(current_ids - previous_ids),
             "removed": len(previous_ids - current_ids),
             "unchanged": len(current_ids & previous_ids),
         }
-        if members and str(record.get("status") or "") not in {"active", "paused"}:
-            payload["status"] = "ready"
-        elif not members and str(record.get("status") or "") == "active":
-            payload["status"] = "draft"
+        payload["activation_preflight"] = self._build_activation_preflight(members, True, snapshot_id)
+        if str(payload.get("status") or "") == "archived":
+            next_status = "archived"
         else:
-            payload["status"] = str(record.get("status") or payload.get("status") or "draft")
+            next_status = str(payload.get("status") or "draft")
+        payload["status"] = next_status
         saved = self.repository.upsert_resource(
             "cohort",
             cohort_id,
@@ -108,7 +170,7 @@ class CohortService:
             "cohort",
             cohort_id,
             event_type="cohort_refreshed",
-            payload={"member_count": len(members), "delta": payload["delta"], "force": force},
+            payload={"member_count": len(members), "delta": payload["delta"], "snapshot_id": snapshot_id, "force": force},
         )
         return self._to_response(saved)
 
@@ -117,35 +179,193 @@ class CohortService:
         if record is None:
             raise KeyError(cohort_id)
         payload = dict(record.get("payload") or {})
-        if not payload.get("latest_members"):
-            payload = self.refresh_cohort(cohort_id, force=force)
-        record = self.repository.get_resource("cohort", cohort_id)
-        payload = dict(record.get("payload") or {})
-        members = list(payload.get("latest_members") or [])
-        if not members:
-            raise ValueError("Empty cohorts cannot be activated.")
-        if any(not item.get("canonical_user_id") for item in members):
-            raise ValueError("Every cohort member must resolve to canonical_user_id before activation.")
+        if not payload.get("latest_snapshot_id") or force:
+            self.refresh_cohort(cohort_id, force=force)
+            record = self.repository.get_resource("cohort", cohort_id)
+            payload = dict((record or {}).get("payload") or {})
+        preflight = payload.get("activation_preflight") or self._build_activation_preflight(
+            payload.get("latest_members") or [],
+            str(payload.get("last_refresh_status") or "") == "success",
+            payload.get("latest_snapshot_id"),
+        )
+        if not preflight.get("eligible"):
+            self.repository.record_resource_event(
+                "cohort",
+                cohort_id,
+                event_type="cohort_activation_blocked",
+                payload={"activation_preflight": preflight},
+            )
+            self._commit_session()
+            raise ValueError("Cohort activation preflight failed.")
         payload["status"] = "active"
+        payload["activation_preflight"] = preflight
         saved = self.repository.upsert_resource("cohort", cohort_id, status="active", name=payload.get("name"), payload=payload)
-        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_activated", payload={"member_count": len(members)})
+        self.repository.record_resource_event(
+            "cohort",
+            cohort_id,
+            event_type="cohort_activation_audit",
+            payload={"activation_preflight": preflight, "snapshot_id": payload.get("latest_snapshot_id")},
+        )
+        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_activated", payload={"member_count": payload.get("member_count", 0)})
         return self._to_response(saved)
 
     def pause_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        return self._set_status(cohort_id, "paused", "cohort_paused")
+
+    def archive_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        return self._set_status(cohort_id, "archived", "cohort_archived", extra_payload={"archived_at": datetime.utcnow().isoformat()})
+
+    def restore_cohort(self, cohort_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("cohort", cohort_id)
         if record is None:
             raise KeyError(cohort_id)
         payload = dict(record.get("payload") or {})
-        payload["status"] = "paused"
-        saved = self.repository.upsert_resource("cohort", cohort_id, status="paused", name=payload.get("name"), payload=payload)
-        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_paused", payload={"status": "paused"})
+        if str(payload.get("status") or "") != "archived":
+            raise ValueError("Only archived cohorts can be restored.")
+        payload["archived_at"] = None
+        payload["status"] = "draft"
+        saved = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=payload.get("name"), payload=payload)
+        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_restored", payload={"status": "draft"})
         return self._to_response(saved)
+
+    def rollback_cohort(self, cohort_id: str, version: int) -> Dict[str, Any]:
+        record = self.repository.get_resource("cohort", cohort_id)
+        if record is None:
+            raise KeyError(cohort_id)
+        version_items = self.repository.list_resource_versions("cohort", cohort_id)
+        selected = next((item for item in version_items if int(item.get("version") or 0) == int(version)), None)
+        if selected is None:
+            raise KeyError(version)
+        current_payload = dict(record.get("payload") or {})
+        version_payload = dict(selected.get("payload") or {})
+        next_version = 1 + max((int(item.get("version") or 0) for item in version_items), default=0)
+        current_payload["definition"] = version_payload.get("definition") or {}
+        current_payload["type"] = version_payload.get("type") or current_payload.get("type") or "rule"
+        current_payload["tags"] = list(version_payload.get("tags") or current_payload.get("tags") or [])
+        current_payload["refresh_mode"] = version_payload.get("refresh_mode") or current_payload.get("refresh_mode") or "manual"
+        current_payload["refresh_policy"] = version_payload.get("refresh_policy") or self._build_refresh_policy(current_payload["refresh_mode"])
+        current_payload["version"] = next_version
+        current_payload["version_id"] = next_version
+        saved = self.repository.upsert_resource(
+            "cohort",
+            cohort_id,
+            status=str(current_payload.get("status") or "draft"),
+            name=current_payload.get("name"),
+            payload=current_payload,
+        )
+        self._create_definition_version(cohort_id, next_version, current_payload)
+        self.repository.record_resource_event(
+            "cohort",
+            cohort_id,
+            event_type="cohort_rolled_back",
+            payload={"rolled_back_to_version": int(version), "new_version": next_version},
+        )
+        return self.refresh_cohort(cohort_id, force=True)
+
+    def _set_status(
+        self,
+        cohort_id: str,
+        status: str,
+        event_type: str,
+        *,
+        extra_payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        record = self.repository.get_resource("cohort", cohort_id)
+        if record is None:
+            raise KeyError(cohort_id)
+        payload = dict(record.get("payload") or {})
+        payload["status"] = status
+        if extra_payload:
+            payload.update(extra_payload)
+        saved = self.repository.upsert_resource("cohort", cohort_id, status=status, name=payload.get("name"), payload=payload)
+        self.repository.record_resource_event("cohort", cohort_id, event_type=event_type, payload={"status": status, **(extra_payload or {})})
+        return self._to_response(saved)
+
+    def _create_definition_version(self, cohort_id: str, version: int, payload: Dict[str, Any]) -> None:
+        version_payload = {
+            "cohort_id": cohort_id,
+            "version": int(version),
+            "version_id": int(version),
+            "name": payload.get("name"),
+            "type": payload.get("type"),
+            "definition": payload.get("definition") or {},
+            "refresh_mode": payload.get("refresh_mode"),
+            "refresh_policy": payload.get("refresh_policy") or {},
+            "tags": list(payload.get("tags") or []),
+        }
+        self.repository.create_resource_version("cohort", cohort_id, version=int(version), payload=version_payload)
+
+    def _persist_snapshot(self, cohort_id: str, payload: Dict[str, Any], members: List[Dict[str, Any]]) -> str:
+        snapshot_id = f"csnap_{uuid.uuid4().hex[:20]}"
+        snapshot_payload = {
+            "snapshot_id": snapshot_id,
+            "cohort_id": cohort_id,
+            "version_id": int(payload.get("version_id") or payload.get("version") or 1),
+            "member_count": len(members),
+            "members": members,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource("cohort_snapshot", snapshot_id, status="ready", name=payload.get("name"), payload=snapshot_payload)
+        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_snapshot_created", payload={"snapshot_id": snapshot_id, "member_count": len(members)})
+        return snapshot_id
 
     def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        payload.setdefault("version", int(payload.get("version_id") or payload.get("version") or 1))
+        payload.setdefault("version_id", int(payload.get("version") or payload.get("version_id") or 1))
+        payload.setdefault("refresh_policy", self._build_refresh_policy(payload.get("refresh_mode") or "manual"))
+        payload.setdefault(
+            "activation_preflight",
+            self._build_activation_preflight(
+                payload.get("latest_members") or [],
+                str(payload.get("last_refresh_status") or "") == "success",
+                payload.get("latest_snapshot_id"),
+            ),
+        )
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
         return payload
+
+    @staticmethod
+    def _build_refresh_policy(refresh_mode: str) -> Dict[str, Any]:
+        resolved = str(refresh_mode or "manual").lower()
+        return {
+            "mode": resolved,
+            "retry_limit": 1 if resolved == "daily" else 0,
+            "auto_pause_after_failures": 2,
+        }
+
+    def _build_activation_preflight(
+        self,
+        members: List[Dict[str, Any]],
+        refresh_success: bool,
+        snapshot_id: str | None,
+        *,
+        refresh_error: str | None = None,
+    ) -> Dict[str, Any]:
+        total = len(members)
+        resolved = sum(1 for item in members if item.get("canonical_user_id"))
+        checks = {
+            "non_empty": total > 0,
+            "canonical_user_id_coverage": 100.0 if total and resolved == total else (round((resolved / total) * 100.0, 2) if total else 0.0),
+            "refresh_success": bool(refresh_success),
+            "snapshot_ready": bool(snapshot_id),
+        }
+        reasons = []
+        if not checks["non_empty"]:
+            reasons.append("empty_cohort")
+        if checks["canonical_user_id_coverage"] < 100.0:
+            reasons.append("canonical_user_id_incomplete")
+        if not checks["refresh_success"]:
+            reasons.append(refresh_error or "refresh_not_successful")
+        if not checks["snapshot_ready"]:
+            reasons.append("snapshot_missing")
+        return {
+            "eligible": not reasons,
+            "checks": checks,
+            "reasons": reasons,
+            "snapshot_id": snapshot_id,
+        }
 
     @staticmethod
     def _member_identity(item: Dict[str, Any]) -> str | None:
@@ -157,11 +377,7 @@ class CohortService:
 
     def _normalize_member(self, row: Dict[str, Any]) -> Dict[str, Any]:
         member = dict(row)
-        canonical = (
-            member.get("canonical_user_id")
-            or member.get("user_id")
-            or member.get("player_id")
-        )
+        canonical = member.get("canonical_user_id") or member.get("user_id") or member.get("player_id")
         if canonical is not None:
             member["canonical_user_id"] = str(canonical)
         return member

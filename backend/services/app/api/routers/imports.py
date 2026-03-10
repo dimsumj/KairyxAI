@@ -101,3 +101,30 @@ def get_import_checkpoints(job_id: str, service: ImportService = Depends(get_imp
     if job is None:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
     return {"items": service.repository.list_checkpoints(job_id)}
+
+
+@router.get("/{job_id}/quality")
+def get_import_quality(job_id: str, service: ImportService = Depends(get_import_service)):
+    try:
+        return service.get_quality(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
+@router.post("/{job_id}/resume")
+def resume_import(job_id: str, service: ImportService = Depends(get_import_service)):
+    try:
+        job = service.resume_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+
+
+@router.post("/{job_id}/replay")
+def replay_import(job_id: str, service: ImportService = Depends(get_import_service)):
+    try:
+        return service.replay_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")

@@ -11,6 +11,9 @@ class WorkflowCreateRequest(BaseModel):
     schedule: Dict[str, Any] = Field(default_factory=lambda: {"type": "daily"})
     action: Dict[str, Any] = Field(default_factory=dict)
     policy: Dict[str, Any] = Field(default_factory=dict)
+    budget_policy: Dict[str, Any] = Field(default_factory=dict)
+    trigger: Dict[str, Any] | None = None
+    channel_config: Dict[str, Any] | None = None
     experiment_id: str | None = None
     requires_confirmation: bool = False
 
@@ -19,6 +22,12 @@ class WorkflowRunRequest(BaseModel):
     limit: int = 20
     confirm: bool = False
     sandbox: bool = True
+    reference_time: str | None = None
+
+
+class OrchestratorRunRequest(BaseModel):
+    reference_time: str | None = None
+    limit_per_workflow: int = 100
 
 
 class WorkflowResponse(BaseModel):
@@ -28,6 +37,11 @@ class WorkflowResponse(BaseModel):
     current_version: int
     published_version: int | None = None
     definition: Dict[str, Any] = Field(default_factory=dict)
+    trigger: Dict[str, Any] = Field(default_factory=dict)
+    policy: Dict[str, Any] = Field(default_factory=dict)
+    budget_policy: Dict[str, Any] = Field(default_factory=dict)
+    experiment_id: str | None = None
+    channel_config: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 
