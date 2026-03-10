@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 import pytest
+import requests
 
 from app.core import db as db_module
+from app.core.db import session_scope
 from app.main import create_app
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 
 
@@ -101,6 +104,21 @@ def _seed_mock_warehouse():
     )
 
 
+def _seed_prediction_job(prediction_job_id: str = "pred_job_1") -> None:
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        if repository.get_prediction_job(prediction_job_id) is None:
+            repository.create_prediction_job(
+                {
+                    "id": prediction_job_id,
+                    "import_job_id": "imp_seeded",
+                    "status": "completed",
+                    "spec": {"prediction_mode": "local"},
+                    "progress": {"current": 3, "total": 3, "pct": 100.0, "details": {}},
+                }
+            )
+
+
 def test_mapping_versioning_and_rollback(client):
     save_resp = client.put(
         "/api/v1/mappings/Adjust%20Source",
@@ -135,6 +153,7 @@ def test_mapping_versioning_and_rollback(client):
 
 def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     _seed_mock_warehouse()
+    _seed_prediction_job()
 
     health = client.get("/api/v1/health")
     assert health.status_code == 200
@@ -235,32 +254,54 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert executions.status_code == 200
     assert len(executions.json()["items"]) >= 1
 
+    deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries")
+    assert deliveries.status_code == 200
+    assert len(deliveries.json()["items"]) >= 2
+    scheduled_delivery = next(item for item in deliveries.json()["items"] if not item.get("sandbox"))
+
     exposures = client.get("/api/v1/experiments/churn_rescue_v1/exposures")
     assert exposures.status_code == 200
     assert len(exposures.json()["items"]) >= 1
 
-    exposure_item = exposures.json()["items"][0]
-    ingest = client.post(
-        "/api/v1/experiments/churn_rescue_v1/outcomes:ingest",
+    callback = client.post(
+        "/api/v1/activation/callbacks/simulator",
         json={
-            "outcomes": [
+            "callbacks": [
                 {
                     "workflow_id": workflow_id,
                     "cohort_id": cohort_id,
-                    "experiment_id": "churn_rescue_v1",
-                    "user_id": exposure_item["user_id"],
-                    "group": exposure_item.get("group") or "treatment",
-                    "action_execution_id": exposure_item.get("action_execution_id"),
+                    "delivery_id": scheduled_delivery["delivery_id"],
+                    "action_execution_id": scheduled_delivery["action_execution_id"],
+                    "user_id": scheduled_delivery["user_id"],
                     "occurred_at": "2026-03-10T11:00:00",
-                    "outcome_name": "returned",
-                    "source": "internal_writeback",
+                    "event_id": "evt_delivery_returned_1",
+                    "event_type": "returned",
                     "metadata": {"channel": "push_notification"},
                 }
             ]
         },
     )
-    assert ingest.status_code == 200
-    assert ingest.json()["ingested"] == 1
+    assert callback.status_code == 200
+    assert callback.json()["ingested"] == 1
+    assert callback.json()["outcomes_ingested"] == 1
+
+    duplicate_callback = client.post(
+        "/api/v1/activation/callbacks/simulator",
+        json={
+            "callbacks": [
+                {
+                    "delivery_id": scheduled_delivery["delivery_id"],
+                    "action_execution_id": scheduled_delivery["action_execution_id"],
+                    "user_id": scheduled_delivery["user_id"],
+                    "occurred_at": "2026-03-10T11:00:00",
+                    "event_id": "evt_delivery_returned_1",
+                    "event_type": "returned",
+                }
+            ]
+        },
+    )
+    assert duplicate_callback.status_code == 200
+    assert duplicate_callback.json()["duplicates"] == 1
 
     outcomes = client.get("/api/v1/experiments/churn_rescue_v1/outcomes")
     assert outcomes.status_code == 200
@@ -283,16 +324,40 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert counters.json()["policy_state"]
     assert counters.json()["budget_state"][0]["consumed"] >= 1
 
+    cohort_metrics = client.get(f"/api/v1/cohorts/{cohort_id}/metrics")
+    assert cohort_metrics.status_code == 200
+    assert cohort_metrics.json()["member_count"] == 1
+    assert cohort_metrics.json()["delivered_users"] == 1
+    assert cohort_metrics.json()["conversion_users"] == 1
+
+    compare_versions = client.get(f"/api/v1/cohorts/{cohort_id}/compare?base_version=1&target_version=1")
+    assert compare_versions.status_code == 200
+    assert compare_versions.json()["base_member_count"] == compare_versions.json()["target_member_count"] == 1
+
     copilot_query = client.post("/api/v1/copilot/query", json={"question": "how many high risk users do we have in 7d?"})
     assert copilot_query.status_code == 200
     assert "conclusion" in copilot_query.json()
     assert "evidence" in copilot_query.json()
     assert "recommended_action" in copilot_query.json()
+    assert copilot_query.json()["query_id"]
+    assert copilot_query.json()["audit_id"]
 
-    copilot_explain = client.post("/api/v1/copilot/explain", json={"metric_id": "active_users", "time_window": "7d"})
+    query_log = client.get(f"/api/v1/copilot/query-logs/{copilot_query.json()['query_id']}", headers={"x-actor-role": "analyst"})
+    assert query_log.status_code == 200
+    assert query_log.json()["query_id"] == copilot_query.json()["query_id"]
+
+    copilot_explain = client.post(
+        "/api/v1/copilot/explain",
+        json={"metric_id": "promo_views", "time_window": "7d", "dimensions": ["campaign", "country", "platform"]},
+    )
     assert copilot_explain.status_code == 200
     assert "key_evidence" in copilot_explain.json()
     assert copilot_explain.json()["metric_window"] == "7d"
+    assert copilot_explain.json()["anomaly_id"]
+
+    anomalies = client.get("/api/v1/copilot/anomalies", headers={"x-actor-role": "analyst"})
+    assert anomalies.status_code == 200
+    assert len(anomalies.json()["items"]) >= 1
 
     copilot_recommend = client.post("/api/v1/copilot/recommend", json={"metric_context": {"metric_id": "high_risk_users"}})
     assert copilot_recommend.status_code == 200
@@ -302,6 +367,11 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert copilot_report.status_code == 200
     assert copilot_report.json()["methodology"]["report_type"] == "daily"
     assert len(copilot_report.json()["evidence"]) == 3
+    assert copilot_report.json()["report_id"]
+
+    reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
+    assert reports.status_code == 200
+    assert len(reports.json()["items"]) >= 1
 
     health_after = client.get("/api/v1/health")
     assert health_after.status_code == 200
@@ -345,6 +415,7 @@ def test_import_quality_resume_and_replay(client):
     assert quality.status_code == 200
     assert quality.json()["mapping_coverage"] < 95.0
     assert quality.json()["checkpoint_state"]["total"] == 0
+    assert quality.json()["audit_id"]
 
     mapping_fix = client.put(
         "/api/v1/mappings/Adjust%20Source",
@@ -357,6 +428,12 @@ def test_import_quality_resume_and_replay(client):
     assert resumed.status_code == 200
     assert resumed.json()["status"] == "completed"
     assert resumed.json()["quality_report"]["required_mapping_coverage"] == 100.0
+    assert resumed.json()["audit_id"]
+
+    quality_after_resume = client.get(import_job["links"]["self"] + "/quality")
+    assert quality_after_resume.status_code == 200
+    assert quality_after_resume.json()["identity_summary"]["source_of_truth_matrix"]
+    assert quality_after_resume.json()["quality_report"]["canonical_user_id_coverage"] >= 90.0
 
     service = get_shared_bigquery_service()
     service.write_pipeline_dead_letters(
@@ -378,9 +455,83 @@ def test_import_quality_resume_and_replay(client):
         ],
         job_id=import_job["id"],
     )
-    replay = client.post(import_job["links"]["self"] + "/replay")
+    replay = client.post(import_job["links"]["self"] + "/replay", headers={"x-actor-role": "operator"})
     assert replay.status_code == 200
     assert replay.json()["replayed_rows"] == 1
+    assert replay.json()["audit_id"]
+
+    replay_denied = client.post(import_job["links"]["self"] + "/replay", headers={"x-actor-role": "analyst"})
+    assert replay_denied.status_code == 403
+
+    delete_denied = client.delete(import_job["links"]["self"], headers={"x-actor-role": "operator"})
+    assert delete_denied.status_code == 403
+
+
+def test_export_diagnostics_retry_and_rbac(client, monkeypatch):
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    create_denied = client.post(
+        "/api/v1/exports",
+        json={
+            "prediction_job_id": "pred_job_1",
+            "provider": "webhook",
+            "channel": "email",
+            "audience_name": "churn_rescue",
+            "webhook_url": "https://example.test/export",
+        },
+        headers={"x-actor-role": "analyst"},
+    )
+    assert create_denied.status_code == 403
+
+    created = client.post(
+        "/api/v1/exports",
+        json={
+            "prediction_job_id": "pred_job_1",
+            "provider": "webhook",
+            "channel": "email",
+            "audience_name": "churn_rescue",
+            "webhook_url": "https://example.test/export",
+        },
+        headers={"x-actor-role": "operator"},
+    )
+    assert created.status_code == 201
+    export_job_id = created.json()["id"]
+
+    class FakeResponse:
+        def __init__(self, status_code: int, text: str = "ok"):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(self.text)
+
+    monkeypatch.setattr("app.application.exports.requests.post", lambda *args, **kwargs: FakeResponse(500, "webhook failed"))
+    failed_run = client.post(f"/api/v1/exports/{export_job_id}/run", headers={"x-actor-role": "operator"})
+    assert failed_run.status_code == 200
+    assert failed_run.json()["status"] == "failed"
+
+    diagnostics = client.get(f"/api/v1/exports/{export_job_id}/diagnostics", headers={"x-actor-role": "operator"})
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["items"][0]["status"] == "failed"
+
+    monkeypatch.setattr("app.application.exports.requests.post", lambda *args, **kwargs: FakeResponse(202, "accepted"))
+    retried = client.post(f"/api/v1/exports/{export_job_id}/retry", headers={"x-actor-role": "operator"})
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "completed"
+
+    diagnostics_after_retry = client.get(f"/api/v1/exports/{export_job_id}/diagnostics", headers={"x-actor-role": "operator"})
+    assert diagnostics_after_retry.status_code == 200
+    assert len(diagnostics_after_retry.json()["items"]) == 2
+    assert any(item["status"] == "completed" for item in diagnostics_after_retry.json()["items"])
+
+    query_denied = client.post(
+        "/api/v1/copilot/query",
+        json={"question": "how many high risk users do we have?"},
+        headers={"x-actor-role": "operator"},
+    )
+    assert query_denied.status_code == 403
 
 
 def test_cohort_lifecycle_and_failed_daily_refresh_auto_pause(client, monkeypatch):

@@ -121,6 +121,16 @@ class WorkflowService:
             raise KeyError(workflow_id)
         return [item.get("payload") or {} for item in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500)]
 
+    def list_deliveries(self, workflow_id: str) -> List[Dict[str, Any]]:
+        if self.get_workflow(workflow_id) is None:
+            raise KeyError(workflow_id)
+        items = []
+        for record in self.repository.list_resources("workflow_delivery"):
+            payload = record.get("payload") or {}
+            if str(payload.get("workflow_id") or "") == workflow_id:
+                items.append(payload)
+        return items
+
     def get_policy_counters(self, workflow_id: str) -> Dict[str, Any]:
         if self.get_workflow(workflow_id) is None:
             raise KeyError(workflow_id)
@@ -138,6 +148,108 @@ class WorkflowService:
             "workflow_id": workflow_id,
             "policy_state": policy_items,
             "budget_state": budget_items,
+        }
+
+    def ingest_delivery_callback(self, provider: str, callbacks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        ingested = 0
+        duplicates = 0
+        outcomes_ingested = 0
+        items = []
+        for callback in callbacks:
+            event_type = str(
+                callback.get("event_type")
+                or callback.get("status")
+                or callback.get("outcome_name")
+                or "delivered"
+            ).lower()
+            callback_id = self._callback_id(provider, callback, event_type)
+            if self.repository.get_resource("provider_callback", callback_id) is not None:
+                duplicates += 1
+                items.append({"callback_id": callback_id, "status": "duplicate"})
+                continue
+
+            delivery = self._find_delivery_for_callback(callback)
+            occurred_at = str(callback.get("occurred_at") or datetime.utcnow().isoformat())
+            callback_payload = {
+                **callback,
+                "callback_id": callback_id,
+                "provider": provider,
+                "event_type": event_type,
+                "occurred_at": occurred_at,
+            }
+            self.repository.upsert_resource(
+                "provider_callback",
+                callback_id,
+                status="ingested",
+                name=provider,
+                payload=callback_payload,
+            )
+            self.repository.record_action("provider_callback_ingested", "provider_callback", callback_id, callback_payload)
+            ingested += 1
+
+            if delivery is None:
+                items.append({"callback_id": callback_id, "status": "unmatched"})
+                continue
+
+            delivery_payload = dict(delivery.get("payload") or {})
+            delivery_payload["callback_count"] = int(delivery_payload.get("callback_count") or 0) + 1
+            delivery_payload["last_callback_at"] = occurred_at
+            delivery_payload["last_provider_event"] = event_type
+            delivery_payload["provider_callback_status"] = str(callback.get("status") or event_type)
+            if event_type in {"opened", "clicked", "returned", "converted"}:
+                delivery_payload["delivery_status"] = "converted" if event_type in {"returned", "converted"} else event_type
+            elif event_type in {"bounced", "failed", "dropped"}:
+                delivery_payload["delivery_status"] = "failed"
+                delivery_payload["failure_reason"] = "provider_error"
+            self.repository.upsert_resource(
+                "workflow_delivery",
+                str(delivery_payload.get("delivery_id") or delivery.get("resource_id")),
+                status=str(delivery_payload.get("delivery_status") or "delivered"),
+                name=delivery_payload.get("workflow_id"),
+                payload=delivery_payload,
+            )
+            workflow_id = str(delivery_payload.get("workflow_id") or "")
+            if workflow_id:
+                self.repository.record_resource_event(
+                    "workflow",
+                    workflow_id,
+                    event_type="action_delivery_callback",
+                    payload={**callback_payload, "workflow_id": workflow_id, "delivery_id": delivery_payload.get("delivery_id")},
+                )
+
+            outcome_name = self._callback_outcome_name(event_type, callback)
+            experiment_id = delivery_payload.get("experiment_id")
+            if experiment_id and outcome_name is not None and not bool(delivery_payload.get("sandbox")):
+                self.experiments.record_outcome(
+                    str(experiment_id),
+                    {
+                        "workflow_id": delivery_payload.get("workflow_id"),
+                        "cohort_id": delivery_payload.get("cohort_id"),
+                        "experiment_id": experiment_id,
+                        "user_id": delivery_payload.get("user_id"),
+                        "group": delivery_payload.get("group") or "treatment",
+                        "action_execution_id": delivery_payload.get("action_execution_id"),
+                        "occurred_at": occurred_at,
+                        "outcome_name": outcome_name,
+                        "source": f"{provider}_callback",
+                        "metadata": dict(callback.get("metadata") or {}),
+                    },
+                )
+                outcomes_ingested += 1
+            items.append(
+                {
+                    "callback_id": callback_id,
+                    "delivery_id": delivery_payload.get("delivery_id"),
+                    "workflow_id": delivery_payload.get("workflow_id"),
+                    "outcome_ingested": outcome_name is not None and bool(experiment_id),
+                }
+            )
+        return {
+            "provider": provider,
+            "ingested": ingested,
+            "duplicates": duplicates,
+            "outcomes_ingested": outcomes_ingested,
+            "items": items,
         }
 
     def test_run(self, workflow_id: str, *, limit: int = 20, confirm: bool = False, sandbox: bool = True, reference_time: str | None = None) -> Dict[str, Any]:
@@ -336,6 +448,97 @@ class WorkflowService:
 
     def _record_idempotency(self, key: str, payload: Dict[str, Any]) -> None:
         self.repository.upsert_resource("workflow_idempotency", key, status="recorded", name=payload.get("workflow_id"), payload=payload)
+
+    def _persist_delivery(
+        self,
+        *,
+        workflow_id: str,
+        cohort_id: str | None,
+        experiment_id: str | None,
+        execution_payload: Dict[str, Any],
+        channel_config: Dict[str, Any],
+        provider_result: Dict[str, Any],
+        sandbox: bool,
+    ) -> Dict[str, Any]:
+        delivery_id = str(provider_result.get("action_id") or execution_payload.get("action_execution_id") or f"delivery_{uuid.uuid4().hex[:16]}")
+        payload = {
+            "delivery_id": delivery_id,
+            "action_execution_id": execution_payload.get("action_execution_id") or delivery_id,
+            "workflow_id": workflow_id,
+            "execution_id": execution_payload.get("execution_id"),
+            "workflow_version": execution_payload.get("workflow_version"),
+            "cohort_id": cohort_id,
+            "cohort_snapshot_id": execution_payload.get("cohort_snapshot_id"),
+            "experiment_id": experiment_id,
+            "user_id": execution_payload.get("user_id"),
+            "group": execution_payload.get("group"),
+            "channel": execution_payload.get("channel"),
+            "provider": provider_result.get("provider") or channel_config.get("provider") or execution_payload.get("channel"),
+            "delivery_status": "delivered" if provider_result.get("ok") else "failed",
+            "failure_reason": provider_result.get("error"),
+            "provider_request": {
+                "channel": channel_config.get("channel"),
+                "subject": channel_config.get("subject"),
+                "content": channel_config.get("content"),
+            },
+            "provider_response": {
+                "status_code": provider_result.get("status_code"),
+                "error": provider_result.get("error"),
+            },
+            "callback_count": 0,
+            "sandbox": bool(sandbox),
+            "recorded_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(
+            "workflow_delivery",
+            delivery_id,
+            status=payload["delivery_status"],
+            name=workflow_id,
+            payload=payload,
+        )
+        return payload
+
+    def _callback_id(self, provider: str, callback: Dict[str, Any], event_type: str) -> str:
+        parts = [
+            str(provider),
+            str(callback.get("event_id") or callback.get("message_id") or callback.get("delivery_id") or callback.get("action_execution_id") or callback.get("user_id") or "unknown"),
+            str(event_type),
+            str(callback.get("occurred_at") or ""),
+        ]
+        digest = hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()
+        return f"cb_{digest[:24]}"
+
+    def _find_delivery_for_callback(self, callback: Dict[str, Any]) -> Dict[str, Any] | None:
+        delivery_id = str(callback.get("delivery_id") or callback.get("action_execution_id") or "").strip()
+        if delivery_id:
+            record = self.repository.get_resource("workflow_delivery", delivery_id)
+            if record is not None:
+                return record
+        workflow_id = str(callback.get("workflow_id") or "").strip()
+        user_id = str(callback.get("user_id") or "").strip()
+        for record in self.repository.list_resources("workflow_delivery"):
+            payload = record.get("payload") or {}
+            if workflow_id and str(payload.get("workflow_id") or "") != workflow_id:
+                continue
+            if user_id and str(payload.get("user_id") or "") != user_id:
+                continue
+            if workflow_id or user_id:
+                return record
+        return None
+
+    def _callback_outcome_name(self, event_type: str, callback: Dict[str, Any]) -> str | None:
+        if callback.get("outcome_name"):
+            return str(callback["outcome_name"]).lower()
+        mapping = {
+            "opened": "opened",
+            "clicked": "engaged",
+            "engaged": "engaged",
+            "returned": "returned",
+            "returned_to_game": "returned",
+            "converted": "returned",
+            "purchase": "returned",
+        }
+        return mapping.get(str(event_type).lower())
 
     def _evaluate_policy(
         self,
@@ -556,25 +759,33 @@ class WorkflowService:
                 "subject": action.get("subject", "KairyxAI"),
                 "player_id": recipient or member.get("canonical_user_id"),
             }
-            delivery_id = self.executor.execute_action(action_payload)
+            provider_result = self.executor.execute_action_detailed(action_payload)
             summary["executed"] += 1
-            execution_payload["execution_status"] = "executed" if delivery_id else "failed"
-            execution_payload["action_execution_id"] = delivery_id or execution_id
+            execution_payload["execution_status"] = "executed" if provider_result.get("ok") else "failed"
+            execution_payload["action_execution_id"] = provider_result.get("action_id") or execution_id
             self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
+            delivery_payload = self._persist_delivery(
+                workflow_id=workflow["workflow_id"],
+                cohort_id=definition.get("cohort_id"),
+                experiment_id=experiment_id,
+                execution_payload=execution_payload,
+                channel_config=channel_config,
+                provider_result=provider_result,
+                sandbox=sandbox,
+            )
 
-            if not delivery_id:
+            if not provider_result.get("ok"):
                 summary["failures"] += 1
                 self.repository.record_resource_event(
                     "workflow",
                     workflow["workflow_id"],
                     event_type="action_delivery",
-                    payload={**execution_payload, "delivery_status": "failed", "failure_reason": "provider_error"},
+                    payload={**execution_payload, **delivery_payload, "delivery_status": "failed", "failure_reason": "provider_error"},
                 )
                 summary["results"].append(execution_payload)
                 continue
 
             summary["success"] += 1
-            delivery_payload = {**execution_payload, "delivery_id": delivery_id, "delivery_status": "delivered"}
             self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_delivery", payload=delivery_payload)
             if not manual_test:
                 self._upsert_policy_state(
@@ -599,7 +810,7 @@ class WorkflowService:
                         "user_id": execution_payload["user_id"],
                         "action_date": action_date,
                         "group": group or "treatment",
-                        "delivery_id": delivery_id,
+                        "delivery_id": delivery_payload["delivery_id"],
                     },
                 )
                 if experiment_id:

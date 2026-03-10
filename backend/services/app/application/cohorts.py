@@ -26,6 +26,7 @@ class CohortService:
         refresh_mode: str = "manual",
         owner: str = "system",
         tags: List[str] | None = None,
+        description: str = "",
         activate: bool = False,
     ) -> Dict[str, Any]:
         if any(item.get("name") == name for item in self.repository.list_resources("cohort")):
@@ -40,6 +41,8 @@ class CohortService:
             "refresh_mode": refresh_mode,
             "refresh_policy": refresh_policy,
             "owner": owner,
+            "description": description,
+            "deleted_at": None,
             "version": 1,
             "version_id": 1,
             "definition": definition,
@@ -53,6 +56,7 @@ class CohortService:
             "last_refresh_status": "not_started",
             "last_refresh_error": None,
             "refresh_failures": 0,
+            "metrics_summary": self._empty_metrics_summary(),
             "activation_preflight": self._build_activation_preflight([], False, None),
         }
         record = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=name, payload=payload)
@@ -90,6 +94,69 @@ class CohortService:
             "page_size": page_size,
             "total": len(members),
             "items": members[offset: offset + page_size],
+        }
+
+    def get_metrics(self, cohort_id: str) -> Dict[str, Any]:
+        cohort = self.get_cohort(cohort_id)
+        if cohort is None:
+            raise KeyError(cohort_id)
+        metrics = self._calculate_metrics(cohort)
+        resource_id = f"{cohort_id}:{datetime.utcnow().date().isoformat()}"
+        self.repository.upsert_resource(
+            "cohort_metrics_daily",
+            resource_id,
+            status="ready",
+            name=cohort.get("name"),
+            payload=metrics,
+        )
+        for experiment_id in metrics.get("experiment_ids") or []:
+            self.repository.upsert_resource(
+                "cohort_experiment_link",
+                f"{cohort_id}:{experiment_id}",
+                status="linked",
+                name=cohort.get("name"),
+                payload={
+                    "cohort_id": cohort_id,
+                    "experiment_id": experiment_id,
+                    "workflow_ids": metrics.get("workflow_ids") or [],
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+            )
+        record = self.repository.get_resource("cohort", cohort_id)
+        if record is not None:
+            payload = dict(record.get("payload") or {})
+            payload["metrics_summary"] = metrics
+            self.repository.upsert_resource("cohort", cohort_id, status=payload.get("status") or "draft", name=payload.get("name"), payload=payload)
+        return metrics
+
+    def compare_versions(self, cohort_id: str, *, base_version: int, target_version: int) -> Dict[str, Any]:
+        cohort = self.get_cohort(cohort_id)
+        if cohort is None:
+            raise KeyError(cohort_id)
+        snapshots = [
+            item.get("payload") or {}
+            for item in self.repository.list_resources("cohort_snapshot")
+            if str((item.get("payload") or {}).get("cohort_id") or "") == cohort_id
+        ]
+        base_snapshot = self._latest_snapshot_for_version(snapshots, base_version)
+        target_snapshot = self._latest_snapshot_for_version(snapshots, target_version)
+        if base_snapshot is None or target_snapshot is None:
+            raise KeyError("snapshot_missing")
+        base_ids = {self._member_identity(item) for item in base_snapshot.get("members") or [] if self._member_identity(item)}
+        target_ids = {self._member_identity(item) for item in target_snapshot.get("members") or [] if self._member_identity(item)}
+        return {
+            "cohort_id": cohort_id,
+            "base_version": int(base_version),
+            "target_version": int(target_version),
+            "base_snapshot_id": base_snapshot.get("snapshot_id"),
+            "target_snapshot_id": target_snapshot.get("snapshot_id"),
+            "base_member_count": int(base_snapshot.get("member_count") or len(base_ids)),
+            "target_member_count": int(target_snapshot.get("member_count") or len(target_ids)),
+            "delta": {
+                "added": len(target_ids - base_ids),
+                "removed": len(base_ids - target_ids),
+                "unchanged": len(base_ids & target_ids),
+            },
         }
 
     def refresh_cohort(self, cohort_id: str, *, force: bool = False) -> Dict[str, Any]:
@@ -213,7 +280,13 @@ class CohortService:
         return self._set_status(cohort_id, "paused", "cohort_paused")
 
     def archive_cohort(self, cohort_id: str) -> Dict[str, Any]:
-        return self._set_status(cohort_id, "archived", "cohort_archived", extra_payload={"archived_at": datetime.utcnow().isoformat()})
+        archived_at = datetime.utcnow().isoformat()
+        return self._set_status(
+            cohort_id,
+            "archived",
+            "cohort_archived",
+            extra_payload={"archived_at": archived_at, "deleted_at": archived_at},
+        )
 
     def restore_cohort(self, cohort_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("cohort", cohort_id)
@@ -223,6 +296,7 @@ class CohortService:
         if str(payload.get("status") or "") != "archived":
             raise ValueError("Only archived cohorts can be restored.")
         payload["archived_at"] = None
+        payload["deleted_at"] = None
         payload["status"] = "draft"
         saved = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=payload.get("name"), payload=payload)
         self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_restored", payload={"status": "draft"})
@@ -314,6 +388,9 @@ class CohortService:
         payload.setdefault("version", int(payload.get("version_id") or payload.get("version") or 1))
         payload.setdefault("version_id", int(payload.get("version") or payload.get("version_id") or 1))
         payload.setdefault("refresh_policy", self._build_refresh_policy(payload.get("refresh_mode") or "manual"))
+        payload.setdefault("description", "")
+        payload.setdefault("deleted_at", payload.get("archived_at"))
+        payload.setdefault("metrics_summary", self._empty_metrics_summary())
         payload.setdefault(
             "activation_preflight",
             self._build_activation_preflight(
@@ -333,6 +410,83 @@ class CohortService:
             "mode": resolved,
             "retry_limit": 1 if resolved == "daily" else 0,
             "auto_pause_after_failures": 2,
+        }
+
+    @staticmethod
+    def _empty_metrics_summary() -> Dict[str, Any]:
+        return {
+            "member_count": 0,
+            "delivered_users": 0,
+            "reach_rate": 0.0,
+            "conversion_users": 0,
+            "conversion_rate": 0.0,
+            "workflow_ids": [],
+            "experiment_ids": [],
+        }
+
+    def _latest_snapshot_for_version(self, snapshots: List[Dict[str, Any]], version: int) -> Dict[str, Any] | None:
+        candidates = [item for item in snapshots if int(item.get("version_id") or 0) == int(version)]
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda item: str(item.get("created_at") or ""), reverse=True)[0]
+
+    def _calculate_metrics(self, cohort: Dict[str, Any]) -> Dict[str, Any]:
+        cohort_id = cohort["cohort_id"]
+        deliveries = [
+            item.get("payload") or {}
+            for item in self.repository.list_resources("workflow_delivery")
+            if str((item.get("payload") or {}).get("cohort_id") or "") == cohort_id
+            and not bool((item.get("payload") or {}).get("sandbox"))
+        ]
+        delivered_users = {
+            str(item.get("user_id"))
+            for item in deliveries
+            if str(item.get("delivery_status") or "") in {"delivered", "opened", "clicked", "returned", "converted"}
+            and item.get("user_id")
+        }
+        workflow_ids = sorted(
+            {
+                str(item.get("workflow_id"))
+                for item in deliveries
+                if item.get("workflow_id")
+            }
+        )
+        outcomes = [
+            item.get("payload") or {}
+            for item in self.repository.list_resource_events("experiment", event_type="outcome", limit=5000)
+            if str((item.get("payload") or {}).get("cohort_id") or "") == cohort_id
+        ]
+        conversion_users = {
+            str(item.get("user_id"))
+            for item in outcomes
+            if str(item.get("outcome_name") or "").lower() in {"returned", "returned_to_game", "converted", "purchase"}
+            and item.get("user_id")
+        }
+        experiment_ids = sorted(
+            {
+                str(item.get("experiment_id"))
+                for item in outcomes
+                if item.get("experiment_id")
+            }
+            | {
+                str((item.get("payload") or {}).get("experiment_id"))
+                for item in self.repository.list_resources("experiment")
+                if str(((item.get("payload") or {}).get("cohort_id") or "")) == cohort_id
+            }
+        )
+        member_count = int(cohort.get("member_count") or 0)
+        return {
+            "cohort_id": cohort_id,
+            "snapshot_id": cohort.get("latest_snapshot_id"),
+            "version_id": int(cohort.get("version_id") or 1),
+            "member_count": member_count,
+            "delivered_users": len(delivered_users),
+            "reach_rate": round((len(delivered_users) / member_count), 4) if member_count else 0.0,
+            "conversion_users": len(conversion_users),
+            "conversion_rate": round((len(conversion_users) / member_count), 4) if member_count else 0.0,
+            "workflow_ids": workflow_ids,
+            "experiment_ids": experiment_ids,
+            "last_calculated_at": datetime.utcnow().isoformat(),
         }
 
     def _build_activation_preflight(

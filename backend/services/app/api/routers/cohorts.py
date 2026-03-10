@@ -24,6 +24,7 @@ def create_cohort(request: CohortCreateRequest, service: CohortService = Depends
             definition=request.definition,
             refresh_mode=request.refresh_mode,
             owner=request.owner,
+            description=request.description,
             tags=request.tags,
             activate=request.activate,
         )
@@ -86,6 +87,27 @@ def list_cohort_versions(cohort_id: str, service: CohortService = Depends(get_co
         return service.list_versions(cohort_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
+
+
+@router.get("/{cohort_id}/metrics", response_model=dict)
+def get_cohort_metrics(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+    try:
+        return service.get_metrics(cohort_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
+
+
+@router.get("/{cohort_id}/compare", response_model=dict)
+def compare_cohort_versions(
+    cohort_id: str,
+    base_version: int = Query(..., ge=1),
+    target_version: int = Query(..., ge=1),
+    service: CohortService = Depends(get_cohort_service),
+):
+    try:
+        return service.compare_versions(cohort_id, base_version=base_version, target_version=target_version)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort snapshot comparison is not available for '{cohort_id}'.")
 
 
 @router.post("/{cohort_id}/rollback", response_model=CohortResponse)

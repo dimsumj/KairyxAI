@@ -31,9 +31,22 @@ class EngagementExecutor:
         }
 
     def execute_action(self, action: Dict[str, Any]) -> Optional[str]:
+        result = self.execute_action_detailed(action)
+        if not result.get("ok", False):
+            return None
+        return str(result.get("action_id"))
+
+    def execute_action_detailed(self, action: Dict[str, Any]) -> Dict[str, Any]:
         if not action or action.get("decision") != "ACT":
             print(f"\nDecision is '{action.get('decision', 'NONE')}'. No action executed.")
-            return None
+            return {
+                "ok": False,
+                "action_id": None,
+                "provider": "none",
+                "channel": str(action.get("channel", "unknown")) if action else "unknown",
+                "content": str(action.get("content", "")) if action else "",
+                "error": "decision_not_act",
+            }
 
         channel = action.get("channel", "push_notification")
         player_id = action.get("player_id")
@@ -42,7 +55,14 @@ class EngagementExecutor:
         adapter = self.adapters.get(channel)
         if not adapter:
             print(f"Warning: Channel '{channel}' is not supported. No action taken.")
-            return None
+            return {
+                "ok": False,
+                "action_id": action_id,
+                "provider": "unsupported",
+                "channel": str(channel),
+                "content": str(action.get("content", "")),
+                "error": f"unsupported_channel:{channel}",
+            }
 
         result = adapter.send(player_id, action, action_id)
         self._log_action(
@@ -57,9 +77,25 @@ class EngagementExecutor:
 
         if not result.get("ok", False):
             print(f"Action delivery failed for {action_id}: {result.get('error', 'unknown error')}")
-            return None
+            return {
+                "action_id": action_id,
+                "provider": result.get("provider", "unknown"),
+                "channel": result.get("channel", channel),
+                "content": result.get("content", action.get("content", "")),
+                "status_code": result.get("status_code"),
+                "ok": False,
+                "error": result.get("error", "unknown_error"),
+            }
 
-        return action_id
+        return {
+            "action_id": action_id,
+            "provider": result.get("provider", "unknown"),
+            "channel": result.get("channel", channel),
+            "content": result.get("content", action.get("content", "")),
+            "status_code": result.get("status_code"),
+            "ok": True,
+            "error": None,
+        }
 
     def _log_action(self, player_id: Any, channel: str, provider: str, content: str, action_id: str, ok: bool, error: Optional[str]):
         status = "SENT" if ok else "FAILED"

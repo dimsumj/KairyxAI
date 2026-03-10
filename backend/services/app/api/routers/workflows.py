@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.schemas.workflows import OrchestratorRunRequest, WorkflowCreateRequest, WorkflowExecutionPage, WorkflowResponse, WorkflowRunRequest
 from app.application.workflows import WorkflowService
+from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_workflow_service
 
 
@@ -106,6 +107,28 @@ def get_workflow_policy_counters(workflow_id: str, service: WorkflowService = De
         return service.get_policy_counters(workflow_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+
+
+@workflow_router.get("/{workflow_id}/deliveries", response_model=dict)
+def list_workflow_deliveries(
+    workflow_id: str,
+    request: Request,
+    service: WorkflowService = Depends(get_workflow_service),
+):
+    context = get_governance_context(request)
+    ensure_permission(context, "workflows.deliveries.read")
+    try:
+        payload = {"items": service.list_deliveries(workflow_id)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="workflow_deliveries_read",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        payload=payload,
+    )
 
 
 @orchestrator_router.post("/kill-switch/on", response_model=dict)

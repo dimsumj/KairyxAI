@@ -38,3 +38,8 @@ class CopilotResponse(BaseModel):
     metric_window: str = "7d"
     risk_notes: List[str] = Field(default_factory=list)
     methodology: Dict[str, Any] = Field(default_factory=dict)
+    query_id: str | None = None
+    anomaly_id: str | None = None
+    report_id: str | None = None
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)

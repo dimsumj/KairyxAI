@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.schemas.copilot import (
     CopilotExplainRequest,
@@ -10,6 +10,7 @@ from app.api.schemas.copilot import (
     CopilotResponse,
 )
 from app.application.copilot import CopilotService
+from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_copilot_service
 
 
@@ -17,20 +18,101 @@ router = APIRouter(prefix="/copilot", tags=["copilot"])
 
 
 @router.post("/query", response_model=CopilotResponse)
-def copilot_query(request: CopilotQueryRequest, service: CopilotService = Depends(get_copilot_service)):
-    return service.query(request.question, time_window=request.time_window, filters=request.filters)
+def copilot_query(request: CopilotQueryRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.query")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_query",
+        resource_type="copilot_query_log",
+        resource_id=None,
+        payload=service.query(request.question, time_window=request.time_window, filters=request.filters),
+    )
 
 
 @router.post("/explain", response_model=CopilotResponse)
-def copilot_explain(request: CopilotExplainRequest, service: CopilotService = Depends(get_copilot_service)):
-    return service.explain(request.metric_id, time_window=request.time_window, dimensions=request.dimensions)
+def copilot_explain(request: CopilotExplainRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.explain")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_explain",
+        resource_type="copilot_query_log",
+        resource_id=None,
+        payload=service.explain(request.metric_id, time_window=request.time_window, dimensions=request.dimensions),
+    )
 
 
 @router.post("/recommend", response_model=CopilotResponse)
-def copilot_recommend(request: CopilotRecommendRequest, service: CopilotService = Depends(get_copilot_service)):
-    return service.recommend(request.insight, request.metric_context)
+def copilot_recommend(request: CopilotRecommendRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.query")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_recommend",
+        resource_type="copilot_query_log",
+        resource_id=None,
+        payload=service.recommend(request.insight, request.metric_context),
+    )
 
 
 @router.post("/report", response_model=CopilotResponse)
-def copilot_report(request: CopilotReportRequest, service: CopilotService = Depends(get_copilot_service)):
-    return service.report(request.report_type, time_window=request.time_window)
+def copilot_report(request: CopilotReportRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.report")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_report",
+        resource_type="copilot_report",
+        resource_id=None,
+        payload=service.report(request.report_type, time_window=request.time_window),
+    )
+
+
+@router.get("/query-logs/{query_id}", response_model=dict)
+def get_copilot_query_log(query_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.query_log.read")
+    payload = service.get_query_log(query_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Copilot query log '{query_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_query_log_read",
+        resource_type="copilot_query_log",
+        resource_id=query_id,
+        payload=payload,
+    )
+
+
+@router.get("/anomalies", response_model=dict)
+def list_copilot_anomalies(http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.anomalies.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_anomalies_read",
+        resource_type="copilot_anomaly",
+        resource_id=None,
+        payload={"items": service.list_anomalies()},
+    )
+
+
+@router.get("/reports", response_model=dict)
+def list_copilot_reports(http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.reports.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_reports_read",
+        resource_type="copilot_report",
+        resource_id=None,
+        payload={"items": service.list_reports()},
+    )

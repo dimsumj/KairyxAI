@@ -60,6 +60,7 @@ class ImportService:
         processing_stats: Dict[str, Any],
         *,
         mapping_coverage: float | None = None,
+        identity_summary: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         raw = max(0, int(processing_stats.get("raw_normalized_events", 0) or 0))
         dead_letters = max(0, int(processing_stats.get("pipeline_dead_letters_written", 0) or 0))
@@ -77,16 +78,35 @@ class ImportService:
         duplicates_removed = int(curation.get("duplicates_removed", 0) or 0)
         dedupe_rate = round((duplicates_removed / staging_rows * 100.0), 2) if staging_rows else 0.0
         reject_rate = round((dead_letters / raw * 100.0), 2) if raw else 0.0
-        canonical_coverage = 100.0 if int(processing_stats.get("events_staging_written", 0) or 0) > 0 else 0.0
+        canonical_coverage = float((identity_summary or {}).get("canonical_user_id_coverage") or 0.0)
+        if identity_summary is None and int(processing_stats.get("events_staging_written", 0) or 0) > 0:
+            canonical_coverage = 100.0
         resolved_mapping_coverage = round(float(mapping_coverage if mapping_coverage is not None else source_required_coverage), 2)
         return {
             "required_mapping_coverage": resolved_mapping_coverage,
             "source_required_field_coverage": source_required_coverage,
-            "canonical_user_id_coverage": canonical_coverage,
+            "canonical_user_id_coverage": round(canonical_coverage, 2),
             "reject_rate": reject_rate,
             "dedupe_rate": dedupe_rate,
             "flag_counts": flag_counts,
         }
+
+    def _identity_summary(self, job_id: str) -> Dict[str, Any]:
+        summary = self.bigquery_service.build_identity_summary(job_id=job_id)
+        self.repository.upsert_resource(
+            "identity_summary",
+            job_id,
+            status="ready",
+            name=job_id,
+            payload=summary,
+        )
+        self.repository.record_resource_event(
+            "identity_summary",
+            job_id,
+            event_type="identity_summary_refreshed",
+            payload=summary,
+        )
+        return summary
 
     def _safe_get_import_job(self, job_id: str) -> Dict[str, Any] | None:
         try:
@@ -375,7 +395,12 @@ class ImportService:
             )
         self._mark_checkpoint_status(job_id, connector_record["name"], notifications, status=CheckpointStatus.PROCESSED.value)
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
-        quality_report = self._build_quality_report(processing_stats, mapping_coverage=mapping_coverage)
+        identity_summary = self._identity_summary(job_id)
+        quality_report = self._build_quality_report(
+            processing_stats,
+            mapping_coverage=mapping_coverage,
+            identity_summary=identity_summary,
+        )
         final_status = JobStatus.COMPLETED.value if quality_report["required_mapping_coverage"] >= 95.0 else JobStatus.AWAITING_MAPPING.value
         current_job = self.repository.get_import_job(job_id)
         if current_job is None:
@@ -397,6 +422,7 @@ class ImportService:
                         "phase": "completed",
                         "processing": processing_stats,
                         "quality_report": quality_report,
+                        "identity_summary": identity_summary,
                         "mapping_coverage": mapping_coverage,
                         "checkpoint_state": self._summarize_checkpoints(job_id),
                         "canonical_aliases": self._canonical_aliases(),
@@ -529,12 +555,18 @@ class ImportService:
             raise KeyError(job_id)
         details = (job.get("progress") or {}).get("details") or {}
         mapping_coverage = float(details.get("mapping_coverage") or self._mapping_coverage(job["spec"]["source_name"], job_id=job_id))
-        quality_report = details.get("quality_report") or self._build_quality_report({}, mapping_coverage=mapping_coverage)
+        identity_summary = details.get("identity_summary") or self._identity_summary(job_id)
+        quality_report = details.get("quality_report") or self._build_quality_report(
+            {},
+            mapping_coverage=mapping_coverage,
+            identity_summary=identity_summary,
+        )
         checkpoint_state = details.get("checkpoint_state") or self._summarize_checkpoints(job_id)
         return {
             "job_id": job_id,
             "status": job["status"],
             "quality_report": quality_report,
+            "identity_summary": identity_summary,
             "mapping_coverage": mapping_coverage,
             "checkpoint_state": checkpoint_state,
             "canonical_aliases": self._canonical_aliases(),
@@ -689,6 +721,7 @@ class ImportService:
             "warehouse_stats": warehouse_stats,
             "replayed_at": datetime.utcnow().isoformat(),
         }
+        identity_summary = self._identity_summary(job_id)
         updated = self.repository.update_import_job(
             job_id,
             {
@@ -697,6 +730,12 @@ class ImportService:
                     details_patch={
                         "checkpoint_state": self._summarize_checkpoints(job_id),
                         "replay_summary": replay_summary,
+                        "identity_summary": identity_summary,
+                        "quality_report": self._build_quality_report(
+                            {},
+                            mapping_coverage=float(((current_job.get("progress") or {}).get("details") or {}).get("mapping_coverage") or 100.0),
+                            identity_summary=identity_summary,
+                        ),
                         "canonical_aliases": self._canonical_aliases(),
                     },
                 )

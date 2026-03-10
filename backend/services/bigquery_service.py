@@ -972,6 +972,141 @@ class BigQueryService:
         rows = table.head(max(1, int(limit))).to_dict(orient="records")
         return rows
 
+    def _identity_hint(self, row: Dict[str, Any], field: str) -> Any:
+        if field in row and row.get(field) not in (None, ""):
+            return row.get(field)
+        for container_name in ("user_properties", "event_properties"):
+            container = row.get(container_name)
+            if isinstance(container, dict) and container.get(field) not in (None, ""):
+                return container.get(field)
+        return None
+
+    @staticmethod
+    def _normalize_identity_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def build_identity_summary(self, job_id: Optional[str] = None) -> Dict[str, Any]:
+        rows = self.get_rows_for_alias("fact_events_unified")
+        if job_id:
+            rows = [
+                row
+                for row in rows
+                if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)
+            ]
+        if not rows:
+            rows = self.get_rows_for_alias("standardized")
+            if job_id:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)
+                ]
+
+        if not rows:
+            return {
+                "job_id": job_id,
+                "rows_evaluated": 0,
+                "profiles": 0,
+                "stitched_rows": 0,
+                "canonical_user_id_coverage": 0.0,
+                "source_of_truth_matrix": {},
+                "conflict_count": 0,
+                "conflict_logs": [],
+            }
+
+        profiles: Dict[str, Dict[str, Any]] = {}
+        source_matrix: Dict[str, Dict[str, int]] = {
+            "canonical_user_id": {},
+            "player_id": {},
+            "email": {},
+        }
+        for row in rows:
+            source = str(row.get("source") or "unknown")
+            canonical = self._normalize_identity_value(row.get("canonical_user_id"))
+            player_id = self._normalize_identity_value(row.get("player_id"))
+            email = self._normalize_identity_value(self._identity_hint(row, "email"))
+            if email is not None:
+                email = email.lower()
+            group_key = email or canonical or player_id or f"row:{len(profiles) + 1}"
+            profile = profiles.setdefault(
+                group_key,
+                {
+                    "key": group_key,
+                    "rows": 0,
+                    "sources": set(),
+                    "canonicals": {},
+                    "player_ids": {},
+                    "emails": {},
+                },
+            )
+            profile["rows"] += 1
+            profile["sources"].add(source)
+            if canonical:
+                profile["canonicals"][canonical] = profile["canonicals"].get(canonical, 0) + 1
+                source_matrix["canonical_user_id"][source] = source_matrix["canonical_user_id"].get(source, 0) + 1
+            if player_id:
+                profile["player_ids"][player_id] = profile["player_ids"].get(player_id, 0) + 1
+                source_matrix["player_id"][source] = source_matrix["player_id"].get(source, 0) + 1
+            if email:
+                profile["emails"][email] = profile["emails"].get(email, 0) + 1
+                source_matrix["email"][source] = source_matrix["email"].get(source, 0) + 1
+
+        stitched_rows = 0
+        covered_rows = 0
+        conflict_logs: List[Dict[str, Any]] = []
+        for profile in profiles.values():
+            resolved_canonical = None
+            canonical_candidates = profile["canonicals"]
+            if canonical_candidates:
+                resolved_canonical = sorted(
+                    canonical_candidates.items(),
+                    key=lambda item: (-int(item[1]), item[0]),
+                )[0][0]
+            elif profile["player_ids"]:
+                resolved_canonical = sorted(profile["player_ids"])[0]
+                stitched_rows += int(profile["rows"])
+            elif profile["emails"]:
+                resolved_canonical = f"email:{sorted(profile['emails'])[0]}"
+                stitched_rows += int(profile["rows"])
+            if resolved_canonical:
+                covered_rows += int(profile["rows"])
+            if len(profile["canonicals"]) > 1:
+                conflict_logs.append(
+                    {
+                        "identity_key": profile["key"],
+                        "type": "canonical_conflict",
+                        "sources": sorted(profile["sources"]),
+                        "candidates": profile["canonicals"],
+                        "rows": profile["rows"],
+                    }
+                )
+
+        def _field_matrix(counts: Dict[str, int]) -> Dict[str, Any]:
+            winner = None
+            if counts:
+                winner = sorted(counts.items(), key=lambda item: (-int(item[1]), item[0]))[0][0]
+            return {
+                "winner": winner,
+                "sources": counts,
+            }
+
+        return {
+            "job_id": job_id,
+            "rows_evaluated": len(rows),
+            "profiles": len(profiles),
+            "stitched_rows": stitched_rows,
+            "canonical_user_id_coverage": round((covered_rows / len(rows) * 100.0), 2) if rows else 0.0,
+            "source_of_truth_matrix": {
+                field: _field_matrix(counts)
+                for field, counts in source_matrix.items()
+            },
+            "conflict_count": len(conflict_logs),
+            "conflict_logs": conflict_logs[:25],
+        }
+
     def replace_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):
         resolved_job_id = str(job_id)
         prepared_rows = []

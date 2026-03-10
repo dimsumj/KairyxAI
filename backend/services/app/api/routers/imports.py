@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.schemas.jobs import build_job_response
 from app.application.imports import ImportService
+from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_import_service
 
 
@@ -85,7 +86,8 @@ def stop_import(job_id: str, service: ImportService = Depends(get_import_service
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def delete_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    ensure_permission(get_governance_context(request), "imports.delete")
     try:
         service.delete_job(job_id)
     except KeyError:
@@ -104,27 +106,54 @@ def get_import_checkpoints(job_id: str, service: ImportService = Depends(get_imp
 
 
 @router.get("/{job_id}/quality")
-def get_import_quality(job_id: str, service: ImportService = Depends(get_import_service)):
+def get_import_quality(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.quality.read")
     try:
-        return service.get_quality(job_id)
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_quality_read",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.get_quality(job_id),
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
 
 
 @router.post("/{job_id}/resume")
-def resume_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def resume_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.resume")
     try:
         job = service.resume_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_resume",
+        resource_type="import_job",
+        resource_id=job_id,
+        payload=build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"}).model_dump(mode="json"),
+    )
 
 
 @router.post("/{job_id}/replay")
-def replay_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def replay_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.replay")
     try:
-        return service.replay_job(job_id)
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_replay",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.replay_job(job_id),
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")

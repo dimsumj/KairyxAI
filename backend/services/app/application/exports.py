@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List
 
 import requests
@@ -39,10 +40,43 @@ class ExportService:
     def get_job(self, job_id: str) -> Dict[str, Any] | None:
         return self.repository.get_export_job(job_id)
 
+    def list_diagnostics(self, job_id: str) -> List[Dict[str, Any]]:
+        if self.repository.get_export_job(job_id) is None:
+            raise KeyError(job_id)
+        items = []
+        for record in self.repository.list_resources("export_diagnostic"):
+            payload = record.get("payload") or {}
+            if str(payload.get("job_id") or "") == job_id:
+                items.append(payload)
+        return items
+
+    def retry_job(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_export_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if str(job.get("status") or "").lower() == JobStatus.RUNNING.value:
+            raise ValueError("Cannot retry a running export job.")
+        current_details = ((job.get("progress") or {}).get("details") or {})
+        current_details["retry_requested_at"] = datetime.utcnow().isoformat()
+        self.repository.update_export_job(
+            job_id,
+            {
+                "status": JobStatus.READY.value,
+                "progress": {
+                    **(job.get("progress") or {}),
+                    "details": current_details,
+                },
+                "error": None,
+            },
+        )
+        return self.run_job(job_id)
+
     def run_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_export_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        existing_details = (((job.get("progress") or {}).get("details")) or {})
+        attempt = int(existing_details.get("attempt") or 0) + 1
         self.repository.update_export_job(job_id, {"status": JobStatus.RUNNING.value})
 
         spec = job["spec"]
@@ -63,7 +97,49 @@ class ExportService:
             page += 1
 
         filtered_rows = self._filter_rows(all_rows, spec.get("include_churned", False), spec.get("include_risks") or [])
-        result = self._dispatch_export(spec, filtered_rows)
+        diagnostic_request = {
+            "provider": str(spec.get("provider", "webhook")).lower(),
+            "channel": spec.get("channel", "push_notification"),
+            "audience_name": spec.get("audience_name"),
+            "count": len(filtered_rows),
+            "sample_user_ids": [row.get("user_id") for row in filtered_rows[:5] if row.get("user_id")],
+        }
+        try:
+            result = self._dispatch_export(spec, filtered_rows)
+        except Exception as exc:
+            diagnostic = self._record_diagnostic(
+                job_id,
+                attempt=attempt,
+                request_payload=diagnostic_request,
+                response_payload={"error": str(exc)},
+                status="failed",
+            )
+            failed = self.repository.update_export_job(
+                job_id,
+                {
+                    "status": JobStatus.FAILED.value,
+                    "error": str(exc),
+                    "progress": {
+                        "current": 0,
+                        "total": len(filtered_rows),
+                        "pct": 0.0,
+                        "details": {
+                            **existing_details,
+                            "attempt": attempt,
+                            "latest_diagnostic_id": diagnostic["diagnostic_id"],
+                        },
+                    },
+                },
+            )
+            self.repository.record_action("export_job_failed", "export_job", job_id, failed)
+            return failed
+        diagnostic = self._record_diagnostic(
+            job_id,
+            attempt=attempt,
+            request_payload=diagnostic_request,
+            response_payload=result,
+            status="completed",
+        )
 
         completed = self.repository.update_export_job(
             job_id,
@@ -73,12 +149,44 @@ class ExportService:
                     "current": len(filtered_rows),
                     "total": len(filtered_rows),
                     "pct": 100.0,
-                    "details": result,
+                    "details": {
+                        **result,
+                        "attempt": attempt,
+                        "latest_diagnostic_id": diagnostic["diagnostic_id"],
+                    },
                 },
             },
         )
         self.repository.record_action("export_job_completed", "export_job", job_id, completed)
         return completed
+
+    def _record_diagnostic(
+        self,
+        job_id: str,
+        *,
+        attempt: int,
+        request_payload: Dict[str, Any],
+        response_payload: Dict[str, Any],
+        status: str,
+    ) -> Dict[str, Any]:
+        diagnostic_id = f"expdiag_{uuid.uuid4().hex[:20]}"
+        payload = {
+            "diagnostic_id": diagnostic_id,
+            "job_id": job_id,
+            "attempt": int(attempt),
+            "status": status,
+            "request": request_payload,
+            "response": response_payload,
+            "recorded_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(
+            "export_diagnostic",
+            diagnostic_id,
+            status=status,
+            name=job_id,
+            payload=payload,
+        )
+        return payload
 
     def _filter_rows(self, rows: List[Dict[str, Any]], include_churned: bool, include_risks: List[str]) -> List[Dict[str, Any]]:
         risk_set = {str(value).lower() for value in include_risks} or {"high", "medium"}

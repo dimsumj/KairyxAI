@@ -60,13 +60,24 @@ class CopilotService:
             "cohort_health": {"sources": ["cohort_snapshot"]},
         }
 
+    def get_query_log(self, query_id: str) -> Dict[str, Any] | None:
+        record = self.repository.get_resource("copilot_query_log", query_id)
+        return (record or {}).get("payload") if record else None
+
+    def list_anomalies(self) -> List[Dict[str, Any]]:
+        return [item.get("payload") or {} for item in self.repository.list_resources("copilot_anomaly")]
+
+    def list_reports(self) -> List[Dict[str, Any]]:
+        return [item.get("payload") or {} for item in self.repository.list_resources("copilot_report")]
+
     def query(self, question: str, *, time_window: str | None = None, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
         metric_id = self._match_metric(question)
         resolved_window = time_window or self._match_window(question)
         alias = self.metric_registry[metric_id]["alias"]
         records_evaluated = self._count_records(alias)
         if records_evaluated == 0:
-            return self._insufficient_evidence(metric_window=resolved_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            response = self._insufficient_evidence(metric_window=resolved_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            return self._record_query_log("query", response, {"question": question, "metric_id": metric_id})
         metric_value = self._compute_metric(metric_id, filters=filters or {})
         response = self._build_response(
             conclusion=f"{self.metric_registry[metric_id]['label']}: {metric_value}",
@@ -81,19 +92,20 @@ class CopilotService:
             risk_notes=["Metric is read from curated aliases only."],
             methodology={"metric_id": metric_id, "filters": filters or {}, "data_sources": [alias]},
         )
-        self.repository.record_resource_event("copilot", metric_id, event_type="query", payload={"question": question, **response})
-        return response
+        return self._record_query_log("query", response, {"question": question, "metric_id": metric_id})
 
     def explain(self, metric_id: str, *, time_window: str = "7d", dimensions: List[str] | None = None) -> Dict[str, Any]:
         metric = self.metric_registry.get(metric_id) or self.metric_registry["active_users"]
         alias = metric["alias"]
         rows = self.bigquery_service.get_rows_for_alias(alias)
         if not rows:
-            return self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            response = self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            return self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window})
         dims = list(dimensions or ["platform", "country", "campaign"])
         drivers = self._top_drivers(rows, dims)
         if not drivers:
-            return self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            response = self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
+            return self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window})
         response = self._build_response(
             conclusion=f"{metric['label']} anomaly drivers identified",
             evidence=drivers[:3],
@@ -102,9 +114,21 @@ class CopilotService:
             confidence="medium",
             metric_window=time_window,
             risk_notes=["Explain reads only curated warehouse aliases and stored snapshots."],
-            methodology={"metric_id": metric_id, "data_sources": [alias], "dimensions": dims},
+            methodology={"metric_id": metric_id, "data_sources": [alias], "dimensions": dims, "baseline_count": len(rows)},
         )
-        self.repository.record_resource_event("copilot", metric_id, event_type="explain", payload=response)
+        response = self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window, "dimensions": dims})
+        anomaly_id = f"anomaly_{uuid.uuid4().hex[:20]}"
+        anomaly_payload = {
+            "anomaly_id": anomaly_id,
+            "metric_id": metric_id,
+            "time_window": time_window,
+            "baseline_count": len(rows),
+            "drivers": drivers[:3],
+            "query_id": response.get("query_id"),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource("copilot_anomaly", anomaly_id, status="ready", name=metric_id, payload=anomaly_payload)
+        response["anomaly_id"] = anomaly_id
         return response
 
     def recommend(self, insight: Dict[str, Any] | None = None, metric_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -112,11 +136,12 @@ class CopilotService:
         metric_context = metric_context or {}
         eligible_users = int(self._compute_metric("high_risk_users"))
         if eligible_users <= 0:
-            return self._insufficient_evidence(
+            response = self._insufficient_evidence(
                 metric_window="7d",
                 evidence=[{"metric_id": "high_risk_users", "alias": "prediction_results"}],
                 risk_notes=["No eligible high-risk users were found for Churn Rescue."],
             )
+            return self._record_query_log("recommend", response, {"metric_context": metric_context})
         cohort_name = f"copilot_high_risk_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:4]}"
         cohort_draft = self.cohorts.create_cohort(
             name=cohort_name,
@@ -145,8 +170,7 @@ class CopilotService:
             risk_notes=["Recommendation creates a draft cohort and does not auto-activate it."],
             methodology={"input_insight": insight, "metric_context": metric_context, "data_sources": ["prediction_results"]},
         )
-        self.repository.record_resource_event("copilot", "recommendation", event_type="recommend", payload=response)
-        return response
+        return self._record_query_log("recommend", response, {"metric_context": metric_context, "cohort_id": cohort_draft.get("cohort_id")})
 
     def report(self, report_type: str = "daily", *, time_window: str = "7d") -> Dict[str, Any]:
         experiment_records = [item for item in self.repository.list_resources("experiment")]
@@ -156,8 +180,10 @@ class CopilotService:
         latest_workflow = workflow_records[0].get("payload") if workflow_records else None
         latest_cohort = cohort_records[0].get("payload") if cohort_records else None
         if latest_experiment is None or latest_workflow is None or latest_cohort is None:
-            return self._insufficient_evidence(metric_window=time_window, evidence=[{"report_type": report_type}], risk_notes=["Missing linked cohort/workflow/experiment resources."])
+            response = self._insufficient_evidence(metric_window=time_window, evidence=[{"report_type": report_type}], risk_notes=["Missing linked cohort/workflow/experiment resources."])
+            return self._record_report(report_type, time_window, response)
         experiment_summary = self.experiments.get_summary(latest_experiment["experiment_id"])
+        cohort_metrics = self.cohorts.get_metrics(latest_cohort["cohort_id"])
         recommended_action = {"type": "adjust_experiment_guardrail", "experiment_id": latest_experiment["experiment_id"]}
         if experiment_summary["decision"] == "winner":
             recommended_action = {"type": "refresh_cohort", "cohort_id": latest_cohort["cohort_id"]}
@@ -166,7 +192,7 @@ class CopilotService:
         response = self._build_response(
             conclusion=f"{report_type.title()} copilot report generated for Churn Rescue.",
             evidence=[
-                {"cohort_id": latest_cohort["cohort_id"], "snapshot_id": latest_cohort.get("latest_snapshot_id"), "member_count": latest_cohort.get("member_count", 0)},
+                {"cohort_id": latest_cohort["cohort_id"], "snapshot_id": latest_cohort.get("latest_snapshot_id"), "member_count": latest_cohort.get("member_count", 0), "metrics_summary": cohort_metrics},
                 {"workflow_id": latest_workflow["workflow_id"], "status": latest_workflow.get("status")},
                 {"experiment_id": latest_experiment["experiment_id"], "decision": experiment_summary.get("decision"), "decision_reason": experiment_summary.get("decision_reason")},
             ],
@@ -177,7 +203,35 @@ class CopilotService:
             risk_notes=["Weekly and daily reports only read cohort snapshots and experiment summaries."],
             methodology={"report_type": report_type, "time_window": time_window, "data_sources": ["cohort_snapshot", "experiment_summary"]},
         )
-        self.repository.record_resource_event("copilot", "report", event_type="report", payload=response)
+        return self._record_report(report_type, time_window, response)
+
+    def _record_query_log(self, log_type: str, response: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        query_id = f"copq_{uuid.uuid4().hex[:20]}"
+        payload = {
+            "query_id": query_id,
+            "type": log_type,
+            "context": context,
+            "response": response,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource("copilot_query_log", query_id, status="ready", name=log_type, payload=payload)
+        self.repository.record_resource_event("copilot", query_id, event_type=log_type, payload=payload)
+        response["query_id"] = query_id
+        return response
+
+    def _record_report(self, report_type: str, time_window: str, response: Dict[str, Any]) -> Dict[str, Any]:
+        response = self._record_query_log("report", response, {"report_type": report_type, "time_window": time_window})
+        report_id = f"copr_{uuid.uuid4().hex[:20]}"
+        payload = {
+            "report_id": report_id,
+            "report_type": report_type,
+            "time_window": time_window,
+            "response": response,
+            "status": "ready" if response.get("conclusion") != "insufficient_evidence" else "insufficient_evidence",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource("copilot_report", report_id, status=payload["status"], name=report_type, payload=payload)
+        response["report_id"] = report_id
         return response
 
     def _build_response(

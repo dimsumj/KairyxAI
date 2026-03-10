@@ -212,7 +212,7 @@ class ExperimentConfigService:
             decision = "winner"
             decision_reason = "Treatment outperformed holdout on return rate."
 
-        return {
+        summary = {
             "experiment_id": experiment_id,
             "status": config.get("status") or "draft",
             "primary_metric": config.get("primary_metric") or "return_rate",
@@ -230,6 +230,14 @@ class ExperimentConfigService:
             "groups": summary_groups,
             "uplift_vs_holdout_return_rate": uplift,
         }
+        self.repository.upsert_resource(
+            "experiment_summary",
+            experiment_id,
+            status=str(summary["decision"]),
+            name=experiment_id,
+            payload=summary,
+        )
+        return summary
 
     def decide(self, experiment_id: str, *, decided_by: str = "system") -> Dict[str, Any]:
         summary = self.get_summary(experiment_id)
