@@ -61,6 +61,7 @@ class ImportService:
         *,
         mapping_coverage: float | None = None,
         identity_summary: Dict[str, Any] | None = None,
+        top20_field_quality: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         raw = max(0, int(processing_stats.get("raw_normalized_events", 0) or 0))
         dead_letters = max(0, int(processing_stats.get("pipeline_dead_letters_written", 0) or 0))
@@ -89,6 +90,7 @@ class ImportService:
             "reject_rate": reject_rate,
             "dedupe_rate": dedupe_rate,
             "flag_counts": flag_counts,
+            "top20_field_coverage": top20_field_quality or {"rows_evaluated": 0, "fields": {}},
         }
 
     def _identity_summary(self, job_id: str) -> Dict[str, Any]:
@@ -107,6 +109,9 @@ class ImportService:
             payload=summary,
         )
         return summary
+
+    def _top20_field_quality(self, job_id: str) -> Dict[str, Any]:
+        return self.bigquery_service.top20_field_quality(job_id=job_id, alias="standardized")
 
     def _safe_get_import_job(self, job_id: str) -> Dict[str, Any] | None:
         try:
@@ -400,6 +405,7 @@ class ImportService:
             processing_stats,
             mapping_coverage=mapping_coverage,
             identity_summary=identity_summary,
+            top20_field_quality=self._top20_field_quality(job_id),
         )
         final_status = JobStatus.COMPLETED.value if quality_report["required_mapping_coverage"] >= 95.0 else JobStatus.AWAITING_MAPPING.value
         current_job = self.repository.get_import_job(job_id)
@@ -423,6 +429,7 @@ class ImportService:
                         "processing": processing_stats,
                         "quality_report": quality_report,
                         "identity_summary": identity_summary,
+                        "top20_field_quality": self._top20_field_quality(job_id),
                         "mapping_coverage": mapping_coverage,
                         "checkpoint_state": self._summarize_checkpoints(job_id),
                         "canonical_aliases": self._canonical_aliases(),
@@ -560,8 +567,11 @@ class ImportService:
             {},
             mapping_coverage=mapping_coverage,
             identity_summary=identity_summary,
+            top20_field_quality=details.get("top20_field_quality") or self._top20_field_quality(job_id),
         )
         checkpoint_state = details.get("checkpoint_state") or self._summarize_checkpoints(job_id)
+        conflicts = self.bigquery_service.get_field_conflicts(job_id=job_id, limit=200)
+        rejected = self.bigquery_service.get_rejected_event_explanations(job_id=job_id, limit=200)
         return {
             "job_id": job_id,
             "status": job["status"],
@@ -570,6 +580,36 @@ class ImportService:
             "mapping_coverage": mapping_coverage,
             "checkpoint_state": checkpoint_state,
             "canonical_aliases": self._canonical_aliases(),
+            "source_of_truth": identity_summary.get("source_of_truth_decisions") or [],
+            "conflict_summary": {"count": len(conflicts), "items": conflicts[:25]},
+            "rejected_summary": {"count": len(rejected), "items": rejected[:25]},
+        }
+
+    def get_identity_links(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return {
+            "job_id": job_id,
+            "items": self.bigquery_service.get_identity_links(job_id=job_id, limit=500),
+        }
+
+    def get_conflicts(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return {
+            "job_id": job_id,
+            "items": self.bigquery_service.get_field_conflicts(job_id=job_id, limit=500),
+        }
+
+    def get_rejected(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return {
+            "job_id": job_id,
+            "items": self.bigquery_service.get_rejected_event_explanations(job_id=job_id, limit=500),
         }
 
     def stop_job(self, job_id: str) -> Dict[str, Any]:
@@ -636,7 +676,11 @@ class ImportService:
                 reason="Resume blocked until mapping coverage reaches 95%.",
                 details_patch={
                     "mapping_coverage": mapping_coverage,
-                    "quality_report": self._build_quality_report({}, mapping_coverage=mapping_coverage),
+                    "quality_report": self._build_quality_report(
+                        {},
+                        mapping_coverage=mapping_coverage,
+                        top20_field_quality=self._top20_field_quality(job_id),
+                    ),
                     "checkpoint_state": self._summarize_checkpoints(job_id),
                 },
             )
@@ -731,10 +775,12 @@ class ImportService:
                         "checkpoint_state": self._summarize_checkpoints(job_id),
                         "replay_summary": replay_summary,
                         "identity_summary": identity_summary,
+                        "top20_field_quality": self._top20_field_quality(job_id),
                         "quality_report": self._build_quality_report(
                             {},
                             mapping_coverage=float(((current_job.get("progress") or {}).get("details") or {}).get("mapping_coverage") or 100.0),
                             identity_summary=identity_summary,
+                            top20_field_quality=self._top20_field_quality(job_id),
                         ),
                         "canonical_aliases": self._canonical_aliases(),
                     },
@@ -774,7 +820,11 @@ class ImportService:
                 reason="Required mapping coverage below 95%; import blocked before staging.",
                 details_patch={
                     "mapping_coverage": mapping_coverage,
-                    "quality_report": self._build_quality_report({}, mapping_coverage=mapping_coverage),
+                    "quality_report": self._build_quality_report(
+                        {},
+                        mapping_coverage=mapping_coverage,
+                        top20_field_quality=self._top20_field_quality(job_id),
+                    ),
                     "checkpoint_state": self._summarize_checkpoints(job_id),
                     "canonical_aliases": self._canonical_aliases(),
                 },

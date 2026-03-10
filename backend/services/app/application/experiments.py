@@ -14,11 +14,13 @@ class ExperimentConfigService:
             "experiment_id": experiment_id,
             "enabled": True,
             "holdout_pct": 0.10,
+            "b_variant_pct": 0.0,
             "primary_metric": "return_rate",
             "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
             "min_sample_size": 20,
             "min_runtime_hours": 24,
             "cohort_id": None,
+            "blacklist_user_ids": [],
             "status": "draft",
         }
 
@@ -54,7 +56,6 @@ class ExperimentConfigService:
     def save_config(self, config: Dict[str, Any], experiment_id: str | None = None) -> Dict[str, Any]:
         resolved_id = str(experiment_id or config.get("experiment_id") or "churn_engagement_v1")
         payload = {**self.get_config(resolved_id), **config, "experiment_id": resolved_id}
-        payload.pop("b_variant_pct", None)
         if payload.get("enabled") is True and payload.get("status") == "draft":
             payload["status"] = "active"
         record = self._save_experiment_record(payload)
@@ -74,10 +75,33 @@ class ExperimentConfigService:
     def assign_user(self, experiment_id: str, user_id: Any) -> Dict[str, Any]:
         config = self.get_config(experiment_id)
         user_text = str(user_id)
+        if user_text in {str(item) for item in config.get("blacklist_user_ids") or []}:
+            assignment = {
+                "experiment_id": experiment_id,
+                "user_id": user_text,
+                "bucket": None,
+                "group": "excluded",
+                "assigned_at": datetime.utcnow().isoformat(),
+            }
+            self.repository.upsert_resource(
+                "experiment_assignment",
+                f"{experiment_id}:{user_text}",
+                status="excluded",
+                name=experiment_id,
+                payload=assignment,
+            )
+            self.repository.record_resource_event("experiment", experiment_id, event_type="assignment", payload=assignment)
+            return assignment
         key = f"{experiment_id}:{user_text}".encode("utf-8")
         bucket = int(hashlib.sha256(key).hexdigest()[:8], 16) % 10000 / 10000.0
         holdout_pct = float(config.get("holdout_pct") or 0.10)
-        group = "holdout" if bucket < holdout_pct else "treatment"
+        treatment_b_pct = max(0.0, min(1.0, float(config.get("b_variant_pct") or 0.0)))
+        if bucket < holdout_pct:
+            group = "holdout"
+        else:
+            remainder = max(0.0, 1.0 - holdout_pct)
+            normalized_bucket = ((bucket - holdout_pct) / remainder) if remainder else 0.0
+            group = "treatment_b" if treatment_b_pct > 0 and normalized_bucket >= (1.0 - treatment_b_pct) else "treatment_a"
         assignment = {
             "experiment_id": experiment_id,
             "user_id": user_text,
@@ -85,6 +109,13 @@ class ExperimentConfigService:
             "group": group,
             "assigned_at": datetime.utcnow().isoformat(),
         }
+        self.repository.upsert_resource(
+            "experiment_assignment",
+            f"{experiment_id}:{user_text}",
+            status=group,
+            name=experiment_id,
+            payload=assignment,
+        )
         self.repository.record_resource_event("experiment", experiment_id, event_type="assignment", payload=assignment)
         return assignment
 
@@ -109,6 +140,20 @@ class ExperimentConfigService:
     def list_outcomes(self, experiment_id: str) -> List[Dict[str, Any]]:
         return [item.get("payload") or {} for item in self.repository.list_resource_events("experiment", experiment_id, event_type="outcome", limit=5000)]
 
+    def list_assignments(self, experiment_id: str) -> List[Dict[str, Any]]:
+        items = []
+        for record in self.repository.list_resources("experiment_assignment"):
+            payload = record.get("payload") or {}
+            if str(payload.get("experiment_id") or "") == experiment_id:
+                items.append(payload)
+        return items
+
+    def list_versions(self, experiment_id: str) -> Dict[str, Any]:
+        return {
+            "experiment_id": experiment_id,
+            "items": self.repository.list_resource_versions("experiment", experiment_id),
+        }
+
     def get_summary(self, experiment_id: str) -> Dict[str, Any]:
         config = self.get_config(experiment_id)
         exposures = self.list_exposures(experiment_id)
@@ -120,11 +165,14 @@ class ExperimentConfigService:
 
         groups: Dict[str, Dict[str, Any]] = {
             "holdout": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
-            "treatment": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
+            "treatment_a": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
+            "treatment_b": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
         }
         first_exposure_at: datetime | None = None
         for exposure in exposures:
             group = str(exposure.get("group") or "holdout")
+            if group == "excluded":
+                continue
             groups.setdefault(group, {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0})
             groups[group]["n"] += 1
             if str(exposure.get("execution_status") or "") == "policy_blocked":
@@ -146,10 +194,18 @@ class ExperimentConfigService:
 
         total = sum(item["n"] for item in groups.values())
         holdout_pct = float(config.get("holdout_pct") or 0.10)
-        expected = {"holdout": holdout_pct, "treatment": 1.0 - holdout_pct}
+        treatment_b_pct = max(0.0, min(1.0, float(config.get("b_variant_pct") or 0.0)))
+        expected_treatment_b = max(0.0, (1.0 - holdout_pct) * treatment_b_pct)
+        expected = {
+            "holdout": holdout_pct,
+            "treatment_a": max(0.0, 1.0 - holdout_pct - expected_treatment_b),
+            "treatment_b": expected_treatment_b,
+        }
         srm_detected = False
         if total > 0:
             for group_name, stats in groups.items():
+                if expected.get(group_name, 0.0) == 0.0 and stats["n"] == 0:
+                    continue
                 observed = stats["n"] / total
                 if abs(observed - expected.get(group_name, 0.0)) > 0.20:
                     srm_detected = True
@@ -159,8 +215,12 @@ class ExperimentConfigService:
             return round((float(numerator) / denominator), 4) if denominator else 0.0
 
         summary_groups: Dict[str, Dict[str, Any]] = {}
+        combined_treatment_n = groups["treatment_a"]["n"] + groups["treatment_b"]["n"]
+        combined_treatment_returned = groups["treatment_a"]["returned"] + groups["treatment_b"]["returned"]
+        combined_treatment_engaged = groups["treatment_a"]["engaged"] + groups["treatment_b"]["engaged"]
+        combined_treatment_blocked = groups["treatment_a"]["policy_blocked"] + groups["treatment_b"]["policy_blocked"]
         holdout_return_rate = _rate(groups["holdout"]["returned"], groups["holdout"]["n"])
-        treatment_return_rate = _rate(groups["treatment"]["returned"], groups["treatment"]["n"])
+        treatment_return_rate = _rate(combined_treatment_returned, combined_treatment_n)
         for group_name, stats in groups.items():
             summary_groups[group_name] = {
                 **stats,
@@ -168,6 +228,15 @@ class ExperimentConfigService:
                 "return_rate": _rate(stats["returned"], stats["n"]),
                 "policy_block_rate": _rate(stats["policy_blocked"], stats["n"]),
             }
+        summary_groups["treatment"] = {
+            "n": combined_treatment_n,
+            "engaged": combined_treatment_engaged,
+            "returned": combined_treatment_returned,
+            "policy_blocked": combined_treatment_blocked,
+            "engagement_rate": _rate(combined_treatment_engaged, combined_treatment_n),
+            "return_rate": _rate(combined_treatment_returned, combined_treatment_n),
+            "policy_block_rate": _rate(combined_treatment_blocked, combined_treatment_n),
+        }
         uplift = round(treatment_return_rate - holdout_return_rate, 4)
 
         runtime_hours = 0.0
@@ -229,6 +298,7 @@ class ExperimentConfigService:
             "decision_reason": decision_reason,
             "groups": summary_groups,
             "uplift_vs_holdout_return_rate": uplift,
+            "expected_allocation": expected,
         }
         self.repository.upsert_resource(
             "experiment_summary",
@@ -239,16 +309,37 @@ class ExperimentConfigService:
         )
         return summary
 
-    def decide(self, experiment_id: str, *, decided_by: str = "system") -> Dict[str, Any]:
+    def get_rollout_suggestion(self, experiment_id: str) -> Dict[str, Any]:
         summary = self.get_summary(experiment_id)
         decision = summary["decision"]
-        next_step = "continue_experiment"
+        suggestion = "continue_experiment"
         if decision == "winner":
-            next_step = "promote_treatment"
-        elif decision == "invalid":
-            next_step = "stop_and_investigate"
+            suggestion = "expand_treatment_audience"
         elif decision == "neutral":
-            next_step = "stop_or_retest"
+            suggestion = "pause_or_retest"
+        elif decision == "invalid":
+            suggestion = "stop_and_investigate"
+        payload = {
+            "experiment_id": experiment_id,
+            "decision": decision,
+            "decision_reason": summary.get("decision_reason"),
+            "suggestion": suggestion,
+            "risk_notes": [item["metric"] for item in summary.get("guardrails", []) if item.get("status") != "pass"],
+            "summary": summary,
+        }
+        self.repository.upsert_resource(
+            "experiment_rollout_suggestion",
+            experiment_id,
+            status=decision,
+            name=experiment_id,
+            payload=payload,
+        )
+        return payload
+
+    def decide(self, experiment_id: str, *, decided_by: str = "system") -> Dict[str, Any]:
+        summary = self.get_summary(experiment_id)
+        rollout = self.get_rollout_suggestion(experiment_id)
+        next_step = rollout["suggestion"]
         payload = {
             "experiment_id": experiment_id,
             "summary": summary,

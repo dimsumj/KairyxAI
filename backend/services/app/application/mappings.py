@@ -142,3 +142,60 @@ class MappingService:
             payload={"rolled_back_to_version": int(version), "changed_by": changed_by},
         )
         return rolled
+
+    def suggestions(
+        self,
+        connector_name: str,
+        *,
+        scope_type: str = "source",
+        scope_key: str | None = None,
+    ) -> Dict[str, Any]:
+        current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
+        suggestions = []
+        candidates = {
+            "canonical_user_id": [
+                ("player_id", 0.92, "player_id is the most common canonical candidate in v1"),
+                ("event_properties.player_id", 0.84, "Found common nested player_id pattern"),
+                ("user_properties.player_id", 0.72, "Fallback user profile player id"),
+            ],
+            "event_name": [
+                ("event_name", 0.93, "event_name aligns with canonical event_type"),
+                ("event_type", 0.88, "event_type is commonly used as source event name"),
+            ],
+            "event_time": [
+                ("timestamp", 0.94, "timestamp is the most common source event time field"),
+                ("event_time", 0.89, "event_time already matches canonical naming"),
+                ("created_at", 0.71, "created_at is a common fallback timestamp"),
+            ],
+            "campaign": [
+                ("event_properties.campaign", 0.81, "campaign usually arrives inside event_properties"),
+                ("campaign", 0.74, "campaign is also common as a top-level field"),
+            ],
+            "media_source": [
+                ("event_properties.media_source", 0.8, "media_source typically lives in attribution payloads"),
+                ("media_source", 0.7, "media_source as a flat field is a common fallback"),
+            ],
+        }
+        for field, options in candidates.items():
+            if str(current.get(field) or "").strip():
+                continue
+            path, confidence, rationale = options[0]
+            suggestions.append(
+                {
+                    "field": field,
+                    "suggested_path": path,
+                    "confidence": confidence,
+                    "rationale": rationale,
+                    "alternatives": [
+                        {"path": alt_path, "confidence": alt_confidence, "rationale": alt_rationale}
+                        for alt_path, alt_confidence, alt_rationale in options[1:]
+                    ],
+                }
+            )
+        return {
+            "connector_name": connector_name,
+            "scope_type": scope_type,
+            "scope_key": scope_key,
+            "suggestions": suggestions,
+            "effective_mapping": current,
+        }

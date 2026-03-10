@@ -11,12 +11,27 @@ class SqlWorkspaceService:
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
-    def preview(self, sql: str, *, limit: int = 50, timeout_seconds: int = 30) -> Dict[str, Any]:
-        return self.bigquery_service.run_readonly_query(
+    def preview(self, sql: str, *, limit: int = 50, timeout_seconds: int = 30, scan_limit_rows: int = 50000) -> Dict[str, Any]:
+        payload = self.bigquery_service.run_readonly_query(
             sql,
             limit=limit,
             timeout_seconds=timeout_seconds,
+            max_scan_rows=scan_limit_rows,
         )
+        audit_id = f"sqlq_{uuid.uuid4().hex[:20]}"
+        audit_payload = {
+            "query_id": audit_id,
+            "sql": sql,
+            "limit": limit,
+            "timeout_seconds": timeout_seconds,
+            "scan_limit_rows": scan_limit_rows,
+            "estimated_scan_rows": payload.get("estimated_scan_rows", 0),
+            "row_count": payload.get("row_count", 0),
+            "status": "completed",
+        }
+        self.repository.upsert_resource("sql_query_audit", audit_id, status="completed", name="preview", payload=audit_payload)
+        self.repository.record_resource_event("sql_query_audit", audit_id, event_type="preview_executed", payload=audit_payload)
+        return payload
 
     def create_saved_query(self, name: str, sql: str, description: str = "") -> Dict[str, Any]:
         query_id = f"sql_{uuid.uuid4().hex[:20]}"

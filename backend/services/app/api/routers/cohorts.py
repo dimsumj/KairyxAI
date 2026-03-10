@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from app.api.schemas.cohorts import CohortCreateRequest, CohortMemberPage, CohortResponse, CohortVersionListResponse
+from app.api.schemas.cohorts import CohortCreateRequest, CohortMemberPage, CohortResponse, CohortUpdateRequest, CohortVersionListResponse
 from app.application.cohorts import CohortService
+from app.core.governance import ensure_permission, get_governance_context
 from app.core.deps import get_cohort_service
 
 
@@ -38,6 +39,20 @@ def get_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_servi
     if cohort is None:
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
     return cohort
+
+
+@router.patch("/{cohort_id}", response_model=CohortResponse)
+def update_cohort(
+    cohort_id: str,
+    request: CohortUpdateRequest,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.update")
+    try:
+        return service.update_cohort(cohort_id, request.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
 
 
 @router.get("/{cohort_id}/members", response_model=CohortMemberPage)
@@ -89,6 +104,19 @@ def list_cohort_versions(cohort_id: str, service: CohortService = Depends(get_co
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
 
 
+@router.get("/{cohort_id}/refresh-jobs", response_model=dict)
+def list_cohort_refresh_jobs(
+    cohort_id: str,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.refresh_jobs.read")
+    try:
+        return service.list_refresh_jobs(cohort_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
+
+
 @router.get("/{cohort_id}/metrics", response_model=dict)
 def get_cohort_metrics(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
     try:
@@ -135,3 +163,16 @@ def restore_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_s
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.delete("/{cohort_id}/permanent", response_model=dict)
+def permanently_delete_cohort(
+    cohort_id: str,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.permanent_delete")
+    try:
+        return service.permanent_delete(cohort_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")

@@ -31,6 +31,20 @@ def copilot_query(request: CopilotQueryRequest, http_request: Request, service: 
     )
 
 
+@router.get("/metrics", response_model=dict)
+def list_copilot_metrics(http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.metrics.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_metrics_read",
+        resource_type="copilot_metric_registry",
+        resource_id=None,
+        payload=service.get_metrics(),
+    )
+
+
 @router.post("/explain", response_model=CopilotResponse)
 def copilot_explain(request: CopilotExplainRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
     context = get_governance_context(http_request)
@@ -104,6 +118,23 @@ def list_copilot_anomalies(http_request: Request, service: CopilotService = Depe
     )
 
 
+@router.get("/anomalies/{anomaly_id}", response_model=dict)
+def get_copilot_anomaly(anomaly_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.anomaly.read")
+    payload = service.get_anomaly(anomaly_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Copilot anomaly '{anomaly_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_anomaly_read",
+        resource_type="copilot_anomaly",
+        resource_id=anomaly_id,
+        payload=payload,
+    )
+
+
 @router.get("/reports", response_model=dict)
 def list_copilot_reports(http_request: Request, service: CopilotService = Depends(get_copilot_service)):
     context = get_governance_context(http_request)
@@ -115,4 +146,22 @@ def list_copilot_reports(http_request: Request, service: CopilotService = Depend
         resource_type="copilot_report",
         resource_id=None,
         payload={"items": service.list_reports()},
+    )
+
+
+@router.post("/reports/{report_id}/retry", response_model=CopilotResponse)
+def retry_copilot_report(report_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.report.retry")
+    try:
+        payload = service.retry_report(report_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot report '{report_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_report_retry",
+        resource_type="copilot_report",
+        resource_id=report_id,
+        payload=payload,
     )

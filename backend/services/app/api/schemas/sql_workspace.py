@@ -9,6 +9,7 @@ class SqlPreviewRequest(BaseModel):
     sql: str
     limit: int = 50
     timeout_seconds: int = 30
+    scan_limit_rows: int = 50000
 
 
 class SavedQueryCreateRequest(BaseModel):
@@ -31,6 +32,11 @@ class SqlPreviewResponse(BaseModel):
     rows: List[Dict[str, Any]] = Field(default_factory=list)
     row_count: int = 0
     truncated: bool = False
+    estimated_scan_rows: int = 0
+    timeout_seconds: int = 30
+    scan_limit_rows: int = 50000
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
 
 
 class SavedQueryResponse(BaseModel):
@@ -40,3 +46,5 @@ class SavedQueryResponse(BaseModel):
     sql: str
     created_at: str
     updated_at: str
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)

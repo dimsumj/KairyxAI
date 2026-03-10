@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.api.schemas.workflows import OrchestratorRunRequest, WorkflowCreateRequest, WorkflowExecutionPage, WorkflowResponse, WorkflowRunRequest
+from app.api.schemas.workflows import (
+    OrchestratorRunRequest,
+    WorkflowConfirmationRequest,
+    WorkflowCreateRequest,
+    WorkflowEventIngestRequest,
+    WorkflowExecutionPage,
+    WorkflowResponse,
+    WorkflowRunRequest,
+    WorkflowThresholdEvaluateRequest,
+    WorkflowUpdateRequest,
+)
 from app.application.workflows import WorkflowService
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_workflow_service
@@ -47,6 +57,17 @@ def get_workflow(workflow_id: str, service: WorkflowService = Depends(get_workfl
     return workflow
 
 
+@workflow_router.put("/{workflow_id}", response_model=WorkflowResponse)
+def update_workflow(workflow_id: str, request: WorkflowUpdateRequest, service: WorkflowService = Depends(get_workflow_service)):
+    try:
+        return service.update_workflow(workflow_id, request.model_dump(exclude_none=True))
+    except KeyError as exc:
+        detail = f"Workflow '{workflow_id}' not found." if str(exc) == workflow_id else f"Cohort '{exc.args[0]}' not found."
+        raise HTTPException(status_code=404, detail=detail)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @workflow_router.post("/{workflow_id}/publish", response_model=WorkflowResponse)
 def publish_workflow(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
     try:
@@ -86,6 +107,7 @@ def test_run_workflow(
             confirm=request.confirm,
             sandbox=request.sandbox,
             reference_time=request.reference_time,
+            confirmation_token=request.confirmation_token,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
@@ -105,6 +127,26 @@ def list_workflow_executions(workflow_id: str, service: WorkflowService = Depend
 def get_workflow_policy_counters(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
     try:
         return service.get_policy_counters(workflow_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+
+
+@workflow_router.get("/{workflow_id}/versions", response_model=dict)
+def get_workflow_versions(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
+    try:
+        return service.list_versions(workflow_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+
+
+@workflow_router.post("/{workflow_id}/confirm", response_model=dict)
+def confirm_workflow(
+    workflow_id: str,
+    request: WorkflowConfirmationRequest,
+    service: WorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.confirm_workflow(workflow_id, note=request.note, valid_for_hours=request.valid_for_hours)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
 
@@ -147,6 +189,43 @@ def run_due_workflows(
     service: WorkflowService = Depends(get_workflow_service),
 ):
     try:
-        return service.run_due_workflows(reference_time=request.reference_time, limit_per_workflow=request.limit_per_workflow)
+        return service.run_due_workflows(
+            reference_time=request.reference_time,
+            limit_per_workflow=request.limit_per_workflow,
+            confirmation_tokens=request.confirmation_tokens,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@orchestrator_router.post("/events:ingest", response_model=dict)
+def ingest_orchestrator_event(
+    request: WorkflowEventIngestRequest,
+    service: WorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.ingest_event(
+            event_type=request.event_type,
+            user_ids=request.user_ids,
+            payload=request.payload,
+            reference_time=request.reference_time,
+            confirmation_tokens=request.confirmation_tokens,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@orchestrator_router.post("/thresholds:evaluate", response_model=dict)
+def evaluate_orchestrator_threshold(
+    request: WorkflowThresholdEvaluateRequest,
+    service: WorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.evaluate_thresholds(
+            metric_id=request.metric_id,
+            value=request.value,
+            reference_time=request.reference_time,
+            confirmation_tokens=request.confirmation_tokens,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

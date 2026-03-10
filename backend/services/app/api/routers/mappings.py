@@ -82,3 +82,13 @@ def rollback_mapping(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Mapping version '{version}' not found.")
+
+
+@router.get("/{connector_name}/suggestions", response_model=dict)
+def get_mapping_suggestions(
+    connector_name: str,
+    scope_type: str = Query("source"),
+    scope_key: str | None = Query(None),
+    service: MappingService = Depends(get_mapping_service),
+):
+    return service.suggestions(connector_name, scope_type=scope_type, scope_key=scope_key)

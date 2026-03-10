@@ -9,7 +9,8 @@ class ExperimentConfigRequest(BaseModel):
     experiment_id: str = "churn_engagement_v1"
     enabled: bool = True
     holdout_pct: float = 0.10
-    b_variant_pct: float = 0.50
+    b_variant_pct: float = 0.0
+    blacklist_user_ids: List[str] = Field(default_factory=list)
 
 
 class ExperimentConfigResponse(BaseModel):
@@ -24,7 +25,8 @@ class ExperimentLifecycleRequest(BaseModel):
     min_runtime_hours: int = 24
     cohort_id: str | None = None
     holdout_pct: float = 0.10
-    b_variant_pct: float = 0.50
+    b_variant_pct: float = 0.0
+    blacklist_user_ids: List[str] = Field(default_factory=list)
 
 
 class ExperimentEventPage(BaseModel):

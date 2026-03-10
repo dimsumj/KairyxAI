@@ -60,6 +60,7 @@ class WorkflowService:
                 "channel_config": normalized_channel,
                 "experiment_id": experiment_id,
                 "requires_confirmation": bool(requires_confirmation),
+                "confirmation_state": None,
             },
         }
         record = self.repository.upsert_resource("workflow", workflow_id, status="draft", name=name, payload=payload)
@@ -67,6 +68,69 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_created", payload=payload)
         self.repository.record_action("workflow_created", "workflow", workflow_id, payload)
         return self._to_response(record)
+
+    def update_workflow(self, workflow_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            raise KeyError(workflow_id)
+        payload = dict(record.get("payload") or {})
+        definition = dict(payload.get("definition") or {})
+        if patch.get("cohort_id") and self.cohorts.get_cohort(str(patch["cohort_id"])) is None:
+            raise KeyError(str(patch["cohort_id"]))
+        if patch.get("name") is not None:
+            payload["name"] = patch["name"]
+        if patch.get("cohort_id") is not None:
+            definition["cohort_id"] = patch["cohort_id"]
+        if patch.get("policy") is not None:
+            payload["policy"] = self._normalize_policy(patch["policy"])
+            definition["policy"] = payload["policy"]
+        if patch.get("budget_policy") is not None:
+            payload["budget_policy"] = dict(patch["budget_policy"] or {})
+            definition["budget_policy"] = payload["budget_policy"]
+        trigger_source = patch.get("trigger") if patch.get("trigger") is not None else patch.get("schedule")
+        if trigger_source is not None:
+            payload["trigger"] = self._normalize_trigger(trigger_source)
+            definition["trigger"] = payload["trigger"]
+            definition["schedule"] = payload["trigger"]
+        channel_source = patch.get("channel_config") if patch.get("channel_config") is not None else patch.get("action")
+        if channel_source is not None:
+            payload["channel_config"] = dict(channel_source or {})
+            definition["channel_config"] = payload["channel_config"]
+            definition["action"] = payload["channel_config"]
+        if patch.get("experiment_id") is not None:
+            payload["experiment_id"] = patch["experiment_id"]
+            definition["experiment_id"] = patch["experiment_id"]
+        if patch.get("requires_confirmation") is not None:
+            definition["requires_confirmation"] = bool(patch["requires_confirmation"])
+        payload["definition"] = definition
+        payload["current_version"] = int(payload.get("current_version") or 1) + 1
+        payload["status"] = "draft"
+        saved = self.repository.upsert_resource("workflow", workflow_id, status="draft", name=payload.get("name"), payload=payload)
+        self.repository.create_resource_version("workflow", workflow_id, version=int(payload["current_version"]), payload=payload)
+        self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_updated", payload={"version": payload["current_version"], "patch": patch})
+        self.repository.record_action("workflow_updated", "workflow", workflow_id, patch)
+        return self._to_response(saved)
+
+    def list_versions(self, workflow_id: str) -> Dict[str, Any]:
+        if self.get_workflow(workflow_id) is None:
+            raise KeyError(workflow_id)
+        return {"workflow_id": workflow_id, "items": self.repository.list_resource_versions("workflow", workflow_id)}
+
+    def confirm_workflow(self, workflow_id: str, *, note: str = "", valid_for_hours: int = 24) -> Dict[str, Any]:
+        workflow = self.get_workflow(workflow_id)
+        if workflow is None:
+            raise KeyError(workflow_id)
+        token = f"wfc_{uuid.uuid4().hex[:24]}"
+        payload = {
+            "workflow_id": workflow_id,
+            "confirmation_token": token,
+            "note": note,
+            "confirmed_at": datetime.utcnow().isoformat(),
+            "valid_until": (datetime.utcnow() + timedelta(hours=max(1, int(valid_for_hours)))).isoformat(),
+        }
+        self.repository.upsert_resource("workflow_confirmation", workflow_id, status="confirmed", name=workflow.get("name"), payload=payload)
+        self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_confirmed", payload=payload)
+        return payload
 
     def get_workflow(self, workflow_id: str) -> Dict[str, Any] | None:
         record = self.repository.get_resource("workflow", workflow_id)
@@ -252,7 +316,16 @@ class WorkflowService:
             "items": items,
         }
 
-    def test_run(self, workflow_id: str, *, limit: int = 20, confirm: bool = False, sandbox: bool = True, reference_time: str | None = None) -> Dict[str, Any]:
+    def test_run(
+        self,
+        workflow_id: str,
+        *,
+        limit: int = 20,
+        confirm: bool = False,
+        sandbox: bool = True,
+        reference_time: str | None = None,
+        confirmation_token: str | None = None,
+    ) -> Dict[str, Any]:
         workflow = self.get_workflow(workflow_id)
         if workflow is None:
             raise KeyError(workflow_id)
@@ -265,13 +338,21 @@ class WorkflowService:
             sandbox=bool(sandbox),
             manual_test=True,
             reference_time=self._parse_reference_time(reference_time),
+            confirmation_token=confirmation_token,
         )
 
-    def run_due_workflows(self, *, reference_time: str | None = None, limit_per_workflow: int = 100) -> Dict[str, Any]:
+    def run_due_workflows(
+        self,
+        *,
+        reference_time: str | None = None,
+        limit_per_workflow: int = 100,
+        confirmation_tokens: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
         if self.get_kill_switch().get("enabled"):
             raise ValueError("Kill switch is enabled.")
         resolved_time = self._parse_reference_time(reference_time)
         action_date = resolved_time.date().isoformat()
+        tokens = dict(confirmation_tokens or {})
         runs = []
         for workflow in self.list_workflows():
             if workflow.get("status") != "published":
@@ -293,9 +374,95 @@ class WorkflowService:
                     sandbox=False,
                     manual_test=False,
                     reference_time=resolved_time,
+                    confirmation_token=tokens.get(workflow["workflow_id"]),
                 )
             )
         return {"reference_time": resolved_time.isoformat(), "items": runs}
+
+    def ingest_event(
+        self,
+        *,
+        event_type: str,
+        user_ids: List[str],
+        payload: Dict[str, Any] | None = None,
+        reference_time: str | None = None,
+        confirmation_tokens: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
+        if self.get_kill_switch().get("enabled"):
+            raise ValueError("Kill switch is enabled.")
+        resolved_time = self._parse_reference_time(reference_time)
+        tokens = dict(confirmation_tokens or {})
+        results = []
+        for workflow in self.list_workflows():
+            trigger = workflow.get("trigger") or {}
+            if workflow.get("status") != "published" or str(trigger.get("type") or "") != "event_trigger":
+                continue
+            if str(trigger.get("event_type") or "") != str(event_type):
+                continue
+            members = self._filter_members_for_user_ids((workflow.get("definition") or {}).get("cohort_id"), user_ids)
+            if not members:
+                continue
+            self.repository.record_resource_event(
+                "workflow",
+                workflow["workflow_id"],
+                event_type="workflow_trigger_event",
+                payload={"trigger_type": "event_trigger", "event_type": event_type, "user_ids": user_ids, "payload": payload or {}, "recorded_at": resolved_time.isoformat()},
+            )
+            results.append(
+                self._execute_workflow(
+                    workflow,
+                    limit=len(members),
+                    confirm=True,
+                    sandbox=False,
+                    manual_test=False,
+                    reference_time=resolved_time,
+                    members_override=members,
+                    trigger_type="event_trigger",
+                    confirmation_token=tokens.get(workflow["workflow_id"]),
+                )
+            )
+        return {"event_type": event_type, "reference_time": resolved_time.isoformat(), "items": results}
+
+    def evaluate_thresholds(
+        self,
+        *,
+        metric_id: str,
+        value: float,
+        reference_time: str | None = None,
+        confirmation_tokens: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
+        if self.get_kill_switch().get("enabled"):
+            raise ValueError("Kill switch is enabled.")
+        resolved_time = self._parse_reference_time(reference_time)
+        tokens = dict(confirmation_tokens or {})
+        results = []
+        for workflow in self.list_workflows():
+            trigger = workflow.get("trigger") or {}
+            if workflow.get("status") != "published" or str(trigger.get("type") or "") != "threshold_trigger":
+                continue
+            if str(trigger.get("metric_id") or "") != str(metric_id):
+                continue
+            if not self._threshold_matches(float(value), str(trigger.get("operator") or ">="), float(trigger.get("threshold") or 0.0)):
+                continue
+            self.repository.record_resource_event(
+                "workflow",
+                workflow["workflow_id"],
+                event_type="workflow_trigger_event",
+                payload={"trigger_type": "threshold_trigger", "metric_id": metric_id, "value": value, "recorded_at": resolved_time.isoformat()},
+            )
+            results.append(
+                self._execute_workflow(
+                    workflow,
+                    limit=100,
+                    confirm=True,
+                    sandbox=False,
+                    manual_test=False,
+                    reference_time=resolved_time,
+                    trigger_type="threshold_trigger",
+                    confirmation_token=tokens.get(workflow["workflow_id"]),
+                )
+            )
+        return {"metric_id": metric_id, "value": value, "reference_time": resolved_time.isoformat(), "items": results}
 
     def _set_status(self, workflow_id: str, status: str, event_type: str) -> Dict[str, Any]:
         record = self.repository.get_resource("workflow", workflow_id)
@@ -323,13 +490,20 @@ class WorkflowService:
         raw_type = str((trigger or {}).get("type") or "daily").lower()
         if raw_type == "daily":
             raw_type = "daily_schedule"
-        if raw_type not in {"daily_schedule", "manual_test"}:
-            raise ValueError("Phase 2 only supports daily_schedule and manual_test triggers.")
-        return {
+        if raw_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger"}:
+            raise ValueError("Supported triggers are daily_schedule, manual_test, event_trigger, and threshold_trigger.")
+        payload = {
             "type": raw_type,
             "hour": int((trigger or {}).get("hour") or 0),
             "minute": int((trigger or {}).get("minute") or 0),
         }
+        if raw_type == "event_trigger":
+            payload["event_type"] = str((trigger or {}).get("event_type") or "").strip()
+        if raw_type == "threshold_trigger":
+            payload["metric_id"] = str((trigger or {}).get("metric_id") or "").strip()
+            payload["operator"] = str((trigger or {}).get("operator") or ">=").strip()
+            payload["threshold"] = float((trigger or {}).get("threshold") or 0.0)
+        return payload
 
     def _normalize_policy(self, policy: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(policy or {})
@@ -354,8 +528,16 @@ class WorkflowService:
         if not str(channel_config.get("content") or "").strip():
             reasons.append("content_missing")
         trigger = workflow.get("trigger") or definition.get("trigger") or definition.get("schedule") or {}
-        if str(trigger.get("type") or "") not in {"daily_schedule", "manual_test"}:
+        trigger_type = str(trigger.get("type") or "")
+        if trigger_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger"}:
             reasons.append("unsupported_trigger")
+        if trigger_type == "event_trigger" and not str(trigger.get("event_type") or "").strip():
+            reasons.append("event_type_missing")
+        if trigger_type == "threshold_trigger":
+            if not str(trigger.get("metric_id") or "").strip():
+                reasons.append("metric_id_missing")
+            if str(trigger.get("operator") or "") not in {">", ">=", "<", "<=", "=="}:
+                reasons.append("threshold_operator_invalid")
         if not workflow.get("experiment_id") and not definition.get("experiment_id"):
             reasons.append("experiment_missing")
         policy = workflow.get("policy") or definition.get("policy") or {}
@@ -371,6 +553,27 @@ class WorkflowService:
             return datetime.fromisoformat(str(reference_time))
         except ValueError:
             return datetime.utcnow()
+
+    def _filter_members_for_user_ids(self, cohort_id: str | None, user_ids: List[str]) -> List[Dict[str, Any]]:
+        if not cohort_id:
+            return []
+        selected = {str(item) for item in user_ids if str(item).strip()}
+        members = self.cohorts.list_members(cohort_id, page=1, page_size=1000)["items"]
+        if not selected:
+            return members
+        return [member for member in members if str(member.get("canonical_user_id") or "") in selected]
+
+    @staticmethod
+    def _threshold_matches(value: float, operator: str, threshold: float) -> bool:
+        if operator == ">":
+            return value > threshold
+        if operator == ">=":
+            return value >= threshold
+        if operator == "<":
+            return value < threshold
+        if operator == "<=":
+            return value <= threshold
+        return value == threshold
 
     def _already_executed_for_date(self, workflow_id: str, action_date: str) -> bool:
         for event in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500):
@@ -485,6 +688,12 @@ class WorkflowService:
                 "status_code": provider_result.get("status_code"),
                 "error": provider_result.get("error"),
             },
+            "delivery_diagnostics": {
+                "attempt_count": provider_result.get("attempt_count", 1),
+                "attempts": provider_result.get("attempts", []),
+                "retry_schedule_seconds": provider_result.get("retry_schedule_seconds", []),
+                "failure_classification": provider_result.get("failure_classification"),
+            },
             "callback_count": 0,
             "sandbox": bool(sandbox),
             "recorded_at": datetime.utcnow().isoformat(),
@@ -539,6 +748,57 @@ class WorkflowService:
             "purchase": "returned",
         }
         return mapping.get(str(event_type).lower())
+
+    def _validate_confirmation(self, workflow_id: str, confirmation_token: str | None) -> None:
+        record = self.repository.get_resource("workflow_confirmation", workflow_id)
+        if record is None:
+            raise ValueError("Workflow requires confirmation before execution.")
+        payload = record.get("payload") or {}
+        valid_until = str(payload.get("valid_until") or "")
+        try:
+            valid_until_dt = datetime.fromisoformat(valid_until)
+        except ValueError:
+            valid_until_dt = None
+        if valid_until_dt is None or valid_until_dt < datetime.utcnow():
+            raise ValueError("Workflow confirmation has expired.")
+        if str(payload.get("confirmation_token") or "") != str(confirmation_token or ""):
+            raise ValueError("Valid confirmation token is required for workflow execution.")
+
+    @staticmethod
+    def _classify_provider_failure(provider_result: Dict[str, Any]) -> str:
+        error = str(provider_result.get("error") or "").lower()
+        if "unsupported_channel" in error:
+            return "internal_error"
+        if "timeout" in error:
+            return "provider_error"
+        return "provider_error"
+
+    def _execute_action_with_retry(self, action_payload: Dict[str, Any], channel_config: Dict[str, Any]) -> Dict[str, Any]:
+        retry_policy = dict(channel_config.get("retry_policy") or {})
+        max_retries = max(0, int(retry_policy.get("max_retries") or 0))
+        base_backoff_seconds = max(1, int(retry_policy.get("base_backoff_seconds") or 1))
+        attempts: List[Dict[str, Any]] = []
+        final_result: Dict[str, Any] | None = None
+        for attempt in range(max_retries + 1):
+            result = self.executor.execute_action_detailed(action_payload)
+            attempts.append(
+                {
+                    "attempt": attempt + 1,
+                    "status_code": result.get("status_code"),
+                    "ok": bool(result.get("ok")),
+                    "error": result.get("error"),
+                    "backoff_seconds": 0 if result.get("ok") else (base_backoff_seconds * (2**attempt) if attempt < max_retries else 0),
+                }
+            )
+            final_result = result
+            if result.get("ok"):
+                break
+        resolved = dict(final_result or {})
+        resolved["attempt_count"] = len(attempts)
+        resolved["attempts"] = attempts
+        resolved["failure_classification"] = None if resolved.get("ok") else self._classify_provider_failure(resolved)
+        resolved["retry_schedule_seconds"] = [item["backoff_seconds"] for item in attempts[:-1] if item["backoff_seconds"] > 0]
+        return resolved
 
     def _evaluate_policy(
         self,
@@ -613,13 +873,18 @@ class WorkflowService:
         sandbox: bool,
         manual_test: bool,
         reference_time: datetime,
+        members_override: List[Dict[str, Any]] | None = None,
+        trigger_type: str | None = None,
+        confirmation_token: str | None = None,
     ) -> Dict[str, Any]:
         if self.get_kill_switch().get("enabled"):
             raise ValueError("Kill switch is enabled.")
 
         definition = workflow.get("definition") or {}
-        if definition.get("requires_confirmation") and not confirm:
-            raise ValueError("Workflow requires confirmation before execution.")
+        if definition.get("requires_confirmation"):
+            if not confirm:
+                raise ValueError("Workflow requires confirmation before execution.")
+            self._validate_confirmation(workflow["workflow_id"], confirmation_token)
 
         cohort = self.cohorts.get_cohort(definition["cohort_id"])
         if cohort is None:
@@ -629,7 +894,7 @@ class WorkflowService:
             if not last_refreshed_at or last_refreshed_at[:10] < reference_time.date().isoformat():
                 cohort = self.cohorts.refresh_cohort(definition["cohort_id"], force=True)
 
-        members = self.cohorts.list_members(definition["cohort_id"], page=1, page_size=max(1, int(limit)))["items"]
+        members = list(members_override or self.cohorts.list_members(definition["cohort_id"], page=1, page_size=max(1, int(limit)))["items"])
         execution_id = f"run_{uuid.uuid4().hex[:20]}"
         snapshot_id = str((cohort or {}).get("latest_snapshot_id") or "snapshot_missing")
         action_date = reference_time.date().isoformat()
@@ -638,7 +903,7 @@ class WorkflowService:
             "workflow_id": workflow["workflow_id"],
             "workflow_version": workflow.get("published_version") or workflow.get("current_version") or 1,
             "sandbox": bool(sandbox),
-            "trigger_type": "manual_test" if manual_test else "daily_schedule",
+            "trigger_type": trigger_type or ("manual_test" if manual_test else "daily_schedule"),
             "action_date": action_date,
             "cohort_snapshot_id": snapshot_id,
             "triggered": len(members),
@@ -759,7 +1024,7 @@ class WorkflowService:
                 "subject": action.get("subject", "KairyxAI"),
                 "player_id": recipient or member.get("canonical_user_id"),
             }
-            provider_result = self.executor.execute_action_detailed(action_payload)
+            provider_result = self._execute_action_with_retry(action_payload, channel_config)
             summary["executed"] += 1
             execution_payload["execution_status"] = "executed" if provider_result.get("ok") else "failed"
             execution_payload["action_execution_id"] = provider_result.get("action_id") or execution_id
@@ -776,11 +1041,12 @@ class WorkflowService:
 
             if not provider_result.get("ok"):
                 summary["failures"] += 1
+                failure_reason = str(provider_result.get("failure_classification") or "provider_error")
                 self.repository.record_resource_event(
                     "workflow",
                     workflow["workflow_id"],
                     event_type="action_delivery",
-                    payload={**execution_payload, **delivery_payload, "delivery_status": "failed", "failure_reason": "provider_error"},
+                    payload={**execution_payload, **delivery_payload, "delivery_status": "failed", "failure_reason": failure_reason},
                 )
                 summary["results"].append(execution_payload)
                 continue
@@ -813,13 +1079,13 @@ class WorkflowService:
                         "delivery_id": delivery_payload["delivery_id"],
                     },
                 )
-                if experiment_id:
+                if experiment_id and group not in {None, "excluded"}:
                     self.experiments.record_exposure(
                         experiment_id,
                         {
                             **delivery_payload,
                             "experiment_id": experiment_id,
-                            "group": group or "treatment",
+                            "group": group or "treatment_a",
                             "exposed_at": datetime.utcnow().isoformat(),
                         },
                     )

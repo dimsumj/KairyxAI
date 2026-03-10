@@ -18,16 +18,51 @@ class WorkflowCreateRequest(BaseModel):
     requires_confirmation: bool = False
 
 
+class WorkflowUpdateRequest(BaseModel):
+    name: str | None = None
+    cohort_id: str | None = None
+    schedule: Dict[str, Any] | None = None
+    action: Dict[str, Any] | None = None
+    policy: Dict[str, Any] | None = None
+    budget_policy: Dict[str, Any] | None = None
+    trigger: Dict[str, Any] | None = None
+    channel_config: Dict[str, Any] | None = None
+    experiment_id: str | None = None
+    requires_confirmation: bool | None = None
+
+
 class WorkflowRunRequest(BaseModel):
     limit: int = 20
     confirm: bool = False
     sandbox: bool = True
     reference_time: str | None = None
+    confirmation_token: str | None = None
 
 
 class OrchestratorRunRequest(BaseModel):
     reference_time: str | None = None
     limit_per_workflow: int = 100
+    confirmation_tokens: Dict[str, str] = Field(default_factory=dict)
+
+
+class WorkflowEventIngestRequest(BaseModel):
+    event_type: str
+    user_ids: List[str] = Field(default_factory=list)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    reference_time: str | None = None
+    confirmation_tokens: Dict[str, str] = Field(default_factory=dict)
+
+
+class WorkflowThresholdEvaluateRequest(BaseModel):
+    metric_id: str
+    value: float
+    reference_time: str | None = None
+    confirmation_tokens: Dict[str, str] = Field(default_factory=dict)
+
+
+class WorkflowConfirmationRequest(BaseModel):
+    note: str = ""
+    valid_for_hours: int = 24
 
 
 class WorkflowResponse(BaseModel):
@@ -42,6 +77,7 @@ class WorkflowResponse(BaseModel):
     budget_policy: Dict[str, Any] = Field(default_factory=dict)
     experiment_id: str | None = None
     channel_config: Dict[str, Any] = Field(default_factory=dict)
+    publish_preflight: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 

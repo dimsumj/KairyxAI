@@ -86,6 +86,8 @@ class BigQueryService:
 
     def __init__(self):
         self._lock = threading.RLock()
+        self._query_state_lock = threading.RLock()
+        self._active_queries = 0
         self.mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
         if self.mode not in {"mock", "gcp"}:
             raise ValueError("DATA_BACKEND_MODE must be 'mock' or 'gcp'.")
@@ -306,6 +308,31 @@ class BigQueryService:
         }
         return mapping.get(alias, ["id"])
 
+    @staticmethod
+    def _top20_field_specs() -> List[Dict[str, Any]]:
+        return [
+            {"field": "player_id", "expected_type": "string"},
+            {"field": "internal_account_id", "expected_type": "string"},
+            {"field": "game_uid", "expected_type": "string"},
+            {"field": "login_user_id", "expected_type": "string"},
+            {"field": "anonymous_id", "expected_type": "string"},
+            {"field": "device_id", "expected_type": "string"},
+            {"field": "email_hash", "expected_type": "string"},
+            {"field": "phone_hash", "expected_type": "string"},
+            {"field": "event_type", "expected_type": "string"},
+            {"field": "event_time", "expected_type": "datetime"},
+            {"field": "source_event_id", "expected_type": "string"},
+            {"field": "session_id", "expected_type": "string"},
+            {"field": "app_version", "expected_type": "string"},
+            {"field": "platform", "expected_type": "string"},
+            {"field": "campaign", "expected_type": "string"},
+            {"field": "adset", "expected_type": "string"},
+            {"field": "media_source", "expected_type": "string"},
+            {"field": "channel", "expected_type": "string"},
+            {"field": "revenue_usd", "expected_type": "number"},
+            {"field": "country", "expected_type": "string"},
+        ]
+
     def _load_rows_to_gcp_table(
         self,
         rows: List[Dict[str, Any]],
@@ -508,12 +535,247 @@ class BigQueryService:
         target = self.get_v1_table_aliases().get(resolved_alias, resolved_alias)
         return self._load_all_rows_from_target(target)
 
+    @staticmethod
+    def _lookup_row_value(row: Dict[str, Any], field: str) -> Any:
+        if field in row and row.get(field) not in (None, ""):
+            return row.get(field)
+        for container_name in ("event_properties", "user_properties"):
+            container = row.get(container_name)
+            if isinstance(container, dict) and container.get(field) not in (None, ""):
+                return container.get(field)
+        return None
+
+    @classmethod
+    def _expected_type_matches(cls, value: Any, expected_type: str) -> bool:
+        if value in (None, "", []):
+            return True
+        kind = str(expected_type or "string")
+        if kind == "string":
+            return isinstance(value, str)
+        if kind == "number":
+            try:
+                float(value)
+                return True
+            except (TypeError, ValueError):
+                return False
+        if kind == "datetime":
+            try:
+                datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                return True
+            except ValueError:
+                return False
+        return True
+
+    def _resolve_canonical_user_id(self, row: Dict[str, Any]) -> tuple[str | None, str]:
+        direct = self._normalize_identity_value(row.get("canonical_user_id"))
+        if direct:
+            return direct, "canonical_user_id"
+
+        ordered_fields = (
+            ("internal_account_id", "internal_account_id"),
+            ("game_uid", "game_uid"),
+            ("login_user_id", "login_user_id"),
+            ("player_id", "player_id"),
+            ("device_id", "device_id"),
+            ("email_hash", "email_hash"),
+            ("phone_hash", "phone_hash"),
+            ("anonymous_id", "anonymous_id"),
+            ("source_user_id", "source_user_id"),
+        )
+        for field, method in ordered_fields:
+            value = self._normalize_identity_value(self._lookup_row_value(row, field))
+            if value:
+                prefix = "uid" if field in {"internal_account_id", "game_uid", "login_user_id", "player_id"} else field
+                return f"{prefix}:{value}" if ":" not in value else value, method
+
+        source = self._normalize_identity_value(row.get("source")) or "unknown"
+        fallback = self._normalize_identity_value(self._lookup_row_value(row, "source_event_id")) or self._normalize_identity_value(self._lookup_row_value(row, "event_type"))
+        if fallback:
+            return f"{source}:{fallback}", "source_fallback"
+        return None, "unresolved"
+
+    @staticmethod
+    def _source_priority(source: str, field: str) -> int:
+        value = str(source or "").strip().lower()
+        identity_priority = {"game_backend": 0, "internal": 0, "game": 0, "server": 0, "analytics_sdk": 1, "sdk": 1, "amplitude": 1, "mixpanel": 1, "adjust": 2, "mmp": 2}
+        attribution_priority = {"analytics_sdk": 0, "sdk": 0, "amplitude": 0, "mixpanel": 0, "adjust": 1, "mmp": 1, "game_backend": 2, "internal": 2}
+        mapping = attribution_priority if field in {"campaign", "adset", "media_source", "channel"} else identity_priority
+        return int(mapping.get(value, 9))
+
+    def _normalize_event_for_curation(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(row)
+        resolved_canonical, method = self._resolve_canonical_user_id(payload)
+        if resolved_canonical:
+            payload["canonical_user_id"] = resolved_canonical
+        payload.setdefault("identity_resolution_method", method)
+        decisions = dict(payload.get("source_of_truth_decision") or {})
+        for field in ("campaign", "adset", "media_source", "channel"):
+            value = self._lookup_row_value(payload, field)
+            if value in (None, "", []):
+                continue
+            decisions[field] = {
+                "selected_value": value,
+                "selected_source": payload.get("source"),
+                "priority": self._source_priority(str(payload.get("source") or ""), field),
+                "rule": "attribution_source_priority" if field in {"campaign", "adset", "media_source", "channel"} else "identity_source_priority",
+            }
+        payload["source_of_truth_decision"] = decisions
+        return payload
+
+    def _referenced_aliases(self, sql: str) -> List[str]:
+        lowered = str(sql or "").lower()
+        aliases = []
+        for alias in self.get_v1_table_aliases():
+            if re.search(rf"\b{re.escape(alias.lower())}\b", lowered):
+                aliases.append(alias)
+        return aliases or ["standardized"]
+
+    def _estimate_scan_rows(self, sql: str) -> int:
+        return sum(len(self.get_rows_for_alias(alias)) for alias in self._referenced_aliases(sql))
+
+    def top20_field_quality(self, *, job_id: Optional[str] = None, alias: str = "standardized") -> Dict[str, Any]:
+        rows = self.get_rows_for_alias(alias)
+        if job_id:
+            rows = [row for row in rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
+        total_rows = len(rows)
+        fields: Dict[str, Any] = {}
+        for spec in self._top20_field_specs():
+            field = spec["field"]
+            samples: List[str] = []
+            non_null = 0
+            mismatches = 0
+            impacted_rows = 0
+            for row in rows:
+                value = self._lookup_row_value(row, field)
+                if value in (None, "", []):
+                    impacted_rows += 1
+                    continue
+                non_null += 1
+                if len(samples) < 3 and str(value) not in samples:
+                    samples.append(str(value))
+                if not self._expected_type_matches(value, spec["expected_type"]):
+                    mismatches += 1
+                    impacted_rows += 1
+            fields[field] = {
+                "coverage": round((non_null / total_rows * 100.0), 2) if total_rows else 0.0,
+                "null_rate": round(((total_rows - non_null) / total_rows * 100.0), 2) if total_rows else 0.0,
+                "type_mismatch_rate": round((mismatches / total_rows * 100.0), 2) if total_rows else 0.0,
+                "sample_values": samples,
+                "impacted_row_count": impacted_rows,
+                "expected_type": spec["expected_type"],
+            }
+        return {
+            "rows_evaluated": total_rows,
+            "alias": alias,
+            "fields": fields,
+        }
+
+    def get_rejected_event_explanations(self, *, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+        items = self.get_pipeline_dead_letters(job_id=job_id, limit=limit)
+        explanations: List[Dict[str, Any]] = []
+        for item in items:
+            normalized_event = dict(item.get("normalized_event") or {})
+            flags = list(normalized_event.get("data_quality_flags") or item.get("data_quality_flags") or [])
+            reason = item.get("rejection_reason") or ", ".join(flags) or "unknown_rejection"
+            explanations.append(
+                {
+                    "job_id": item.get("job_id") or item.get("job_identifier"),
+                    "event_fingerprint": normalized_event.get("event_fingerprint"),
+                    "reason": reason,
+                    "flags": flags,
+                    "normalized_event": normalized_event,
+                }
+            )
+        return explanations
+
+    def get_identity_links(self, *, job_id: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
+        rows = self.get_rows_for_alias("fact_events_unified")
+        if job_id:
+            rows = [row for row in rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
+        links: List[Dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in rows:
+            canonical, method = self._resolve_canonical_user_id(row)
+            if canonical is None:
+                continue
+            source = str(row.get("source") or "unknown")
+            source_user_id = self._normalize_identity_value(
+                self._lookup_row_value(row, "source_user_id")
+                or self._lookup_row_value(row, "player_id")
+                or self._lookup_row_value(row, "login_user_id")
+                or self._lookup_row_value(row, "anonymous_id")
+            )
+            if source_user_id is None:
+                continue
+            key = (source, source_user_id, canonical)
+            if key in seen:
+                continue
+            seen.add(key)
+            event_time = row.get("event_time")
+            links.append(
+                {
+                    "source": source,
+                    "source_user_id": source_user_id,
+                    "canonical_user_id": canonical,
+                    "method": method,
+                    "confidence": "high" if method in {"canonical_user_id", "internal_account_id", "game_uid", "login_user_id", "player_id"} else "medium",
+                    "first_seen_at": event_time,
+                    "last_seen_at": event_time,
+                }
+            )
+            if len(links) >= max(1, int(limit)):
+                break
+        return links
+
+    def get_field_conflicts(self, *, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+        rows = self.get_rows_for_alias("fact_events_unified")
+        if job_id:
+            rows = [row for row in rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
+        grouped: Dict[str, Dict[str, Dict[str, set[str]]]] = {}
+        for row in rows:
+            canonical, _ = self._resolve_canonical_user_id(row)
+            identity_key = canonical or self._normalize_identity_value(self._lookup_row_value(row, "player_id")) or f"row:{len(grouped)+1}"
+            bucket = grouped.setdefault(identity_key, {})
+            for field in ("campaign", "adset", "media_source", "channel"):
+                value = self._normalize_identity_value(self._lookup_row_value(row, field))
+                if value is None:
+                    continue
+                field_bucket = bucket.setdefault(field, {})
+                field_bucket.setdefault(value, set()).add(str(row.get("source") or "unknown"))
+
+        conflicts: List[Dict[str, Any]] = []
+        for identity_key, field_map in grouped.items():
+            for field, value_map in field_map.items():
+                if len(value_map) <= 1:
+                    continue
+                selected_value = sorted(
+                    value_map.items(),
+                    key=lambda item: (min(self._source_priority(source, field) for source in item[1]), item[0]),
+                )[0][0]
+                selected_sources = sorted(value_map[selected_value])
+                conflicts.append(
+                    {
+                        "identity_key": identity_key,
+                        "field": field,
+                        "selected_value": selected_value,
+                        "selected_source": selected_sources[0] if selected_sources else None,
+                        "rule": "attribution_source_priority",
+                        "candidates": {value: sorted(sources) for value, sources in value_map.items()},
+                        "explain": f"Selected '{selected_value}' using source priority for {field}.",
+                    }
+                )
+                if len(conflicts) >= max(1, int(limit)):
+                    return conflicts
+        return conflicts
+
     def run_readonly_query(
         self,
         sql: str,
         *,
         limit: int = 50,
         timeout_seconds: int = 30,
+        max_scan_rows: int = 50000,
+        max_concurrency: int = 4,
     ) -> Dict[str, Any]:
         query = str(sql or "").strip()
         if not query:
@@ -528,53 +790,72 @@ class BigQueryService:
         if ";" in query.rstrip(";"):
             raise ValueError("Multiple SQL statements are not allowed.")
 
-        resolved_query = query
-        aliases = self.get_v1_table_aliases()
-        if self.mode == "gcp":
-            for alias, target in aliases.items():
-                table_id = self._target_meta(target)["table_id"]
-                resolved_query = re.sub(rf"\b{re.escape(alias)}\b", f"`{table_id}`", resolved_query)
-            job_config = self._bigquery.QueryJobConfig()
-            job = self._client.query(resolved_query, job_config=job_config, timeout=max(1, int(timeout_seconds)))
-            rows = [dict(row.items()) for row in job.result(max_results=max(1, int(limit)))]
-            return {
-                "sql": query,
-                "resolved_sql": resolved_query,
-                "aliases": aliases,
-                "rows": rows,
-                "row_count": len(rows),
-                "truncated": len(rows) >= max(1, int(limit)),
-            }
+        estimated_scan_rows = self._estimate_scan_rows(query)
+        if estimated_scan_rows > max(1, int(max_scan_rows)):
+            raise ValueError(f"Estimated scan rows {estimated_scan_rows} exceed limit {int(max_scan_rows)}.")
 
-        connection = sqlite3.connect(":memory:")
+        with self._query_state_lock:
+            if self._active_queries >= max(1, int(max_concurrency)):
+                raise ValueError("Concurrent query limit exceeded.")
+            self._active_queries += 1
+
         try:
-            for alias, target in aliases.items():
-                rows = self._load_all_rows_from_target(target)
-                frame = pd.DataFrame(rows)
-                if frame.empty:
-                    frame = pd.DataFrame(columns=self._default_columns_for_alias(alias))
-                else:
-                    for column in frame.columns:
-                        if frame[column].dtype != "object":
-                            continue
-                        frame[column] = frame[column].map(
-                            lambda value: json.dumps(value) if isinstance(value, (dict, list)) else value
-                        )
-                frame.to_sql(alias, connection, if_exists="replace", index=False)
-            preview_query = resolved_query
-            if " limit " not in lowered:
-                preview_query = f"{resolved_query.rstrip(';')} LIMIT {max(1, int(limit))}"
-            rows = pd.read_sql_query(preview_query, connection).to_dict(orient="records")
-            return {
-                "sql": query,
-                "resolved_sql": preview_query,
-                "aliases": aliases,
-                "rows": rows,
-                "row_count": len(rows),
-                "truncated": len(rows) >= max(1, int(limit)),
-            }
+            resolved_query = query
+            aliases = self.get_v1_table_aliases()
+            if self.mode == "gcp":
+                for alias, target in aliases.items():
+                    table_id = self._target_meta(target)["table_id"]
+                    resolved_query = re.sub(rf"\b{re.escape(alias)}\b", f"`{table_id}`", resolved_query)
+                job_config = self._bigquery.QueryJobConfig()
+                job = self._client.query(resolved_query, job_config=job_config, timeout=max(1, int(timeout_seconds)))
+                rows = [dict(row.items()) for row in job.result(max_results=max(1, int(limit)))]
+                return {
+                    "sql": query,
+                    "resolved_sql": resolved_query,
+                    "aliases": aliases,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "truncated": len(rows) >= max(1, int(limit)),
+                    "estimated_scan_rows": estimated_scan_rows,
+                    "timeout_seconds": int(timeout_seconds),
+                    "scan_limit_rows": int(max_scan_rows),
+                }
+
+            connection = sqlite3.connect(":memory:")
+            try:
+                for alias, target in aliases.items():
+                    rows = self._load_all_rows_from_target(target)
+                    frame = pd.DataFrame(rows)
+                    if frame.empty:
+                        frame = pd.DataFrame(columns=self._default_columns_for_alias(alias))
+                    else:
+                        for column in frame.columns:
+                            if frame[column].dtype != "object":
+                                continue
+                            frame[column] = frame[column].map(
+                                lambda value: json.dumps(value) if isinstance(value, (dict, list)) else value
+                            )
+                    frame.to_sql(alias, connection, if_exists="replace", index=False)
+                preview_query = resolved_query
+                if " limit " not in lowered:
+                    preview_query = f"{resolved_query.rstrip(';')} LIMIT {max(1, int(limit))}"
+                rows = pd.read_sql_query(preview_query, connection).to_dict(orient="records")
+                return {
+                    "sql": query,
+                    "resolved_sql": preview_query,
+                    "aliases": aliases,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "truncated": len(rows) >= max(1, int(limit)),
+                    "estimated_scan_rows": estimated_scan_rows,
+                    "timeout_seconds": int(timeout_seconds),
+                    "scan_limit_rows": int(max_scan_rows),
+                }
+            finally:
+                connection.close()
         finally:
-            connection.close()
+            with self._query_state_lock:
+                self._active_queries = max(0, self._active_queries - 1)
 
     @staticmethod
     def _is_missing_key_part(value: Any) -> bool:
@@ -774,13 +1055,15 @@ class BigQueryService:
     def run_events_curation(self, job_id: Optional[str] = None, event_date: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
             staging_rows = self._load_all_rows_from_target("events_staging")
-            deduped_rows = self._dedupe_events(staging_rows)
+            normalized_rows = [self._normalize_event_for_curation(row) for row in staging_rows]
+            deduped_rows = self._dedupe_events(normalized_rows)
             self._replace_rows_unlocked(deduped_rows, target="events_curated")
             return {
                 "job_id": job_id,
                 "event_date": event_date,
                 "full_recompute": True,
                 "staging_rows": len(staging_rows),
+                "normalized_rows": len(normalized_rows),
                 "curated_rows": len(deduped_rows),
                 "duplicates_removed": max(0, len(staging_rows) - len(deduped_rows)),
             }
@@ -1013,8 +1296,10 @@ class BigQueryService:
                 "stitched_rows": 0,
                 "canonical_user_id_coverage": 0.0,
                 "source_of_truth_matrix": {},
+                "source_of_truth_decisions": [],
                 "conflict_count": 0,
                 "conflict_logs": [],
+                "identity_links": [],
             }
 
         profiles: Dict[str, Dict[str, Any]] = {}
@@ -1057,6 +1342,8 @@ class BigQueryService:
         stitched_rows = 0
         covered_rows = 0
         conflict_logs: List[Dict[str, Any]] = []
+        identity_links = self.get_identity_links(job_id=job_id, limit=500)
+        source_of_truth_decisions = self.get_field_conflicts(job_id=job_id, limit=200)
         for profile in profiles.values():
             resolved_canonical = None
             canonical_candidates = profile["canonicals"]
@@ -1103,8 +1390,10 @@ class BigQueryService:
                 field: _field_matrix(counts)
                 for field, counts in source_matrix.items()
             },
-            "conflict_count": len(conflict_logs),
-            "conflict_logs": conflict_logs[:25],
+            "source_of_truth_decisions": source_of_truth_decisions,
+            "conflict_count": len(conflict_logs) + len(source_of_truth_decisions),
+            "conflict_logs": (conflict_logs + source_of_truth_decisions)[:25],
+            "identity_links": identity_links,
         }
 
     def replace_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):

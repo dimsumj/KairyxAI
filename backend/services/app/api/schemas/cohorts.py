@@ -20,6 +20,16 @@ class CohortActionRequest(BaseModel):
     force: bool = False
 
 
+class CohortUpdateRequest(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    definition: Dict[str, Any] | None = None
+    refresh_mode: str | None = None
+    owner: str | None = None
+    description: str | None = None
+    tags: List[str] | None = None
+
+
 class CohortResponse(BaseModel):
     cohort_id: str
     name: str

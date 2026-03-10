@@ -581,3 +581,341 @@ def test_cohort_lifecycle_and_failed_daily_refresh_auto_pause(client, monkeypatc
     final_state = client.get(f"/api/v1/cohorts/{cohort_id}")
     assert final_state.status_code == 200
     assert final_state.json()["status"] == "paused"
+
+
+def test_data_core_identity_conflicts_and_sql_guardrails(client):
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.create_import_job(
+            {
+                "id": "imp_identity_1",
+                "source_name": "seeded",
+                "status": "completed",
+                "spec": {"source_name": "seeded"},
+                "progress": {"current": 0, "total": 0, "pct": 100.0, "details": {}},
+            }
+        )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": "imp_identity_1",
+                "source": "analytics_sdk",
+                "player_id": "p_1",
+                "event_type": "promo_view",
+                "event_time": "2026-03-08T08:00:00",
+                "event_properties": {"campaign": "spring_a", "media_source": "sdk", "platform": "ios", "country": "US"},
+                "user_properties": {"email": "p1@example.com"},
+            },
+            {
+                "job_id": "imp_identity_1",
+                "source": "adjust",
+                "player_id": "p_1",
+                "event_type": "promo_view",
+                "event_time": "2026-03-08T08:05:00",
+                "event_properties": {"campaign": "spring_b", "media_source": "mmp", "platform": "ios", "country": "US"},
+                "user_properties": {"email": "p1@example.com"},
+            },
+        ],
+        job_id="imp_identity_1",
+    )
+    service.run_events_curation(job_id="imp_identity_1")
+    service.refresh_player_latest_state(job_id="imp_identity_1")
+    service.write_pipeline_dead_letters(
+        [
+            {
+                "job_id": "imp_identity_1",
+                "rejection_reason": "missing_player_id",
+                "normalized_event": {
+                    "job_id": "imp_identity_1",
+                    "event_type": "session_start",
+                    "event_time": "2026-03-08T09:00:00",
+                    "data_quality_flags": ["missing_player_id"],
+                    "event_fingerprint": "dead_1",
+                },
+            }
+        ],
+        job_id="imp_identity_1",
+    )
+
+    quality = client.get("/api/v1/imports/imp_identity_1/quality", headers={"x-actor-role": "analyst"})
+    assert quality.status_code == 200
+    assert quality.json()["quality_report"]["top20_field_coverage"]["fields"]["campaign"]["coverage"] >= 50.0
+    assert quality.json()["source_of_truth"]
+    assert quality.json()["conflict_summary"]["count"] >= 1
+
+    identity_links = client.get("/api/v1/imports/imp_identity_1/identity-links", headers={"x-actor-role": "analyst"})
+    assert identity_links.status_code == 200
+    assert identity_links.json()["items"]
+
+    conflicts = client.get("/api/v1/imports/imp_identity_1/conflicts", headers={"x-actor-role": "analyst"})
+    assert conflicts.status_code == 200
+    assert conflicts.json()["items"][0]["field"] in {"campaign", "media_source", "channel", "adset"}
+
+    rejected = client.get("/api/v1/imports/imp_identity_1/rejected", headers={"x-actor-role": "operator"})
+    assert rejected.status_code == 200
+    assert rejected.json()["items"][0]["reason"] == "missing_player_id"
+
+    suggestions = client.get("/api/v1/mappings/seeded/suggestions", headers={"x-actor-role": "operator"})
+    assert suggestions.status_code == 200
+    assert suggestions.json()["suggestions"]
+
+    preview_blocked = client.post(
+        "/api/v1/sql-workspace/preview",
+        json={"sql": "DELETE FROM prediction_results", "limit": 10},
+        headers={"x-actor-role": "analyst"},
+    )
+    assert preview_blocked.status_code == 400
+
+    preview_scan_blocked = client.post(
+        "/api/v1/sql-workspace/preview",
+        json={"sql": "SELECT * FROM fact_events_unified", "limit": 10, "scan_limit_rows": 1},
+        headers={"x-actor-role": "analyst"},
+    )
+    assert preview_scan_blocked.status_code == 400
+
+
+def test_workflow_event_threshold_confirmation_and_experiment_extensions(client):
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    cohort = client.post(
+        "/api/v1/cohorts",
+        json={
+            "name": "event_trigger_cohort",
+            "type": "list",
+            "definition": {"members": [{"canonical_user_id": "u_1", "email": "u1@example.com"}]},
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=event_trigger_exp",
+        json={
+            "enabled": True,
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+            "holdout_pct": 0.0,
+            "b_variant_pct": 0.5,
+        },
+    )
+    assert experiment.status_code == 200
+
+    event_workflow = client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "event_trigger_workflow",
+            "cohort_id": cohort_id,
+            "trigger": {"type": "event_trigger", "event_type": "promo_view"},
+            "action": {"channel": "push_notification", "content": "Event based winback"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "event_trigger_exp",
+            "requires_confirmation": True,
+        },
+    )
+    assert event_workflow.status_code == 201
+    workflow_id = event_workflow.json()["workflow_id"]
+
+    updated = client.put(
+        f"/api/v1/workflows/{workflow_id}",
+        json={"action": {"channel": "push_notification", "content": "Updated event winback"}},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["current_version"] == 2
+
+    versions = client.get(f"/api/v1/workflows/{workflow_id}/versions")
+    assert versions.status_code == 200
+    assert len(versions.json()["items"]) >= 2
+
+    publish = client.post(f"/api/v1/workflows/{workflow_id}/publish")
+    assert publish.status_code == 200
+
+    no_token = client.post(
+        "/api/v1/orchestrator/events:ingest",
+        json={"event_type": "promo_view", "user_ids": ["u_1"]},
+    )
+    assert no_token.status_code == 409
+
+    confirmation = client.post(f"/api/v1/workflows/{workflow_id}/confirm", json={"note": "approve high risk", "valid_for_hours": 24})
+    assert confirmation.status_code == 200
+    token = confirmation.json()["confirmation_token"]
+
+    event_run = client.post(
+        "/api/v1/orchestrator/events:ingest",
+        json={"event_type": "promo_view", "user_ids": ["u_1"], "confirmation_tokens": {workflow_id: token}},
+    )
+    assert event_run.status_code == 200
+    assert len(event_run.json()["items"]) == 1
+    assert event_run.json()["items"][0]["success"] == 1
+
+    assignments = client.get("/api/v1/experiments/event_trigger_exp/assignments")
+    assert assignments.status_code == 200
+    assert assignments.json()["items"][0]["group"] in {"treatment_a", "treatment_b", "holdout"}
+
+    rollout = client.get("/api/v1/experiments/event_trigger_exp/rollout-suggestion")
+    assert rollout.status_code == 200
+    assert rollout.json()["suggestion"]
+
+    threshold_workflow = client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "threshold_trigger_workflow",
+            "cohort_id": cohort_id,
+            "trigger": {"type": "threshold_trigger", "metric_id": "high_risk_users", "operator": ">=", "threshold": 1},
+            "action": {
+                "channel": "webhook",
+                "content": "Threshold fallback",
+                "retry_policy": {"max_retries": 2, "base_backoff_seconds": 1},
+            },
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "event_trigger_exp",
+            "requires_confirmation": False,
+        },
+    )
+    assert threshold_workflow.status_code == 201
+    threshold_workflow_id = threshold_workflow.json()["workflow_id"]
+    assert client.post(f"/api/v1/workflows/{threshold_workflow_id}/publish").status_code == 200
+
+    threshold_run = client.post(
+        "/api/v1/orchestrator/thresholds:evaluate",
+        json={"metric_id": "high_risk_users", "value": 3},
+    )
+    assert threshold_run.status_code == 200
+    assert threshold_run.json()["items"][0]["failures"] >= 1
+
+    deliveries = client.get(f"/api/v1/workflows/{threshold_workflow_id}/deliveries", headers={"x-actor-role": "operator"})
+    assert deliveries.status_code == 200
+    assert deliveries.json()["items"][0]["delivery_diagnostics"]["attempt_count"] == 3
+
+
+def test_audience_copilot_weekly_report_and_permanent_delete(client):
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    cohort = client.post(
+        "/api/v1/cohorts",
+        json={
+            "name": "audience_patch_test",
+            "type": "sql",
+            "definition": {"sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"},
+            "refresh_mode": "daily",
+            "activate": True,
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    patched = client.patch(
+        f"/api/v1/cohorts/{cohort_id}",
+        json={"description": "Updated cohort", "tags": ["churn", "weekly"], "definition": {"sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results"}},
+        headers={"x-actor-role": "operator"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["description"] == "Updated cohort"
+    assert patched.json()["version_id"] == 2
+    assert client.post(f"/api/v1/cohorts/{cohort_id}/refresh").status_code == 200
+
+    refresh_jobs = client.get(f"/api/v1/cohorts/{cohort_id}/refresh-jobs", headers={"x-actor-role": "analyst"})
+    assert refresh_jobs.status_code == 200
+    assert refresh_jobs.json()["items"]
+
+    compare = client.get(f"/api/v1/cohorts/{cohort_id}/compare?base_version=1&target_version=2", headers={"x-actor-role": "analyst"})
+    assert compare.status_code == 200
+    assert "definition_diff" in compare.json()
+    assert "metrics_delta" in compare.json()
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=weekly_report_exp",
+        json={
+            "enabled": True,
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+            "holdout_pct": 0.0,
+        },
+    )
+    assert experiment.status_code == 200
+
+    workflow = client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "weekly_report_workflow",
+            "cohort_id": cohort_id,
+            "schedule": {"type": "daily"},
+            "action": {"channel": "push_notification", "content": "Weekly report seed"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "weekly_report_exp",
+        },
+    )
+    assert workflow.status_code == 201
+    workflow_id = workflow.json()["workflow_id"]
+    assert client.post(f"/api/v1/workflows/{workflow_id}/publish").status_code == 200
+    due = client.post("/api/v1/orchestrator/run-due", json={"reference_time": "2026-03-10T10:00:00", "limit_per_workflow": 10})
+    assert due.status_code == 200
+    delivery = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers={"x-actor-role": "operator"})
+    assert delivery.status_code == 200
+    scheduled_delivery = next(item for item in delivery.json()["items"] if not item.get("sandbox"))
+    callback = client.post(
+        "/api/v1/activation/callbacks/simulator",
+        json={
+            "callbacks": [
+                {
+                    "workflow_id": workflow_id,
+                    "cohort_id": cohort_id,
+                    "delivery_id": scheduled_delivery["delivery_id"],
+                    "action_execution_id": scheduled_delivery["action_execution_id"],
+                    "user_id": scheduled_delivery["user_id"],
+                    "occurred_at": "2026-03-10T11:00:00",
+                    "event_id": "weekly_report_event_1",
+                    "event_type": "returned",
+                }
+            ]
+        },
+    )
+    assert callback.status_code == 200
+
+    metrics = client.get("/api/v1/copilot/metrics", headers={"x-actor-role": "analyst"})
+    assert metrics.status_code == 200
+    assert len(metrics.json()["items"]) >= 20
+
+    explain = client.post(
+        "/api/v1/copilot/explain",
+        json={"metric_id": "promo_views", "time_window": "7d", "dimensions": ["campaign", "country", "platform"]},
+    )
+    assert explain.status_code == 200
+    anomaly_id = explain.json()["anomaly_id"]
+
+    anomaly = client.get(f"/api/v1/copilot/anomalies/{anomaly_id}", headers={"x-actor-role": "analyst"})
+    assert anomaly.status_code == 200
+    assert anomaly.json()["baseline_windows"]["7d"] >= 0
+
+    weekly_report = client.post("/api/v1/copilot/report", json={"report_type": "weekly", "time_window": "7d"})
+    assert weekly_report.status_code == 200
+    report_id = weekly_report.json()["report_id"]
+
+    retry = client.post(f"/api/v1/copilot/reports/{report_id}/retry", headers={"x-actor-role": "analyst"})
+    assert retry.status_code == 200
+    assert retry.json()["report_id"]
+
+    reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
+    assert reports.status_code == 200
+    assert any(item.get("report_type") == "weekly" for item in reports.json()["items"])
+
+    archived = client.post(f"/api/v1/cohorts/{cohort_id}/archive")
+    assert archived.status_code == 200
+
+    denied_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "operator"})
+    assert denied_delete.status_code == 403
+
+    deleted = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True

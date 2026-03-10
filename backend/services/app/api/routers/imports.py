@@ -122,6 +122,57 @@ def get_import_quality(job_id: str, request: Request, service: ImportService = D
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
 
 
+@router.get("/{job_id}/identity-links")
+def get_import_identity_links(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.identity_links.read")
+    try:
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_identity_links_read",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.get_identity_links(job_id),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
+@router.get("/{job_id}/conflicts")
+def get_import_conflicts(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.conflicts.read")
+    try:
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_conflicts_read",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.get_conflicts(job_id),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
+@router.get("/{job_id}/rejected")
+def get_import_rejected(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.rejected.read")
+    try:
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_rejected_read",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.get_rejected(job_id),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
 @router.post("/{job_id}/resume")
 def resume_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
     context = get_governance_context(request)

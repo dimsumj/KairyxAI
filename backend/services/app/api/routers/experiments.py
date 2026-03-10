@@ -54,6 +54,16 @@ def get_named_experiment_summary(experiment_id: str, service: ExperimentConfigSe
     return service.get_summary(experiment_id)
 
 
+@router.get("/{experiment_id}/versions", response_model=dict)
+def get_experiment_versions(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
+    return service.list_versions(experiment_id)
+
+
+@router.get("/{experiment_id}/assignments", response_model=ExperimentEventPage)
+def get_experiment_assignments(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
+    return {"items": service.list_assignments(experiment_id)}
+
+
 @router.get("/{experiment_id}/exposures", response_model=ExperimentEventPage)
 def get_experiment_exposures(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return {"items": service.list_exposures(experiment_id)}
@@ -83,3 +93,8 @@ def post_experiment_decision(
         return service.decide(experiment_id, decided_by=request.decided_by)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found.")
+
+
+@router.get("/{experiment_id}/rollout-suggestion", response_model=dict)
+def get_experiment_rollout_suggestion(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
+    return service.get_rollout_suggestion(experiment_id)

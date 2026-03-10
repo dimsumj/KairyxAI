@@ -75,6 +75,38 @@ class CohortService:
         record = self.repository.get_resource("cohort", cohort_id)
         return self._to_response(record) if record else None
 
+    def update_cohort(self, cohort_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+        record = self.repository.get_resource("cohort", cohort_id)
+        if record is None:
+            raise KeyError(cohort_id)
+        payload = dict(record.get("payload") or {})
+        definition_changed = False
+        for field in ("name", "owner", "description"):
+            if field in patch and patch.get(field) is not None:
+                payload[field] = patch[field]
+        if patch.get("tags") is not None:
+            payload["tags"] = list(patch.get("tags") or [])
+        for field in ("type", "definition", "refresh_mode"):
+            if field in patch and patch.get(field) is not None and patch.get(field) != payload.get(field):
+                payload[field] = patch[field]
+                definition_changed = True
+        if definition_changed:
+            next_version = int(payload.get("version_id") or payload.get("version") or 1) + 1
+            payload["version"] = next_version
+            payload["version_id"] = next_version
+            payload["refresh_policy"] = self._build_refresh_policy(payload.get("refresh_mode") or "manual")
+        saved = self.repository.upsert_resource(
+            "cohort",
+            cohort_id,
+            status=str(payload.get("status") or "draft"),
+            name=payload.get("name"),
+            payload=payload,
+        )
+        if definition_changed:
+            self._create_definition_version(cohort_id, int(payload["version_id"]), payload)
+        self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_updated", payload={"patch": patch, "definition_changed": definition_changed})
+        return self._to_response(saved)
+
     def list_versions(self, cohort_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("cohort", cohort_id)
         if record is None:
@@ -133,6 +165,9 @@ class CohortService:
         cohort = self.get_cohort(cohort_id)
         if cohort is None:
             raise KeyError(cohort_id)
+        version_items = self.repository.list_resource_versions("cohort", cohort_id)
+        base_version_payload = next((item.get("payload") or {} for item in version_items if int(item.get("version") or 0) == int(base_version)), None)
+        target_version_payload = next((item.get("payload") or {} for item in version_items if int(item.get("version") or 0) == int(target_version)), None)
         snapshots = [
             item.get("payload") or {}
             for item in self.repository.list_resources("cohort_snapshot")
@@ -144,6 +179,8 @@ class CohortService:
             raise KeyError("snapshot_missing")
         base_ids = {self._member_identity(item) for item in base_snapshot.get("members") or [] if self._member_identity(item)}
         target_ids = {self._member_identity(item) for item in target_snapshot.get("members") or [] if self._member_identity(item)}
+        base_metrics = self._calculate_metrics_for_snapshot(cohort_id, base_snapshot)
+        target_metrics = self._calculate_metrics_for_snapshot(cohort_id, target_snapshot)
         return {
             "cohort_id": cohort_id,
             "base_version": int(base_version),
@@ -152,11 +189,13 @@ class CohortService:
             "target_snapshot_id": target_snapshot.get("snapshot_id"),
             "base_member_count": int(base_snapshot.get("member_count") or len(base_ids)),
             "target_member_count": int(target_snapshot.get("member_count") or len(target_ids)),
-            "delta": {
+            "member_delta": {
                 "added": len(target_ids - base_ids),
                 "removed": len(base_ids - target_ids),
                 "unchanged": len(base_ids & target_ids),
             },
+            "definition_diff": self._definition_diff(base_version_payload or {}, target_version_payload or {}),
+            "metrics_delta": self._metrics_delta(base_metrics, target_metrics),
         }
 
     def refresh_cohort(self, cohort_id: str, *, force: bool = False) -> Dict[str, Any]:
@@ -164,6 +203,16 @@ class CohortService:
         if record is None:
             raise KeyError(cohort_id)
         payload = dict(record.get("payload") or {})
+        refresh_job_id = f"crj_{uuid.uuid4().hex[:20]}"
+        refresh_payload = {
+            "refresh_job_id": refresh_job_id,
+            "cohort_id": cohort_id,
+            "status": "running",
+            "requested_at": datetime.utcnow().isoformat(),
+            "force": bool(force),
+            "version_id": int(payload.get("version_id") or payload.get("version") or 1),
+        }
+        self.repository.upsert_resource("cohort_refresh_job", refresh_job_id, status="running", name=payload.get("name"), payload=refresh_payload)
         previous_members = list(payload.get("latest_members") or [])
         attempts = 2 if str(payload.get("refresh_mode") or "").lower() == "daily" else 1
         last_error: Exception | None = None
@@ -201,6 +250,10 @@ class CohortService:
                 event_type="cohort_refresh_failed",
                 payload={"error": str(last_error), "refresh_failures": failures, "force": force},
             )
+            refresh_payload["status"] = "failed"
+            refresh_payload["error"] = str(last_error)
+            refresh_payload["completed_at"] = datetime.utcnow().isoformat()
+            self.repository.upsert_resource("cohort_refresh_job", refresh_job_id, status="failed", name=payload.get("name"), payload=refresh_payload)
             self._commit_session()
             raise ValueError(str(last_error)) from last_error
 
@@ -239,6 +292,12 @@ class CohortService:
             event_type="cohort_refreshed",
             payload={"member_count": len(members), "delta": payload["delta"], "snapshot_id": snapshot_id, "force": force},
         )
+        refresh_payload["status"] = "completed"
+        refresh_payload["snapshot_id"] = snapshot_id
+        refresh_payload["member_count"] = len(members)
+        refresh_payload["delta"] = payload["delta"]
+        refresh_payload["completed_at"] = datetime.utcnow().isoformat()
+        self.repository.upsert_resource("cohort_refresh_job", refresh_job_id, status="completed", name=payload.get("name"), payload=refresh_payload)
         return self._to_response(saved)
 
     def activate_cohort(self, cohort_id: str, *, force: bool = False) -> Dict[str, Any]:
@@ -301,6 +360,31 @@ class CohortService:
         saved = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=payload.get("name"), payload=payload)
         self.repository.record_resource_event("cohort", cohort_id, event_type="cohort_restored", payload={"status": "draft"})
         return self._to_response(saved)
+
+    def list_refresh_jobs(self, cohort_id: str) -> Dict[str, Any]:
+        cohort = self.get_cohort(cohort_id)
+        if cohort is None:
+            raise KeyError(cohort_id)
+        items = []
+        for record in self.repository.list_resources("cohort_refresh_job"):
+            payload = record.get("payload") or {}
+            if str(payload.get("cohort_id") or "") == cohort_id:
+                items.append(payload)
+        return {"cohort_id": cohort_id, "items": items}
+
+    def permanent_delete(self, cohort_id: str) -> Dict[str, Any]:
+        cohort = self.get_cohort(cohort_id)
+        if cohort is None:
+            raise KeyError(cohort_id)
+        for resource_type in ("cohort_snapshot", "cohort_metrics_daily", "cohort_experiment_link", "cohort_refresh_job"):
+            for record in self.repository.list_resources(resource_type):
+                payload = record.get("payload") or {}
+                if str(payload.get("cohort_id") or "") == cohort_id:
+                    self.repository.delete_resource(resource_type, record["resource_id"])
+        deleted = self.repository.delete_resource("cohort", cohort_id)
+        if deleted:
+            self.repository.record_action("cohort_permanently_deleted", "cohort", cohort_id, {"cohort_id": cohort_id})
+        return {"cohort_id": cohort_id, "deleted": bool(deleted)}
 
     def rollback_cohort(self, cohort_id: str, version: int) -> Dict[str, Any]:
         record = self.repository.get_resource("cohort", cohort_id)
@@ -424,6 +508,28 @@ class CohortService:
             "experiment_ids": [],
         }
 
+    @staticmethod
+    def _definition_diff(base_version_payload: Dict[str, Any], target_version_payload: Dict[str, Any]) -> Dict[str, Any]:
+        diff: Dict[str, Any] = {}
+        for field in ("type", "refresh_mode", "definition", "tags"):
+            if (base_version_payload or {}).get(field) != (target_version_payload or {}).get(field):
+                diff[field] = {
+                    "base": (base_version_payload or {}).get(field),
+                    "target": (target_version_payload or {}).get(field),
+                }
+        return diff
+
+    @staticmethod
+    def _metrics_delta(base_metrics: Dict[str, Any], target_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        result = {}
+        for field in ("member_count", "delivered_users", "reach_rate", "conversion_users", "conversion_rate"):
+            result[field] = {
+                "base": base_metrics.get(field, 0),
+                "target": target_metrics.get(field, 0),
+                "delta": round(float(target_metrics.get(field, 0)) - float(base_metrics.get(field, 0)), 4),
+            }
+        return result
+
     def _latest_snapshot_for_version(self, snapshots: List[Dict[str, Any]], version: int) -> Dict[str, Any] | None:
         candidates = [item for item in snapshots if int(item.get("version_id") or 0) == int(version)]
         if not candidates:
@@ -432,10 +538,25 @@ class CohortService:
 
     def _calculate_metrics(self, cohort: Dict[str, Any]) -> Dict[str, Any]:
         cohort_id = cohort["cohort_id"]
+        snapshot_id = cohort.get("latest_snapshot_id")
+        if snapshot_id:
+            snapshot_payload = {"snapshot_id": snapshot_id, "cohort_id": cohort_id, "version_id": int(cohort.get("version_id") or 1)}
+            return self._calculate_metrics_for_snapshot(cohort_id, snapshot_payload, default_member_count=int(cohort.get("member_count") or 0))
+        return self._empty_metrics_summary() | {"cohort_id": cohort_id}
+
+    def _calculate_metrics_for_snapshot(
+        self,
+        cohort_id: str,
+        snapshot: Dict[str, Any],
+        *,
+        default_member_count: int | None = None,
+    ) -> Dict[str, Any]:
+        snapshot_id = snapshot.get("snapshot_id")
         deliveries = [
             item.get("payload") or {}
             for item in self.repository.list_resources("workflow_delivery")
             if str((item.get("payload") or {}).get("cohort_id") or "") == cohort_id
+            and (snapshot_id is None or str((item.get("payload") or {}).get("cohort_snapshot_id") or "") == str(snapshot_id))
             and not bool((item.get("payload") or {}).get("sandbox"))
         ]
         delivered_users = {
@@ -451,11 +572,19 @@ class CohortService:
                 if item.get("workflow_id")
             }
         )
-        outcomes = [
-            item.get("payload") or {}
-            for item in self.repository.list_resource_events("experiment", event_type="outcome", limit=5000)
-            if str((item.get("payload") or {}).get("cohort_id") or "") == cohort_id
-        ]
+        delivery_ids = {
+            str(item.get("action_execution_id"))
+            for item in deliveries
+            if item.get("action_execution_id")
+        }
+        outcomes = []
+        for item in self.repository.list_resource_events("experiment", event_type="outcome", limit=5000):
+            payload = item.get("payload") or {}
+            if str(payload.get("cohort_id") or "") != cohort_id:
+                continue
+            if delivery_ids and payload.get("action_execution_id") and str(payload.get("action_execution_id")) not in delivery_ids:
+                continue
+            outcomes.append(payload)
         conversion_users = {
             str(item.get("user_id"))
             for item in outcomes
@@ -474,11 +603,11 @@ class CohortService:
                 if str(((item.get("payload") or {}).get("cohort_id") or "")) == cohort_id
             }
         )
-        member_count = int(cohort.get("member_count") or 0)
+        member_count = int(default_member_count if default_member_count is not None else snapshot.get("member_count") or 0)
         return {
             "cohort_id": cohort_id,
-            "snapshot_id": cohort.get("latest_snapshot_id"),
-            "version_id": int(cohort.get("version_id") or 1),
+            "snapshot_id": snapshot_id,
+            "version_id": int(snapshot.get("version_id") or 1),
             "member_count": member_count,
             "delivered_users": len(delivered_users),
             "reach_rate": round((len(delivered_users) / member_count), 4) if member_count else 0.0,
