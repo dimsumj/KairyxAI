@@ -10,6 +10,7 @@ from runtime_paths import default_control_plane_database_url, normalize_sqlite_d
 class Settings:
     app_name: str = "KairyxAI Operator API"
     api_v1_prefix: str = "/api/v1"
+    api_access_key: str = ""
     control_plane_database_url: str = ""
     data_backend_mode: str = "mock"
     import_command_topic: str = "kairyx-import-jobs"
@@ -31,6 +32,7 @@ def get_settings() -> Settings:
         or default_control_plane_database_url()
     )
     return Settings(
+        api_access_key=os.getenv("API_ACCESS_KEY", "").strip(),
         control_plane_database_url=database_url,
         data_backend_mode=os.getenv("DATA_BACKEND_MODE", "mock").strip().lower(),
         import_command_topic=os.getenv("IMPORT_COMMAND_TOPIC", "kairyx-import-jobs"),

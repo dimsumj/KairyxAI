@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.application.audit import AuditService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
 from app.application.connectors import ConnectorService
@@ -12,10 +13,12 @@ from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
 from app.application.sql_workspace import SqlWorkspaceService
+from app.application.templates import ScenarioTemplateService
 from app.application.workflows import WorkflowService
 from app.core.db import get_db_session
 from app.core.settings import Settings, get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
+from bigquery_service import get_shared_bigquery_service
 
 
 def get_settings_dependency() -> Settings:
@@ -35,7 +38,7 @@ def get_connector_service(
 def get_mapping_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> MappingService:
-    return MappingService(repository)
+    return MappingService(repository, get_shared_bigquery_service())
 
 
 def get_import_service(
@@ -87,3 +90,15 @@ def get_copilot_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> CopilotService:
     return CopilotService(repository)
+
+
+def get_audit_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> AuditService:
+    return AuditService(repository)
+
+
+def get_template_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> ScenarioTemplateService:
+    return ScenarioTemplateService(repository)

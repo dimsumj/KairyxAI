@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from bigquery_service import BigQueryService, get_shared_bigquery_service
+
 
 class MappingService:
-    def __init__(self, repository):
+    def __init__(self, repository, bigquery_service: BigQueryService | None = None):
         self.repository = repository
+        self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     @staticmethod
     def _mapping_key(connector_name: str, scope_type: str = "source", scope_key: str | None = None) -> str:
@@ -151,6 +154,7 @@ class MappingService:
         scope_key: str | None = None,
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
+        observed_paths = self._observed_paths()
         suggestions = []
         candidates = {
             "canonical_user_id": [
@@ -179,16 +183,30 @@ class MappingService:
         for field, options in candidates.items():
             if str(current.get(field) or "").strip():
                 continue
-            path, confidence, rationale = options[0]
+            ranked_options = []
+            for path, confidence, rationale in options:
+                sample_values = observed_paths.get(path) or []
+                if sample_values:
+                    ranked_options.append((path, min(0.99, confidence + 0.03), f"{rationale}; backed by observed samples", sample_values))
+                else:
+                    ranked_options.append((path, confidence, rationale, []))
+            ranked_options.sort(key=lambda item: (item[1], len(item[3])), reverse=True)
+            path, confidence, rationale, sample_values = ranked_options[0]
             suggestions.append(
                 {
                     "field": field,
                     "suggested_path": path,
                     "confidence": confidence,
                     "rationale": rationale,
+                    "sample_values": sample_values[:3],
                     "alternatives": [
-                        {"path": alt_path, "confidence": alt_confidence, "rationale": alt_rationale}
-                        for alt_path, alt_confidence, alt_rationale in options[1:]
+                        {
+                            "path": alt_path,
+                            "confidence": alt_confidence,
+                            "rationale": alt_rationale,
+                            "sample_values": alt_samples[:3],
+                        }
+                        for alt_path, alt_confidence, alt_rationale, alt_samples in ranked_options[1:]
                     ],
                 }
             )
@@ -199,3 +217,23 @@ class MappingService:
             "suggestions": suggestions,
             "effective_mapping": current,
         }
+
+    def _observed_paths(self) -> Dict[str, list[str]]:
+        rows = self.bigquery_service.get_rows_for_alias("standardized")[:100]
+        observed: Dict[str, list[str]] = {}
+        for row in rows:
+            self._collect_paths("", row, observed)
+        return observed
+
+    def _collect_paths(self, prefix: str, value: Any, observed: Dict[str, list[str]]) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                next_prefix = f"{prefix}.{key}" if prefix else str(key)
+                self._collect_paths(next_prefix, item, observed)
+            return
+        if value in (None, "", [], {}):
+            return
+        bucket = observed.setdefault(prefix, [])
+        text = str(value)
+        if text not in bucket and len(bucket) < 5:
+            bucket.append(text)

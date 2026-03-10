@@ -11,6 +11,8 @@ class ExperimentConfigRequest(BaseModel):
     holdout_pct: float = 0.10
     b_variant_pct: float = 0.0
     blacklist_user_ids: List[str] = Field(default_factory=list)
+    rollout_policy: str = "conservative"
+    multiple_comparisons_method: str = "none"
 
 
 class ExperimentConfigResponse(BaseModel):
@@ -27,6 +29,8 @@ class ExperimentLifecycleRequest(BaseModel):
     holdout_pct: float = 0.10
     b_variant_pct: float = 0.0
     blacklist_user_ids: List[str] = Field(default_factory=list)
+    rollout_policy: str = "conservative"
+    multiple_comparisons_method: str = "none"
 
 
 class ExperimentEventPage(BaseModel):

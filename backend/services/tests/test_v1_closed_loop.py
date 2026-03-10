@@ -919,3 +919,149 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     deleted = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
+
+
+def test_health_audit_templates_and_workflow_builder(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={"name": "Adjust Source", "type": "adjust", "config": {"api_token": "adjust-token"}},
+    )
+    assert connector_resp.status_code == 201
+
+    weak_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id"}},
+    )
+    assert weak_mapping.status_code == 200
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260302"},
+    )
+    assert create_import.status_code == 201
+    blocked = client.post(create_import.json()["links"]["self"] + "/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    alerts = client.get("/api/v1/health/alerts")
+    assert alerts.status_code == 200
+    assert any(item["code"] == "awaiting_mapping" for item in alerts.json()["items"])
+
+    modules = client.get("/api/v1/health/modules")
+    assert modules.status_code == 200
+    assert any(item["module"] == "data_core" for item in modules.json()["items"])
+
+    audit = client.get("/api/v1/audit/actions?resource_type=import_job&tenant_id=default", headers={"x-actor-role": "operator"})
+    assert audit.status_code == 200
+    assert audit.json()["summary"]["returned"] >= 1
+    assert audit.json()["tenant_id"] == "default"
+
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    mapping_suggestions = client.get("/api/v1/mappings/Adjust%20Source/suggestions")
+    assert mapping_suggestions.status_code == 200
+    assert any(item.get("sample_values") for item in mapping_suggestions.json()["suggestions"])
+
+    templates = client.get("/api/v1/templates", headers={"x-actor-role": "operator"})
+    assert templates.status_code == 200
+    assert len(templates.json()["items"]) >= 3
+
+    instance = client.post(
+        "/api/v1/templates/onboarding_activation/instantiate",
+        headers={"x-actor-role": "operator", "x-tenant-id": "studio-a"},
+        json={"owner": "ops", "activate_cohort": True, "publish_workflow": True},
+    )
+    assert instance.status_code == 201
+    assert instance.json()["workflow"]["status"] == "published"
+    assert instance.json()["tenant_id"] == "studio-a"
+
+    builder_cohort = client.post(
+        "/api/v1/cohorts",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "builder_cohort",
+            "type": "list",
+            "definition": {
+                "members": [
+                    {"canonical_user_id": "builder_u1", "email": "builder1@example.com", "country": "US", "platform": "ios"},
+                    {"canonical_user_id": "builder_u2", "email": "builder2@example.com", "country": "CA", "platform": "android"},
+                ]
+            },
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert builder_cohort.status_code == 201
+    cohort_id = builder_cohort.json()["cohort_id"]
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=builder_exp",
+        headers={"x-actor-role": "operator"},
+        json={
+            "enabled": True,
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+            "holdout_pct": 0.0,
+            "b_variant_pct": 0.0,
+            "rollout_policy": "balanced",
+            "multiple_comparisons_method": "holm_bonferroni",
+        },
+    )
+    assert experiment.status_code == 200
+
+    workflow = client.post(
+        "/api/v1/workflows",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "builder_flow",
+            "cohort_id": cohort_id,
+            "schedule": {"type": "daily"},
+            "action": {"channel": "push_notification", "content": "fallback"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 0},
+            "experiment_id": "builder_exp",
+            "steps": [
+                {"type": "filter", "conditions": [{"field": "country", "op": "=", "value": "US"}]},
+                {"type": "wait", "seconds": 60},
+                {
+                    "type": "if_else",
+                    "condition": {"field": "platform", "op": "=", "value": "ios"},
+                    "then": {"action": {"channel": "push_notification", "content": "iOS offer"}},
+                    "else": {"action": {"channel": "push_notification", "content": "fallback offer"}},
+                },
+            ],
+        },
+    )
+    assert workflow.status_code == 201
+    workflow_id = workflow.json()["workflow_id"]
+
+    publish = client.post(f"/api/v1/workflows/{workflow_id}/publish", headers={"x-actor-role": "operator"})
+    assert publish.status_code == 200
+
+    run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        headers={"x-actor-role": "operator"},
+        json={"limit": 10, "confirm": True, "sandbox": True},
+    )
+    assert run.status_code == 200
+    assert run.json()["success"] == 1
+    assert run.json()["filtered_out"] == 1
+
+    deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers={"x-actor-role": "operator"})
+    assert deliveries.status_code == 200
+    sandbox_delivery = next(item for item in deliveries.json()["items"] if item.get("sandbox"))
+    assert sandbox_delivery["provider_request"]["content"] == "iOS offer"
+
+    summary = client.get("/api/v1/experiments/builder_exp/summary")
+    assert summary.status_code == 200
+    assert summary.json()["multiple_comparisons_method"] == "holm_bonferroni"
+    assert summary.json()["multiple_comparisons_note"]
+    assert summary.json()["confidence_hint"] in {"low", "medium", "high"}
+    assert summary.json()["significance_hint"]
+
+    rollout = client.get("/api/v1/experiments/builder_exp/rollout-suggestion")
+    assert rollout.status_code == 200
+    assert rollout.json()["rollout_policy"] == "balanced"

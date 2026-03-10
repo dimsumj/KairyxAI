@@ -21,6 +21,8 @@ class ExperimentConfigService:
             "min_runtime_hours": 24,
             "cohort_id": None,
             "blacklist_user_ids": [],
+            "rollout_policy": "conservative",
+            "multiple_comparisons_method": "none",
             "status": "draft",
         }
 
@@ -281,6 +283,23 @@ class ExperimentConfigService:
             decision = "winner"
             decision_reason = "Treatment outperformed holdout on return rate."
 
+        confidence_hint = "low"
+        if decision == "winner" and total >= max(min_sample * 2, 40) and runtime_hours >= max(float(min_runtime_hours), 24.0):
+            confidence_hint = "high"
+        elif total >= min_sample and runtime_hours >= float(min_runtime_hours) and not srm_detected:
+            confidence_hint = "medium"
+        significance_hint = "not_significant"
+        if decision == "winner" and uplift >= 0.05:
+            significance_hint = "practical_significance_positive"
+        elif decision == "winner":
+            significance_hint = "directional_positive"
+        multiple_comparisons_method = str(config.get("multiple_comparisons_method") or "none")
+        multiple_comparisons_note = (
+            "No multiple-comparisons correction applied."
+            if multiple_comparisons_method == "none"
+            else f"Decision should be read with {multiple_comparisons_method} correction guidance."
+        )
+
         summary = {
             "experiment_id": experiment_id,
             "status": config.get("status") or "draft",
@@ -294,6 +313,11 @@ class ExperimentConfigService:
             "srm_detected": srm_detected,
             "srm_status": "detected" if srm_detected else "ok",
             "guardrails": guardrails,
+            "confidence_hint": confidence_hint,
+            "significance_hint": significance_hint,
+            "multiple_comparisons_method": multiple_comparisons_method,
+            "multiple_comparisons_note": multiple_comparisons_note,
+            "rollout_policy": str(config.get("rollout_policy") or "conservative"),
             "decision": decision,
             "decision_reason": decision_reason,
             "groups": summary_groups,
@@ -312,9 +336,14 @@ class ExperimentConfigService:
     def get_rollout_suggestion(self, experiment_id: str) -> Dict[str, Any]:
         summary = self.get_summary(experiment_id)
         decision = summary["decision"]
+        rollout_policy = str(summary.get("rollout_policy") or "conservative")
         suggestion = "continue_experiment"
         if decision == "winner":
             suggestion = "expand_treatment_audience"
+            if rollout_policy == "aggressive":
+                suggestion = "expand_treatment_audience_fast"
+            elif rollout_policy == "balanced":
+                suggestion = "expand_treatment_audience_gradually"
         elif decision == "neutral":
             suggestion = "pause_or_retest"
         elif decision == "invalid":
@@ -324,6 +353,7 @@ class ExperimentConfigService:
             "decision": decision,
             "decision_reason": summary.get("decision_reason"),
             "suggestion": suggestion,
+            "rollout_policy": rollout_policy,
             "risk_notes": [item["metric"] for item in summary.get("guardrails", []) if item.get("status") != "pass"],
             "summary": summary,
         }

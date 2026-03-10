@@ -31,6 +31,7 @@ class WorkflowService:
         budget_policy: Dict[str, Any] | None = None,
         trigger: Dict[str, Any] | None = None,
         channel_config: Dict[str, Any] | None = None,
+        steps: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         if self.cohorts.get_cohort(cohort_id) is None:
             raise KeyError(cohort_id)
@@ -58,6 +59,7 @@ class WorkflowService:
                 "budget_policy": resolved_budget_policy,
                 "trigger": normalized_trigger,
                 "channel_config": normalized_channel,
+                "steps": self._normalize_steps(steps or []),
                 "experiment_id": experiment_id,
                 "requires_confirmation": bool(requires_confirmation),
                 "confirmation_state": None,
@@ -102,6 +104,8 @@ class WorkflowService:
             definition["experiment_id"] = patch["experiment_id"]
         if patch.get("requires_confirmation") is not None:
             definition["requires_confirmation"] = bool(patch["requires_confirmation"])
+        if patch.get("steps") is not None:
+            definition["steps"] = self._normalize_steps(patch["steps"])
         payload["definition"] = definition
         payload["current_version"] = int(payload.get("current_version") or 1) + 1
         payload["status"] = "draft"
@@ -514,6 +518,116 @@ class WorkflowService:
         payload.setdefault("quiet_hours", {"start": 22, "end": 7})
         return payload
 
+    def _normalize_steps(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not steps:
+            return []
+        normalized = []
+        for step in steps:
+            step_type = str((step or {}).get("type") or "action").strip().lower()
+            if step_type not in {"filter", "wait", "if_else", "action", "end"}:
+                raise ValueError("Supported workflow step types are filter, wait, if_else, action, and end.")
+            payload = {"type": step_type}
+            if step_type == "filter":
+                payload["conditions"] = list((step or {}).get("conditions") or [((step or {}).get("condition") or {})])
+            elif step_type == "wait":
+                payload["seconds"] = max(0, int((step or {}).get("seconds") or 0))
+            elif step_type == "if_else":
+                payload["condition"] = dict((step or {}).get("condition") or {})
+                payload["then"] = dict((step or {}).get("then") or {})
+                payload["else"] = dict((step or {}).get("else") or {})
+            elif step_type == "action":
+                payload["action"] = dict((step or {}).get("action") or {})
+            normalized.append(payload)
+        return normalized
+
+    @staticmethod
+    def _lookup_member_value(member: Dict[str, Any], field: str) -> Any:
+        if field in member:
+            return member.get(field)
+        attributes = member.get("attributes")
+        if isinstance(attributes, dict) and field in attributes:
+            return attributes.get(field)
+        for container_name in ("event_properties", "user_properties"):
+            container = member.get(container_name)
+            if isinstance(container, dict) and field in container:
+                return container.get(field)
+        return None
+
+    def _condition_matches(self, member: Dict[str, Any], condition: Dict[str, Any], *, group: str | None = None) -> bool:
+        if not condition:
+            return True
+        field = str(condition.get("field") or "")
+        actual = group if field == "group" else self._lookup_member_value(member, field)
+        op = str(condition.get("op") or "=").lower()
+        expected = condition.get("value")
+        if op in {"=", "=="}:
+            return actual == expected
+        if op == "!=":
+            return actual != expected
+        if op == "in":
+            return actual in (expected or [])
+        if op == "not in":
+            return actual not in (expected or [])
+        if op == "contains":
+            return str(expected) in str(actual or "")
+        try:
+            actual_number = float(actual)
+            expected_number = float(expected)
+        except (TypeError, ValueError):
+            return False
+        if op == ">":
+            return actual_number > expected_number
+        if op == ">=":
+            return actual_number >= expected_number
+        if op == "<":
+            return actual_number < expected_number
+        if op == "<=":
+            return actual_number <= expected_number
+        return actual == expected
+
+    def _resolve_channel_config_from_steps(
+        self,
+        *,
+        member: Dict[str, Any],
+        base_channel_config: Dict[str, Any],
+        steps: List[Dict[str, Any]],
+        group: str | None,
+    ) -> Dict[str, Any]:
+        resolved = dict(base_channel_config or {})
+        trace: List[Dict[str, Any]] = []
+        if not steps:
+            return {"status": "ok", "channel_config": resolved, "trace": trace}
+        for index, step in enumerate(steps, start=1):
+            step_type = str(step.get("type") or "action")
+            if step_type == "filter":
+                conditions = list(step.get("conditions") or [])
+                passed = all(self._condition_matches(member, condition, group=group) for condition in conditions)
+                trace.append({"step": index, "type": step_type, "passed": passed, "conditions": conditions})
+                if not passed:
+                    return {"status": "filtered_out", "channel_config": resolved, "trace": trace}
+                continue
+            if step_type == "wait":
+                trace.append({"step": index, "type": step_type, "seconds": int(step.get("seconds") or 0), "mode": "simulated"})
+                continue
+            if step_type == "if_else":
+                branch = "then" if self._condition_matches(member, step.get("condition") or {}, group=group) else "else"
+                branch_payload = dict(step.get(branch) or {})
+                trace.append({"step": index, "type": step_type, "branch": branch, "condition": step.get("condition") or {}})
+                if branch_payload.get("end") is True:
+                    return {"status": "ended", "channel_config": resolved, "trace": trace}
+                if isinstance(branch_payload.get("action"), dict):
+                    resolved.update(branch_payload["action"])
+                continue
+            if step_type == "action":
+                action_payload = dict(step.get("action") or {})
+                resolved.update(action_payload)
+                trace.append({"step": index, "type": step_type, "action": action_payload})
+                continue
+            if step_type == "end":
+                trace.append({"step": index, "type": step_type, "ended": True})
+                return {"status": "ended", "channel_config": resolved, "trace": trace}
+        return {"status": "ok", "channel_config": resolved, "trace": trace}
+
     def _build_publish_preflight(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         reasons: List[str] = []
         definition = workflow.get("definition") or {}
@@ -523,9 +637,21 @@ class WorkflowService:
         elif cohort.get("status") != "active":
             reasons.append("cohort_not_active")
         channel_config = workflow.get("channel_config") or definition.get("channel_config") or definition.get("action") or {}
-        if not channel_config.get("channel"):
+        steps = list(definition.get("steps") or [])
+        step_actions = [dict(step.get("action") or {}) for step in steps if str(step.get("type") or "") == "action"]
+        branch_actions = []
+        for step in steps:
+            if str(step.get("type") or "") != "if_else":
+                continue
+            for branch_name in ("then", "else"):
+                branch_payload = dict(step.get(branch_name) or {})
+                if isinstance(branch_payload.get("action"), dict):
+                    branch_actions.append(dict(branch_payload["action"]))
+        has_step_channel = any(str(item.get("channel") or "").strip() for item in step_actions + branch_actions)
+        if not channel_config.get("channel") and not has_step_channel:
             reasons.append("channel_missing")
-        if not str(channel_config.get("content") or "").strip():
+        has_step_content = any(str(item.get("content") or "").strip() for item in step_actions + branch_actions)
+        if not str(channel_config.get("content") or "").strip() and not has_step_content:
             reasons.append("content_missing")
         trigger = workflow.get("trigger") or definition.get("trigger") or definition.get("schedule") or {}
         trigger_type = str(trigger.get("type") or "")
@@ -544,6 +670,11 @@ class WorkflowService:
         for field in ("global_daily_limit", "channel_daily_limit", "cooldown_hours"):
             if int(policy.get(field) or 0) < 0:
                 reasons.append(f"invalid_{field}")
+        if steps:
+            has_action_step = any(str(step.get("type") or "") == "action" for step in steps)
+            has_branch_action = any(str(step.get("type") or "") == "if_else" and any(isinstance((step.get(branch) or {}).get("action"), dict) for branch in ("then", "else")) for step in steps)
+            if not has_action_step and not has_branch_action:
+                reasons.append("workflow_steps_missing_action")
         return {"eligible": not reasons, "reasons": reasons}
 
     def _parse_reference_time(self, reference_time: str | None) -> datetime:
@@ -910,6 +1041,8 @@ class WorkflowService:
             "executed": 0,
             "success": 0,
             "holdout": 0,
+            "filtered_out": 0,
+            "ended": 0,
             "policy_blocked": 0,
             "duplicate_suppressed": 0,
             "budget_exhausted": 0,
@@ -922,13 +1055,27 @@ class WorkflowService:
         policy = workflow.get("policy") or definition.get("policy") or {}
         budget_policy = workflow.get("budget_policy") or definition.get("budget_policy") or {}
         channel_config = workflow.get("channel_config") or definition.get("channel_config") or definition.get("action") or {}
+        workflow_steps = list(definition.get("steps") or [])
         experiment_id = workflow.get("experiment_id") or definition.get("experiment_id")
 
         for member in members:
+            assignment = None
+            group = None
+            if experiment_id and not manual_test:
+                assignment = self.experiments.assign_user(experiment_id, member.get("canonical_user_id"))
+                group = assignment["group"]
+
+            step_resolution = self._resolve_channel_config_from_steps(
+                member=member,
+                base_channel_config=channel_config,
+                steps=workflow_steps,
+                group=group,
+            )
+            resolved_channel_config = dict(step_resolution.get("channel_config") or channel_config)
             policy_result = self._evaluate_policy(
                 workflow["workflow_id"],
                 member,
-                channel_config,
+                resolved_channel_config,
                 policy,
                 budget_policy,
                 action_date=action_date,
@@ -936,11 +1083,6 @@ class WorkflowService:
                 snapshot_id=snapshot_id,
                 manual_test=manual_test,
             )
-            assignment = None
-            group = None
-            if experiment_id and not manual_test:
-                assignment = self.experiments.assign_user(experiment_id, member.get("canonical_user_id"))
-                group = assignment["group"]
 
             execution_payload = {
                 "execution_id": execution_id,
@@ -949,13 +1091,27 @@ class WorkflowService:
                 "cohort_id": definition.get("cohort_id"),
                 "cohort_snapshot_id": snapshot_id,
                 "user_id": member.get("canonical_user_id"),
-                "channel": channel_config.get("channel", "push_notification"),
+                "channel": resolved_channel_config.get("channel", channel_config.get("channel", "push_notification")),
                 "execution_status": "pending",
                 "group": group,
                 "sandbox": bool(sandbox),
                 "trigger_type": summary["trigger_type"],
                 "recorded_at": datetime.utcnow().isoformat(),
+                "step_trace": step_resolution.get("trace") or [],
             }
+
+            if step_resolution["status"] == "filtered_out":
+                execution_payload["execution_status"] = "filtered_out"
+                summary["filtered_out"] += 1
+                self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
+                summary["results"].append(execution_payload)
+                continue
+            if step_resolution["status"] == "ended":
+                execution_payload["execution_status"] = "ended"
+                summary["ended"] += 1
+                self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
+                summary["results"].append(execution_payload)
+                continue
 
             if not policy_result["allowed"]:
                 reason = str(policy_result["reason"] or "policy_blocked")
@@ -1015,7 +1171,8 @@ class WorkflowService:
                 summary["results"].append(execution_payload)
                 continue
 
-            action = dict(channel_config)
+            action = dict(resolved_channel_config)
+            execution_payload["channel"] = action.get("channel", execution_payload["channel"])
             recipient = member.get("email") if str(action.get("channel") or "") == "email" else member.get("canonical_user_id")
             action_payload = {
                 "decision": "ACT",
@@ -1024,7 +1181,7 @@ class WorkflowService:
                 "subject": action.get("subject", "KairyxAI"),
                 "player_id": recipient or member.get("canonical_user_id"),
             }
-            provider_result = self._execute_action_with_retry(action_payload, channel_config)
+            provider_result = self._execute_action_with_retry(action_payload, action)
             summary["executed"] += 1
             execution_payload["execution_status"] = "executed" if provider_result.get("ok") else "failed"
             execution_payload["action_execution_id"] = provider_result.get("action_id") or execution_id
@@ -1034,7 +1191,7 @@ class WorkflowService:
                 cohort_id=definition.get("cohort_id"),
                 experiment_id=experiment_id,
                 execution_payload=execution_payload,
-                channel_config=channel_config,
+                channel_config=action,
                 provider_result=provider_result,
                 sandbox=sandbox,
             )

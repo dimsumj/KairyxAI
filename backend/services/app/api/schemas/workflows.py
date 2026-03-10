@@ -16,6 +16,7 @@ class WorkflowCreateRequest(BaseModel):
     channel_config: Dict[str, Any] | None = None
     experiment_id: str | None = None
     requires_confirmation: bool = False
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowUpdateRequest(BaseModel):
@@ -29,6 +30,7 @@ class WorkflowUpdateRequest(BaseModel):
     channel_config: Dict[str, Any] | None = None
     experiment_id: str | None = None
     requires_confirmation: bool | None = None
+    steps: List[Dict[str, Any]] | None = None
 
 
 class WorkflowRunRequest(BaseModel):

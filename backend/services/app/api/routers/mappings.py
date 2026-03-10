@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.schemas.mappings import MappingResponse, MappingUpdateRequest, MappingVersionListResponse
 from app.application.mappings import MappingService
+from app.core.governance import ensure_permission, get_governance_context
 from app.core.deps import get_mapping_service
 
 
@@ -51,8 +52,10 @@ def list_mapping_versions(
 def save_mapping(
     connector_name: str,
     request: MappingUpdateRequest,
+    http_request: Request,
     service: MappingService = Depends(get_mapping_service),
 ):
+    ensure_permission(get_governance_context(http_request), "mappings.update")
     saved = service.save_mapping(
         connector_name,
         request.mapping,
@@ -67,11 +70,13 @@ def save_mapping(
 def rollback_mapping(
     connector_name: str,
     version: int,
+    http_request: Request,
     scope_type: str = Query("source"),
     scope_key: str | None = Query(None),
     changed_by: str = Query("system"),
     service: MappingService = Depends(get_mapping_service),
 ):
+    ensure_permission(get_governance_context(http_request), "mappings.rollback")
     try:
         return service.rollback(
             connector_name,

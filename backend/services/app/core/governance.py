@@ -24,6 +24,7 @@ ROLE_PERMISSIONS = {
         "cohorts.metrics.read",
         "cohorts.compare.read",
         "cohorts.refresh_jobs.read",
+        "audit.logs.read",
         "imports.quality.read",
         "imports.identity_links.read",
         "imports.conflicts.read",
@@ -31,6 +32,8 @@ ROLE_PERMISSIONS = {
         "sql_workspace.preview",
         "sql_workspace.queries.read",
         "mappings.suggestions.read",
+        "audit.logs.read",
+        "templates.read",
         "workflows.deliveries.read",
         "workflows.versions.read",
         "experiments.read",
@@ -43,18 +46,26 @@ ROLE_PERMISSIONS = {
         "exports.run",
         "exports.retry",
         "exports.diagnostics.read",
+        "connectors.write",
+        "mappings.update",
+        "mappings.rollback",
         "imports.resume",
         "imports.replay",
         "imports.quality.read",
         "imports.identity_links.read",
         "imports.conflicts.read",
         "imports.rejected.read",
+        "cohorts.create",
         "cohorts.refresh",
         "cohorts.activate",
+        "cohorts.pause",
+        "cohorts.archive",
+        "cohorts.restore",
         "cohorts.update",
         "cohorts.metrics.read",
         "cohorts.compare.read",
         "cohorts.refresh_jobs.read",
+        "workflows.create",
         "workflows.publish",
         "workflows.pause",
         "workflows.resume",
@@ -65,8 +76,14 @@ ROLE_PERMISSIONS = {
         "workflows.confirm",
         "orchestrator.events.ingest",
         "orchestrator.thresholds.evaluate",
+        "orchestrator.kill_switch",
         "activation.callbacks.ingest",
         "experiments.read",
+        "experiments.config.write",
+        "experiments.start",
+        "experiments.stop",
+        "experiments.decision",
+        "experiments.outcomes.ingest",
         "experiments.versions.read",
         "experiments.assignments.read",
         "experiments.rollout.read",
@@ -75,6 +92,9 @@ ROLE_PERMISSIONS = {
         "sql_workspace.queries.create",
         "sql_workspace.query_to_cohort",
         "mappings.suggestions.read",
+        "audit.logs.read",
+        "templates.read",
+        "templates.instantiate",
     },
 }
 
@@ -83,14 +103,16 @@ ROLE_PERMISSIONS = {
 class GovernanceContext:
     actor_role: str
     actor_id: str
+    tenant_id: str
 
 
 def get_governance_context(request: Request) -> GovernanceContext:
     actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower()
     actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
+    tenant_id = str(request.headers.get("x-tenant-id") or "default").strip() or "default"
     if actor_role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Unsupported actor_role '{actor_role}'.")
-    return GovernanceContext(actor_role=actor_role, actor_id=actor_id)
+    return GovernanceContext(actor_role=actor_role, actor_id=actor_id, tenant_id=tenant_id)
 
 
 def ensure_permission(context: GovernanceContext, permission: str) -> None:
@@ -116,6 +138,7 @@ def record_audit(
         {
             "actor_role": context.actor_role,
             "actor_id": context.actor_id,
+            "tenant_id": context.tenant_id,
             "payload": payload,
         },
     )
@@ -184,11 +207,13 @@ def build_audited_response(
         return {
             **masked_payload,
             "audit_id": audit_id,
+            "tenant_id": context.tenant_id,
             "masked_fields": masked_fields,
         }
     return {
         "data": masked_payload,
         "audit_id": audit_id,
+        "tenant_id": context.tenant_id,
         "masked_fields": masked_fields,
     }
 

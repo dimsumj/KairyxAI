@@ -29,7 +29,8 @@ def list_workflows(service: WorkflowService = Depends(get_workflow_service)):
 
 
 @workflow_router.post("", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
-def create_workflow(request: WorkflowCreateRequest, service: WorkflowService = Depends(get_workflow_service)):
+def create_workflow(request: WorkflowCreateRequest, http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "workflows.create")
     try:
         return service.create_workflow(
             name=request.name,
@@ -42,6 +43,7 @@ def create_workflow(request: WorkflowCreateRequest, service: WorkflowService = D
             channel_config=request.channel_config,
             experiment_id=request.experiment_id,
             requires_confirmation=request.requires_confirmation,
+            steps=request.steps,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Cohort '{request.cohort_id}' not found.")
@@ -58,7 +60,8 @@ def get_workflow(workflow_id: str, service: WorkflowService = Depends(get_workfl
 
 
 @workflow_router.put("/{workflow_id}", response_model=WorkflowResponse)
-def update_workflow(workflow_id: str, request: WorkflowUpdateRequest, service: WorkflowService = Depends(get_workflow_service)):
+def update_workflow(workflow_id: str, request: WorkflowUpdateRequest, http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "workflows.update")
     try:
         return service.update_workflow(workflow_id, request.model_dump(exclude_none=True))
     except KeyError as exc:
@@ -69,7 +72,8 @@ def update_workflow(workflow_id: str, request: WorkflowUpdateRequest, service: W
 
 
 @workflow_router.post("/{workflow_id}/publish", response_model=WorkflowResponse)
-def publish_workflow(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
+def publish_workflow(workflow_id: str, http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "workflows.publish")
     try:
         return service.publish_workflow(workflow_id)
     except KeyError:
@@ -79,7 +83,8 @@ def publish_workflow(workflow_id: str, service: WorkflowService = Depends(get_wo
 
 
 @workflow_router.post("/{workflow_id}/pause", response_model=WorkflowResponse)
-def pause_workflow(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
+def pause_workflow(workflow_id: str, http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "workflows.pause")
     try:
         return service.pause_workflow(workflow_id)
     except KeyError:
@@ -87,7 +92,8 @@ def pause_workflow(workflow_id: str, service: WorkflowService = Depends(get_work
 
 
 @workflow_router.post("/{workflow_id}/resume", response_model=WorkflowResponse)
-def resume_workflow(workflow_id: str, service: WorkflowService = Depends(get_workflow_service)):
+def resume_workflow(workflow_id: str, http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "workflows.resume")
     try:
         return service.resume_workflow(workflow_id)
     except KeyError:
@@ -98,8 +104,10 @@ def resume_workflow(workflow_id: str, service: WorkflowService = Depends(get_wor
 def test_run_workflow(
     workflow_id: str,
     request: WorkflowRunRequest,
+    http_request: Request,
     service: WorkflowService = Depends(get_workflow_service),
 ):
+    ensure_permission(get_governance_context(http_request), "workflows.execute")
     try:
         return service.test_run(
             workflow_id,
@@ -143,8 +151,10 @@ def get_workflow_versions(workflow_id: str, service: WorkflowService = Depends(g
 def confirm_workflow(
     workflow_id: str,
     request: WorkflowConfirmationRequest,
+    http_request: Request,
     service: WorkflowService = Depends(get_workflow_service),
 ):
+    ensure_permission(get_governance_context(http_request), "workflows.confirm")
     try:
         return service.confirm_workflow(workflow_id, note=request.note, valid_for_hours=request.valid_for_hours)
     except KeyError:
@@ -174,20 +184,24 @@ def list_workflow_deliveries(
 
 
 @orchestrator_router.post("/kill-switch/on", response_model=dict)
-def enable_kill_switch(service: WorkflowService = Depends(get_workflow_service)):
+def enable_kill_switch(http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "orchestrator.kill_switch")
     return service.set_kill_switch(True)
 
 
 @orchestrator_router.post("/kill-switch/off", response_model=dict)
-def disable_kill_switch(service: WorkflowService = Depends(get_workflow_service)):
+def disable_kill_switch(http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
+    ensure_permission(get_governance_context(http_request), "orchestrator.kill_switch")
     return service.set_kill_switch(False)
 
 
 @orchestrator_router.post("/run-due", response_model=dict)
 def run_due_workflows(
     request: OrchestratorRunRequest,
+    http_request: Request,
     service: WorkflowService = Depends(get_workflow_service),
 ):
+    ensure_permission(get_governance_context(http_request), "workflows.execute")
     try:
         return service.run_due_workflows(
             reference_time=request.reference_time,
@@ -201,8 +215,10 @@ def run_due_workflows(
 @orchestrator_router.post("/events:ingest", response_model=dict)
 def ingest_orchestrator_event(
     request: WorkflowEventIngestRequest,
+    http_request: Request,
     service: WorkflowService = Depends(get_workflow_service),
 ):
+    ensure_permission(get_governance_context(http_request), "orchestrator.events.ingest")
     try:
         return service.ingest_event(
             event_type=request.event_type,
@@ -218,8 +234,10 @@ def ingest_orchestrator_event(
 @orchestrator_router.post("/thresholds:evaluate", response_model=dict)
 def evaluate_orchestrator_threshold(
     request: WorkflowThresholdEvaluateRequest,
+    http_request: Request,
     service: WorkflowService = Depends(get_workflow_service),
 ):
+    ensure_permission(get_governance_context(http_request), "orchestrator.thresholds.evaluate")
     try:
         return service.evaluate_thresholds(
             metric_id=request.metric_id,

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.schemas.connectors import ConnectorCreateRequest, ConnectorHealthResponse, ConnectorResponse
 from app.application.connectors import ConnectorService
+from app.core.governance import ensure_permission, get_governance_context
 from app.core.deps import get_connector_service
 
 
@@ -16,7 +17,8 @@ def list_connectors(service: ConnectorService = Depends(get_connector_service)):
 
 
 @router.post("", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
-def create_connector(request: ConnectorCreateRequest, service: ConnectorService = Depends(get_connector_service)):
+def create_connector(request: ConnectorCreateRequest, http_request: Request, service: ConnectorService = Depends(get_connector_service)):
+    ensure_permission(get_governance_context(http_request), "connectors.write")
     return service.create_connector(request.name, request.type, request.config)
 
 
@@ -29,7 +31,8 @@ def connector_health(connector_name: str, service: ConnectorService = Depends(ge
 
 
 @router.delete("/{connector_name}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_connector(connector_name: str, service: ConnectorService = Depends(get_connector_service)):
+def delete_connector(connector_name: str, http_request: Request, service: ConnectorService = Depends(get_connector_service)):
+    ensure_permission(get_governance_context(http_request), "connectors.write")
     deleted = service.delete_connector(connector_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")

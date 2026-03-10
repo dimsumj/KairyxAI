@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, JSONResponse
 
-from app.api.routers import activation, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, workflows
+from app.api.routers import activation, audit, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, templates, workflows
 from app.application.imports import ImportService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
@@ -34,6 +34,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def _api_key_guard(request: Request, call_next):
+        protected_prefix = settings.api_v1_prefix.rstrip("/")
+        if settings.api_access_key and request.url.path.startswith(protected_prefix):
+            if request.url.path not in {f"{protected_prefix}/health", "/health"}:
+                provided = str(request.headers.get("x-api-key") or "").strip()
+                if provided != settings.api_access_key:
+                    return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
+        return await call_next(request)
 
     @app.on_event("startup")
     def _startup() -> None:
@@ -90,6 +100,8 @@ def create_app() -> FastAPI:
     app.include_router(workflows.orchestrator_router, prefix=settings.api_v1_prefix)
     app.include_router(activation.router, prefix=settings.api_v1_prefix)
     app.include_router(copilot.router, prefix=settings.api_v1_prefix)
+    app.include_router(audit.router, prefix=settings.api_v1_prefix)
+    app.include_router(templates.router, prefix=settings.api_v1_prefix)
     return app
 
 

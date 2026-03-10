@@ -17,7 +17,8 @@ def list_cohorts(service: CohortService = Depends(get_cohort_service)):
 
 
 @router.post("", response_model=CohortResponse, status_code=status.HTTP_201_CREATED)
-def create_cohort(request: CohortCreateRequest, service: CohortService = Depends(get_cohort_service)):
+def create_cohort(request: CohortCreateRequest, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.create")
     try:
         return service.create_cohort(
             name=request.name,
@@ -69,7 +70,8 @@ def get_cohort_members(
 
 
 @router.post("/{cohort_id}/refresh", response_model=CohortResponse)
-def refresh_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+def refresh_cohort(cohort_id: str, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.refresh")
     try:
         return service.refresh_cohort(cohort_id, force=True)
     except KeyError:
@@ -79,7 +81,8 @@ def refresh_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_s
 
 
 @router.post("/{cohort_id}/activate", response_model=CohortResponse)
-def activate_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+def activate_cohort(cohort_id: str, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.activate")
     try:
         return service.activate_cohort(cohort_id)
     except KeyError:
@@ -89,7 +92,8 @@ def activate_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_
 
 
 @router.post("/{cohort_id}/pause", response_model=CohortResponse)
-def pause_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+def pause_cohort(cohort_id: str, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.pause")
     try:
         return service.pause_cohort(cohort_id)
     except KeyError:
@@ -148,7 +152,8 @@ def rollback_cohort(cohort_id: str, version: int, service: CohortService = Depen
 
 
 @router.post("/{cohort_id}/archive", response_model=CohortResponse)
-def archive_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+def archive_cohort(cohort_id: str, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.archive")
     try:
         return service.archive_cohort(cohort_id)
     except KeyError:
@@ -156,7 +161,8 @@ def archive_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_s
 
 
 @router.post("/{cohort_id}/restore", response_model=CohortResponse)
-def restore_cohort(cohort_id: str, service: CohortService = Depends(get_cohort_service)):
+def restore_cohort(cohort_id: str, http_request: Request, service: CohortService = Depends(get_cohort_service)):
+    ensure_permission(get_governance_context(http_request), "cohorts.restore")
     try:
         return service.restore_cohort(cohort_id)
     except KeyError:
