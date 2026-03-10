@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 from app.infrastructure.db_models import (
     ActionHistoryModel,
     ConnectorConfigModel,
+    ControlPlaneResourceEventModel,
+    ControlPlaneResourceModel,
+    ControlPlaneResourceVersionModel,
     ExperimentConfigModel,
     ExportJobModel,
     FieldMappingModel,
@@ -259,6 +262,155 @@ class SqlAlchemyControlPlaneRepository:
         self.session.flush()
         return _from_json_text(row.config_json)
 
+    def get_resource(self, resource_type: str, resource_id: str) -> Optional[Dict[str, Any]]:
+        row = self.session.execute(
+            select(ControlPlaneResourceModel).where(
+                ControlPlaneResourceModel.resource_type == resource_type,
+                ControlPlaneResourceModel.resource_id == resource_id,
+            )
+        ).scalar_one_or_none()
+        return self._resource_to_dict(row) if row else None
+
+    def list_resources(self, resource_type: str) -> List[Dict[str, Any]]:
+        rows = self.session.execute(
+            select(ControlPlaneResourceModel)
+            .where(ControlPlaneResourceModel.resource_type == resource_type)
+            .order_by(ControlPlaneResourceModel.updated_at.desc())
+        ).scalars().all()
+        return [self._resource_to_dict(row) for row in rows]
+
+    def upsert_resource(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        status: str,
+        payload: Dict[str, Any],
+        name: str | None = None,
+    ) -> Dict[str, Any]:
+        row = self.session.execute(
+            select(ControlPlaneResourceModel).where(
+                ControlPlaneResourceModel.resource_type == resource_type,
+                ControlPlaneResourceModel.resource_id == resource_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = ControlPlaneResourceModel(
+                resource_type=resource_type,
+                resource_id=resource_id,
+                name=name,
+                status=status,
+                payload_json=_to_json_text(payload),
+            )
+            self.session.add(row)
+        else:
+            row.name = name if name is not None else row.name
+            row.status = status
+            row.payload_json = _to_json_text(payload)
+            row.updated_at = datetime.utcnow()
+        self.session.flush()
+        return self._resource_to_dict(row)
+
+    def delete_resource(self, resource_type: str, resource_id: str) -> bool:
+        row = self.session.execute(
+            select(ControlPlaneResourceModel).where(
+                ControlPlaneResourceModel.resource_type == resource_type,
+                ControlPlaneResourceModel.resource_id == resource_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        self.session.execute(
+            delete(ControlPlaneResourceVersionModel).where(
+                ControlPlaneResourceVersionModel.resource_type == resource_type,
+                ControlPlaneResourceVersionModel.resource_id == resource_id,
+            )
+        )
+        self.session.execute(
+            delete(ControlPlaneResourceEventModel).where(
+                ControlPlaneResourceEventModel.resource_type == resource_type,
+                ControlPlaneResourceEventModel.resource_id == resource_id,
+            )
+        )
+        self.session.delete(row)
+        self.session.flush()
+        return True
+
+    def create_resource_version(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        version: int,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        row = self.session.execute(
+            select(ControlPlaneResourceVersionModel).where(
+                ControlPlaneResourceVersionModel.resource_type == resource_type,
+                ControlPlaneResourceVersionModel.resource_id == resource_id,
+                ControlPlaneResourceVersionModel.version == int(version),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = ControlPlaneResourceVersionModel(
+                resource_type=resource_type,
+                resource_id=resource_id,
+                version=int(version),
+                payload_json=_to_json_text(payload),
+            )
+            self.session.add(row)
+        else:
+            row.payload_json = _to_json_text(payload)
+        self.session.flush()
+        return self._resource_version_to_dict(row)
+
+    def list_resource_versions(self, resource_type: str, resource_id: str) -> List[Dict[str, Any]]:
+        rows = self.session.execute(
+            select(ControlPlaneResourceVersionModel)
+            .where(
+                ControlPlaneResourceVersionModel.resource_type == resource_type,
+                ControlPlaneResourceVersionModel.resource_id == resource_id,
+            )
+            .order_by(ControlPlaneResourceVersionModel.version.desc())
+        ).scalars().all()
+        return [self._resource_version_to_dict(row) for row in rows]
+
+    def record_resource_event(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        event_type: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        row = ControlPlaneResourceEventModel(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            event_type=event_type,
+            payload_json=_to_json_text(payload),
+        )
+        self.session.add(row)
+        self.session.flush()
+        return self._resource_event_to_dict(row)
+
+    def list_resource_events(
+        self,
+        resource_type: str,
+        resource_id: str | None = None,
+        *,
+        event_type: str | None = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        query = select(ControlPlaneResourceEventModel).where(ControlPlaneResourceEventModel.resource_type == resource_type)
+        if resource_id is not None:
+            query = query.where(ControlPlaneResourceEventModel.resource_id == resource_id)
+        if event_type is not None:
+            query = query.where(ControlPlaneResourceEventModel.event_type == event_type)
+        rows = self.session.execute(
+            query.order_by(desc(ControlPlaneResourceEventModel.created_at)).limit(max(1, int(limit)))
+        ).scalars().all()
+        return [self._resource_event_to_dict(row) for row in rows]
+
     def _connector_to_dict(self, row: ConnectorConfigModel) -> Dict[str, Any]:
         return {
             "name": row.name,
@@ -301,6 +453,38 @@ class SqlAlchemyControlPlaneRepository:
             "action_type": row.action_type,
             "resource_type": row.resource_type,
             "resource_id": row.resource_id,
+            "payload": _from_json_text(row.payload_json),
+            "created_at": row.created_at.isoformat(),
+        }
+
+    def _resource_to_dict(self, row: ControlPlaneResourceModel) -> Dict[str, Any]:
+        payload = _from_json_text(row.payload_json)
+        return {
+            "resource_type": row.resource_type,
+            "resource_id": row.resource_id,
+            "name": row.name,
+            "status": row.status,
+            "payload": payload,
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        }
+
+    def _resource_version_to_dict(self, row: ControlPlaneResourceVersionModel) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "resource_type": row.resource_type,
+            "resource_id": row.resource_id,
+            "version": row.version,
+            "payload": _from_json_text(row.payload_json),
+            "created_at": row.created_at.isoformat(),
+        }
+
+    def _resource_event_to_dict(self, row: ControlPlaneResourceEventModel) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "resource_type": row.resource_type,
+            "resource_id": row.resource_id,
+            "event_type": row.event_type,
             "payload": _from_json_text(row.payload_json),
             "created_at": row.created_at.isoformat(),
         }

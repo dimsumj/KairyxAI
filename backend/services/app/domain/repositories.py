@@ -89,3 +89,58 @@ class ExperimentConfigRepository(Protocol):
 
     def save_experiment_config(self, config: Dict[str, Any], key: str = "default") -> Dict[str, Any]:
         ...
+
+
+class ControlPlaneResourceRepository(Protocol):
+    def get_resource(self, resource_type: str, resource_id: str) -> Optional[Dict[str, Any]]:
+        ...
+
+    def list_resources(self, resource_type: str) -> List[Dict[str, Any]]:
+        ...
+
+    def upsert_resource(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        status: str,
+        payload: Dict[str, Any],
+        name: str | None = None,
+    ) -> Dict[str, Any]:
+        ...
+
+    def delete_resource(self, resource_type: str, resource_id: str) -> bool:
+        ...
+
+    def create_resource_version(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        version: int,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        ...
+
+    def list_resource_versions(self, resource_type: str, resource_id: str) -> List[Dict[str, Any]]:
+        ...
+
+    def record_resource_event(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        event_type: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        ...
+
+    def list_resource_events(
+        self,
+        resource_type: str,
+        resource_id: str | None = None,
+        *,
+        event_type: str | None = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        ...

@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 
-from app.api.routers import connectors, experiments, exports, health, imports, mappings, predictions
+from app.api.routers import cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, workflows
 from app.application.imports import ImportService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
@@ -79,6 +79,11 @@ def create_app() -> FastAPI:
     app.include_router(predictions.router, prefix=settings.api_v1_prefix)
     app.include_router(exports.router, prefix=settings.api_v1_prefix)
     app.include_router(experiments.router, prefix=settings.api_v1_prefix)
+    app.include_router(cohorts.router, prefix=settings.api_v1_prefix)
+    app.include_router(sql_workspace.router, prefix=settings.api_v1_prefix)
+    app.include_router(workflows.workflow_router, prefix=settings.api_v1_prefix)
+    app.include_router(workflows.orchestrator_router, prefix=settings.api_v1_prefix)
+    app.include_router(copilot.router, prefix=settings.api_v1_prefix)
     return app
 
 

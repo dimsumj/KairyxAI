@@ -3,6 +3,8 @@
 from functools import lru_cache
 import os
 import json
+import re
+import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -271,6 +273,39 @@ class BigQueryService:
             raise ValueError(f"Unknown BigQueryService target '{target}'.")
         return mapping[target]
 
+    def get_v1_table_aliases(self) -> Dict[str, str]:
+        return {
+            "standardized": "events_staging",
+            "fact_events_unified": "events_curated",
+            "mart_user_daily": "player_latest_state",
+            "prediction_results": "prediction_results",
+            "pipeline_dead_letters": "pipeline_dead_letters",
+        }
+
+    def _default_columns_for_alias(self, alias: str) -> List[str]:
+        mapping = {
+            "standardized": [
+                "job_id", "source", "player_id", "canonical_user_id", "event_type", "event_time",
+                "event_properties", "user_properties", "data_quality_flags",
+            ],
+            "fact_events_unified": [
+                "job_id", "source", "player_id", "canonical_user_id", "event_type", "event_time",
+                "event_properties", "user_properties", "data_quality_flags",
+            ],
+            "mart_user_daily": [
+                "player_id", "canonical_user_id", "email", "sessions_7d", "sessions_30d",
+                "lifetime_revenue_usd", "days_since_last_seen", "last_campaign", "last_media_source",
+            ],
+            "prediction_results": [
+                "prediction_job_id", "user_id", "canonical_user_id", "email", "churn_state",
+                "predicted_churn_risk", "prediction_source", "suggested_action", "completed_at",
+            ],
+            "pipeline_dead_letters": [
+                "job_id", "player_id", "event_type", "event_time", "rejection_reason",
+            ],
+        }
+        return mapping.get(alias, ["id"])
+
     def _load_rows_to_gcp_table(
         self,
         rows: List[Dict[str, Any]],
@@ -467,6 +502,79 @@ class BigQueryService:
             except Exception:
                 return []
         return self._get_local_rows(target)
+
+    def get_rows_for_alias(self, alias: str) -> List[Dict[str, Any]]:
+        resolved_alias = str(alias or "").strip()
+        target = self.get_v1_table_aliases().get(resolved_alias, resolved_alias)
+        return self._load_all_rows_from_target(target)
+
+    def run_readonly_query(
+        self,
+        sql: str,
+        *,
+        limit: int = 50,
+        timeout_seconds: int = 30,
+    ) -> Dict[str, Any]:
+        query = str(sql or "").strip()
+        if not query:
+            raise ValueError("SQL query is required.")
+        lowered = query.lower()
+        if not (lowered.startswith("select") or lowered.startswith("with")):
+            raise ValueError("Only SELECT queries are allowed.")
+        forbidden = (" insert ", " update ", " delete ", " drop ", " create ", " alter ", " truncate ", " merge ")
+        padded = f" {lowered} "
+        if any(token in padded for token in forbidden):
+            raise ValueError("Only read-only SQL is allowed.")
+        if ";" in query.rstrip(";"):
+            raise ValueError("Multiple SQL statements are not allowed.")
+
+        resolved_query = query
+        aliases = self.get_v1_table_aliases()
+        if self.mode == "gcp":
+            for alias, target in aliases.items():
+                table_id = self._target_meta(target)["table_id"]
+                resolved_query = re.sub(rf"\b{re.escape(alias)}\b", f"`{table_id}`", resolved_query)
+            job_config = self._bigquery.QueryJobConfig()
+            job = self._client.query(resolved_query, job_config=job_config, timeout=max(1, int(timeout_seconds)))
+            rows = [dict(row.items()) for row in job.result(max_results=max(1, int(limit)))]
+            return {
+                "sql": query,
+                "resolved_sql": resolved_query,
+                "aliases": aliases,
+                "rows": rows,
+                "row_count": len(rows),
+                "truncated": len(rows) >= max(1, int(limit)),
+            }
+
+        connection = sqlite3.connect(":memory:")
+        try:
+            for alias, target in aliases.items():
+                rows = self._load_all_rows_from_target(target)
+                frame = pd.DataFrame(rows)
+                if frame.empty:
+                    frame = pd.DataFrame(columns=self._default_columns_for_alias(alias))
+                else:
+                    for column in frame.columns:
+                        if frame[column].dtype != "object":
+                            continue
+                        frame[column] = frame[column].map(
+                            lambda value: json.dumps(value) if isinstance(value, (dict, list)) else value
+                        )
+                frame.to_sql(alias, connection, if_exists="replace", index=False)
+            preview_query = resolved_query
+            if " limit " not in lowered:
+                preview_query = f"{resolved_query.rstrip(';')} LIMIT {max(1, int(limit))}"
+            rows = pd.read_sql_query(preview_query, connection).to_dict(orient="records")
+            return {
+                "sql": query,
+                "resolved_sql": preview_query,
+                "aliases": aliases,
+                "rows": rows,
+                "row_count": len(rows),
+                "truncated": len(rows) >= max(1, int(limit)),
+            }
+        finally:
+            connection.close()
 
     @staticmethod
     def _is_missing_key_part(value: Any) -> bool:

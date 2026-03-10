@@ -36,6 +36,32 @@ class ImportService:
         if session is not None:
             session.rollback()
 
+    def _build_quality_report(self, processing_stats: Dict[str, Any]) -> Dict[str, Any]:
+        raw = max(0, int(processing_stats.get("raw_normalized_events", 0) or 0))
+        dead_letters = max(0, int(processing_stats.get("pipeline_dead_letters_written", 0) or 0))
+        flag_counts = processing_stats.get("flag_counts") or {}
+        invalid_time = int(flag_counts.get("invalid_event_time", 0) or 0)
+        missing_player = int(flag_counts.get("missing_player_id", 0) or 0)
+        required_coverage = 100.0
+        if raw > 0:
+            player_id_coverage = max(0.0, (raw - missing_player) / raw * 100.0)
+            event_time_coverage = max(0.0, (raw - invalid_time) / raw * 100.0)
+            required_coverage = round(min(player_id_coverage, event_time_coverage, 100.0), 2)
+        warehouse_stats = processing_stats.get("warehouse_stats") or {}
+        curation = warehouse_stats.get("curation") or {}
+        staging_rows = int(curation.get("staging_rows", 0) or 0)
+        duplicates_removed = int(curation.get("duplicates_removed", 0) or 0)
+        dedupe_rate = round((duplicates_removed / staging_rows * 100.0), 2) if staging_rows else 0.0
+        reject_rate = round((dead_letters / raw * 100.0), 2) if raw else 0.0
+        canonical_coverage = 100.0 if int(processing_stats.get("events_staging_written", 0) or 0) > 0 else 0.0
+        return {
+            "required_mapping_coverage": required_coverage,
+            "canonical_user_id_coverage": canonical_coverage,
+            "reject_rate": reject_rate,
+            "dedupe_rate": dedupe_rate,
+            "flag_counts": flag_counts,
+        }
+
     def _safe_get_import_job(self, job_id: str) -> Dict[str, Any] | None:
         try:
             return self.repository.get_import_job(job_id)
@@ -336,9 +362,20 @@ class ImportService:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
+            connector_config = dict(connector_record["config"] or {})
+            if hasattr(self.repository, "get_resource"):
+                try:
+                    from app.application.mappings import MappingService
+
+                    connector_config["field_mapping"] = MappingService(self.repository).get_effective_mapping(
+                        connector_record["name"],
+                        job_id=job_id,
+                    )
+                except Exception:
+                    connector_config.setdefault("field_mapping", connector_config.get("field_mapping") or {})
             ingestion_service = IngestionService(
                 gcs_service=gcs_service,
-                connector_config=connector_record["config"],
+                connector_config=connector_config,
                 connector_type=connector_record["type"],
                 source_config_id=connector_record["name"],
                 pubsub_service=raw_pubsub,
@@ -413,11 +450,17 @@ class ImportService:
                         summary,
                     ),
                 )
+            quality_report = self._build_quality_report(processing_stats)
+            final_status = (
+                JobStatus.AWAITING_MAPPING.value
+                if quality_report["required_mapping_coverage"] < 95.0
+                else JobStatus.COMPLETED.value
+            )
 
             completed = self.repository.update_import_job(
                 job_id,
                 {
-                    "status": JobStatus.COMPLETED.value,
+                    "status": final_status,
                     "error": None,
                     "progress": {
                         "current": int(staged["events_staged"]),
@@ -429,6 +472,12 @@ class ImportService:
                             "events_staged": staged["events_staged"],
                             "shards_created": staged["shards_created"],
                             "processing": processing_stats,
+                            "quality_report": quality_report,
+                            "canonical_aliases": {
+                                "standardized": "events_staging",
+                                "fact_events_unified": "events_curated",
+                                "mart_user_daily": "player_latest_state",
+                            },
                         },
                     },
                 },

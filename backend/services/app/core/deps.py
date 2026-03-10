@@ -3,12 +3,16 @@ from __future__ import annotations
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.application.cohorts import CohortService
+from app.application.copilot import CopilotService
 from app.application.connectors import ConnectorService
 from app.application.experiments import ExperimentConfigService
 from app.application.exports import ExportService
 from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
+from app.application.sql_workspace import SqlWorkspaceService
+from app.application.workflows import WorkflowService
 from app.core.db import get_db_session
 from app.core.settings import Settings, get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
@@ -59,3 +63,27 @@ def get_experiment_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> ExperimentConfigService:
     return ExperimentConfigService(repository)
+
+
+def get_cohort_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> CohortService:
+    return CohortService(repository)
+
+
+def get_sql_workspace_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> SqlWorkspaceService:
+    return SqlWorkspaceService(repository)
+
+
+def get_workflow_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> WorkflowService:
+    return WorkflowService(repository)
+
+
+def get_copilot_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> CopilotService:
+    return CopilotService(repository)

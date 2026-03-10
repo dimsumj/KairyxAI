@@ -12,6 +12,7 @@ class JobType(str, Enum):
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    AWAITING_MAPPING = "awaiting_mapping"
     STOPPING = "stopping"
     STOPPED = "stopped"
     COMPLETED = "completed"

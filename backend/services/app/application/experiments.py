@@ -1,18 +1,224 @@
 from __future__ import annotations
 
-from experiment_service import ExperimentService
+import hashlib
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
 
 class ExperimentConfigService:
     def __init__(self, repository):
         self.repository = repository
-        self.experiment_service = ExperimentService(base_dir=".")
 
-    def get_config(self):
-        return self.repository.get_experiment_config()
+    def _default_config(self, experiment_id: str = "churn_engagement_v1") -> Dict[str, Any]:
+        return {
+            "experiment_id": experiment_id,
+            "enabled": True,
+            "holdout_pct": 0.10,
+            "b_variant_pct": 0.50,
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 20,
+            "min_runtime_hours": 24,
+            "cohort_id": None,
+            "status": "draft",
+        }
 
-    def save_config(self, config):
-        return self.repository.save_experiment_config(config)
+    def _get_experiment_record(self, experiment_id: str) -> Dict[str, Any] | None:
+        return self.repository.get_resource("experiment", experiment_id)
 
-    def get_summary(self, experiment_id: str):
-        return self.experiment_service.summary(experiment_id)
+    def _save_experiment_record(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        existing = self.repository.list_resource_versions("experiment", payload["experiment_id"])
+        next_version = 1 + max((int(item.get("version") or 0) for item in existing), default=0)
+        record = self.repository.upsert_resource(
+            "experiment",
+            payload["experiment_id"],
+            status=str(payload.get("status") or "draft"),
+            name=payload.get("experiment_id"),
+            payload=payload,
+        )
+        self.repository.create_resource_version("experiment", payload["experiment_id"], version=next_version, payload=payload)
+        return record
+
+    def get_config(self, experiment_id: str = "churn_engagement_v1") -> Dict[str, Any]:
+        record = self._get_experiment_record(experiment_id)
+        if record is not None:
+            return record.get("payload") or {}
+        if experiment_id == "churn_engagement_v1":
+            legacy = self.repository.get_experiment_config()
+            if legacy:
+                payload = {**self._default_config(experiment_id), **legacy}
+                self._save_experiment_record(payload)
+                return payload
+        return self._default_config(experiment_id)
+
+    def save_config(self, config: Dict[str, Any], experiment_id: str | None = None) -> Dict[str, Any]:
+        resolved_id = str(experiment_id or config.get("experiment_id") or "churn_engagement_v1")
+        payload = {**self.get_config(resolved_id), **config, "experiment_id": resolved_id}
+        if payload.get("enabled") is True and payload.get("status") == "draft":
+            payload["status"] = "active"
+        record = self._save_experiment_record(payload)
+        if resolved_id == "churn_engagement_v1":
+            self.repository.save_experiment_config(payload)
+        self.repository.record_action("experiment_config_saved", "experiment", resolved_id, payload)
+        return record.get("payload") or payload
+
+    def start(self, experiment_id: str) -> Dict[str, Any]:
+        payload = {**self.get_config(experiment_id), "status": "active", "started_at": datetime.utcnow().isoformat()}
+        return self._save_experiment_record(payload).get("payload") or payload
+
+    def stop(self, experiment_id: str) -> Dict[str, Any]:
+        payload = {**self.get_config(experiment_id), "status": "stopped", "stopped_at": datetime.utcnow().isoformat()}
+        return self._save_experiment_record(payload).get("payload") or payload
+
+    def assign_user(self, experiment_id: str, user_id: Any) -> Dict[str, Any]:
+        config = self.get_config(experiment_id)
+        user_text = str(user_id)
+        key = f"{experiment_id}:{user_text}".encode("utf-8")
+        bucket = int(hashlib.sha256(key).hexdigest()[:8], 16) % 10000 / 10000.0
+        holdout_pct = float(config.get("holdout_pct") or 0.10)
+        b_variant_pct = float(config.get("b_variant_pct") or 0.50)
+        if bucket < holdout_pct:
+            group = "holdout"
+        else:
+            group = "treatment_b" if ((bucket - holdout_pct) / max(1e-9, 1 - holdout_pct)) < b_variant_pct else "treatment_a"
+        assignment = {
+            "experiment_id": experiment_id,
+            "user_id": user_text,
+            "bucket": bucket,
+            "group": group,
+            "assigned_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.record_resource_event("experiment", experiment_id, event_type="assignment", payload=assignment)
+        return assignment
+
+    def record_exposure(self, experiment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.repository.record_resource_event("experiment", experiment_id, event_type="exposure", payload=payload)
+
+    def record_outcome(self, experiment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.repository.record_resource_event("experiment", experiment_id, event_type="outcome", payload=payload)
+
+    def list_exposures(self, experiment_id: str) -> List[Dict[str, Any]]:
+        return [item.get("payload") or {} for item in self.repository.list_resource_events("experiment", experiment_id, event_type="exposure", limit=5000)]
+
+    def list_outcomes(self, experiment_id: str) -> List[Dict[str, Any]]:
+        return [item.get("payload") or {} for item in self.repository.list_resource_events("experiment", experiment_id, event_type="outcome", limit=5000)]
+
+    def get_summary(self, experiment_id: str) -> Dict[str, Any]:
+        config = self.get_config(experiment_id)
+        exposures = self.list_exposures(experiment_id)
+        outcomes_by_action = {
+            str(item.get("action_execution_id") or item.get("action_id") or ""): item
+            for item in self.list_outcomes(experiment_id)
+        }
+        groups: Dict[str, Dict[str, Any]] = {
+            "holdout": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
+            "treatment_a": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
+            "treatment_b": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
+        }
+        first_exposure_at: datetime | None = None
+        for exposure in exposures:
+            group = str(exposure.get("group") or "holdout")
+            groups.setdefault(group, {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0})
+            groups[group]["n"] += 1
+            if str(exposure.get("execution_status") or "") == "policy_blocked":
+                groups[group]["policy_blocked"] += 1
+            action_id = str(exposure.get("action_execution_id") or exposure.get("action_id") or "")
+            outcome = outcomes_by_action.get(action_id)
+            response = str((outcome or {}).get("simulated_response") or "")
+            if response in {"opened", "returned_to_game"}:
+                groups[group]["engaged"] += 1
+            if response == "returned_to_game":
+                groups[group]["returned"] += 1
+            ts = exposure.get("recorded_at") or exposure.get("exposed_at")
+            try:
+                parsed = datetime.fromisoformat(str(ts))
+            except Exception:
+                parsed = None
+            if parsed is not None and (first_exposure_at is None or parsed < first_exposure_at):
+                first_exposure_at = parsed
+
+        expected = {
+            "holdout": float(config.get("holdout_pct") or 0.10),
+            "treatment_a": (1.0 - float(config.get("holdout_pct") or 0.10)) * (1.0 - float(config.get("b_variant_pct") or 0.50)),
+            "treatment_b": (1.0 - float(config.get("holdout_pct") or 0.10)) * float(config.get("b_variant_pct") or 0.50),
+        }
+        total = sum(item["n"] for item in groups.values())
+        srm_detected = False
+        if total > 0:
+            for group_name, stats in groups.items():
+                observed = stats["n"] / total
+                if abs(observed - expected.get(group_name, 0.0)) > 0.20:
+                    srm_detected = True
+                    break
+
+        def _rate(numerator: int, denominator: int) -> float:
+            return round((float(numerator) / denominator), 4) if denominator else 0.0
+
+        summary_groups: Dict[str, Dict[str, Any]] = {}
+        holdout_return_rate = _rate(groups["holdout"]["returned"], groups["holdout"]["n"])
+        for group_name, stats in groups.items():
+            summary_groups[group_name] = {
+                **stats,
+                "engagement_rate": _rate(stats["engaged"], stats["n"]),
+                "return_rate": _rate(stats["returned"], stats["n"]),
+                "policy_block_rate": _rate(stats["policy_blocked"], stats["n"]),
+            }
+            if group_name != "holdout":
+                summary_groups[group_name]["uplift_vs_holdout_return_rate"] = round(
+                    summary_groups[group_name]["return_rate"] - holdout_return_rate,
+                    4,
+                )
+
+        runtime_hours = 0.0
+        if first_exposure_at is not None:
+            runtime_hours = max(0.0, round((datetime.utcnow() - first_exposure_at).total_seconds() / 3600.0, 2))
+        min_sample = int(config.get("min_sample_size") or 20)
+        min_runtime_hours = int(config.get("min_runtime_hours") or 24)
+
+        decision = "neutral"
+        if srm_detected:
+            decision = "invalid"
+        elif total < min_sample or runtime_hours < min_runtime_hours:
+            decision = "inconclusive"
+        else:
+            best_group = max(
+                ("treatment_a", "treatment_b"),
+                key=lambda group_name: summary_groups.get(group_name, {}).get("uplift_vs_holdout_return_rate", 0.0),
+            )
+            best_uplift = summary_groups.get(best_group, {}).get("uplift_vs_holdout_return_rate", 0.0)
+            decision = "winner" if best_uplift > 0 else "neutral"
+
+        return {
+            "experiment_id": experiment_id,
+            "status": config.get("status") or "draft",
+            "primary_metric": config.get("primary_metric") or "return_rate",
+            "guardrail_metrics": config.get("guardrail_metrics") or [],
+            "min_sample_size": min_sample,
+            "min_runtime_hours": min_runtime_hours,
+            "runtime_hours": runtime_hours,
+            "total_exposures": total,
+            "srm_detected": srm_detected,
+            "decision": decision,
+            "groups": summary_groups,
+        }
+
+    def decide(self, experiment_id: str, *, decided_by: str = "system") -> Dict[str, Any]:
+        summary = self.get_summary(experiment_id)
+        decision = summary["decision"]
+        next_step = "continue_experiment"
+        if decision == "winner":
+            next_step = "expand_winner_with_confirmation"
+        elif decision == "invalid":
+            next_step = "stop_and_investigate_srm"
+        elif decision == "neutral":
+            next_step = "stop_or_retest"
+        payload = {
+            "experiment_id": experiment_id,
+            "summary": summary,
+            "next_step": next_step,
+            "decided_by": decided_by,
+            "decided_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.record_resource_event("experiment", experiment_id, event_type="decision", payload=payload)
+        self.repository.record_action("experiment_decision_recorded", "experiment", experiment_id, payload)
+        return payload
