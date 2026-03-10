@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -9,6 +10,8 @@ from starlette.responses import FileResponse, JSONResponse
 
 from app.api.routers import activation, audit, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, templates, workflows
 from app.application.imports import ImportService
+from app.application.control_loop import ControlLoopService
+from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
 from app.core.logging import configure_access_log_filters
@@ -60,15 +63,41 @@ def create_app() -> FastAPI:
                 ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
                 ImportService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
                 PredictionService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
+                HealthMonitorService(repository, bigquery_service).snapshot(persist=True)
+                ControlLoopService(repository, settings, bigquery_service).ensure_default_jobs()
             except Exception:
                 logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
         finally:
             session.close()
+        if settings.scheduler_enabled and getattr(app.state, "control_loop_thread", None) is None:
+            stop_event = threading.Event()
+
+            def _run_control_loop() -> None:
+                while not stop_event.wait(settings.scheduler_interval_seconds):
+                    session = get_session_factory()()
+                    try:
+                        repository = SqlAlchemyControlPlaneRepository(session)
+                        ControlLoopService(repository, settings, get_shared_bigquery_service()).tick()
+                    except Exception:
+                        logger.exception("Control loop tick failed.")
+                    finally:
+                        session.close()
+
+            thread = threading.Thread(target=_run_control_loop, name="kairyx-control-loop", daemon=True)
+            app.state.control_loop_stop_event = stop_event
+            app.state.control_loop_thread = thread
+            thread.start()
         app.state.restart_reconciliation_complete = True
 
     @app.on_event("shutdown")
     def _shutdown() -> None:
         mark_shutdown_requested()
+        stop_event = getattr(app.state, "control_loop_stop_event", None)
+        thread = getattr(app.state, "control_loop_thread", None)
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
 
     @app.get("/")
     def root():
@@ -83,7 +112,7 @@ def create_app() -> FastAPI:
         session = get_session_factory()()
         try:
             repository = SqlAlchemyControlPlaneRepository(session)
-            return health.health(repository=repository)
+            return health.health(service=HealthMonitorService(repository, get_shared_bigquery_service()))
         finally:
             session.close()
 

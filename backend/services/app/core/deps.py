@@ -7,8 +7,10 @@ from app.application.audit import AuditService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
 from app.application.connectors import ConnectorService
+from app.application.control_loop import ControlLoopService
 from app.application.experiments import ExperimentConfigService
 from app.application.exports import ExportService
+from app.application.health_monitor import HealthMonitorService
 from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
@@ -90,6 +92,19 @@ def get_copilot_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> CopilotService:
     return CopilotService(repository)
+
+
+def get_health_monitor_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> HealthMonitorService:
+    return HealthMonitorService(repository)
+
+
+def get_control_loop_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
+) -> ControlLoopService:
+    return ControlLoopService(repository, settings)
 
 
 def get_audit_service(

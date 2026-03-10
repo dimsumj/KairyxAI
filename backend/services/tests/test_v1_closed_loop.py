@@ -17,6 +17,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
     monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SCHEDULER_ENABLED", "false")
     db_module.get_engine.cache_clear()
     db_module.get_session_factory.cache_clear()
     clear_shared_bigquery_service_cache()
@@ -1065,3 +1066,212 @@ def test_health_audit_templates_and_workflow_builder(client):
     rollout = client.get("/api/v1/experiments/builder_exp/rollout-suggestion")
     assert rollout.status_code == 200
     assert rollout.json()["rollout_policy"] == "balanced"
+
+
+def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, monkeypatch):
+    class FakeGeminiClient:
+        model_name = "gemini-test"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def generate_content(self, prompt):
+            return """
+            {
+              "suggestions": [
+                {
+                  "field": "campaign",
+                  "suggested_path": "event_properties.campaign",
+                  "confidence": 0.98,
+                  "rationale": "Nested campaign field best matches the current source payload."
+                }
+              ]
+            }
+            """
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "mock-key")
+    monkeypatch.setattr("app.application.mappings.GeminiClient", FakeGeminiClient)
+
+    client.post(
+        "/api/v1/connectors",
+        json={"name": "Gemini Mapping", "type": "google", "config": {"api_key": "mock-key", "model_name": "gemini-test"}},
+    )
+    client.post(
+        "/api/v1/connectors",
+        json={"name": "Adjust Source", "type": "adjust", "config": {"api_token": "adjust-token"}},
+    )
+    client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id"}},
+    )
+    create_import = client.post(
+        "/api/v1/imports",
+        json={"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260302"},
+    )
+    assert create_import.status_code == 201
+    job_id = create_import.json()["id"]
+    blocked = client.post(f"/api/v1/imports/{job_id}/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    open_alerts = client.get("/api/v1/health/alerts?include_resolved=true")
+    assert open_alerts.status_code == 200
+    awaiting_mapping = next(item for item in open_alerts.json()["items"] if item["code"] == "awaiting_mapping")
+    assert awaiting_mapping["status"] == "open"
+
+    save_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id", "event_name": "event_type", "event_time": "event_time"}},
+    )
+    assert save_mapping.status_code == 200
+    resumed = client.post(f"/api/v1/imports/{job_id}/resume", headers={"x-actor-role": "operator"})
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] in {"completed", "running"}
+
+    tick = client.post(
+        "/api/v1/health/scheduler/tick",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-10T10:00:00"},
+    )
+    assert tick.status_code == 200
+    assert any(item["job_id"] == "health_refresh" for item in tick.json()["items"])
+
+    scheduler_jobs = client.get("/api/v1/health/scheduler", headers={"x-actor-role": "analyst"})
+    assert scheduler_jobs.status_code == 200
+    assert any(item["job_id"] == "daily_copilot_report" for item in scheduler_jobs.json()["items"])
+
+    alerts = client.get("/api/v1/health/alerts?include_resolved=true")
+    assert alerts.status_code == 200
+    resolved_alert = next(item for item in alerts.json()["items"] if item["code"] == "awaiting_mapping")
+    assert resolved_alert["status"] == "resolved"
+
+    suggestions = client.get("/api/v1/mappings/Adjust%20Source/suggestions")
+    assert suggestions.status_code == 200
+    assert suggestions.json()["engine"] == "ai_assisted"
+    assert suggestions.json()["model_name"] == "gemini-test"
+    assert suggestions.json()["suggestions"][0]["suggested_path"] == "event_properties.campaign"
+
+
+def test_copilot_comparison_and_experiment_statistics(client):
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    copilot_query = client.post(
+        "/api/v1/copilot/query",
+        json={"question": "compare promo views ios vs android in 7d"},
+    )
+    assert copilot_query.status_code == 200
+    assert "ios vs android" in copilot_query.json()["conclusion"].lower()
+    assert copilot_query.json()["methodology"]["sql_summary"]["parsed_intent"]["comparison"]["dimension"] == "platform"
+
+    copilot_explain = client.post(
+        "/api/v1/copilot/explain",
+        json={"metric_id": "promo_views", "time_window": "7d", "dimensions": ["campaign", "country", "platform"]},
+    )
+    assert copilot_explain.status_code == 200
+    assert len(copilot_explain.json()["evidence"]) >= 2
+    assert "impact_score" in copilot_explain.json()["evidence"][0]
+
+    members = [
+        {"canonical_user_id": f"exp_u_{index:02d}", "email": f"exp{index:02d}@example.com", "country": "US", "platform": "ios"}
+        for index in range(1, 31)
+    ]
+    cohort = client.post(
+        "/api/v1/cohorts",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "experiment_stats_cohort",
+            "type": "list",
+            "definition": {"members": members},
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=stats_exp",
+        headers={"x-actor-role": "operator"},
+        json={
+            "enabled": True,
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+            "holdout_pct": 0.2,
+            "b_variant_pct": 0.4,
+            "multiple_comparisons_method": "holm_bonferroni",
+            "rollout_policy": "aggressive",
+        },
+    )
+    assert experiment.status_code == 200
+
+    workflow = client.post(
+        "/api/v1/workflows",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "stats_flow",
+            "cohort_id": cohort_id,
+            "schedule": {"type": "daily", "hour": 10, "minute": 0},
+            "action": {"channel": "push_notification", "content": "stats offer"},
+            "policy": {"global_daily_limit": 50, "channel_daily_limit": 50, "cooldown_hours": 0},
+            "experiment_id": "stats_exp",
+        },
+    )
+    assert workflow.status_code == 201
+    workflow_id = workflow.json()["workflow_id"]
+    assert client.post(f"/api/v1/workflows/{workflow_id}/publish", headers={"x-actor-role": "operator"}).status_code == 200
+
+    run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-10T10:00:00", "limit_per_workflow": 100},
+    )
+    assert run.status_code == 200
+    assert run.json()["items"][0]["triggered"] == 30
+
+    assignments = client.get("/api/v1/experiments/stats_exp/assignments")
+    assert assignments.status_code == 200
+    groups = assignments.json()["items"]
+    assert any(item["group"] == "holdout" for item in groups)
+    assert any(item["group"] == "treatment_a" for item in groups)
+    assert any(item["group"] == "treatment_b" for item in groups)
+
+    outcomes = []
+    for item in groups:
+        if item["group"] == "holdout":
+            continue
+        if item["group"] == "treatment_a" or item["user_id"].endswith(("1", "3")):
+            outcomes.append(
+                {
+                    "workflow_id": workflow_id,
+                    "cohort_id": cohort_id,
+                    "experiment_id": "stats_exp",
+                    "user_id": item["user_id"],
+                    "group": item["group"],
+                    "occurred_at": "2026-03-10T11:00:00",
+                    "outcome_name": "returned",
+                    "source": "internal_writeback",
+                }
+            )
+    ingest = client.post(
+        "/api/v1/experiments/stats_exp/outcomes:ingest",
+        headers={"x-actor-role": "operator"},
+        json={"outcomes": outcomes},
+    )
+    assert ingest.status_code == 200
+    assert ingest.json()["ingested"] == len(outcomes)
+
+    summary = client.get("/api/v1/experiments/stats_exp/summary")
+    assert summary.status_code == 200
+    assert summary.json()["multiple_comparisons_method"] == "holm_bonferroni"
+    assert len(summary.json()["comparisons"]) >= 2
+    assert any("adjusted_p_value" in item for item in summary.json()["comparisons"])
+    assert summary.json()["winner_group"] in {"treatment_a", "treatment_b"}
+
+    rollout = client.get("/api/v1/experiments/stats_exp/rollout-suggestion")
+    assert rollout.status_code == 200
+    assert rollout.json()["winner_group"] == summary.json()["winner_group"]
+    assert rollout.json()["suggestion"].startswith("expand_")

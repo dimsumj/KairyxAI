@@ -40,6 +40,7 @@ ROLE_PERMISSIONS = {
         "experiments.versions.read",
         "experiments.assignments.read",
         "experiments.rollout.read",
+        "health.scheduler.read",
     },
     "operator": {
         "exports.create",
@@ -95,6 +96,8 @@ ROLE_PERMISSIONS = {
         "audit.logs.read",
         "templates.read",
         "templates.instantiate",
+        "health.scheduler.read",
+        "health.scheduler.tick",
     },
 }
 

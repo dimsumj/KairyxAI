@@ -67,6 +67,40 @@ class CopilotService:
             "experiment_health": {"sources": ["experiment_summary"]},
             "cohort_health": {"sources": ["cohort_snapshot"]},
         }
+        self.intent_registry: Dict[str, Dict[str, Any]] = {
+            "active_users": {"aliases": ["active users", "active players", "active"], "dimensions": ["platform", "country", "campaign"]},
+            "total_players": {"aliases": ["total players", "total users", "player count"], "dimensions": ["platform", "country"]},
+            "payers": {"aliases": ["payers", "paid users", "paying users"], "dimensions": ["platform", "country", "campaign"]},
+            "revenue_usd": {"aliases": ["revenue", "revenue usd", "sales", "ltv"], "dimensions": ["platform", "country", "campaign"]},
+            "sessions_7d": {"aliases": ["sessions 7d", "sessions last 7", "weekly sessions"], "dimensions": ["platform", "country", "campaign"]},
+            "sessions_30d": {"aliases": ["sessions 30d", "sessions last 30", "monthly sessions"], "dimensions": ["platform", "country", "campaign"]},
+            "high_risk_users": {"aliases": ["high risk users", "high-risk users", "high risk", "churn risk"], "dimensions": ["platform", "country", "campaign"]},
+            "medium_risk_users": {"aliases": ["medium risk users", "medium risk"], "dimensions": ["platform", "country", "campaign"]},
+            "low_risk_users": {"aliases": ["low risk users", "low risk"], "dimensions": ["platform", "country", "campaign"]},
+            "already_churned": {"aliases": ["already churned", "already churned users"], "dimensions": ["platform", "country"]},
+            "churned_users": {"aliases": ["churned users", "churned"], "dimensions": ["platform", "country"]},
+            "campaign_touches": {"aliases": ["campaign touches", "campaign touch"], "dimensions": ["campaign", "country", "platform"]},
+            "events_total": {"aliases": ["events total", "total events", "events"], "dimensions": ["event_type", "country", "platform"]},
+            "purchase_events": {"aliases": ["purchase events", "purchases", "bought"], "dimensions": ["campaign", "country", "platform"]},
+            "promo_views": {"aliases": ["promo views", "promo", "campaign views"], "dimensions": ["campaign", "country", "platform"]},
+            "return_rate": {"aliases": ["return rate", "come back rate", "returning"], "dimensions": ["platform", "country", "campaign"]},
+            "payer_rate": {"aliases": ["payer rate", "paid rate"], "dimensions": ["platform", "country", "campaign"]},
+            "prediction_rows": {"aliases": ["prediction rows", "prediction count"], "dimensions": ["predicted_churn_risk", "prediction_source"]},
+            "ios_users": {"aliases": ["ios users", "ios", "iphone users"], "dimensions": ["country", "campaign"]},
+            "android_users": {"aliases": ["android users", "android"], "dimensions": ["country", "campaign"]},
+            "us_users": {"aliases": ["us users", "united states users", "country us"], "dimensions": ["platform", "campaign"]},
+            "email_reachable_users": {"aliases": ["email reachable users", "email users", "reachable emails"], "dimensions": ["predicted_churn_risk", "country"]},
+        }
+        self.dimension_value_lexicon: Dict[str, Dict[str, List[str]]] = {
+            "platform": {"ios": ["ios", "iphone"], "android": ["android"]},
+            "country": {"US": ["us", "united states"], "CA": ["ca", "canada"]},
+            "predicted_churn_risk": {
+                "high": ["high risk", "high-risk"],
+                "medium": ["medium risk"],
+                "low": ["low risk"],
+                "already_churned": ["already churned"],
+            },
+        }
 
     def get_metrics(self) -> Dict[str, Any]:
         return {
@@ -103,30 +137,63 @@ class CopilotService:
         return items + weekly
 
     def query(self, question: str, *, time_window: str | None = None, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        metric_id = self._match_metric(question)
-        resolved_window = time_window or self._match_window(question)
+        parsed = self._parse_question(question, time_window=time_window, filters=filters or {})
+        metric_id = parsed["metric_id"]
+        resolved_window = parsed["time_window"]
         alias = self.metric_registry[metric_id]["alias"]
-        records_evaluated = self._count_records(alias)
+        records_evaluated = self._count_records(alias, filters=parsed["filters"])
         if records_evaluated == 0:
             response = self._insufficient_evidence(metric_window=resolved_window, evidence=[{"metric_id": metric_id, "alias": alias}])
             return self._record_query_log("query", response, {"question": question, "metric_id": metric_id})
-        metric_value = self._compute_metric(metric_id, filters=filters or {})
+        metric_value = self._compute_metric(metric_id, filters=parsed["filters"])
+        evidence: List[Dict[str, Any]] = [
+            {"metric_id": metric_id, "value": metric_value, "alias": alias, "filters": parsed["filters"]},
+            {"intent_id": metric_id, "evidence_sources": self.intent_templates.get(metric_id, {}).get("sources", [alias]), "parsed_intent": parsed},
+        ]
+        impact_scope: Dict[str, Any] = {"records_evaluated": records_evaluated}
+        conclusion = f"{self.metric_registry[metric_id]['label']}: {metric_value}"
+        if parsed.get("comparison"):
+            comparison = dict(parsed["comparison"])
+            left_filters = {**parsed["filters"], comparison["dimension"]: comparison["left"]}
+            right_filters = {**parsed["filters"], comparison["dimension"]: comparison["right"]}
+            left_value = self._compute_metric(metric_id, filters=left_filters)
+            right_value = self._compute_metric(metric_id, filters=right_filters)
+            delta = round(float(left_value) - float(right_value), 4)
+            delta_pct = round((delta / max(abs(float(right_value)), 1.0)) * 100.0, 2)
+            conclusion = (
+                f"{self.metric_registry[metric_id]['label']} {comparison['left']} vs {comparison['right']}: "
+                f"{left_value} vs {right_value} (delta {delta}, {delta_pct}%)"
+            )
+            evidence.append(
+                {
+                    "comparison": comparison,
+                    "left_value": left_value,
+                    "right_value": right_value,
+                    "delta": delta,
+                    "delta_pct": delta_pct,
+                }
+            )
+            impact_scope["comparison"] = {"left": left_value, "right": right_value, "delta": delta, "delta_pct": delta_pct}
+        elif parsed.get("group_by"):
+            dimension = str(parsed["group_by"][0])
+            breakdown = self._breakdown_by_dimension(metric_id, dimension, parsed["filters"])
+            evidence.append({"dimension": dimension, "breakdown": breakdown[:5]})
+            impact_scope["group_by"] = {"dimension": dimension, "rows": len(breakdown)}
+            if breakdown:
+                conclusion = f"{self.metric_registry[metric_id]['label']} by {dimension}: top segment {breakdown[0]['value']} = {breakdown[0]['metric_value']}"
         response = self._build_response(
-            conclusion=f"{self.metric_registry[metric_id]['label']}: {metric_value}",
-            evidence=[
-                {"metric_id": metric_id, "value": metric_value, "alias": alias},
-                {"intent_id": metric_id, "evidence_sources": self.intent_templates.get(metric_id, {}).get("sources", [alias])},
-            ],
-            impact_scope={"records_evaluated": records_evaluated},
+            conclusion=conclusion,
+            evidence=evidence,
+            impact_scope=impact_scope,
             recommended_action={"type": "adjust_experiment_guardrail", "metric_id": metric_id},
-            confidence="medium" if records_evaluated >= 5 else "low",
+            confidence="high" if records_evaluated >= 20 else ("medium" if records_evaluated >= 5 else "low"),
             metric_window=resolved_window,
             risk_notes=["Metric is read from curated aliases only."],
             methodology={
                 "metric_id": metric_id,
-                "filters": filters or {},
+                "filters": parsed["filters"],
                 "data_sources": [alias],
-                "sql_summary": self._sql_summary(metric_id, resolved_window, filters or {}),
+                "sql_summary": self._sql_summary(metric_id, resolved_window, parsed["filters"], parsed_intent=parsed),
             },
         )
         return self._record_query_log("query", response, {"question": question, "metric_id": metric_id})
@@ -138,18 +205,26 @@ class CopilotService:
         if not rows:
             response = self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
             return self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window})
-        dims = list(dimensions or ["platform", "country", "campaign"])
+        dims = list(dimensions or self.intent_registry.get(metric_id, {}).get("dimensions") or ["platform", "country", "campaign"])
         current_value = self._compute_metric(metric_id)
         baseline_7d = self._baseline_metric(metric_id, "7d")
         baseline_14d = self._baseline_metric(metric_id, "14d")
-        drivers = self._top_drivers(rows, dims)
+        drivers = self._top_drivers(metric_id, rows, dims)
         if len(drivers) < 2:
             response = self._insufficient_evidence(metric_window=time_window, evidence=[{"metric_id": metric_id, "alias": alias}])
             return self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window})
         response = self._build_response(
             conclusion=f"{metric['label']} anomaly drivers identified",
             evidence=drivers[:3],
-            impact_scope={"records_evaluated": len(rows), "time_window": time_window, "current_value": current_value, "baseline_7d": baseline_7d, "baseline_14d": baseline_14d},
+            impact_scope={
+                "records_evaluated": len(rows),
+                "time_window": time_window,
+                "current_value": current_value,
+                "baseline_7d": baseline_7d,
+                "baseline_14d": baseline_14d,
+                "delta_vs_7d": round(float(current_value) - float(baseline_7d), 4),
+                "delta_vs_14d": round(float(current_value) - float(baseline_14d), 4),
+            },
             recommended_action={"type": "adjust_experiment_guardrail", "dimensions": dims},
             confidence="medium",
             metric_window=time_window,
@@ -160,7 +235,7 @@ class CopilotService:
                 "dimensions": dims,
                 "baseline_count": len(rows),
                 "baseline_windows": {"7d": baseline_7d, "14d": baseline_14d},
-                "sql_summary": self._sql_summary(metric_id, time_window, {}),
+                "sql_summary": self._sql_summary(metric_id, time_window, {}, parsed_intent={"mode": "explain", "dimensions": dims}),
             },
         )
         response = self._record_query_log("explain", response, {"metric_id": metric_id, "time_window": time_window, "dimensions": dims})
@@ -172,6 +247,8 @@ class CopilotService:
             "baseline_count": len(rows),
             "drivers": drivers[:3],
             "baseline_windows": {"7d": baseline_7d, "14d": baseline_14d},
+            "delta_vs_7d": round(float(current_value) - float(baseline_7d), 4),
+            "delta_vs_14d": round(float(current_value) - float(baseline_14d), 4),
             "query_id": response.get("query_id"),
             "created_at": datetime.utcnow().isoformat(),
         }
@@ -369,32 +446,28 @@ class CopilotService:
 
     def _match_metric(self, question: str) -> str:
         text = str(question or "").lower()
-        for metric_id, candidates in (
-            ("high_risk_users", ("high risk", "churn risk", "high-risk")),
-            ("medium_risk_users", ("medium risk",)),
-            ("low_risk_users", ("low risk",)),
-            ("revenue_usd", ("revenue", "sales", "ltv")),
-            ("payers", ("payer", "paid users")),
-            ("purchase_events", ("purchase", "bought")),
-            ("promo_views", ("promo", "campaign view")),
-            ("payer_rate", ("payer rate", "paid rate")),
-            ("return_rate", ("return rate", "come back", "returning")),
-            ("sessions_7d", ("sessions 7d", "sessions last 7")),
-            ("sessions_30d", ("sessions 30d", "sessions last 30")),
-            ("ios_users", ("ios", "iphone")),
-            ("android_users", ("android",)),
-            ("us_users", ("us users", "united states", "country us")),
-            ("email_reachable_users", ("email reachable", "email users")),
-            ("active_users", ("active", "users", "players")),
-        ):
-            if any(token in text for token in candidates):
-                return metric_id
-        return "active_users"
+        best_metric = "active_users"
+        best_score = 0
+        for metric_id, config in self.intent_registry.items():
+            score = sum(2 if alias == text else 1 for alias in config.get("aliases") or [] if alias in text)
+            if metric_id in text:
+                score += 2
+            if score > best_score:
+                best_metric = metric_id
+                best_score = score
+        return best_metric
 
     def _match_window(self, question: str) -> str:
-        match = re.search(r"(\d+)\s*d", str(question or "").lower())
+        normalized = str(question or "").lower()
+        match = re.search(r"(\d+)\s*(?:d|day|days)", normalized)
         if match:
             return f"{match.group(1)}d"
+        if "month" in normalized or "30 days" in normalized:
+            return "30d"
+        if "14 day" in normalized or "two week" in normalized:
+            return "14d"
+        if "week" in normalized:
+            return "7d"
         return "7d"
 
     def _lookup_value(self, row: Dict[str, Any], field: str) -> Any:
@@ -411,6 +484,10 @@ class CopilotService:
         rows = self.bigquery_service.get_rows_for_alias(metric["alias"])
         if filters:
             rows = [row for row in rows if all(self._lookup_value(row, key) == value for key, value in filters.items())]
+        return self._compute_metric_from_rows(metric_id, rows)
+
+    def _compute_metric_from_rows(self, metric_id: str, rows: List[Dict[str, Any]]) -> float | int:
+        metric = self.metric_registry.get(metric_id) or self.metric_registry["active_users"]
         operation = metric["operation"]
         if operation == "count_rows":
             return len(rows)
@@ -430,37 +507,146 @@ class CopilotService:
             return round(sum(values) / len(values), 4) if values else 0.0
         return len(rows)
 
-    def _count_records(self, alias: str) -> int:
-        return len(self.bigquery_service.get_rows_for_alias(alias))
+    def _count_records(self, alias: str, *, filters: Dict[str, Any] | None = None) -> int:
+        rows = self.bigquery_service.get_rows_for_alias(alias)
+        if filters:
+            rows = [row for row in rows if all(self._lookup_value(row, key) == value for key, value in filters.items())]
+        return len(rows)
 
     def _baseline_metric(self, metric_id: str, window: str) -> float | int:
         multiplier = 0.9 if window == "7d" else 0.8
         current = float(self._compute_metric(metric_id))
         return round(current * multiplier, 4)
 
-    def _top_drivers(self, rows: List[Dict[str, Any]], dimensions: List[str]) -> List[Dict[str, Any]]:
-        scores: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            for dimension in dimensions:
+    def _top_drivers(self, metric_id: str, rows: List[Dict[str, Any]], dimensions: List[str]) -> List[Dict[str, Any]]:
+        total_rows = max(1, len(rows))
+        total_metric = float(self._compute_metric_from_rows(metric_id, rows) or 0.0)
+        drivers: List[Dict[str, Any]] = []
+        for dimension in dimensions:
+            buckets: Dict[str, List[Dict[str, Any]]] = {}
+            for row in rows:
                 value = self._lookup_value(row, dimension)
                 if value in (None, "", []):
                     continue
-                key = f"{dimension}:{value}"
-                item = scores.setdefault(key, {"dimension": dimension, "value": value, "count": 0})
-                item["count"] += 1
-        total = max(1, len(rows))
-        drivers = sorted(scores.values(), key=lambda item: item["count"], reverse=True)
-        return [{**item, "share": round(item["count"] / total, 4)} for item in drivers]
+                buckets.setdefault(str(value), []).append(row)
+            if len(buckets) < 2:
+                continue
+            baseline_share = round(1.0 / len(buckets), 4)
+            for value, bucket_rows in buckets.items():
+                metric_value = float(self._compute_metric_from_rows(metric_id, bucket_rows) or 0.0)
+                record_share = round(len(bucket_rows) / total_rows, 4)
+                if total_metric > 0:
+                    metric_share = round(metric_value / total_metric, 4)
+                else:
+                    metric_share = record_share
+                delta_share = round(metric_share - baseline_share, 4)
+                impact_score = round(abs(delta_share) + (len(bucket_rows) / total_rows), 4)
+                drivers.append(
+                    {
+                        "dimension": dimension,
+                        "value": value,
+                        "count": len(bucket_rows),
+                        "record_share": record_share,
+                        "metric_value": round(metric_value, 4),
+                        "metric_share": metric_share,
+                        "baseline_share": baseline_share,
+                        "delta_share": delta_share,
+                        "impact_score": impact_score,
+                    }
+                )
+        return sorted(drivers, key=lambda item: (item["impact_score"], item["metric_value"]), reverse=True)
 
-    def _sql_summary(self, metric_id: str, time_window: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _breakdown_by_dimension(self, metric_id: str, dimension: str, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         metric = self.metric_registry.get(metric_id) or self.metric_registry["active_users"]
+        rows = self.bigquery_service.get_rows_for_alias(metric["alias"])
+        if filters:
+            rows = [row for row in rows if all(self._lookup_value(row, key) == value for key, value in filters.items())]
+        buckets: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            value = self._lookup_value(row, dimension)
+            if value in (None, "", []):
+                continue
+            buckets.setdefault(str(value), []).append(row)
+        items = []
+        for value, bucket_rows in buckets.items():
+            items.append(
+                {
+                    "value": value,
+                    "records": len(bucket_rows),
+                    "metric_value": self._compute_metric_from_rows(metric_id, bucket_rows),
+                }
+            )
+        return sorted(items, key=lambda item: float(item["metric_value"] or 0.0), reverse=True)
+
+    def _sql_summary(self, metric_id: str, time_window: str, filters: Dict[str, Any], *, parsed_intent: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        metric = self.metric_registry.get(metric_id) or self.metric_registry["active_users"]
+        operation = metric["operation"]
+        select_expr = {
+            "count_rows": "COUNT(*)",
+            "count_match": f"COUNTIF({metric.get('field')} = '{metric.get('value')}')",
+            "count_positive": f"COUNTIF({metric.get('field')} > 0)",
+            "count_present": f"COUNTIF({metric.get('field')} IS NOT NULL)",
+            "sum": f"SUM({metric.get('field')})",
+            "ratio_positive": f"AVG(CASE WHEN {metric.get('field')} > 0 THEN 1 ELSE 0 END)",
+            "mean_inverse_days": f"AVG(1 / (1 + {metric.get('field')}))",
+        }.get(operation, "COUNT(*)")
+        where = [f"{field} = '{value}'" for field, value in (filters or {}).items()]
+        pseudo_sql = f"SELECT {select_expr} AS metric_value FROM {metric['alias']}"
+        if where:
+            pseudo_sql += " WHERE " + " AND ".join(where)
         return {
             "table_alias": metric["alias"],
-            "operation": metric["operation"],
+            "operation": operation,
             "field": metric.get("field"),
             "filters": filters,
             "time_window": time_window,
+            "parsed_intent": parsed_intent or {},
+            "pseudo_sql": pseudo_sql,
         }
+
+    def _parse_question(self, question: str, *, time_window: str | None = None, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        text = str(question or "").strip().lower()
+        comparison = self._extract_comparison(text)
+        parsed_filters = self._extract_filters_from_text(text)
+        if comparison:
+            parsed_filters.pop(comparison["dimension"], None)
+        return {
+            "metric_id": self._match_metric(text),
+            "time_window": time_window or self._match_window(text),
+            "filters": {**parsed_filters, **(filters or {})},
+            "group_by": self._extract_group_by(text),
+            "comparison": comparison,
+            "question": question,
+        }
+
+    def _extract_filters_from_text(self, text: str) -> Dict[str, Any]:
+        filters: Dict[str, Any] = {}
+        for dimension, values in self.dimension_value_lexicon.items():
+            matches = [canonical for canonical, aliases in values.items() if any(alias in text for alias in aliases)]
+            if len(matches) == 1:
+                filters[dimension] = matches[0]
+        return filters
+
+    def _extract_group_by(self, text: str) -> List[str]:
+        dims = []
+        for dimension in ("platform", "country", "campaign", "predicted_churn_risk", "event_type"):
+            normalized = dimension.replace("_", " ")
+            if f"by {normalized}" in text or f"per {normalized}" in text:
+                dims.append(dimension)
+        return dims
+
+    def _extract_comparison(self, text: str) -> Dict[str, Any] | None:
+        if " vs " not in text and " versus " not in text:
+            return None
+        for dimension, values in self.dimension_value_lexicon.items():
+            matches = [canonical for canonical, aliases in values.items() if any(alias in text for alias in aliases)]
+            unique_matches = []
+            for value in matches:
+                if value not in unique_matches:
+                    unique_matches.append(value)
+            if len(unique_matches) >= 2:
+                return {"dimension": dimension, "left": unique_matches[0], "right": unique_matches[1]}
+        return None
 
     def _workflow_summary(self, workflow_id: str) -> Dict[str, Any]:
         executions = [

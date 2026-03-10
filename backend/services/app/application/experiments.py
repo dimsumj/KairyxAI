@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -96,7 +97,7 @@ class ExperimentConfigService:
             return assignment
         key = f"{experiment_id}:{user_text}".encode("utf-8")
         bucket = int(hashlib.sha256(key).hexdigest()[:8], 16) % 10000 / 10000.0
-        holdout_pct = float(config.get("holdout_pct") or 0.10)
+        holdout_pct = float(config.get("holdout_pct") if config.get("holdout_pct") is not None else 0.10)
         treatment_b_pct = max(0.0, min(1.0, float(config.get("b_variant_pct") or 0.0)))
         if bucket < holdout_pct:
             group = "holdout"
@@ -162,8 +163,13 @@ class ExperimentConfigService:
         outcomes = self.list_outcomes(experiment_id)
         outcomes_by_key: Dict[str, List[Dict[str, Any]]] = {}
         for item in outcomes:
-            key = str(item.get("action_execution_id") or item.get("user_id") or "")
-            outcomes_by_key.setdefault(key, []).append(item)
+            keys = {
+                str(item.get("action_execution_id") or "").strip(),
+                str(item.get("user_id") or "").strip(),
+            }
+            for key in keys:
+                if key:
+                    outcomes_by_key.setdefault(key, []).append(item)
 
         groups: Dict[str, Dict[str, Any]] = {
             "holdout": {"n": 0, "engaged": 0, "returned": 0, "policy_blocked": 0},
@@ -179,8 +185,20 @@ class ExperimentConfigService:
             groups[group]["n"] += 1
             if str(exposure.get("execution_status") or "") == "policy_blocked":
                 groups[group]["policy_blocked"] += 1
-            key = str(exposure.get("action_execution_id") or exposure.get("user_id") or "")
-            for outcome in outcomes_by_key.get(key, []):
+            outcome_keys = [
+                str(exposure.get("action_execution_id") or "").strip(),
+                str(exposure.get("user_id") or "").strip(),
+            ]
+            matched_outcomes: List[Dict[str, Any]] = []
+            seen_matches: set[str] = set()
+            for key in outcome_keys:
+                for outcome in outcomes_by_key.get(key, []):
+                    dedupe_key = f"{outcome.get('action_execution_id') or ''}:{outcome.get('user_id') or ''}:{outcome.get('occurred_at') or ''}:{outcome.get('outcome_name') or ''}"
+                    if dedupe_key in seen_matches:
+                        continue
+                    seen_matches.add(dedupe_key)
+                    matched_outcomes.append(outcome)
+            for outcome in matched_outcomes:
                 outcome_name = str(outcome.get("outcome_name") or outcome.get("simulated_response") or "").lower()
                 if outcome_name in {"opened", "engaged"}:
                     groups[group]["engaged"] += 1
@@ -195,7 +213,7 @@ class ExperimentConfigService:
                 first_exposure_at = parsed
 
         total = sum(item["n"] for item in groups.values())
-        holdout_pct = float(config.get("holdout_pct") or 0.10)
+        holdout_pct = float(config.get("holdout_pct") if config.get("holdout_pct") is not None else 0.10)
         treatment_b_pct = max(0.0, min(1.0, float(config.get("b_variant_pct") or 0.0)))
         expected_treatment_b = max(0.0, (1.0 - holdout_pct) * treatment_b_pct)
         expected = {
@@ -244,8 +262,8 @@ class ExperimentConfigService:
         runtime_hours = 0.0
         if first_exposure_at is not None:
             runtime_hours = max(0.0, round((datetime.utcnow() - first_exposure_at).total_seconds() / 3600.0, 2))
-        min_sample = int(config.get("min_sample_size") or 20)
-        min_runtime_hours = int(config.get("min_runtime_hours") or 24)
+        min_sample = int(config.get("min_sample_size") if config.get("min_sample_size") is not None else 20)
+        min_runtime_hours = int(config.get("min_runtime_hours") if config.get("min_runtime_hours") is not None else 24)
 
         guardrails = []
         for metric_name in list(config.get("guardrail_metrics") or [])[:2]:
@@ -265,6 +283,16 @@ class ExperimentConfigService:
                 }
             )
 
+        comparisons = self._build_comparisons(groups, config)
+        winner_comparison = next(
+            (
+                item
+                for item in sorted(comparisons, key=lambda item: (item.get("adjusted_p_value", 1.0), -float(item.get("uplift", 0.0))))
+                if item.get("significant") is True and float(item.get("uplift") or 0.0) > 0
+            ),
+            None,
+        )
+
         decision = "neutral"
         decision_reason = "No material uplift over holdout."
         if srm_detected:
@@ -279,19 +307,23 @@ class ExperimentConfigService:
         elif any(item["status"] == "fail" for item in guardrails):
             decision = "invalid"
             decision_reason = "Guardrail failure detected."
-        elif uplift > 0:
+        elif winner_comparison is not None:
             decision = "winner"
-            decision_reason = "Treatment outperformed holdout on return rate."
+            decision_reason = (
+                f"{winner_comparison['group']} outperformed holdout on return rate "
+                f"(uplift {winner_comparison['uplift']}, adjusted_p_value {winner_comparison['adjusted_p_value']})."
+            )
 
         confidence_hint = "low"
-        if decision == "winner" and total >= max(min_sample * 2, 40) and runtime_hours >= max(float(min_runtime_hours), 24.0):
+        best_adjusted_p_value = min((float(item.get("adjusted_p_value") or 1.0) for item in comparisons), default=1.0)
+        if decision == "winner" and total >= max(min_sample * 2, 40) and runtime_hours >= max(float(min_runtime_hours), 24.0) and best_adjusted_p_value <= 0.01:
             confidence_hint = "high"
         elif total >= min_sample and runtime_hours >= float(min_runtime_hours) and not srm_detected:
             confidence_hint = "medium"
         significance_hint = "not_significant"
-        if decision == "winner" and uplift >= 0.05:
+        if decision == "winner" and winner_comparison is not None and float(winner_comparison.get("uplift") or 0.0) >= 0.05 and best_adjusted_p_value <= 0.05:
             significance_hint = "practical_significance_positive"
-        elif decision == "winner":
+        elif decision == "winner" and winner_comparison is not None and best_adjusted_p_value <= 0.1:
             significance_hint = "directional_positive"
         multiple_comparisons_method = str(config.get("multiple_comparisons_method") or "none")
         multiple_comparisons_note = (
@@ -320,7 +352,9 @@ class ExperimentConfigService:
             "rollout_policy": str(config.get("rollout_policy") or "conservative"),
             "decision": decision,
             "decision_reason": decision_reason,
+            "winner_group": winner_comparison.get("group") if winner_comparison else None,
             "groups": summary_groups,
+            "comparisons": comparisons,
             "uplift_vs_holdout_return_rate": uplift,
             "expected_allocation": expected,
         }
@@ -338,12 +372,13 @@ class ExperimentConfigService:
         decision = summary["decision"]
         rollout_policy = str(summary.get("rollout_policy") or "conservative")
         suggestion = "continue_experiment"
+        winner_group = str(summary.get("winner_group") or "treatment_a")
         if decision == "winner":
-            suggestion = "expand_treatment_audience"
+            suggestion = f"expand_{winner_group}_audience"
             if rollout_policy == "aggressive":
-                suggestion = "expand_treatment_audience_fast"
+                suggestion = f"expand_{winner_group}_audience_fast"
             elif rollout_policy == "balanced":
-                suggestion = "expand_treatment_audience_gradually"
+                suggestion = f"expand_{winner_group}_audience_gradually"
         elif decision == "neutral":
             suggestion = "pause_or_retest"
         elif decision == "invalid":
@@ -353,6 +388,7 @@ class ExperimentConfigService:
             "decision": decision,
             "decision_reason": summary.get("decision_reason"),
             "suggestion": suggestion,
+            "winner_group": summary.get("winner_group"),
             "rollout_policy": rollout_policy,
             "risk_notes": [item["metric"] for item in summary.get("guardrails", []) if item.get("status") != "pass"],
             "summary": summary,
@@ -381,3 +417,85 @@ class ExperimentConfigService:
         self.repository.record_resource_event("experiment", experiment_id, event_type="decision", payload=payload)
         self.repository.record_action("experiment_decision_recorded", "experiment", experiment_id, payload)
         return payload
+
+    def _build_comparisons(self, groups: Dict[str, Dict[str, Any]], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        comparisons: List[Dict[str, Any]] = []
+        method = str(config.get("multiple_comparisons_method") or "none")
+        candidates = [
+            ("treatment_a", "holdout"),
+            ("treatment_b", "holdout"),
+        ]
+        raw_values: List[float] = []
+        for treatment_group, control_group in candidates:
+            treatment_stats = groups.get(treatment_group) or {}
+            control_stats = groups.get(control_group) or {}
+            if int(treatment_stats.get("n") or 0) <= 0 or int(control_stats.get("n") or 0) <= 0:
+                continue
+            treatment_rate = self._rate(int(treatment_stats.get("returned") or 0), int(treatment_stats.get("n") or 0))
+            control_rate = self._rate(int(control_stats.get("returned") or 0), int(control_stats.get("n") or 0))
+            p_value, z_score = self._two_proportion_test(
+                int(treatment_stats.get("returned") or 0),
+                int(treatment_stats.get("n") or 0),
+                int(control_stats.get("returned") or 0),
+                int(control_stats.get("n") or 0),
+            )
+            comparisons.append(
+                {
+                    "group": treatment_group,
+                    "control_group": control_group,
+                    "returned": int(treatment_stats.get("returned") or 0),
+                    "n": int(treatment_stats.get("n") or 0),
+                    "control_returned": int(control_stats.get("returned") or 0),
+                    "control_n": int(control_stats.get("n") or 0),
+                    "return_rate": treatment_rate,
+                    "control_return_rate": control_rate,
+                    "uplift": round(treatment_rate - control_rate, 4),
+                    "z_score": z_score,
+                    "p_value": p_value,
+                }
+            )
+            raw_values.append(p_value)
+        adjusted = self._adjust_p_values(raw_values, method)
+        for index, comparison in enumerate(comparisons):
+            adjusted_p = adjusted[index] if index < len(adjusted) else float(comparison.get("p_value") or 1.0)
+            comparison["adjusted_p_value"] = adjusted_p
+            comparison["significant"] = adjusted_p <= 0.05 and float(comparison.get("uplift") or 0.0) > 0.0
+            comparison["correction_method"] = method
+        return comparisons
+
+    @staticmethod
+    def _rate(numerator: int, denominator: int) -> float:
+        return round((float(numerator) / denominator), 4) if denominator else 0.0
+
+    @staticmethod
+    def _two_proportion_test(success_a: int, n_a: int, success_b: int, n_b: int) -> tuple[float, float]:
+        if min(n_a, n_b) <= 0:
+            return 1.0, 0.0
+        rate_a = success_a / n_a
+        rate_b = success_b / n_b
+        pooled = (success_a + success_b) / (n_a + n_b)
+        variance = pooled * (1.0 - pooled) * ((1.0 / n_a) + (1.0 / n_b))
+        if variance <= 0:
+            return 1.0, 0.0
+        z_score = (rate_a - rate_b) / math.sqrt(variance)
+        p_value = math.erfc(abs(z_score) / math.sqrt(2.0))
+        return round(min(1.0, max(0.0, p_value)), 6), round(z_score, 4)
+
+    @staticmethod
+    def _adjust_p_values(p_values: List[float], method: str) -> List[float]:
+        if not p_values:
+            return []
+        normalized = str(method or "none").lower()
+        if normalized == "bonferroni":
+            return [round(min(1.0, value * len(p_values)), 6) for value in p_values]
+        if normalized == "holm_bonferroni":
+            indexed = sorted(enumerate(p_values), key=lambda item: item[1])
+            adjusted = [1.0] * len(p_values)
+            running_max = 0.0
+            total = len(p_values)
+            for rank, (original_index, value) in enumerate(indexed, start=1):
+                candidate = min(1.0, value * (total - rank + 1))
+                running_max = max(running_max, candidate)
+                adjusted[original_index] = round(running_max, 6)
+            return adjusted
+        return [round(min(1.0, max(0.0, value)), 6) for value in p_values]

@@ -746,16 +746,32 @@
         <section id="action-history" class="page">
             <h1>Audit Trail</h1>
             <div class="card">
-                <p>A timeline of human-triggered actions such as imports, manual mapping updates, prediction runs, and audience exports.</p>
-                <div id="action-history-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label for="action-history-items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
+                <p>Read the persisted audit log across imports, cohorts, workflows, experiments, copilot reports, and governance actions.</p>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="action-history-resource-type-filter">Resource Type</label>
+                        <input type="text" id="action-history-resource-type-filter" placeholder="workflow / experiment / import_job">
+                    </div>
+                    <div class="form-group">
+                        <label for="action-history-action-type-filter">Action Type</label>
+                        <input type="text" id="action-history-action-type-filter" placeholder="workflow_execution_completed">
+                    </div>
+                    <div class="form-group">
+                        <label for="action-history-items-per-page">Show</label>
                         <select id="action-history-items-per-page" style="padding: 0.5rem; border-radius: 4px;">
                             <option value="25" selected>25</option>
                             <option value="50">50</option>
                             <option value="100">100</option>
                         </select>
                     </div>
+                </div>
+                <div class="inline-actions" style="margin-bottom: 1rem;">
+                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                        <input type="checkbox" id="action-history-high-risk-filter">
+                        High risk only
+                    </label>
+                    <button id="action-history-refresh-btn">Refresh Audit Log</button>
+                    <span id="action-history-status" class="subtle"></span>
                 </div>
                 <table>
                     <thead>
@@ -770,6 +786,51 @@
                 </table>
                 <div id="action-history-pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
                     <!-- Pagination buttons will be injected here -->
+                </div>
+            </div>
+        </section>
+
+        <section id="scenario-templates" class="page">
+            <h1>Scenario Templates</h1>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Available Templates</h2>
+                        <button id="templates-refresh-btn">Refresh</button>
+                    </div>
+                    <div id="templates-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Template Detail</h2>
+                        <span id="templates-selected-label" class="pill">No template selected</span>
+                    </div>
+                    <pre id="template-detail-output" class="json-output">Template details will appear here.</pre>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="template-owner-input">Owner</label>
+                            <input type="text" id="template-owner-input" value="frontend_operator">
+                        </div>
+                        <div class="form-group">
+                            <label for="template-name-prefix-input">Name Prefix</label>
+                            <input type="text" id="template-name-prefix-input" placeholder="Optional prefix">
+                        </div>
+                    </div>
+                    <div class="inline-actions">
+                        <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                            <input type="checkbox" id="template-activate-cohort-checkbox" checked>
+                            Activate cohort
+                        </label>
+                        <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                            <input type="checkbox" id="template-publish-workflow-checkbox">
+                            Publish workflow
+                        </label>
+                    </div>
+                    <div class="inline-actions" style="margin-top: 1rem;">
+                        <button id="template-instantiate-btn">Instantiate Template</button>
+                        <span id="template-instantiate-status" class="subtle"></span>
+                    </div>
+                    <pre id="template-instance-output" class="json-output">Instantiation results will appear here.</pre>
                 </div>
             </div>
         </section>
@@ -886,9 +947,39 @@
 
         <section id="service-health" class="page">
             <h1>Health & Observability</h1>
-            <div class="card">
-                <p>Real-time status of all integrated services.</p>
+            <div class="card split-card">
+                <div class="module-section-header">
+                    <h2>Operational Snapshot</h2>
+                    <div class="inline-actions">
+                        <button id="service-health-refresh-btn">Refresh</button>
+                        <button id="service-health-tick-btn">Run Scheduler Tick</button>
+                    </div>
+                </div>
+                <span id="service-health-status" class="subtle"></span>
                 <div id="service-status-list"></div>
+            </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Persistent Alerts</h2>
+                        <span class="pill">Open + Resolved</span>
+                    </div>
+                    <div id="service-alerts-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Scheduler Jobs</h2>
+                        <span class="pill">Control Loop</span>
+                    </div>
+                    <div id="service-scheduler-list"></div>
+                </div>
+            </div>
+            <div class="card split-card">
+                <div class="module-section-header">
+                    <h2>Raw Health Payload</h2>
+                    <span class="pill">Diagnostics</span>
+                </div>
+                <pre id="service-health-output" class="json-output">Health payload will appear here.</pre>
             </div>
         </section>
 
@@ -1676,6 +1767,7 @@ dimensions: campaign,country,platform</pre>
                         { id: 'connectors', label: 'Connectors' },
                         { id: 'data-sandbox', label: 'Mappings' },
                         { id: 'action-history', label: 'Audit Trail' },
+                        { id: 'scenario-templates', label: 'Templates' },
                         { id: 'service-health', label: 'Health' },
                         { id: 'safety-rails', label: 'Governance' },
                     ],
@@ -1778,6 +1870,9 @@ dimensions: campaign,country,platform</pre>
                 }
                 if (pageId === 'action-history') {
                     loadActionHistory();
+                }
+                if (pageId === 'scenario-templates') {
+                    loadScenarioTemplates();
                 }
                 if (pageId === 'service-health') {
                     loadServiceHealthStatus();
@@ -3476,6 +3571,7 @@ dimensions: campaign,country,platform</pre>
                 const normalized = String(status || '').toLowerCase();
                 if (['completed', 'ok', 'saved', 'sent'].includes(normalized)) return 'var(--green)';
                 if (['failed', 'error'].includes(normalized)) return 'var(--red)';
+                if (['high_risk'].includes(normalized)) return 'var(--yellow)';
                 if (['started', 'stopping', 'awaiting_mapping'].includes(normalized)) return 'var(--yellow)';
                 if (['stopped'].includes(normalized)) return 'var(--primary-color)';
                 return 'var(--text-secondary)';
@@ -3571,21 +3667,34 @@ dimensions: campaign,country,platform</pre>
                     actionHistoryPaginationControls.innerHTML = '';
                 }
                 try {
-                    await Promise.all([
-                        refreshConnectorsState(),
-                        refreshImportsState(),
-                        refreshPredictionJobsState(),
-                        refreshExportJobsState(),
-                    ]);
-                    allActionHistoryItems = buildActionHistoryItems();
+                    setInlineStatus(actionHistoryStatus, 'Loading audit log...');
+                    const query = new URLSearchParams();
+                    query.set('limit', String(Number(actionHistoryItemsPerPageSelect.value || 25)));
+                    const resourceType = (document.getElementById('action-history-resource-type-filter').value || '').trim();
+                    const actionType = (document.getElementById('action-history-action-type-filter').value || '').trim();
+                    if (resourceType) query.set('resource_type', resourceType);
+                    if (actionType) query.set('action_type', actionType);
+                    if (document.getElementById('action-history-high-risk-filter').checked) {
+                        query.set('high_risk_only', 'true');
+                    }
+                    query.set('tenant_id', (tenantIdInput.value || 'default').trim() || 'default');
+                    const payload = await apiRequest(`/audit/actions?${query.toString()}`);
+                    allActionHistoryItems = (payload.items || []).map((item) => ({
+                        timestamp: item.created_at,
+                        summary: `${item.action_type} · ${item.resource_type}${item.resource_id ? `:${item.resource_id}` : ''}`,
+                        status: item.high_risk ? 'high_risk' : 'recorded',
+                        details: JSON.stringify(item.payload || {}),
+                    }));
                     actionHistoryCurrentPage = 1;
                     renderActionHistoryTable();
+                    setInlineStatus(actionHistoryStatus, `Loaded ${payload.summary?.returned || 0} audit record(s).`);
                 } catch (error) {
                     allActionHistoryItems = [];
                     actionHistoryResults.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                     if (actionHistoryPaginationControls) {
                         actionHistoryPaginationControls.innerHTML = '';
                     }
+                    setInlineStatus(actionHistoryStatus, error.message || 'Failed to load audit log.', true);
                 }
             }
 
@@ -3709,56 +3818,133 @@ dimensions: campaign,country,platform</pre>
             async function loadServiceHealthStatus() {
                 serviceStatusListDiv.innerHTML = '<p>Checking service status...</p>';
                 try {
-                    const health = await ensureHealthState();
-                    await Promise.all([
-                        refreshConnectorsState(),
-                        refreshImportsState(),
-                        refreshPredictionJobsState(),
+                    setInlineStatus(serviceHealthStatus, 'Refreshing operational state...');
+                    const [health, modulesPayload, alertsPayload, schedulerPayload] = await Promise.all([
+                        apiRequest('/health'),
+                        apiRequest('/health/modules'),
+                        apiRequest('/health/alerts?include_resolved=true'),
+                        apiRequest('/health/scheduler'),
                     ]);
-                    const statuses = {
-                        operator_api: {
-                            status: 'ok',
-                            details: `${health.service} (${health.mode})`,
-                        },
-                        connectors: {
-                            status: cachedConnectors.length > 0 ? 'ok' : 'warning',
-                            details: `${cachedConnectors.length} configured`,
-                        },
-                        imports: {
-                            status: cachedImports.some((job) => job.raw_status === 'failed') ? 'error' : 'ok',
-                            details: `${cachedImports.length} job(s)`,
-                        },
-                        predictions: {
-                            status: cachedPredictionJobs.some((job) => String(job.status || '').toLowerCase() === 'failed') ? 'error' : 'ok',
-                            details: `${cachedPredictionJobs.length} job(s)`,
-                        },
-                    };
-                    if (health.local_cache && health.local_cache.tables) {
-                        const predictionRows = Number((((health.local_cache || {}).tables || {}).prediction_results || {}).rows || 0);
-                        const stagingRows = Number((((health.local_cache || {}).tables || {}).events_staging || {}).rows || 0);
-                        const retentionDays = Number((health.local_cache || {}).retention_days || 7);
-                        statuses.local_cache = {
-                            status: 'ok',
-                            details: `${stagingRows.toLocaleString()} staging row(s) · ${predictionRows.toLocaleString()} prediction row(s) · ${retentionDays}-day retention`,
-                        };
-                    }
-                    serviceStatusListDiv.innerHTML = ''; // Clear loading message
-
-                    for (const serviceKey in statuses) {
-                        const service = statuses[serviceKey];
-                        const serviceName = serviceKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                        
-                        const item = document.createElement('div');
-                        item.className = 'service-item';
-                        item.innerHTML = `
-                            <div class="status-indicator status-${service.status}"></div>
-                            <div class="service-name">${serviceName}</div>
-                            <div style="margin-left: auto; color: var(--subtle-text);">${service.details}</div>
-                        `;
-                        serviceStatusListDiv.appendChild(item);
-                    }
+                    renderJsonOutput(serviceHealthOutput, health, 'No health payload available.');
+                    renderSimpleTable(
+                        serviceStatusListDiv,
+                        [
+                            { label: 'Module', render: (item) => escapeHtml(item.module || '-') },
+                            { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
+                            { label: 'Metrics', render: (item) => `<span class="subtle">${escapeHtml(JSON.stringify(item.metrics || {}))}</span>` },
+                        ],
+                        modulesPayload.items || [],
+                        'No module status records found.',
+                    );
+                    renderSimpleTable(
+                        serviceAlertsList,
+                        [
+                            { label: 'Module', render: (item) => escapeHtml(item.module || '-') },
+                            { label: 'Code', render: (item) => escapeHtml(item.code || '-') },
+                            { label: 'Severity', render: (item) => `<span class="pill">${escapeHtml(item.severity || '-')}</span>` },
+                            { label: 'Status', render: (item) => escapeHtml(item.status || '-') },
+                            { label: 'Message', render: (item) => escapeHtml(item.message || '-') },
+                        ],
+                        alertsPayload.items || [],
+                        'No persisted alerts found.',
+                    );
+                    renderSimpleTable(
+                        serviceSchedulerList,
+                        [
+                            { label: 'Job', render: (item) => escapeHtml(item.name || item.job_id || '-') },
+                            { label: 'Schedule', render: (item) => `<span class="subtle">${escapeHtml(JSON.stringify(item.schedule || {}))}</span>` },
+                            { label: 'Last Run', render: (item) => escapeHtml(formatDateTime(item.last_run_at)) },
+                            { label: 'Next Run', render: (item) => escapeHtml(formatDateTime(item.next_run_hint)) },
+                            { label: 'Last Status', render: (item) => escapeHtml(item.last_status || '-') },
+                        ],
+                        schedulerPayload.items || [],
+                        'No scheduler jobs found.',
+                    );
+                    setInlineStatus(serviceHealthStatus, `Loaded ${modulesPayload.items?.length || 0} module(s), ${alertsPayload.items?.length || 0} alert(s), and ${schedulerPayload.items?.length || 0} scheduler job(s).`);
                 } catch (error) {
                     serviceStatusListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                    renderJsonOutput(serviceHealthOutput, { error: error.message }, 'Health payload unavailable.');
+                    renderSimpleTable(serviceAlertsList, [], [], 'Health alerts unavailable.');
+                    renderSimpleTable(serviceSchedulerList, [], [], 'Scheduler state unavailable.');
+                    setInlineStatus(serviceHealthStatus, error.message || 'Failed to load health state.', true);
+                }
+            }
+
+            async function runServiceHealthTick() {
+                try {
+                    setInlineStatus(serviceHealthStatus, 'Running scheduler tick...');
+                    const payload = await apiRequest('/health/scheduler/tick', {
+                        method: 'POST',
+                        body: { reference_time: new Date().toISOString() },
+                    });
+                    renderJsonOutput(serviceHealthOutput, payload, 'Scheduler tick returned no payload.');
+                    setInlineStatus(serviceHealthStatus, `Executed ${payload.items?.length || 0} scheduler task(s).`);
+                    await loadServiceHealthStatus();
+                } catch (error) {
+                    setInlineStatus(serviceHealthStatus, error.message || 'Failed to run scheduler tick.', true);
+                }
+            }
+
+            async function loadScenarioTemplates() {
+                if (!templatesList) return;
+                templatesList.innerHTML = '<div class="list-empty">Loading templates...</div>';
+                try {
+                    const payload = await apiRequest('/templates');
+                    const items = payload.items || [];
+                    if (!items.length) {
+                        templatesList.innerHTML = '<div class="list-empty">No templates available.</div>';
+                        renderJsonOutput(templateDetailOutput, null, 'No template selected.');
+                        return;
+                    }
+                    if (!selectedTemplateId || !items.some((item) => item.template_id === selectedTemplateId)) {
+                        selectedTemplateId = items[0].template_id;
+                    }
+                    renderSimpleTable(
+                        templatesList,
+                        [
+                            { label: 'Template', render: (item) => `<button type="button" class="template-select-btn" data-template-id="${escapeHtml(item.template_id)}">${escapeHtml(item.name || item.template_id)}</button>` },
+                            { label: 'Goal', render: (item) => escapeHtml(item.goal || '-') },
+                            { label: 'Scenario', render: (item) => escapeHtml(item.template_id || '-') },
+                        ],
+                        items,
+                        'No templates found.',
+                    );
+                    Array.from(templatesList.querySelectorAll('.template-select-btn')).forEach((button) => {
+                        button.addEventListener('click', async () => {
+                            selectedTemplateId = button.dataset.templateId;
+                            await loadScenarioTemplates();
+                        });
+                    });
+                    const detail = await apiRequest(`/templates/${encodeURIComponent(selectedTemplateId)}`);
+                    templatesSelectedLabel.textContent = selectedTemplateId;
+                    renderJsonOutput(templateDetailOutput, detail, 'No template detail found.');
+                } catch (error) {
+                    templatesList.innerHTML = `<div class="list-empty" style="color: var(--red);">${escapeHtml(error.message)}</div>`;
+                    renderJsonOutput(templateDetailOutput, { error: error.message }, 'Failed to load templates.');
+                }
+            }
+
+            async function instantiateScenarioTemplate() {
+                if (!selectedTemplateId) {
+                    setInlineStatus(templateInstantiateStatus, 'Select a template first.', true);
+                    return;
+                }
+                try {
+                    setInlineStatus(templateInstantiateStatus, 'Instantiating template...');
+                    const payload = await apiRequest(`/templates/${encodeURIComponent(selectedTemplateId)}/instantiate`, {
+                        method: 'POST',
+                        body: {
+                            owner: document.getElementById('template-owner-input').value || 'frontend_operator',
+                            name_prefix: (document.getElementById('template-name-prefix-input').value || '').trim() || null,
+                            activate_cohort: document.getElementById('template-activate-cohort-checkbox').checked,
+                            publish_workflow: document.getElementById('template-publish-workflow-checkbox').checked,
+                        },
+                    });
+                    renderJsonOutput(templateInstanceOutput, payload, 'No instantiation payload returned.');
+                    setInlineStatus(templateInstantiateStatus, `Instantiated ${selectedTemplateId}.`);
+                } catch (error) {
+                    setInlineStatus(templateInstantiateStatus, error.message || 'Failed to instantiate template.', true);
+                    renderJsonOutput(templateInstanceOutput, { error: error.message }, 'Template instantiation failed.');
                 }
             }
 
@@ -4140,8 +4326,20 @@ dimensions: campaign,country,platform</pre>
             const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
             const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
             const copilotReportsList = document.getElementById('copilot-reports-list');
+            const actionHistoryRefreshBtn = document.getElementById('action-history-refresh-btn');
+            const actionHistoryStatus = document.getElementById('action-history-status');
+            const serviceHealthStatus = document.getElementById('service-health-status');
+            const serviceAlertsList = document.getElementById('service-alerts-list');
+            const serviceSchedulerList = document.getElementById('service-scheduler-list');
+            const serviceHealthOutput = document.getElementById('service-health-output');
+            const templatesList = document.getElementById('templates-list');
+            const templateDetailOutput = document.getElementById('template-detail-output');
+            const templateInstanceOutput = document.getElementById('template-instance-output');
+            const templateInstantiateStatus = document.getElementById('template-instantiate-status');
+            const templatesSelectedLabel = document.getElementById('templates-selected-label');
             let selectedAudienceCohortId = null;
             let selectedWorkflowId = null;
+            let selectedTemplateId = null;
             let cachedSavedQueries = [];
 
             function setInlineStatus(element, message = '', isError = false) {
@@ -4987,6 +5185,7 @@ dimensions: campaign,country,platform</pre>
             }
 
             audienceCreateCohortBtn.addEventListener('click', createAudienceCohort);
+            actionHistoryRefreshBtn.addEventListener('click', loadActionHistory);
             document.getElementById('audience-refresh-list-btn').addEventListener('click', loadAudienceEngine);
             document.getElementById('audience-load-members-btn').addEventListener('click', () => loadAudienceMembers());
             document.getElementById('audience-load-versions-btn').addEventListener('click', () => loadAudienceVersions());
@@ -5046,6 +5245,10 @@ dimensions: campaign,country,platform</pre>
             });
             document.getElementById('copilot-load-query-log-btn').addEventListener('click', loadCopilotQueryLog);
             document.getElementById('copilot-refresh-meta-btn').addEventListener('click', loadCopilotMeta);
+            document.getElementById('templates-refresh-btn').addEventListener('click', loadScenarioTemplates);
+            document.getElementById('template-instantiate-btn').addEventListener('click', instantiateScenarioTemplate);
+            document.getElementById('service-health-refresh-btn').addEventListener('click', loadServiceHealthStatus);
+            document.getElementById('service-health-tick-btn').addEventListener('click', runServiceHealthTick);
 
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any, Dict
 
 from bigquery_service import BigQueryService, get_shared_bigquery_service
+from gemini_client import GeminiClient
 
 
 class MappingService:
@@ -155,6 +158,25 @@ class MappingService:
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
         observed_paths = self._observed_paths()
+        suggestions = self._heuristic_suggestions(current, observed_paths)
+        engine = "heuristic"
+        ai_model = None
+        ai_suggestions = self._ai_suggestions(connector_name, current, observed_paths, suggestions)
+        if ai_suggestions:
+            suggestions = ai_suggestions["suggestions"]
+            engine = "ai_assisted"
+            ai_model = ai_suggestions.get("model_name")
+        return {
+            "connector_name": connector_name,
+            "scope_type": scope_type,
+            "scope_key": scope_key,
+            "engine": engine,
+            "model_name": ai_model,
+            "suggestions": suggestions,
+            "effective_mapping": current,
+        }
+
+    def _heuristic_suggestions(self, current: Dict[str, Any], observed_paths: Dict[str, list[str]]) -> list[Dict[str, Any]]:
         suggestions = []
         candidates = {
             "canonical_user_id": [
@@ -210,13 +232,114 @@ class MappingService:
                     ],
                 }
             )
-        return {
+        return suggestions
+
+    def _ai_suggestions(
+        self,
+        connector_name: str,
+        current: Dict[str, Any],
+        observed_paths: Dict[str, list[str]],
+        heuristic_suggestions: list[Dict[str, Any]],
+    ) -> Dict[str, Any] | None:
+        client = self._build_gemini_client()
+        if client is None or not heuristic_suggestions:
+            return None
+        prompt = {
+            "task": "Choose the best source field path for each missing canonical mapping field in a game event connector.",
             "connector_name": connector_name,
-            "scope_type": scope_type,
-            "scope_key": scope_key,
-            "suggestions": suggestions,
-            "effective_mapping": current,
+            "current_mapping": current,
+            "observed_paths": {path: values[:3] for path, values in list(observed_paths.items())[:80]},
+            "heuristic_suggestions": heuristic_suggestions,
+            "instructions": {
+                "return_format": [
+                    {
+                        "field": "canonical_user_id",
+                        "suggested_path": "player_id",
+                        "confidence": 0.97,
+                        "rationale": "why this path is best",
+                    }
+                ],
+                "rules": [
+                    "Prefer deterministic identifier fields for canonical_user_id.",
+                    "Use event_name/event_type for event_name.",
+                    "Use timestamp-like fields for event_time.",
+                    "Return only JSON.",
+                ],
+            },
         }
+        try:
+            raw_response = client.generate_content(json.dumps(prompt))
+            parsed = self._extract_json_object(raw_response)
+            items = parsed if isinstance(parsed, list) else parsed.get("suggestions") or []
+            if not isinstance(items, list) or not items:
+                return None
+            merged = self._merge_ai_suggestions(heuristic_suggestions, items)
+            return {"suggestions": merged, "model_name": getattr(client, "model_name", None)}
+        except Exception:
+            return None
+
+    def _build_gemini_client(self) -> GeminiClient | None:
+        connector = self._select_google_connector()
+        if connector is not None:
+            config = connector.get("config") or {}
+            api_key = str(config.get("api_key") or "").strip()
+            model_name = str(config.get("model_name") or "").strip() or None
+            if api_key:
+                try:
+                    return GeminiClient(api_key=api_key, model_name=model_name)
+                except Exception:
+                    return None
+        if str(os.getenv("GOOGLE_API_KEY") or "").strip():
+            try:
+                return GeminiClient()
+            except Exception:
+                return None
+        return None
+
+    def _select_google_connector(self) -> Dict[str, Any] | None:
+        google_connectors = [
+            connector
+            for connector in self.repository.list_connectors()
+            if str(connector.get("type") or "").lower() == "google"
+            and str((connector.get("config") or {}).get("api_key") or "").strip()
+        ]
+        if not google_connectors:
+            return None
+        return max(google_connectors, key=lambda connector: str(connector.get("updated_at") or connector.get("created_at") or ""))
+
+    @staticmethod
+    def _extract_json_object(raw_response: Any) -> Any:
+        text = str(raw_response or "").strip()
+        if not text:
+            return {}
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start = min((index for index in (text.find("["), text.find("{")) if index >= 0), default=-1)
+            end = max(text.rfind("]"), text.rfind("}"))
+            if start >= 0 and end > start:
+                return json.loads(text[start : end + 1])
+        return {}
+
+    @staticmethod
+    def _merge_ai_suggestions(heuristic_suggestions: list[Dict[str, Any]], ai_items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        by_field = {str(item.get("field") or ""): dict(item) for item in heuristic_suggestions}
+        for ai_item in ai_items:
+            field = str(ai_item.get("field") or "")
+            if field not in by_field:
+                continue
+            merged = dict(by_field[field])
+            suggested_path = str(ai_item.get("suggested_path") or "").strip()
+            confidence = float(ai_item.get("confidence") or merged.get("confidence") or 0.0)
+            rationale = str(ai_item.get("rationale") or "").strip()
+            if suggested_path:
+                merged["suggested_path"] = suggested_path
+            merged["confidence"] = max(0.0, min(0.99, confidence))
+            if rationale:
+                merged["rationale"] = f"{rationale} (AI-assisted)"
+            merged["engine"] = "ai_assisted"
+            by_field[field] = merged
+        return list(by_field.values())
 
     def _observed_paths(self) -> Dict[str, list[str]]:
         rows = self.bigquery_service.get_rows_for_alias("standardized")[:100]
