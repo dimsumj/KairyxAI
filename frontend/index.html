@@ -151,6 +151,7 @@
             flex-grow: 1;
             padding: 2rem;
             overflow-y: auto;
+            min-width: 0;
         }
 
         .page {
@@ -173,6 +174,7 @@
             padding: 1.5rem;
             box-shadow: var(--shadow);
             margin-bottom: 1.5rem;
+            min-width: 0;
         }
 
         .module-shell {
@@ -266,6 +268,13 @@
             gap: 1rem;
         }
 
+        .grid-2 > *,
+        .grid-3 > *,
+        .stats-grid > *,
+        .split-card {
+            min-width: 0;
+        }
+
         .grid-2 {
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         }
@@ -304,6 +313,7 @@
         .json-output {
             margin: 0;
             min-height: 8rem;
+            max-width: 100%;
             padding: 1rem;
             border-radius: 8px;
             background: rgba(15, 23, 42, 0.9);
@@ -376,6 +386,12 @@
             gap: 1rem;
         }
 
+        .table-shell {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -428,6 +444,9 @@
             text-align: left;
             padding: 0.75rem;
             border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         th {
@@ -3917,10 +3936,12 @@ WHERE predicted_churn_risk = 'high'
                     </tr>
                 `).join('');
                 container.innerHTML = `
-                    <table>
-                        <thead><tr>${head}</tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>
+                    <div class="table-shell">
+                        <table>
+                            <thead><tr>${head}</tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
                 `;
             }
 
