@@ -367,6 +367,31 @@
             font-size: 0.8rem;
         }
 
+        .help-card ul,
+        .help-card ol {
+            margin: 0.5rem 0 0 1.25rem;
+            padding: 0;
+        }
+
+        .help-card li + li {
+            margin-top: 0.45rem;
+        }
+
+        .help-callout {
+            padding: 1rem 1.1rem;
+            border-left: 3px solid var(--primary-color);
+            background: color-mix(in srgb, var(--white) 90%, var(--bg-color) 10%);
+            border-radius: 8px;
+            color: var(--text-secondary);
+        }
+
+        .help-code-title {
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
         .metric-line {
             display: flex;
             justify-content: space-between;
@@ -550,6 +575,7 @@
             <li><a href="#" class="nav-link" data-module="action-orchestrator"><span>Action Orchestrator</span><small>Workflows, delivery, policy runtime</small></a></li>
             <li><a href="#" class="nav-link" data-module="experiment-hub"><span>Experiment Hub</span><small>Configs, exposures, outcomes, decisions</small></a></li>
             <li><a href="#" class="nav-link" data-module="insight-copilot"><span>Insight Copilot</span><small>Query, explain, recommend, report</small></a></li>
+            <li><a href="#" class="nav-link" data-module="help"><span>Help</span><small>Manual, walkthroughs, payload samples</small></a></li>
         </ul>
         <div class="sidebar-footer">
             <div class="form-group">
@@ -1402,6 +1428,216 @@ WHERE predicted_churn_risk = 'high'
                 </div>
             </div>
         </section>
+
+        <section id="help" class="page">
+            <h1>Help & Manual</h1>
+            <div class="card help-card">
+                <div class="module-section-header">
+                    <h2>What This Console Covers</h2>
+                    <span class="pill">v1 First Manual</span>
+                </div>
+                <p>This console is organized around the current KairyxAI v1 closed-loop stack: <strong>Data Core</strong>, <strong>Audience Engine</strong>, <strong>Action Orchestrator</strong>, <strong>Experiment Hub</strong>, and <strong>Insight Copilot</strong>. The recommended operating path is:</p>
+                <ol>
+                    <li>Configure connectors and import data in <strong>Data Core</strong>.</li>
+                    <li>Create or refresh a cohort in <strong>Audience Engine</strong>.</li>
+                    <li>Bind that cohort to a workflow in <strong>Action Orchestrator</strong>.</li>
+                    <li>Attach an experiment and inspect results in <strong>Experiment Hub</strong>.</li>
+                    <li>Use <strong>Insight Copilot</strong> for query, explain, recommend, and report loops.</li>
+                </ol>
+                <div class="help-callout" style="margin-top: 1rem;">
+                    Current governance is role-aware. The sidebar actor context controls `x-actor-role` and `x-actor-id` for all requests, so results can differ between `Admin`, `Analyst`, and `Operator`.
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card help-card">
+                    <div class="module-section-header">
+                        <h2>Quick Start</h2>
+                        <span class="pill">Hands On</span>
+                    </div>
+                    <ol>
+                        <li>In <strong>Data Core → Connectors</strong>, create at least one ingest source such as Amplitude, Adjust, or AppsFlyer.</li>
+                        <li>In <strong>Data Core → Imports</strong>, choose a source and import a date range. If the import pauses in awaiting mapping, go to <strong>Mappings</strong> and complete the JSON mapping before retrying.</li>
+                        <li>Use <strong>Data Core → Churn Rescue</strong> to run churn prediction and optionally export an audience to a provider.</li>
+                        <li>In <strong>Audience Engine</strong>, create a cohort from SQL, a rule definition, or an explicit member list.</li>
+                        <li>Activate the cohort before publishing a workflow. Publish preflight will fail if the cohort is still draft or paused.</li>
+                        <li>In <strong>Action Orchestrator</strong>, create a workflow, test it in sandbox, then use <strong>Run Due Workflows</strong> for scheduled runs.</li>
+                        <li>In <strong>Experiment Hub</strong>, save experiment config, watch exposures and outcomes, then record a decision when sample and runtime thresholds are met.</li>
+                        <li>In <strong>Insight Copilot</strong>, run query/explain/recommend/report flows and inspect query logs, anomalies, and archived reports.</li>
+                    </ol>
+                </div>
+                <div class="card help-card">
+                    <div class="module-section-header">
+                        <h2>Role Guide</h2>
+                        <span class="pill">Safety</span>
+                    </div>
+                    <ul>
+                        <li><strong>Admin</strong>: full access, no masking.</li>
+                        <li><strong>Analyst</strong>: read-heavy mode for experiment, copilot, and cohort metrics. Delivery payloads and PII can be masked.</li>
+                        <li><strong>Operator</strong>: execution-heavy mode for resume/replay, cohort activation, workflow publish/pause/resume, callbacks, and export retry.</li>
+                    </ul>
+                    <div class="help-callout" style="margin-top: 1rem;">
+                        If a request fails with `403`, switch the sidebar role to one that has permission for that operation or return to `Admin` while testing.
+                    </div>
+                </div>
+            </div>
+
+            <div class="card help-card">
+                <div class="module-section-header">
+                    <h2>Audience Samples</h2>
+                    <span class="pill">Copy / Paste</span>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <div class="help-code-title">SQL cohort definition</div>
+                        <pre class="json-output">{
+  "sql": "SELECT user_id AS canonical_user_id, email\nFROM prediction_results\nWHERE predicted_churn_risk = 'high'\n  AND COALESCE(churn_state, 'active') != 'churned'"
+}</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Rule cohort definition</div>
+                        <pre class="json-output">{
+  "source_alias": "mart_user_daily",
+  "logic": "AND",
+  "conditions": [
+    { "field": "days_since_last_seen", "op": ">=", "value": 3 },
+    { "field": "sessions_7d", "op": "<=", "value": 2 }
+  ]
+}</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">List cohort definition</div>
+                        <pre class="json-output">{
+  "members": [
+    { "canonical_user_id": "u_1001", "email": "u1001@example.com" },
+    { "canonical_user_id": "u_1002", "email": "u1002@example.com" }
+  ]
+}</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Advanced event-count rule</div>
+                        <pre class="json-output">{
+  "source_alias": "fact_events_unified",
+  "logic": "AND",
+  "conditions": [
+    { "type": "event_count", "event": "promo_view", "window_days": 7, "op": ">=", "value": 3 },
+    { "field": "country", "op": "in", "value": ["US", "CA"] }
+  ]
+}</pre>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card help-card">
+                <div class="module-section-header">
+                    <h2>Workflow & Experiment Samples</h2>
+                    <span class="pill">Operational JSON</span>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <div class="help-code-title">Workflow shape used by the current UI</div>
+                        <pre class="json-output">{
+  "name": "daily_churn_rescue",
+  "cohort_id": "cohort_xxx",
+  "experiment_id": "churn_rescue_v1",
+  "trigger": { "type": "daily_schedule", "hour": 10, "minute": 0 },
+  "action": {
+    "channel": "push_notification",
+    "content": "Come back for a reward."
+  },
+  "policy": {
+    "global_daily_limit": 5,
+    "channel_daily_limit": 5,
+    "cooldown_hours": 24,
+    "blacklist_ids": [],
+    "quiet_hours": { "start": 22, "end": 7 }
+  },
+  "budget_policy": {
+    "daily_budget_limit": 25
+  },
+  "requires_confirmation": false
+}</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Outcome ingestion sample</div>
+                        <pre class="json-output">{
+  "outcomes": [
+    {
+      "workflow_id": "wf_xxx",
+      "cohort_id": "cohort_xxx",
+      "experiment_id": "churn_rescue_v1",
+      "user_id": "u_1001",
+      "occurred_at": "2026-03-10T11:00:00",
+      "group": "treatment",
+      "outcome_name": "returned",
+      "source": "internal_writeback",
+      "metadata": { "channel": "push_notification" }
+    }
+  ]
+}</pre>
+                    </div>
+                </div>
+                <ul>
+                    <li><strong>Publish preflight</strong> requires an active cohort, non-empty channel content, a supported trigger type, and an experiment id.</li>
+                    <li><strong>Supported triggers</strong> in the current implementation are `daily_schedule` and `manual_test`.</li>
+                    <li><strong>Decision outcomes</strong> can resolve to `winner`, `neutral`, `inconclusive`, or `invalid` depending on sample size, runtime, guardrails, and SRM checks.</li>
+                </ul>
+            </div>
+
+            <div class="card help-card">
+                <div class="module-section-header">
+                    <h2>Copilot Samples</h2>
+                    <span class="pill">Prompt Starter Pack</span>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <div class="help-code-title">Query examples</div>
+                        <pre class="json-output">how many high risk users do we have in 7d?
+how many payers do we have?
+what is total revenue in 7d?</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Explain examples</div>
+                        <pre class="json-output">metric_id: promo_views
+time_window: 7d
+dimensions: campaign,country,platform</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Recommend example</div>
+                        <pre class="json-output">{
+  "metric_context": {
+    "metric_id": "high_risk_users"
+  }
+}</pre>
+                    </div>
+                    <div>
+                        <div class="help-code-title">Report example</div>
+                        <pre class="json-output">{
+  "report_type": "daily",
+  "time_window": "7d"
+}</pre>
+                    </div>
+                </div>
+                <div class="help-callout" style="margin-top: 1rem;">
+                    Copilot outputs always come back in a fixed evidence envelope: `conclusion`, `evidence`, `impact_scope`, `recommended_action`, `confidence`, `metric_window`, `risk_notes`, plus ids such as `query_id`, `anomaly_id`, or `report_id` when available.
+                </div>
+            </div>
+
+            <div class="card help-card">
+                <div class="module-section-header">
+                    <h2>Common Issues</h2>
+                    <span class="pill">Troubleshooting</span>
+                </div>
+                <ul>
+                    <li><strong>No processed datasets in Data Core</strong>: you probably have not completed an import or the import is blocked on mapping coverage.</li>
+                    <li><strong>Cohort activate or workflow publish fails</strong>: check `activation_preflight`, cohort member count, and workflow preflight requirements.</li>
+                    <li><strong>Deliveries or emails look masked</strong>: switch from `Analyst` or `Operator` to `Admin` if you need unmasked PII during testing.</li>
+                    <li><strong>Run Due Workflows returns nothing</strong>: the workflow must already be published, its scheduled hour/minute must be due, and that workflow must not have already executed for the same action date.</li>
+                    <li><strong>Experiment stays inconclusive</strong>: look at `sample_size`, `runtime_hours`, `srm_status`, and guardrail results in the summary panel.</li>
+                    <li><strong>Copilot returns insufficient evidence</strong>: seed more curated data first or use a metric that exists in the current warehouse aliases.</li>
+                </ul>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -1451,6 +1687,11 @@ WHERE predicted_churn_risk = 'high'
                     title: 'Insight Copilot',
                     subtitle: 'Run query, explain, recommend, and report flows against curated evidence with query logs, anomaly tracking, and archived reports.',
                     pages: [{ id: 'insight-copilot', label: 'Copilot Workspace' }],
+                },
+                'help': {
+                    title: 'Help',
+                    subtitle: 'Read the current v1 manual, follow the end-to-end operator path, and copy sample SQL or JSON payloads that match the live UI.',
+                    pages: [{ id: 'help', label: 'Manual & Samples' }],
                 },
             };
 
