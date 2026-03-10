@@ -95,9 +95,36 @@
             padding-left: calc(1.5rem - 3px);
         }
 
+        .sidebar-nav li a span {
+            display: block;
+        }
+
+        .sidebar-nav li a small {
+            display: block;
+            margin-top: 0.2rem;
+            font-size: 0.74rem;
+            font-weight: 400;
+            color: var(--text-secondary);
+        }
+
         .sidebar-footer {
             padding: 1rem 1.5rem;
             border-top: 1px solid var(--border-color);
+        }
+
+        .sidebar-footer .form-group {
+            margin-bottom: 0.75rem;
+        }
+
+        .sidebar-footer .form-group label {
+            font-size: 0.78rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .sidebar-footer .form-group input,
+        .sidebar-footer .form-group select {
+            padding: 0.55rem 0.65rem;
+            font-size: 0.85rem;
         }
 
         #health-status {
@@ -105,6 +132,7 @@
             align-items: center;
             font-size: 0.875rem;
             font-weight: 500;
+            margin-top: 0.75rem;
         }
 
         #health-status .status-dot {
@@ -147,6 +175,46 @@
             margin-bottom: 1.5rem;
         }
 
+        .module-shell {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .module-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+
+        .module-subtitle {
+            margin: 0;
+            color: var(--text-secondary);
+            max-width: 58rem;
+            font-size: 0.92rem;
+        }
+
+        .module-subnav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        .module-subnav button {
+            background: transparent;
+            color: var(--main-text);
+            border: 1px solid var(--border-color);
+            padding: 0.6rem 0.85rem;
+        }
+
+        .module-subnav button.active {
+            background: var(--primary-color);
+            color: #ffffff;
+            border-color: var(--primary-color);
+        }
+
         .form-group {
             margin-bottom: 1rem;
         }
@@ -182,6 +250,130 @@
 
         button:hover {
             background-color: var(--primary-hover);
+        }
+
+        .inline-actions {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .grid-2,
+        .grid-3,
+        .stats-grid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+
+        .stats-grid {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+
+        .stat-card {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            background: color-mix(in srgb, var(--white) 88%, var(--bg-color) 12%);
+        }
+
+        .stat-card .label {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .stat-card .value {
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .subtle {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .json-output {
+            margin: 0;
+            min-height: 8rem;
+            padding: 1rem;
+            border-radius: 8px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            color: #e2e8f0;
+            white-space: pre-wrap;
+            overflow: auto;
+            font-size: 0.82rem;
+        }
+
+        .module-section-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .module-section-header h2 {
+            margin: 0;
+            font-size: 1.05rem;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 0.2rem 0.55rem;
+            font-size: 0.78rem;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        .list-empty {
+            padding: 1rem;
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        .table-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .table-actions button {
+            padding: 0.45rem 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .metric-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+        }
+
+        .metric-line:last-child {
+            border-bottom: none;
+        }
+
+        .split-card {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
         }
 
         table {
@@ -299,6 +491,32 @@
         input:checked + .slider:before {
             transform: translateX(24px);
         }
+
+        @media (max-width: 960px) {
+            body {
+                flex-direction: column;
+                height: auto;
+                overflow: auto;
+            }
+
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .content {
+                padding: 1.25rem;
+            }
+
+            .module-shell {
+                flex-direction: column;
+            }
+
+            .module-subnav {
+                justify-content: flex-start;
+            }
+        }
     </style>
 </head>
 <body>
@@ -308,15 +526,25 @@
             Kairyx AI
         </div>
         <ul class="sidebar-nav">
-            <li><a href="#" class="nav-link active" data-page="operator-hub">Operator Hub</a></li>
-            <li><a href="#" class="nav-link" data-page="player-cohorts">Player Cohorts</a></li>
-            <li><a href="#" class="nav-link" data-page="action-history">Action History</a></li>
-            <li><a href="#" class="nav-link" data-page="connectors">Connectors</a></li>
-            <li><a href="#" class="nav-link" data-page="data-sandbox">Data Sandbox</a></li>
-            <li><a href="#" class="nav-link" data-page="safety-rails">Safety Rails</a></li>
-            <li><a href="#" class="nav-link" data-page="service-health">Service Health</a></li>
+            <li><a href="#" class="nav-link active" data-module="data-core"><span>Data Core</span><small>Connectors, imports, mappings, health</small></a></li>
+            <li><a href="#" class="nav-link" data-module="audience-engine"><span>Audience Engine</span><small>Cohorts, SQL workspace, metrics</small></a></li>
+            <li><a href="#" class="nav-link" data-module="action-orchestrator"><span>Action Orchestrator</span><small>Workflows, delivery, policy runtime</small></a></li>
+            <li><a href="#" class="nav-link" data-module="experiment-hub"><span>Experiment Hub</span><small>Configs, exposures, outcomes, decisions</small></a></li>
+            <li><a href="#" class="nav-link" data-module="insight-copilot"><span>Insight Copilot</span><small>Query, explain, recommend, report</small></a></li>
         </ul>
         <div class="sidebar-footer">
+            <div class="form-group">
+                <label for="actor-role-select">Actor Role</label>
+                <select id="actor-role-select">
+                    <option value="admin" selected>Admin</option>
+                    <option value="analyst">Analyst</option>
+                    <option value="operator">Operator</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="actor-id-input">Actor ID</label>
+                <input type="text" id="actor-id-input" value="admin">
+            </div>
             <div id="health-status">
                 <span class="status-dot"></span>
                 <span id="status-text">Connecting...</span>
@@ -333,8 +561,16 @@
             </label>
         </div>
 
+        <div class="card module-shell">
+            <div>
+                <div id="module-title" class="module-title">Data Core</div>
+                <p id="module-subtitle" class="module-subtitle">Manage connectors, imports, mapping governance, and health signals that power the closed-loop lifecycle.</p>
+            </div>
+            <div id="module-subnav" class="module-subnav"></div>
+        </div>
+
         <section id="operator-hub" class="page active">
-            <h1>Operator Hub</h1>
+            <h1>Churn Rescue Workbench</h1>
             <div class="card" id="operator-hub-controls">
                 <p>Select a processed dataset and run churn prediction on its members.</p>
                 <div class="form-group">
@@ -425,7 +661,7 @@
         </section>
 
         <section id="player-cohorts" class="page">
-            <h1>Player Cohorts</h1>
+            <h1>Import Control Plane</h1>
             <div class="card">
                 <p>Import and process data from a connected source. Once imported, the system will analyze the data and automatically generate player cohorts.</p>
                 <div class="form-group">
@@ -455,7 +691,7 @@
         </section>
 
         <section id="action-history" class="page">
-            <h1>Action History</h1>
+            <h1>Audit Trail</h1>
             <div class="card">
                 <p>A timeline of human-triggered actions such as imports, manual mapping updates, prediction runs, and audience exports.</p>
                 <div id="action-history-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
@@ -518,7 +754,7 @@
         </section>
 
         <section id="data-sandbox" class="page">
-            <h1>Data Sandbox</h1>
+            <h1>Mapping Sandbox</h1>
             <div id="data-sandbox-content" class="card">
                 <!-- Content will be loaded here dynamically -->
             </div>
@@ -580,9 +816,9 @@
         </section>
 
         <section id="safety-rails" class="page">
-            <h1>Safety Rails</h1>
+            <h1>Governance & Safety</h1>
             <div class="card">
-                <p>Set limits on AI token usage and budget to control costs.</p>
+                <p>Set limits on AI token usage and budget to control costs, and use the actor context in the sidebar to test role-scoped API behavior.</p>
                 <div class="form-group">
                     <label for="token-limit">AI Token Limit (per month)</label>
                     <input type="number" id="token-limit" placeholder="e.g., 1000000">
@@ -596,10 +832,555 @@
         </section>
 
         <section id="service-health" class="page">
-            <h1>Service Health</h1>
+            <h1>Health & Observability</h1>
             <div class="card">
                 <p>Real-time status of all integrated services.</p>
                 <div id="service-status-list"></div>
+            </div>
+        </section>
+
+        <section id="audience-engine" class="page">
+            <h1>Audience Engine</h1>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Create Cohort</h2>
+                        <span class="pill">Rule / SQL / List</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="audience-name-input">Name</label>
+                            <input type="text" id="audience-name-input" placeholder="e.g. churn_rescue_high_risk">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-type-select">Type</label>
+                            <select id="audience-type-select">
+                                <option value="sql" selected>SQL</option>
+                                <option value="rule">Rule</option>
+                                <option value="list">List</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-refresh-mode-select">Refresh Mode</label>
+                            <select id="audience-refresh-mode-select">
+                                <option value="daily">Daily</option>
+                                <option value="manual" selected>Manual</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="audience-owner-input">Owner</label>
+                            <input type="text" id="audience-owner-input" value="frontend_operator">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-tags-input">Tags (comma separated)</label>
+                            <input type="text" id="audience-tags-input" placeholder="churn,rescue,high-risk">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-description-input">Description</label>
+                        <input type="text" id="audience-description-input" placeholder="Describe the cohort purpose">
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-definition-json">Definition JSON</label>
+                        <textarea id="audience-definition-json" style="min-height: 12rem; font-family: monospace;">{
+  "sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"
+}</textarea>
+                    </div>
+                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                        <input type="checkbox" id="audience-activate-checkbox">
+                        Activate after create
+                    </label>
+                    <div class="inline-actions">
+                        <button id="audience-create-cohort-btn">Create Cohort</button>
+                        <span id="audience-create-status" class="subtle"></span>
+                    </div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>SQL Workspace</h2>
+                        <span class="pill">BigQuery Read Only</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="sql-saved-query-name">Saved Query Name</label>
+                            <input type="text" id="sql-saved-query-name" placeholder="High risk users">
+                        </div>
+                        <div class="form-group">
+                            <label for="sql-preview-limit">Preview Limit</label>
+                            <input type="number" id="sql-preview-limit" value="20" min="1" max="200">
+                        </div>
+                        <div class="form-group">
+                            <label for="sql-timeout-seconds">Timeout (seconds)</label>
+                            <input type="number" id="sql-timeout-seconds" value="30" min="1" max="120">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="sql-saved-query-description">Description</label>
+                        <input type="text" id="sql-saved-query-description" placeholder="Why this query is useful">
+                    </div>
+                    <div class="form-group">
+                        <label for="sql-workspace-textarea">SQL</label>
+                        <textarea id="sql-workspace-textarea" style="min-height: 12rem; font-family: monospace;">SELECT user_id AS canonical_user_id, email
+FROM prediction_results
+WHERE predicted_churn_risk = 'high'
+  AND COALESCE(churn_state, 'active') != 'churned'</textarea>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="sql-preview-btn">Preview</button>
+                        <button id="sql-save-query-btn">Save Query</button>
+                        <button id="sql-create-cohort-btn">Query to Cohort</button>
+                    </div>
+                    <span id="sql-workspace-status" class="subtle"></span>
+                    <pre id="sql-preview-output" class="json-output">SQL preview results will appear here.</pre>
+                    <div id="sql-saved-query-list"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="module-section-header">
+                    <h2>Cohorts</h2>
+                    <button id="audience-refresh-list-btn">Refresh</button>
+                </div>
+                <div id="audience-cohort-list"></div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Selected Cohort Detail</h2>
+                        <span id="audience-selected-cohort-label" class="pill">No cohort selected</span>
+                    </div>
+                    <div id="audience-cohort-detail"></div>
+                    <div class="inline-actions">
+                        <button id="audience-load-members-btn">Load Members</button>
+                        <button id="audience-load-versions-btn">Load Versions</button>
+                        <button id="audience-load-metrics-btn">Load Metrics</button>
+                    </div>
+                    <div id="audience-members-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Versions & Comparison</h2>
+                        <span class="pill">Rollback Safe</span>
+                    </div>
+                    <div id="audience-versions-list"></div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="audience-base-version-input">Base Version</label>
+                            <input type="number" id="audience-base-version-input" min="1" value="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-target-version-input">Target Version</label>
+                            <input type="number" id="audience-target-version-input" min="1" value="1">
+                        </div>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="audience-compare-btn">Compare Versions</button>
+                        <button id="audience-rollback-btn">Rollback to Base</button>
+                    </div>
+                    <pre id="audience-metrics-output" class="json-output">Cohort metrics will appear here.</pre>
+                    <pre id="audience-compare-output" class="json-output">Version comparison will appear here.</pre>
+                </div>
+            </div>
+        </section>
+
+        <section id="action-orchestrator" class="page">
+            <h1>Action Orchestrator</h1>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Create Workflow</h2>
+                        <span class="pill">daily_schedule / manual_test</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="workflow-name-input">Name</label>
+                            <input type="text" id="workflow-name-input" placeholder="daily_churn_rescue">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-cohort-select">Cohort</label>
+                            <select id="workflow-cohort-select">
+                                <option value="">Load cohorts first</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-experiment-id-input">Experiment ID</label>
+                            <input type="text" id="workflow-experiment-id-input" value="churn_rescue_v1">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="workflow-trigger-type-select">Trigger Type</label>
+                            <select id="workflow-trigger-type-select">
+                                <option value="daily_schedule" selected>daily_schedule</option>
+                                <option value="manual_test">manual_test</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-trigger-hour-input">Hour</label>
+                            <input type="number" id="workflow-trigger-hour-input" min="0" max="23" value="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-trigger-minute-input">Minute</label>
+                            <input type="number" id="workflow-trigger-minute-input" min="0" max="59" value="0">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="workflow-channel-select">Channel</label>
+                            <select id="workflow-channel-select">
+                                <option value="push_notification" selected>Push Notification</option>
+                                <option value="email">Email</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-global-limit-input">Global Daily Limit</label>
+                            <input type="number" id="workflow-global-limit-input" min="1" value="5">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-channel-limit-input">Channel Daily Limit</label>
+                            <input type="number" id="workflow-channel-limit-input" min="1" value="5">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="workflow-cooldown-hours-input">Cooldown Hours</label>
+                            <input type="number" id="workflow-cooldown-hours-input" min="0" value="24">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-quiet-start-input">Quiet Hours Start</label>
+                            <input type="number" id="workflow-quiet-start-input" min="0" max="23" value="22">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-quiet-end-input">Quiet Hours End</label>
+                            <input type="number" id="workflow-quiet-end-input" min="0" max="23" value="7">
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="workflow-budget-limit-input">Daily Budget Limit</label>
+                            <input type="number" id="workflow-budget-limit-input" min="0" value="25">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-blacklist-input">Blacklist IDs (comma separated)</label>
+                            <input type="text" id="workflow-blacklist-input" placeholder="user_1,user_2">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-content-input">Content</label>
+                        <textarea id="workflow-content-input" style="min-height: 8rem;">Come back for a reward.</textarea>
+                    </div>
+                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                        <input type="checkbox" id="workflow-requires-confirmation-checkbox">
+                        Requires manual confirmation
+                    </label>
+                    <div class="inline-actions">
+                        <button id="workflow-create-btn">Create Workflow</button>
+                        <span id="workflow-create-status" class="subtle"></span>
+                    </div>
+                </div>
+
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Runtime Controls</h2>
+                        <span class="pill">Policies, Callbacks, Exports</span>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="orchestrator-kill-on-btn">Kill Switch On</button>
+                        <button id="orchestrator-kill-off-btn">Kill Switch Off</button>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="orchestrator-reference-time-input">Run Due Reference Time</label>
+                            <input type="text" id="orchestrator-reference-time-input" placeholder="2026-03-10T10:00:00">
+                        </div>
+                        <div class="form-group">
+                            <label for="orchestrator-limit-input">Limit Per Workflow</label>
+                            <input type="number" id="orchestrator-limit-input" min="1" value="100">
+                        </div>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="orchestrator-run-due-btn">Run Due Workflows</button>
+                        <span id="orchestrator-run-status" class="subtle"></span>
+                    </div>
+                    <pre id="orchestrator-run-output" class="json-output">Scheduled workflow runs will appear here.</pre>
+                    <div class="form-group">
+                        <label for="activation-provider-select">Callback Provider</label>
+                        <select id="activation-provider-select">
+                            <option value="simulator" selected>simulator</option>
+                            <option value="braze">braze</option>
+                            <option value="sendgrid">sendgrid</option>
+                            <option value="webhook">webhook</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="activation-callbacks-json">Callback Payload</label>
+                        <textarea id="activation-callbacks-json" style="min-height: 10rem; font-family: monospace;">{
+  "callbacks": []
+}</textarea>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="activation-ingest-btn">Ingest Callback</button>
+                        <span id="activation-ingest-status" class="subtle"></span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="export-diagnostics-select">Export Job</label>
+                            <select id="export-diagnostics-select">
+                                <option value="">Load exports first</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="export-diagnostics-btn">Load Diagnostics</button>
+                            <button id="export-retry-btn">Retry Export</button>
+                        </div>
+                    </div>
+                    <pre id="export-diagnostics-output" class="json-output">Export diagnostics will appear here.</pre>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="module-section-header">
+                    <h2>Workflows</h2>
+                    <button id="workflow-refresh-list-btn">Refresh</button>
+                </div>
+                <div id="workflow-list"></div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Executions & Policy Counters</h2>
+                        <span id="workflow-selected-label" class="pill">No workflow selected</span>
+                    </div>
+                    <div id="workflow-executions-list"></div>
+                    <pre id="workflow-policy-output" class="json-output">Policy counters will appear here.</pre>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Deliveries</h2>
+                        <span class="pill">Audited</span>
+                    </div>
+                    <div id="workflow-deliveries-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="experiment-hub" class="page">
+            <h1>Experiment Hub</h1>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Experiment Control</h2>
+                        <span class="pill">Treatment vs Holdout</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="experiment-id-input">Experiment ID</label>
+                            <input type="text" id="experiment-id-input" value="churn_rescue_v1">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-primary-metric-input">Primary Metric</label>
+                            <input type="text" id="experiment-primary-metric-input" value="return_rate">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-cohort-id-input">Cohort ID</label>
+                            <input type="text" id="experiment-cohort-id-input" placeholder="Optional linked cohort">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="experiment-guardrails-input">Guardrails (comma separated)</label>
+                            <input type="text" id="experiment-guardrails-input" value="engagement_rate,policy_block_rate">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-min-sample-input">Min Sample Size</label>
+                            <input type="number" id="experiment-min-sample-input" min="1" value="20">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-min-runtime-input">Min Runtime Hours</label>
+                            <input type="number" id="experiment-min-runtime-input" min="0" value="24">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="experiment-holdout-input">Holdout %</label>
+                            <input type="number" id="experiment-holdout-input" min="0" max="1" step="0.01" value="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-b-variant-input">B Variant %</label>
+                            <input type="number" id="experiment-b-variant-input" min="0" max="1" step="0.01" value="0.5">
+                        </div>
+                        <div class="form-group">
+                            <label for="experiment-decided-by-input">Decision Actor</label>
+                            <input type="text" id="experiment-decided-by-input" value="frontend_operator">
+                        </div>
+                    </div>
+                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                        <input type="checkbox" id="experiment-enabled-checkbox" checked>
+                        Enabled
+                    </label>
+                    <div class="inline-actions">
+                        <button id="experiment-load-btn">Load Config</button>
+                        <button id="experiment-save-btn">Save Config</button>
+                        <button id="experiment-start-btn">Start</button>
+                        <button id="experiment-stop-btn">Stop</button>
+                        <button id="experiment-decision-btn">Record Decision</button>
+                    </div>
+                    <span id="experiment-status" class="subtle"></span>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Summary</h2>
+                        <button id="experiment-refresh-btn">Refresh Summary</button>
+                    </div>
+                    <pre id="experiment-summary-output" class="json-output">Experiment summary will appear here.</pre>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Exposures</h2>
+                        <span class="pill">Read only</span>
+                    </div>
+                    <div id="experiment-exposures-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Outcomes</h2>
+                        <span class="pill">Read only</span>
+                    </div>
+                    <div id="experiment-outcomes-list"></div>
+                </div>
+            </div>
+            <div class="card split-card">
+                <div class="module-section-header">
+                    <h2>Outcome Ingestion</h2>
+                    <span class="pill">Internal writeback</span>
+                </div>
+                <div class="form-group">
+                    <label for="experiment-outcomes-json">Outcome Payload</label>
+                    <textarea id="experiment-outcomes-json" style="min-height: 12rem; font-family: monospace;">{
+  "outcomes": []
+}</textarea>
+                </div>
+                <div class="inline-actions">
+                    <button id="experiment-ingest-outcomes-btn">Ingest Outcomes</button>
+                    <span id="experiment-ingest-status" class="subtle"></span>
+                </div>
+            </div>
+        </section>
+
+        <section id="insight-copilot" class="page">
+            <h1>Insight Copilot</h1>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Query</h2>
+                        <span class="pill">NL2Metric</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="copilot-question-input">Question</label>
+                        <input type="text" id="copilot-question-input" value="how many high risk users do we have in 7d?">
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="copilot-query-window-input">Time Window</label>
+                            <input type="text" id="copilot-query-window-input" value="7d">
+                        </div>
+                        <div class="form-group">
+                            <label for="copilot-query-filters-json">Filters JSON</label>
+                            <textarea id="copilot-query-filters-json" style="min-height: 4rem; font-family: monospace;">{}</textarea>
+                        </div>
+                    </div>
+                    <button id="copilot-query-btn">Run Query</button>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Explain</h2>
+                        <span class="pill">Drivers</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="copilot-explain-metric-input">Metric ID</label>
+                            <input type="text" id="copilot-explain-metric-input" value="promo_views">
+                        </div>
+                        <div class="form-group">
+                            <label for="copilot-explain-window-input">Time Window</label>
+                            <input type="text" id="copilot-explain-window-input" value="7d">
+                        </div>
+                        <div class="form-group">
+                            <label for="copilot-explain-dimensions-input">Dimensions</label>
+                            <input type="text" id="copilot-explain-dimensions-input" value="campaign,country,platform">
+                        </div>
+                    </div>
+                    <button id="copilot-explain-btn">Explain Metric</button>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Recommend</h2>
+                        <span class="pill">Actionable</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="copilot-insight-json">Insight JSON</label>
+                            <textarea id="copilot-insight-json" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="copilot-metric-context-json">Metric Context JSON</label>
+                            <textarea id="copilot-metric-context-json" style="min-height: 6rem; font-family: monospace;">{
+  "metric_id": "high_risk_users"
+}</textarea>
+                        </div>
+                    </div>
+                    <button id="copilot-recommend-btn">Generate Recommendation</button>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Report</h2>
+                        <span class="pill">Archived</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="copilot-report-type-select">Report Type</label>
+                            <select id="copilot-report-type-select">
+                                <option value="daily" selected>daily</option>
+                                <option value="weekly">weekly</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="copilot-report-window-input">Time Window</label>
+                            <input type="text" id="copilot-report-window-input" value="7d">
+                        </div>
+                    </div>
+                    <button id="copilot-report-btn">Generate Report</button>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Latest Response & Query Log</h2>
+                        <span class="pill">Evidence Envelope</span>
+                    </div>
+                    <pre id="copilot-response-output" class="json-output">Copilot responses will appear here.</pre>
+                    <div class="inline-actions">
+                        <input type="text" id="copilot-query-log-id-input" placeholder="Query log ID">
+                        <button id="copilot-load-query-log-btn">Load Query Log</button>
+                    </div>
+                    <pre id="copilot-query-log-output" class="json-output">Query log details will appear here.</pre>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Anomalies & Reports</h2>
+                        <button id="copilot-refresh-meta-btn">Refresh</button>
+                    </div>
+                    <div id="copilot-anomalies-list"></div>
+                    <div id="copilot-reports-list"></div>
+                </div>
             </div>
         </section>
     </main>
@@ -608,51 +1389,181 @@
         document.addEventListener('DOMContentLoaded', function () {
             const navLinks = document.querySelectorAll('.nav-link');
             const pages = document.querySelectorAll('.page');
+            const moduleTitle = document.getElementById('module-title');
+            const moduleSubtitle = document.getElementById('module-subtitle');
+            const moduleSubnav = document.getElementById('module-subnav');
+            const actorRoleSelect = document.getElementById('actor-role-select');
+            const actorIdInput = document.getElementById('actor-id-input');
+            const ACTOR_ROLE_STORAGE_KEY = 'kairyx.actorRole';
+            const ACTOR_ID_STORAGE_KEY = 'kairyx.actorId';
+            let activeModuleId = 'data-core';
+            let activePageId = 'operator-hub';
 
-            navLinks.forEach(link => {
-                link.addEventListener('click', function (e) {
-                    e.preventDefault();
+            const moduleConfigs = {
+                'data-core': {
+                    title: 'Data Core',
+                    subtitle: 'Manage connectors, imports, mappings, governance checks, and health signals that power the closed-loop lifecycle.',
+                    pages: [
+                        { id: 'operator-hub', label: 'Churn Rescue' },
+                        { id: 'player-cohorts', label: 'Imports' },
+                        { id: 'connectors', label: 'Connectors' },
+                        { id: 'data-sandbox', label: 'Mappings' },
+                        { id: 'action-history', label: 'Audit Trail' },
+                        { id: 'service-health', label: 'Health' },
+                        { id: 'safety-rails', label: 'Governance' },
+                    ],
+                },
+                'audience-engine': {
+                    title: 'Audience Engine',
+                    subtitle: 'Build and operate cohorts with SQL workspace support, refresh controls, member previews, metrics, and version-aware rollback.',
+                    pages: [{ id: 'audience-engine', label: 'Audience Console' }],
+                },
+                'action-orchestrator': {
+                    title: 'Action Orchestrator',
+                    subtitle: 'Configure workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    pages: [{ id: 'action-orchestrator', label: 'Workflow Runtime' }],
+                },
+                'experiment-hub': {
+                    title: 'Experiment Hub',
+                    subtitle: 'Operate treatment-vs-holdout experiments with explicit configuration, exposure and outcome inspection, summary gates, and decision logging.',
+                    pages: [{ id: 'experiment-hub', label: 'Experiment Console' }],
+                },
+                'insight-copilot': {
+                    title: 'Insight Copilot',
+                    subtitle: 'Run query, explain, recommend, and report flows against curated evidence with query logs, anomaly tracking, and archived reports.',
+                    pages: [{ id: 'insight-copilot', label: 'Copilot Workspace' }],
+                },
+            };
 
-                    // Deactivate all links and pages
-                    navLinks.forEach(l => l.classList.remove('active'));
-                    pages.forEach(p => p.classList.remove('active'));
+            function readStoredActorContext() {
+                try {
+                    return {
+                        role: localStorage.getItem(ACTOR_ROLE_STORAGE_KEY) || 'admin',
+                        actorId: localStorage.getItem(ACTOR_ID_STORAGE_KEY) || 'admin',
+                    };
+                } catch (error) {
+                    return { role: 'admin', actorId: 'admin' };
+                }
+            }
 
-                    // Clear any page-specific intervals when navigating away
-                    if (importListInterval) {
-                        clearInterval(importListInterval);
-                        importListInterval = null;
-                    }
+            function persistActorContext() {
+                try {
+                    localStorage.setItem(ACTOR_ROLE_STORAGE_KEY, actorRoleSelect.value || 'admin');
+                    localStorage.setItem(ACTOR_ID_STORAGE_KEY, actorIdInput.value || actorRoleSelect.value || 'admin');
+                } catch (error) {
+                    console.warn('Unable to persist actor context:', error);
+                }
+            }
 
-                    // Activate the clicked link
-                    this.classList.add('active');
+            const storedActorContext = readStoredActorContext();
+            actorRoleSelect.value = storedActorContext.role;
+            actorIdInput.value = storedActorContext.actorId;
 
-                    // Activate the corresponding page
-                    const pageId = this.getAttribute('data-page');
-                    document.getElementById(pageId).classList.add('active');
+            actorRoleSelect.addEventListener('change', () => {
+                if (!actorIdInput.value.trim() || actorIdInput.value.trim() === readStoredActorContext().role) {
+                    actorIdInput.value = actorRoleSelect.value;
+                }
+                persistActorContext();
+                if (activePageId) {
+                    activatePage(activePageId);
+                }
+            });
+            actorIdInput.addEventListener('change', () => {
+                persistActorContext();
+                if (activePageId) {
+                    activatePage(activePageId);
+                }
+            });
 
-                    if (pageId === 'operator-hub') {
-                        loadReadyImportsForOperatorHub();
-                    }
+            function clearPageIntervals() {
+                if (importListInterval) {
+                    clearInterval(importListInterval);
+                    importListInterval = null;
+                }
+            }
 
-                    if (pageId === 'player-cohorts') {
-                        loadConfiguredSources();
-                        loadImportedDataList();
-                        // Poll for import status updates every 3 seconds
-                        importListInterval = setInterval(loadImportedDataList, 3000);
+            function loadPageData(pageId) {
+                if (pageId === 'operator-hub') {
+                    loadReadyImportsForOperatorHub();
+                }
+                if (pageId === 'player-cohorts') {
+                    loadConfiguredSources();
+                    loadImportedDataList();
+                    importListInterval = setInterval(loadImportedDataList, 3000);
+                }
+                if (pageId === 'action-history') {
+                    loadActionHistory();
+                }
+                if (pageId === 'service-health') {
+                    loadServiceHealthStatus();
+                }
+                if (pageId === 'connectors') {
+                    loadSavedConnectors();
+                }
+                if (pageId === 'data-sandbox') {
+                    loadDataSandboxGlance();
+                    loadDataSandboxMappingControls();
+                }
+                if (pageId === 'audience-engine') {
+                    loadAudienceEngine();
+                }
+                if (pageId === 'action-orchestrator') {
+                    loadActionOrchestrator();
+                }
+                if (pageId === 'experiment-hub') {
+                    loadExperimentHub();
+                }
+                if (pageId === 'insight-copilot') {
+                    loadInsightCopilot();
+                }
+            }
+
+            function activatePage(pageId) {
+                clearPageIntervals();
+                activePageId = pageId;
+                pages.forEach((page) => page.classList.remove('active'));
+                const page = document.getElementById(pageId);
+                if (page) {
+                    page.classList.add('active');
+                    loadPageData(pageId);
+                }
+                Array.from(moduleSubnav.querySelectorAll('button')).forEach((button) => {
+                    button.classList.toggle('active', button.dataset.page === pageId);
+                });
+            }
+
+            function renderModuleSubnav(moduleId, preferredPageId = null) {
+                const config = moduleConfigs[moduleId];
+                moduleTitle.textContent = config.title;
+                moduleSubtitle.textContent = config.subtitle;
+                moduleSubnav.innerHTML = '';
+                config.pages.forEach((entry) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = entry.label;
+                    button.dataset.page = entry.id;
+                    if (entry.id === (preferredPageId || config.pages[0].id)) {
+                        button.classList.add('active');
                     }
-                    if (pageId === 'action-history') {
-                        loadActionHistory();
-                    }
-                    if (pageId === 'service-health') {
-                        loadServiceHealthStatus();
-                    }
-                    if (pageId === 'connectors') {
-                        loadSavedConnectors();
-                    }
-                    if (pageId === 'data-sandbox') {
-                        loadDataSandboxGlance();
-                        loadDataSandboxMappingControls();
-                    }
+                    button.addEventListener('click', () => activatePage(entry.id));
+                    moduleSubnav.appendChild(button);
+                });
+            }
+
+            function activateModule(moduleId, preferredPageId = null) {
+                const config = moduleConfigs[moduleId];
+                if (!config) return;
+                activeModuleId = moduleId;
+                navLinks.forEach((link) => link.classList.toggle('active', link.dataset.module === moduleId));
+                const nextPageId = preferredPageId || config.pages[0].id;
+                renderModuleSubnav(moduleId, nextPageId);
+                activatePage(nextPageId);
+            }
+
+            navLinks.forEach((link) => {
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    activateModule(link.dataset.module);
                 });
             });
 
@@ -695,9 +1606,16 @@
 
             async function apiRequest(path, options = {}) {
                 const { method = 'GET', body } = options;
+                const headers = {
+                    'x-actor-role': actorRoleSelect.value || 'admin',
+                    'x-actor-id': (actorIdInput.value || actorRoleSelect.value || 'admin').trim(),
+                };
+                if (body) {
+                    headers['Content-Type'] = 'application/json';
+                }
                 const response = await fetch(`${apiBaseUrl}${path}`, {
                     method,
-                    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+                    headers,
                     body: body ? JSON.stringify(body) : undefined,
                 });
                 if (response.status === 204) {
@@ -2901,6 +3819,943 @@
             dataSandboxCoverageBtn.addEventListener('click', loadDataSandboxMappingCoverage);
             dataSandboxProcessMappingBtn.addEventListener('click', processDataSandboxAwaitingJob);
 
+            // Audience / Workflow / Experiment / Copilot Shared Helpers
+            const audienceCreateCohortBtn = document.getElementById('audience-create-cohort-btn');
+            const audienceCreateStatus = document.getElementById('audience-create-status');
+            const audienceCohortList = document.getElementById('audience-cohort-list');
+            const audienceSelectedCohortLabel = document.getElementById('audience-selected-cohort-label');
+            const audienceCohortDetail = document.getElementById('audience-cohort-detail');
+            const audienceMembersList = document.getElementById('audience-members-list');
+            const audienceVersionsList = document.getElementById('audience-versions-list');
+            const audienceMetricsOutput = document.getElementById('audience-metrics-output');
+            const audienceCompareOutput = document.getElementById('audience-compare-output');
+            const sqlWorkspaceStatus = document.getElementById('sql-workspace-status');
+            const sqlPreviewOutput = document.getElementById('sql-preview-output');
+            const sqlSavedQueryList = document.getElementById('sql-saved-query-list');
+            const workflowCreateStatus = document.getElementById('workflow-create-status');
+            const workflowList = document.getElementById('workflow-list');
+            const workflowSelectedLabel = document.getElementById('workflow-selected-label');
+            const workflowExecutionsList = document.getElementById('workflow-executions-list');
+            const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
+            const workflowPolicyOutput = document.getElementById('workflow-policy-output');
+            const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
+            const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
+            const activationIngestStatus = document.getElementById('activation-ingest-status');
+            const exportDiagnosticsOutput = document.getElementById('export-diagnostics-output');
+            const experimentStatus = document.getElementById('experiment-status');
+            const experimentSummaryOutput = document.getElementById('experiment-summary-output');
+            const experimentExposuresList = document.getElementById('experiment-exposures-list');
+            const experimentOutcomesList = document.getElementById('experiment-outcomes-list');
+            const experimentIngestStatus = document.getElementById('experiment-ingest-status');
+            const copilotResponseOutput = document.getElementById('copilot-response-output');
+            const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
+            const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
+            const copilotReportsList = document.getElementById('copilot-reports-list');
+            let selectedAudienceCohortId = null;
+            let selectedWorkflowId = null;
+            let cachedSavedQueries = [];
+
+            function setInlineStatus(element, message = '', isError = false) {
+                if (!element) return;
+                element.textContent = message;
+                element.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
+            }
+
+            function renderJsonOutput(element, payload, emptyMessage = 'No data available.') {
+                if (!element) return;
+                if (payload === null || payload === undefined || payload === '') {
+                    element.textContent = emptyMessage;
+                    return;
+                }
+                element.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+            }
+
+            function parseJsonText(value, fallback = {}) {
+                const raw = String(value || '').trim();
+                if (!raw) return fallback;
+                return JSON.parse(raw);
+            }
+
+            function splitCsv(value) {
+                return String(value || '')
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean);
+            }
+
+            function formatDateTime(value) {
+                if (!value) return '-';
+                const parsed = parseIsoDate(value);
+                return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString();
+            }
+
+            function renderMetricList(container, payload = {}, emptyMessage = 'No metrics available.') {
+                if (!container) return;
+                const entries = Object.entries(payload || {});
+                if (entries.length === 0) {
+                    container.innerHTML = `<div class="list-empty">${escapeHtml(emptyMessage)}</div>`;
+                    return;
+                }
+                container.innerHTML = entries.map(([key, value]) => `
+                    <div class="metric-line">
+                        <span>${escapeHtml(String(key).replace(/_/g, ' '))}</span>
+                        <strong>${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : String(value))}</strong>
+                    </div>
+                `).join('');
+            }
+
+            function renderSimpleTable(container, columns, items, emptyMessage = 'No records found.') {
+                if (!container) return;
+                if (!Array.isArray(items) || items.length === 0) {
+                    container.innerHTML = `<div class="list-empty">${escapeHtml(emptyMessage)}</div>`;
+                    return;
+                }
+                const head = columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('');
+                const rows = items.map((item) => `
+                    <tr>
+                        ${columns.map((column) => `<td>${column.render ? column.render(item) : escapeHtml(String(item[column.key] ?? '-'))}</td>`).join('')}
+                    </tr>
+                `).join('');
+                container.innerHTML = `
+                    <table>
+                        <thead><tr>${head}</tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+            }
+
+            function getCurrentExperimentId() {
+                return (document.getElementById('experiment-id-input').value || 'churn_rescue_v1').trim() || 'churn_rescue_v1';
+            }
+
+            function getCurrentWorkflowReferenceTime() {
+                return (document.getElementById('orchestrator-reference-time-input').value || '').trim() || null;
+            }
+
+            function populateWorkflowCohortSelect(cohorts = []) {
+                const select = document.getElementById('workflow-cohort-select');
+                const previousValue = select.value;
+                select.innerHTML = '<option value="">Select cohort</option>';
+                cohorts.forEach((cohort) => {
+                    const option = document.createElement('option');
+                    option.value = cohort.cohort_id;
+                    option.textContent = `${cohort.name} (${cohort.status})`;
+                    select.appendChild(option);
+                });
+                if (cohorts.some((item) => item.cohort_id === previousValue)) {
+                    select.value = previousValue;
+                }
+            }
+
+            function populateExportJobSelect(exportJobs = []) {
+                const select = document.getElementById('export-diagnostics-select');
+                const previousValue = select.value;
+                select.innerHTML = '<option value="">Select export job</option>';
+                exportJobs.forEach((job) => {
+                    const option = document.createElement('option');
+                    option.value = job.id;
+                    option.textContent = `${job.id} (${job.status || 'unknown'})`;
+                    select.appendChild(option);
+                });
+                if (exportJobs.some((item) => item.id === previousValue)) {
+                    select.value = previousValue;
+                }
+            }
+
+            async function loadAudienceMembers(cohortId = selectedAudienceCohortId) {
+                if (!cohortId) {
+                    audienceMembersList.innerHTML = '<div class="list-empty">Select a cohort first.</div>';
+                    return;
+                }
+                const payload = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/members?page=1&page_size=50`);
+                renderSimpleTable(
+                    audienceMembersList,
+                    [
+                        { label: 'Canonical User ID', render: (item) => escapeHtml(String(item.canonical_user_id || item.user_id || '-')) },
+                        { label: 'Email', render: (item) => escapeHtml(String(item.email || '-')) },
+                        { label: 'Attributes', render: (item) => `<span class="subtle">${escapeHtml(JSON.stringify(item))}</span>` },
+                    ],
+                    payload.items || [],
+                    'No members in the latest snapshot.',
+                );
+            }
+
+            async function loadAudienceVersions(cohortId = selectedAudienceCohortId) {
+                if (!cohortId) {
+                    audienceVersionsList.innerHTML = '<div class="list-empty">Select a cohort first.</div>';
+                    return;
+                }
+                const payload = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/versions`);
+                renderSimpleTable(
+                    audienceVersionsList,
+                    [
+                        { label: 'Version', render: (item) => escapeHtml(String(item.version || '-')) },
+                        { label: 'Created', render: (item) => escapeHtml(formatDateTime(item.created_at)) },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(String((item.payload || {}).status || '-'))}</span>` },
+                    ],
+                    payload.items || [],
+                    'No saved versions yet.',
+                );
+            }
+
+            async function loadAudienceMetrics(cohortId = selectedAudienceCohortId) {
+                if (!cohortId) {
+                    renderJsonOutput(audienceMetricsOutput, null, 'Select a cohort first.');
+                    return;
+                }
+                const payload = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/metrics`);
+                renderJsonOutput(audienceMetricsOutput, payload, 'No metrics available.');
+            }
+
+            async function loadAudienceCohortDetails(cohortId) {
+                selectedAudienceCohortId = cohortId;
+                audienceSelectedCohortLabel.textContent = cohortId || 'No cohort selected';
+                if (!cohortId) {
+                    audienceCohortDetail.innerHTML = '<div class="list-empty">Select a cohort from the table.</div>';
+                    audienceMembersList.innerHTML = '';
+                    audienceVersionsList.innerHTML = '';
+                    renderJsonOutput(audienceMetricsOutput, null, 'Cohort metrics will appear here.');
+                    renderJsonOutput(audienceCompareOutput, null, 'Version comparison will appear here.');
+                    return;
+                }
+                const cohort = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}`);
+                document.getElementById('audience-base-version-input').value = cohort.version || 1;
+                document.getElementById('audience-target-version-input').value = cohort.version || 1;
+                audienceCohortDetail.innerHTML = `
+                    <div class="stats-grid">
+                        <div class="stat-card"><div class="label">Status</div><div class="value">${escapeHtml(cohort.status || '-')}</div></div>
+                        <div class="stat-card"><div class="label">Members</div><div class="value">${escapeHtml(String(cohort.member_count || 0))}</div></div>
+                        <div class="stat-card"><div class="label">Refresh Mode</div><div class="value">${escapeHtml(cohort.refresh_mode || '-')}</div></div>
+                        <div class="stat-card"><div class="label">Version</div><div class="value">${escapeHtml(String(cohort.version || cohort.version_id || 1))}</div></div>
+                    </div>
+                    <div class="subtle">Last refreshed: ${escapeHtml(formatDateTime(cohort.last_refreshed_at))}</div>
+                    <pre class="json-output">${escapeHtml(JSON.stringify({ definition: cohort.definition, delta: cohort.delta, activation_preflight: cohort.activation_preflight, metrics_summary: cohort.metrics_summary }, null, 2))}</pre>
+                `;
+                await Promise.all([loadAudienceMetrics(cohortId), loadAudienceMembers(cohortId), loadAudienceVersions(cohortId)]);
+            }
+
+            function renderSavedQueries(items = []) {
+                cachedSavedQueries = Array.isArray(items) ? items : [];
+                renderSimpleTable(
+                    sqlSavedQueryList,
+                    [
+                        { label: 'Name', render: (item) => escapeHtml(item.name || '-') },
+                        { label: 'Description', render: (item) => `<span class="subtle">${escapeHtml(item.description || '-')}</span>` },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-sql-action="preview" data-query-id="${escapeHtml(item.query_id)}">Preview</button>
+                                    <button type="button" data-sql-action="cohort" data-query-id="${escapeHtml(item.query_id)}">To Cohort</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    cachedSavedQueries,
+                    'No saved SQL queries yet.',
+                );
+                sqlSavedQueryList.querySelectorAll('[data-sql-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const query = cachedSavedQueries.find((item) => item.query_id === button.dataset.queryId);
+                        if (!query) return;
+                        if (button.dataset.sqlAction === 'preview') {
+                            document.getElementById('sql-workspace-textarea').value = query.sql || '';
+                            await previewSqlWorkspace();
+                            return;
+                        }
+                        if (button.dataset.sqlAction === 'cohort') {
+                            await createCohortFromSavedQuery(query.query_id);
+                        }
+                    });
+                });
+            }
+
+            async function previewSqlWorkspace() {
+                try {
+                    setInlineStatus(sqlWorkspaceStatus, 'Previewing query...');
+                    const payload = await apiRequest('/sql-workspace/preview', {
+                        method: 'POST',
+                        body: {
+                            sql: document.getElementById('sql-workspace-textarea').value,
+                            limit: Number(document.getElementById('sql-preview-limit').value || 20),
+                            timeout_seconds: Number(document.getElementById('sql-timeout-seconds').value || 30),
+                        },
+                    });
+                    renderJsonOutput(sqlPreviewOutput, payload, 'Preview returned no rows.');
+                    setInlineStatus(sqlWorkspaceStatus, `Preview returned ${payload.row_count || 0} row(s).`);
+                } catch (error) {
+                    setInlineStatus(sqlWorkspaceStatus, error.message || 'SQL preview failed.', true);
+                    renderJsonOutput(sqlPreviewOutput, null, 'SQL preview failed.');
+                }
+            }
+
+            async function saveSqlWorkspaceQuery() {
+                try {
+                    setInlineStatus(sqlWorkspaceStatus, 'Saving query...');
+                    await apiRequest('/sql-workspace/queries', {
+                        method: 'POST',
+                        body: {
+                            name: document.getElementById('sql-saved-query-name').value || 'Untitled query',
+                            description: document.getElementById('sql-saved-query-description').value || '',
+                            sql: document.getElementById('sql-workspace-textarea').value,
+                        },
+                    });
+                    setInlineStatus(sqlWorkspaceStatus, 'Saved query.');
+                    await loadAudienceEngine();
+                } catch (error) {
+                    setInlineStatus(sqlWorkspaceStatus, error.message || 'Failed to save query.', true);
+                }
+            }
+
+            async function createCohortFromSavedQuery(queryId) {
+                try {
+                    setInlineStatus(sqlWorkspaceStatus, 'Creating cohort from saved query...');
+                    const name = document.getElementById('audience-name-input').value.trim()
+                        || document.getElementById('sql-saved-query-name').value.trim()
+                        || `cohort_${Date.now()}`;
+                    await apiRequest(`/sql-workspace/queries/${encodeURIComponent(queryId)}/cohort`, {
+                        method: 'POST',
+                        body: {
+                            name,
+                            refresh_mode: document.getElementById('audience-refresh-mode-select').value || 'manual',
+                            owner: document.getElementById('audience-owner-input').value || 'frontend_operator',
+                            activate: document.getElementById('audience-activate-checkbox').checked,
+                        },
+                    });
+                    setInlineStatus(sqlWorkspaceStatus, 'Saved query converted to cohort.');
+                    await loadAudienceEngine();
+                } catch (error) {
+                    setInlineStatus(sqlWorkspaceStatus, error.message || 'Failed to create cohort from query.', true);
+                }
+            }
+
+            function renderAudienceCohorts(items = []) {
+                renderSimpleTable(
+                    audienceCohortList,
+                    [
+                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.cohort_id || '-')}</div>` },
+                        { label: 'Type', render: (item) => `<span class="pill">${escapeHtml(item.type || '-')}</span>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
+                        { label: 'Members', render: (item) => escapeHtml(String(item.member_count || 0)) },
+                        { label: 'Last Refreshed', render: (item) => escapeHtml(formatDateTime(item.last_refreshed_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-cohort-action="view" data-cohort-id="${escapeHtml(item.cohort_id)}">View</button>
+                                    <button type="button" data-cohort-action="refresh" data-cohort-id="${escapeHtml(item.cohort_id)}">Refresh</button>
+                                    <button type="button" data-cohort-action="activate" data-cohort-id="${escapeHtml(item.cohort_id)}">Activate</button>
+                                    <button type="button" data-cohort-action="pause" data-cohort-id="${escapeHtml(item.cohort_id)}">Pause</button>
+                                    <button type="button" data-cohort-action="archive" data-cohort-id="${escapeHtml(item.cohort_id)}">Archive</button>
+                                    <button type="button" data-cohort-action="restore" data-cohort-id="${escapeHtml(item.cohort_id)}">Restore</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No cohorts yet.',
+                );
+
+                audienceCohortList.querySelectorAll('[data-cohort-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const cohortId = button.dataset.cohortId;
+                        const action = button.dataset.cohortAction;
+                        try {
+                            if (action === 'view') {
+                                await loadAudienceCohortDetails(cohortId);
+                                return;
+                            }
+                            if (action === 'refresh') {
+                                await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/refresh`, { method: 'POST' });
+                            }
+                            if (action === 'activate') {
+                                await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/activate`, { method: 'POST' });
+                            }
+                            if (action === 'pause') {
+                                await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/pause`, { method: 'POST' });
+                            }
+                            if (action === 'archive') {
+                                await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/archive`, { method: 'POST' });
+                            }
+                            if (action === 'restore') {
+                                await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}/restore`, { method: 'POST' });
+                            }
+                            await loadAudienceEngine();
+                            await loadAudienceCohortDetails(cohortId);
+                        } catch (error) {
+                            setInlineStatus(audienceCreateStatus, error.message || `Failed to ${action} cohort.`, true);
+                        }
+                    });
+                });
+            }
+
+            async function loadAudienceEngine() {
+                try {
+                    const [cohortPayload, savedQueryPayload] = await Promise.all([
+                        apiRequest('/cohorts'),
+                        apiRequest('/sql-workspace/queries'),
+                    ]);
+                    const cohorts = Array.isArray(cohortPayload.items) ? cohortPayload.items : [];
+                    renderAudienceCohorts(cohorts);
+                    renderSavedQueries(savedQueryPayload.items || []);
+                    populateWorkflowCohortSelect(cohorts);
+                    if (selectedAudienceCohortId && cohorts.some((item) => item.cohort_id === selectedAudienceCohortId)) {
+                        await loadAudienceCohortDetails(selectedAudienceCohortId);
+                    } else if (!selectedAudienceCohortId && cohorts[0]) {
+                        await loadAudienceCohortDetails(cohorts[0].cohort_id);
+                    } else if (!cohorts.length) {
+                        await loadAudienceCohortDetails(null);
+                    }
+                } catch (error) {
+                    setInlineStatus(audienceCreateStatus, error.message || 'Failed to load audience engine.', true);
+                }
+            }
+
+            async function createAudienceCohort() {
+                try {
+                    setInlineStatus(audienceCreateStatus, 'Creating cohort...');
+                    const payload = await apiRequest('/cohorts', {
+                        method: 'POST',
+                        body: {
+                            name: document.getElementById('audience-name-input').value || `cohort_${Date.now()}`,
+                            type: document.getElementById('audience-type-select').value || 'sql',
+                            refresh_mode: document.getElementById('audience-refresh-mode-select').value || 'manual',
+                            owner: document.getElementById('audience-owner-input').value || 'frontend_operator',
+                            description: document.getElementById('audience-description-input').value || '',
+                            tags: splitCsv(document.getElementById('audience-tags-input').value),
+                            definition: parseJsonText(document.getElementById('audience-definition-json').value, {}),
+                            activate: document.getElementById('audience-activate-checkbox').checked,
+                        },
+                    });
+                    selectedAudienceCohortId = payload.cohort_id;
+                    setInlineStatus(audienceCreateStatus, `Created cohort ${payload.name}.`);
+                    await loadAudienceEngine();
+                } catch (error) {
+                    setInlineStatus(audienceCreateStatus, error.message || 'Failed to create cohort.', true);
+                }
+            }
+
+            async function compareAudienceVersions() {
+                if (!selectedAudienceCohortId) {
+                    renderJsonOutput(audienceCompareOutput, null, 'Select a cohort first.');
+                    return;
+                }
+                try {
+                    const baseVersion = Number(document.getElementById('audience-base-version-input').value || 1);
+                    const targetVersion = Number(document.getElementById('audience-target-version-input').value || 1);
+                    const payload = await apiRequest(`/cohorts/${encodeURIComponent(selectedAudienceCohortId)}/compare?base_version=${baseVersion}&target_version=${targetVersion}`);
+                    renderJsonOutput(audienceCompareOutput, payload, 'No version comparison available.');
+                } catch (error) {
+                    renderJsonOutput(audienceCompareOutput, { error: error.message }, 'Comparison failed.');
+                }
+            }
+
+            async function rollbackAudienceVersion() {
+                if (!selectedAudienceCohortId) {
+                    setInlineStatus(audienceCreateStatus, 'Select a cohort first.', true);
+                    return;
+                }
+                try {
+                    const version = Number(document.getElementById('audience-base-version-input').value || 1);
+                    await apiRequest(`/cohorts/${encodeURIComponent(selectedAudienceCohortId)}/rollback?version=${version}`, { method: 'POST' });
+                    setInlineStatus(audienceCreateStatus, `Rolled back cohort to version ${version}.`);
+                    await loadAudienceEngine();
+                    await loadAudienceCohortDetails(selectedAudienceCohortId);
+                } catch (error) {
+                    setInlineStatus(audienceCreateStatus, error.message || 'Failed to rollback cohort.', true);
+                }
+            }
+
+            function renderWorkflowList(items = []) {
+                renderSimpleTable(
+                    workflowList,
+                    [
+                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.workflow_id || '-')}</div>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
+                        { label: 'Trigger', render: (item) => escapeHtml((item.trigger || {}).type || '-') },
+                        { label: 'Experiment', render: (item) => escapeHtml(item.experiment_id || '-') },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-workflow-action="view" data-workflow-id="${escapeHtml(item.workflow_id)}">View</button>
+                                    <button type="button" data-workflow-action="publish" data-workflow-id="${escapeHtml(item.workflow_id)}">Publish</button>
+                                    <button type="button" data-workflow-action="pause" data-workflow-id="${escapeHtml(item.workflow_id)}">Pause</button>
+                                    <button type="button" data-workflow-action="resume" data-workflow-id="${escapeHtml(item.workflow_id)}">Resume</button>
+                                    <button type="button" data-workflow-action="test-run" data-workflow-id="${escapeHtml(item.workflow_id)}">Test Run</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No workflows yet.',
+                );
+                workflowList.querySelectorAll('[data-workflow-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const workflowId = button.dataset.workflowId;
+                        const action = button.dataset.workflowAction;
+                        try {
+                            if (action === 'view') {
+                                await loadWorkflowDetail(workflowId);
+                                return;
+                            }
+                            if (action === 'publish') {
+                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/publish`, { method: 'POST' });
+                            }
+                            if (action === 'pause') {
+                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/pause`, { method: 'POST' });
+                            }
+                            if (action === 'resume') {
+                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/resume`, { method: 'POST' });
+                            }
+                            if (action === 'test-run') {
+                                const payload = await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/test-run`, {
+                                    method: 'POST',
+                                    body: { limit: 10, confirm: true, sandbox: true, reference_time: getCurrentWorkflowReferenceTime() },
+                                });
+                                renderJsonOutput(orchestratorRunOutput, payload, 'No workflow run output.');
+                                setInlineStatus(orchestratorRunStatus, `Workflow ${workflowId} test-run completed.`);
+                            }
+                            await loadActionOrchestrator();
+                            await loadWorkflowDetail(workflowId);
+                        } catch (error) {
+                            setInlineStatus(workflowCreateStatus, error.message || `Failed to ${action} workflow.`, true);
+                        }
+                    });
+                });
+            }
+
+            async function loadWorkflowDetail(workflowId) {
+                selectedWorkflowId = workflowId;
+                workflowSelectedLabel.textContent = workflowId || 'No workflow selected';
+                if (!workflowId) {
+                    workflowExecutionsList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
+                    workflowDeliveriesList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
+                    renderJsonOutput(workflowPolicyOutput, null, 'Policy counters will appear here.');
+                    return;
+                }
+                const [executionsPayload, deliveriesPayload, policyPayload] = await Promise.all([
+                    apiRequest(`/workflows/${encodeURIComponent(workflowId)}/executions`),
+                    apiRequest(`/workflows/${encodeURIComponent(workflowId)}/deliveries`),
+                    apiRequest(`/workflows/${encodeURIComponent(workflowId)}/policy-counters`),
+                ]);
+                renderSimpleTable(
+                    workflowExecutionsList,
+                    [
+                        { label: 'Recorded At', render: (item) => escapeHtml(formatDateTime(item.reference_time || item.executed_at || item.recorded_at)) },
+                        { label: 'Triggered', render: (item) => escapeHtml(String(item.triggered || 0)) },
+                        { label: 'Success', render: (item) => escapeHtml(String(item.success || 0)) },
+                        { label: 'Sandbox', render: (item) => escapeHtml(String(Boolean(item.sandbox))) },
+                    ],
+                    executionsPayload.items || [],
+                    'No workflow executions recorded yet.',
+                );
+                renderSimpleTable(
+                    workflowDeliveriesList,
+                    [
+                        { label: 'Delivery', render: (item) => `<strong>${escapeHtml(item.delivery_id || '-')}</strong><div class="subtle">${escapeHtml(item.user_id || '-')}</div>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.delivery_status || item.status || '-')}</span>` },
+                        { label: 'Channel', render: (item) => escapeHtml(item.channel || '-') },
+                        { label: 'Sandbox', render: (item) => escapeHtml(String(Boolean(item.sandbox))) },
+                    ],
+                    deliveriesPayload.items || [],
+                    'No deliveries recorded yet.',
+                );
+                renderJsonOutput(workflowPolicyOutput, policyPayload, 'No policy counters recorded.');
+            }
+
+            async function createWorkflow() {
+                try {
+                    setInlineStatus(workflowCreateStatus, 'Creating workflow...');
+                    const channel = document.getElementById('workflow-channel-select').value || 'push_notification';
+                    const payload = await apiRequest('/workflows', {
+                        method: 'POST',
+                        body: {
+                            name: document.getElementById('workflow-name-input').value || `workflow_${Date.now()}`,
+                            cohort_id: document.getElementById('workflow-cohort-select').value,
+                            experiment_id: document.getElementById('workflow-experiment-id-input').value || null,
+                            requires_confirmation: document.getElementById('workflow-requires-confirmation-checkbox').checked,
+                            schedule: { type: 'daily' },
+                            trigger: {
+                                type: document.getElementById('workflow-trigger-type-select').value || 'daily_schedule',
+                                hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
+                                minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
+                            },
+                            action: {
+                                channel,
+                                content: document.getElementById('workflow-content-input').value || '',
+                            },
+                            channel_config: {
+                                channel,
+                                content: document.getElementById('workflow-content-input').value || '',
+                            },
+                            policy: {
+                                global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
+                                channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
+                                cooldown_hours: Number(document.getElementById('workflow-cooldown-hours-input').value || 24),
+                                blacklist_ids: splitCsv(document.getElementById('workflow-blacklist-input').value),
+                                quiet_hours: {
+                                    start: Number(document.getElementById('workflow-quiet-start-input').value || 22),
+                                    end: Number(document.getElementById('workflow-quiet-end-input').value || 7),
+                                },
+                            },
+                            budget_policy: {
+                                daily_budget_limit: Number(document.getElementById('workflow-budget-limit-input').value || 25),
+                            },
+                        },
+                    });
+                    selectedWorkflowId = payload.workflow_id;
+                    setInlineStatus(workflowCreateStatus, `Created workflow ${payload.name}.`);
+                    await loadActionOrchestrator();
+                    await loadWorkflowDetail(payload.workflow_id);
+                } catch (error) {
+                    setInlineStatus(workflowCreateStatus, error.message || 'Failed to create workflow.', true);
+                }
+            }
+
+            async function loadExportDiagnostics() {
+                const jobId = document.getElementById('export-diagnostics-select').value;
+                if (!jobId) {
+                    renderJsonOutput(exportDiagnosticsOutput, null, 'Select an export job first.');
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/exports/${encodeURIComponent(jobId)}/diagnostics`);
+                    renderJsonOutput(exportDiagnosticsOutput, payload, 'No export diagnostics found.');
+                } catch (error) {
+                    renderJsonOutput(exportDiagnosticsOutput, { error: error.message }, 'Failed to load export diagnostics.');
+                }
+            }
+
+            async function retryExportDiagnostics() {
+                const jobId = document.getElementById('export-diagnostics-select').value;
+                if (!jobId) {
+                    renderJsonOutput(exportDiagnosticsOutput, null, 'Select an export job first.');
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/exports/${encodeURIComponent(jobId)}/retry`, { method: 'POST' });
+                    renderJsonOutput(exportDiagnosticsOutput, payload, 'Retry returned no payload.');
+                    await refreshExportJobsState();
+                    populateExportJobSelect(cachedExportJobs);
+                } catch (error) {
+                    renderJsonOutput(exportDiagnosticsOutput, { error: error.message }, 'Failed to retry export.');
+                }
+            }
+
+            async function ingestProviderCallbacks() {
+                try {
+                    setInlineStatus(activationIngestStatus, 'Ingesting callbacks...');
+                    const provider = document.getElementById('activation-provider-select').value || 'simulator';
+                    const payload = parseJsonText(document.getElementById('activation-callbacks-json').value, { callbacks: [] });
+                    const response = await apiRequest(`/activation/callbacks/${encodeURIComponent(provider)}`, {
+                        method: 'POST',
+                        body: payload,
+                    });
+                    renderJsonOutput(orchestratorRunOutput, response, 'No callback ingestion response.');
+                    setInlineStatus(activationIngestStatus, `Ingested ${response.ingested || 0} callback(s).`);
+                    if (selectedWorkflowId) {
+                        await loadWorkflowDetail(selectedWorkflowId);
+                    }
+                } catch (error) {
+                    setInlineStatus(activationIngestStatus, error.message || 'Failed to ingest callbacks.', true);
+                }
+            }
+
+            async function runDueWorkflows() {
+                try {
+                    setInlineStatus(orchestratorRunStatus, 'Running due workflows...');
+                    const payload = await apiRequest('/orchestrator/run-due', {
+                        method: 'POST',
+                        body: {
+                            reference_time: getCurrentWorkflowReferenceTime(),
+                            limit_per_workflow: Number(document.getElementById('orchestrator-limit-input').value || 100),
+                        },
+                    });
+                    renderJsonOutput(orchestratorRunOutput, payload, 'No due workflows were executed.');
+                    setInlineStatus(orchestratorRunStatus, `Executed ${Array.isArray(payload.items) ? payload.items.length : 0} workflow run(s).`);
+                    if (selectedWorkflowId) {
+                        await loadWorkflowDetail(selectedWorkflowId);
+                    }
+                } catch (error) {
+                    setInlineStatus(orchestratorRunStatus, error.message || 'Failed to run due workflows.', true);
+                }
+            }
+
+            async function setKillSwitch(enabled) {
+                try {
+                    const path = enabled ? '/orchestrator/kill-switch/on' : '/orchestrator/kill-switch/off';
+                    const payload = await apiRequest(path, { method: 'POST' });
+                    renderJsonOutput(orchestratorRunOutput, payload, 'Kill switch updated.');
+                    setInlineStatus(orchestratorRunStatus, `Kill switch ${enabled ? 'enabled' : 'disabled'}.`);
+                } catch (error) {
+                    setInlineStatus(orchestratorRunStatus, error.message || 'Failed to update kill switch.', true);
+                }
+            }
+
+            async function loadActionOrchestrator() {
+                try {
+                    const [workflowPayload, cohortPayload] = await Promise.all([
+                        apiRequest('/workflows'),
+                        apiRequest('/cohorts'),
+                        refreshExportJobsState(),
+                    ]);
+                    const workflows = Array.isArray(workflowPayload.items) ? workflowPayload.items : [];
+                    renderWorkflowList(workflows);
+                    populateWorkflowCohortSelect(cohortPayload.items || []);
+                    populateExportJobSelect(cachedExportJobs);
+                    if (selectedWorkflowId && workflows.some((item) => item.workflow_id === selectedWorkflowId)) {
+                        await loadWorkflowDetail(selectedWorkflowId);
+                    } else if (!selectedWorkflowId && workflows[0]) {
+                        await loadWorkflowDetail(workflows[0].workflow_id);
+                    } else if (!workflows.length) {
+                        await loadWorkflowDetail(null);
+                    }
+                } catch (error) {
+                    setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
+                }
+            }
+
+            function fillExperimentForm(config = {}) {
+                document.getElementById('experiment-primary-metric-input').value = config.primary_metric || 'return_rate';
+                document.getElementById('experiment-cohort-id-input').value = config.cohort_id || '';
+                document.getElementById('experiment-guardrails-input').value = (config.guardrail_metrics || []).join(',');
+                document.getElementById('experiment-min-sample-input').value = config.min_sample_size || 20;
+                document.getElementById('experiment-min-runtime-input').value = config.min_runtime_hours || 24;
+                document.getElementById('experiment-holdout-input').value = config.holdout_pct ?? 0.1;
+                document.getElementById('experiment-b-variant-input').value = config.b_variant_pct ?? 0.5;
+                document.getElementById('experiment-enabled-checkbox').checked = Boolean(config.enabled ?? true);
+            }
+
+            async function loadExperimentWorkspace() {
+                const experimentId = getCurrentExperimentId();
+                try {
+                    const [configPayload, summaryPayload, exposuresPayload, outcomesPayload] = await Promise.all([
+                        apiRequest(`/experiments/config?experiment_id=${encodeURIComponent(experimentId)}`),
+                        apiRequest(`/experiments/${encodeURIComponent(experimentId)}/summary`),
+                        apiRequest(`/experiments/${encodeURIComponent(experimentId)}/exposures`),
+                        apiRequest(`/experiments/${encodeURIComponent(experimentId)}/outcomes`),
+                    ]);
+                    fillExperimentForm(configPayload.experiment || {});
+                    renderJsonOutput(experimentSummaryOutput, summaryPayload, 'No experiment summary available.');
+                    renderSimpleTable(
+                        experimentExposuresList,
+                        [
+                            { label: 'User', render: (item) => escapeHtml(item.user_id || '-') },
+                            { label: 'Group', render: (item) => `<span class="pill">${escapeHtml(item.group || '-')}</span>` },
+                            { label: 'Execution Status', render: (item) => escapeHtml(item.execution_status || '-') },
+                            { label: 'Recorded', render: (item) => escapeHtml(formatDateTime(item.recorded_at || item.exposed_at)) },
+                        ],
+                        exposuresPayload.items || [],
+                        'No exposures recorded yet.',
+                    );
+                    renderSimpleTable(
+                        experimentOutcomesList,
+                        [
+                            { label: 'User', render: (item) => escapeHtml(item.user_id || '-') },
+                            { label: 'Outcome', render: (item) => `<span class="pill">${escapeHtml(item.outcome_name || '-')}</span>` },
+                            { label: 'Group', render: (item) => escapeHtml(item.group || '-') },
+                            { label: 'Occurred', render: (item) => escapeHtml(formatDateTime(item.occurred_at)) },
+                        ],
+                        outcomesPayload.items || [],
+                        'No outcomes recorded yet.',
+                    );
+                    setInlineStatus(experimentStatus, `Loaded experiment ${experimentId}.`);
+                } catch (error) {
+                    setInlineStatus(experimentStatus, error.message || 'Failed to load experiment workspace.', true);
+                }
+            }
+
+            async function saveExperimentConfig() {
+                const experimentId = getCurrentExperimentId();
+                try {
+                    setInlineStatus(experimentStatus, 'Saving experiment config...');
+                    const payload = await apiRequest(`/experiments/config?experiment_id=${encodeURIComponent(experimentId)}`, {
+                        method: 'POST',
+                        body: {
+                            enabled: document.getElementById('experiment-enabled-checkbox').checked,
+                            primary_metric: document.getElementById('experiment-primary-metric-input').value || 'return_rate',
+                            guardrail_metrics: splitCsv(document.getElementById('experiment-guardrails-input').value),
+                            min_sample_size: Number(document.getElementById('experiment-min-sample-input').value || 20),
+                            min_runtime_hours: Number(document.getElementById('experiment-min-runtime-input').value || 24),
+                            cohort_id: document.getElementById('experiment-cohort-id-input').value || null,
+                            holdout_pct: Number(document.getElementById('experiment-holdout-input').value || 0.1),
+                            b_variant_pct: Number(document.getElementById('experiment-b-variant-input').value || 0.5),
+                        },
+                    });
+                    fillExperimentForm(payload.experiment || {});
+                    setInlineStatus(experimentStatus, `Saved experiment ${experimentId}.`);
+                    await loadExperimentWorkspace();
+                } catch (error) {
+                    setInlineStatus(experimentStatus, error.message || 'Failed to save experiment config.', true);
+                }
+            }
+
+            async function updateExperimentLifecycle(action) {
+                const experimentId = getCurrentExperimentId();
+                try {
+                    setInlineStatus(experimentStatus, `${action === 'start' ? 'Starting' : 'Stopping'} experiment...`);
+                    await apiRequest(`/experiments/${encodeURIComponent(experimentId)}/${action}`, { method: 'POST' });
+                    await loadExperimentWorkspace();
+                } catch (error) {
+                    setInlineStatus(experimentStatus, error.message || `Failed to ${action} experiment.`, true);
+                }
+            }
+
+            async function decideExperiment() {
+                const experimentId = getCurrentExperimentId();
+                try {
+                    const payload = await apiRequest(`/experiments/${encodeURIComponent(experimentId)}/decision`, {
+                        method: 'POST',
+                        body: { decided_by: document.getElementById('experiment-decided-by-input').value || 'frontend_operator' },
+                    });
+                    renderJsonOutput(experimentSummaryOutput, payload, 'No experiment decision available.');
+                    setInlineStatus(experimentStatus, `Recorded decision for ${experimentId}.`);
+                    await loadExperimentWorkspace();
+                } catch (error) {
+                    setInlineStatus(experimentStatus, error.message || 'Failed to record decision.', true);
+                }
+            }
+
+            async function ingestExperimentOutcomes() {
+                const experimentId = getCurrentExperimentId();
+                try {
+                    setInlineStatus(experimentIngestStatus, 'Ingesting outcomes...');
+                    const payload = parseJsonText(document.getElementById('experiment-outcomes-json').value, { outcomes: [] });
+                    const response = await apiRequest(`/experiments/${encodeURIComponent(experimentId)}/outcomes:ingest`, {
+                        method: 'POST',
+                        body: payload,
+                    });
+                    setInlineStatus(experimentIngestStatus, `Ingested ${response.ingested || 0} outcomes.`);
+                    await loadExperimentWorkspace();
+                } catch (error) {
+                    setInlineStatus(experimentIngestStatus, error.message || 'Failed to ingest outcomes.', true);
+                }
+            }
+
+            async function loadExperimentHub() {
+                await loadExperimentWorkspace();
+            }
+
+            function renderCopilotMetaList(container, items = [], label) {
+                renderSimpleTable(
+                    container,
+                    [
+                        { label: `${label} ID`, render: (item) => escapeHtml(item[`${label.toLowerCase()}_id`] || item.query_id || '-') },
+                        { label: 'Created', render: (item) => escapeHtml(formatDateTime(item.created_at)) },
+                        { label: 'Summary', render: (item) => `<span class="subtle">${escapeHtml(JSON.stringify(item.drivers || item.response || item.context || item.methodology || {}))}</span>` },
+                    ],
+                    items,
+                    `No ${label.toLowerCase()} items found.`,
+                );
+            }
+
+            async function runCopilotRequest(path, body) {
+                try {
+                    const payload = await apiRequest(path, { method: 'POST', body });
+                    renderJsonOutput(copilotResponseOutput, payload, 'No copilot response.');
+                    if (payload.query_id) {
+                        document.getElementById('copilot-query-log-id-input').value = payload.query_id;
+                    }
+                    await loadCopilotMeta();
+                } catch (error) {
+                    renderJsonOutput(copilotResponseOutput, { error: error.message }, 'Copilot request failed.');
+                }
+            }
+
+            async function loadCopilotMeta() {
+                try {
+                    const [anomaliesPayload, reportsPayload] = await Promise.all([
+                        apiRequest('/copilot/anomalies'),
+                        apiRequest('/copilot/reports'),
+                    ]);
+                    renderCopilotMetaList(copilotAnomaliesList, anomaliesPayload.items || [], 'Anomaly');
+                    renderCopilotMetaList(copilotReportsList, reportsPayload.items || [], 'Report');
+                } catch (error) {
+                    renderJsonOutput(copilotQueryLogOutput, { error: error.message }, 'Failed to load copilot metadata.');
+                }
+            }
+
+            async function loadCopilotQueryLog() {
+                const queryId = (document.getElementById('copilot-query-log-id-input').value || '').trim();
+                if (!queryId) {
+                    renderJsonOutput(copilotQueryLogOutput, null, 'Enter a query log ID first.');
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/copilot/query-logs/${encodeURIComponent(queryId)}`);
+                    renderJsonOutput(copilotQueryLogOutput, payload, 'No query log available.');
+                } catch (error) {
+                    renderJsonOutput(copilotQueryLogOutput, { error: error.message }, 'Failed to load query log.');
+                }
+            }
+
+            async function loadInsightCopilot() {
+                await loadCopilotMeta();
+            }
+
+            audienceCreateCohortBtn.addEventListener('click', createAudienceCohort);
+            document.getElementById('audience-refresh-list-btn').addEventListener('click', loadAudienceEngine);
+            document.getElementById('audience-load-members-btn').addEventListener('click', () => loadAudienceMembers());
+            document.getElementById('audience-load-versions-btn').addEventListener('click', () => loadAudienceVersions());
+            document.getElementById('audience-load-metrics-btn').addEventListener('click', () => loadAudienceMetrics());
+            document.getElementById('audience-compare-btn').addEventListener('click', compareAudienceVersions);
+            document.getElementById('audience-rollback-btn').addEventListener('click', rollbackAudienceVersion);
+            document.getElementById('sql-preview-btn').addEventListener('click', previewSqlWorkspace);
+            document.getElementById('sql-save-query-btn').addEventListener('click', saveSqlWorkspaceQuery);
+            document.getElementById('sql-create-cohort-btn').addEventListener('click', async () => {
+                const firstQuery = cachedSavedQueries[0];
+                if (!firstQuery) {
+                    setInlineStatus(sqlWorkspaceStatus, 'Save a query first, or use a saved query action.', true);
+                    return;
+                }
+                await createCohortFromSavedQuery(firstQuery.query_id);
+            });
+            document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
+            document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);
+            document.getElementById('orchestrator-run-due-btn').addEventListener('click', runDueWorkflows);
+            document.getElementById('orchestrator-kill-on-btn').addEventListener('click', () => setKillSwitch(true));
+            document.getElementById('orchestrator-kill-off-btn').addEventListener('click', () => setKillSwitch(false));
+            document.getElementById('activation-ingest-btn').addEventListener('click', ingestProviderCallbacks);
+            document.getElementById('export-diagnostics-btn').addEventListener('click', loadExportDiagnostics);
+            document.getElementById('export-retry-btn').addEventListener('click', retryExportDiagnostics);
+            document.getElementById('experiment-load-btn').addEventListener('click', loadExperimentWorkspace);
+            document.getElementById('experiment-save-btn').addEventListener('click', saveExperimentConfig);
+            document.getElementById('experiment-start-btn').addEventListener('click', () => updateExperimentLifecycle('start'));
+            document.getElementById('experiment-stop-btn').addEventListener('click', () => updateExperimentLifecycle('stop'));
+            document.getElementById('experiment-refresh-btn').addEventListener('click', loadExperimentWorkspace);
+            document.getElementById('experiment-decision-btn').addEventListener('click', decideExperiment);
+            document.getElementById('experiment-ingest-outcomes-btn').addEventListener('click', ingestExperimentOutcomes);
+            document.getElementById('copilot-query-btn').addEventListener('click', async () => {
+                await runCopilotRequest('/copilot/query', {
+                    question: document.getElementById('copilot-question-input').value,
+                    time_window: document.getElementById('copilot-query-window-input').value || null,
+                    filters: parseJsonText(document.getElementById('copilot-query-filters-json').value, {}),
+                });
+            });
+            document.getElementById('copilot-explain-btn').addEventListener('click', async () => {
+                await runCopilotRequest('/copilot/explain', {
+                    metric_id: document.getElementById('copilot-explain-metric-input').value,
+                    time_window: document.getElementById('copilot-explain-window-input').value || '7d',
+                    dimensions: splitCsv(document.getElementById('copilot-explain-dimensions-input').value),
+                });
+            });
+            document.getElementById('copilot-recommend-btn').addEventListener('click', async () => {
+                await runCopilotRequest('/copilot/recommend', {
+                    insight: parseJsonText(document.getElementById('copilot-insight-json').value, {}),
+                    metric_context: parseJsonText(document.getElementById('copilot-metric-context-json').value, {}),
+                });
+            });
+            document.getElementById('copilot-report-btn').addEventListener('click', async () => {
+                await runCopilotRequest('/copilot/report', {
+                    report_type: document.getElementById('copilot-report-type-select').value || 'daily',
+                    time_window: document.getElementById('copilot-report-window-input').value || '7d',
+                });
+            });
+            document.getElementById('copilot-load-query-log-btn').addEventListener('click', loadCopilotQueryLog);
+            document.getElementById('copilot-refresh-meta-btn').addEventListener('click', loadCopilotMeta);
+
             // Health Check Logic
             const healthStatusDiv = document.getElementById('health-status');
             const statusTextSpan = document.getElementById('status-text');
@@ -2921,7 +4776,7 @@
             // Check status on page load and then every 30 seconds.
             checkBackendStatus();
             setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
-            loadReadyImportsForOperatorHub();
+            activateModule('data-core');
 
             // Theme Toggle Logic
             const themeToggle = document.getElementById('theme-switch-checkbox');
