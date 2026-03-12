@@ -1,0 +1,23 @@
+[project]
+name = "kairyx-ai"
+version = "0.1.0"
+description = "KairyxAI demo deployment"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.13",
+    "fastapi",
+    "google-cloud-bigquery",
+    "google-cloud-pubsub",
+    "google-cloud-storage",
+    "google-generativeai",
+    "gunicorn",
+    "httpx",
+    "pandas",
+    "psycopg[binary]>=3.2",
+    "pyarrow",
+    "pytest",
+    "requests",
+    "sqlalchemy>=2.0",
+    "uvicorn",
+]
