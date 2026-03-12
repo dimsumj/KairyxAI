@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from connectors import create_connector
+from app.core.errors import ResourceLockedError
 
 
 class ConnectorService:
@@ -16,6 +17,16 @@ class ConnectorService:
         return self.repository.upsert_connector(name=name, connector_type=connector_type, config=config)
 
     def delete_connector(self, name: str) -> bool:
+        blocking_jobs = [
+            job["id"]
+            for job in self.repository.list_import_jobs()
+            if str(job.get("source_name") or (job.get("spec") or {}).get("source_name") or "") == name
+            and str(job.get("status") or "").lower() not in {"completed", "cancelled"}
+        ]
+        if blocking_jobs:
+            raise ResourceLockedError(
+                f"Connector '{name}' is locked by import jobs: {', '.join(sorted(blocking_jobs)[:5])}."
+            )
         return self.repository.delete_connector(name)
 
     def health_check(self, name: str) -> Dict[str, Any]:

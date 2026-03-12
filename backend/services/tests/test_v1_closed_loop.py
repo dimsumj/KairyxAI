@@ -796,6 +796,99 @@ def test_workflow_event_threshold_confirmation_and_experiment_extensions(client)
     assert deliveries.json()["items"][0]["delivery_diagnostics"]["attempt_count"] == 3
 
 
+def test_workflow_lifecycle_guards_return_locked(client):
+    _seed_mock_warehouse()
+    _seed_prediction_job()
+
+    cohort = client.post(
+        "/api/v1/cohorts",
+        json={
+            "name": "locked_cohort",
+            "type": "sql",
+            "definition": {"sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"},
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=locked_exp",
+        json={
+            "enabled": True,
+            "status": "active",
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+        },
+    )
+    assert experiment.status_code == 200
+
+    workflow = client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "locked_workflow",
+            "cohort_id": cohort_id,
+            "schedule": {"type": "daily_schedule", "hour": 0, "minute": 0},
+            "action": {"channel": "email", "content": "Locked lifecycle test"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "locked_exp",
+        },
+    )
+    assert workflow.status_code == 201
+    workflow_id = workflow.json()["workflow_id"]
+    assert client.post(f"/api/v1/workflows/{workflow_id}/publish").status_code == 200
+
+    archive = client.post(f"/api/v1/cohorts/{cohort_id}/archive", headers={"x-actor-role": "operator"})
+    assert archive.status_code == 423
+    assert "locked by published workflows" in archive.json()["detail"]
+
+    paused = client.post(f"/api/v1/cohorts/{cohort_id}/pause", headers={"x-actor-role": "operator"})
+    assert paused.status_code == 200
+
+    locked_run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        json={"limit": 10, "confirm": True, "sandbox": True},
+        headers={"x-actor-role": "operator"},
+    )
+    assert locked_run.status_code == 423
+    assert "locked for workflow execution" in locked_run.json()["detail"]
+
+    delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
+    assert delete.status_code == 423
+    assert "locked by workflows" in delete.json()["detail"]
+
+    assert client.post(f"/api/v1/cohorts/{cohort_id}/activate", headers={"x-actor-role": "operator"}).status_code == 200
+    assert client.post("/api/v1/experiments/locked_exp/stop", headers={"x-actor-role": "operator"}).status_code == 200
+
+    stopped_run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        json={"limit": 10, "confirm": True, "sandbox": False},
+        headers={"x-actor-role": "operator"},
+    )
+    assert stopped_run.status_code == 423
+    assert "Experiment 'locked_exp' is stopped" in stopped_run.json()["detail"]
+
+    missing_experiment_workflow = client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "missing_experiment_workflow",
+            "cohort_id": cohort_id,
+            "schedule": {"type": "daily_schedule", "hour": 0, "minute": 0},
+            "action": {"channel": "email", "content": "Missing experiment"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "missing_exp",
+        },
+    )
+    assert missing_experiment_workflow.status_code == 201
+    publish_missing = client.post(f"/api/v1/workflows/{missing_experiment_workflow.json()['workflow_id']}/publish")
+    assert publish_missing.status_code == 404
+    assert "Experiment 'missing_exp'" in publish_missing.json()["detail"]
+
+
 def test_audience_copilot_weekly_report_and_permanent_delete(client):
     _seed_mock_warehouse()
     _seed_prediction_job()
@@ -912,12 +1005,29 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     assert any(item.get("report_type") == "weekly" for item in reports.json()["items"])
 
     archived = client.post(f"/api/v1/cohorts/{cohort_id}/archive")
-    assert archived.status_code == 200
+    assert archived.status_code == 423
 
     denied_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "operator"})
     assert denied_delete.status_code == 403
 
-    deleted = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
+    locked_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
+    assert locked_delete.status_code == 423
+
+    disposable = client.post(
+        "/api/v1/cohorts",
+        json={
+            "name": "delete_safe_cohort",
+            "type": "list",
+            "definition": {"members": [{"canonical_user_id": "delete_u_1", "email": "delete_u_1@example.com"}]},
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert disposable.status_code == 201
+    disposable_id = disposable.json()["cohort_id"]
+    assert client.post(f"/api/v1/cohorts/{disposable_id}/archive").status_code == 200
+
+    deleted = client.delete(f"/api/v1/cohorts/{disposable_id}/permanent", headers={"x-actor-role": "admin"})
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
 

@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 import requests
 
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import JobStatus
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from pubsub_service import PubSubService
@@ -18,9 +19,7 @@ class ExportService:
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     def create_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        prediction_job = self.repository.get_prediction_job(payload["prediction_job_id"])
-        if prediction_job is None:
-            raise KeyError(payload["prediction_job_id"])
+        self._require_completed_prediction(str(payload["prediction_job_id"]))
         job = self.repository.create_export_job(
             {
                 "id": f"exp_{uuid.uuid4().hex[:20]}",
@@ -75,6 +74,9 @@ class ExportService:
         job = self.repository.get_export_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        prediction_job_id = str((job.get("spec") or {}).get("prediction_job_id") or "")
+        if prediction_job_id:
+            self._require_completed_prediction(prediction_job_id)
         existing_details = (((job.get("progress") or {}).get("details")) or {})
         attempt = int(existing_details.get("attempt") or 0) + 1
         self.repository.update_export_job(job_id, {"status": JobStatus.RUNNING.value})
@@ -263,3 +265,18 @@ class ExportService:
         )
         response.raise_for_status()
         return {"provider": provider, "status_code": response.status_code, "count": len(attributes)}
+
+    def _require_completed_prediction(self, prediction_job_id: str) -> Dict[str, Any]:
+        prediction_job = self.repository.get_prediction_job(prediction_job_id)
+        if prediction_job is None:
+            raise MissingDependencyError(
+                "prediction job",
+                prediction_job_id,
+                detail=f"Prediction job '{prediction_job_id}' required for export is missing.",
+            )
+        prediction_status = str(prediction_job.get("status") or "").lower()
+        if prediction_status != JobStatus.COMPLETED.value:
+            raise ResourceLockedError(
+                f"Prediction job '{prediction_job_id}' is {prediction_status or 'unknown'} and cannot be used for export until completed."
+            )
+        return prediction_job

@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from app.core.errors import ResourceLockedError
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
@@ -339,6 +340,11 @@ class CohortService:
         return self._set_status(cohort_id, "paused", "cohort_paused")
 
     def archive_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        blocking_workflows = self._referencing_workflows(cohort_id, statuses={"published"})
+        if blocking_workflows:
+            raise ResourceLockedError(
+                f"Cohort '{cohort_id}' is locked by published workflows: {', '.join(blocking_workflows[:5])}."
+            )
         archived_at = datetime.utcnow().isoformat()
         return self._set_status(
             cohort_id,
@@ -376,6 +382,11 @@ class CohortService:
         cohort = self.get_cohort(cohort_id)
         if cohort is None:
             raise KeyError(cohort_id)
+        blocking_workflows = self._referencing_workflows(cohort_id)
+        if blocking_workflows:
+            raise ResourceLockedError(
+                f"Cohort '{cohort_id}' is locked by workflows: {', '.join(blocking_workflows[:5])}."
+            )
         for resource_type in ("cohort_snapshot", "cohort_metrics_daily", "cohort_experiment_link", "cohort_refresh_job"):
             for record in self.repository.list_resources(resource_type):
                 payload = record.get("payload") or {}
@@ -617,6 +628,21 @@ class CohortService:
             "experiment_ids": experiment_ids,
             "last_calculated_at": datetime.utcnow().isoformat(),
         }
+
+    def _referencing_workflows(self, cohort_id: str, *, statuses: set[str] | None = None) -> List[str]:
+        items: List[str] = []
+        for record in self.repository.list_resources("workflow"):
+            payload = record.get("payload") or {}
+            definition = payload.get("definition") or {}
+            if str(definition.get("cohort_id") or payload.get("cohort_id") or "") != cohort_id:
+                continue
+            workflow_status = str(payload.get("status") or record.get("status") or "").lower()
+            if statuses and workflow_status not in statuses:
+                continue
+            workflow_id = str(payload.get("workflow_id") or record.get("resource_id") or "")
+            if workflow_id:
+                items.append(workflow_id)
+        return sorted(items)
 
     def _build_activation_preflight(
         self,
