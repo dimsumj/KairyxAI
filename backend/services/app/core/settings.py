@@ -28,6 +28,8 @@ class Settings:
     scheduler_daily_report_hour: int = 9
     scheduler_weekly_report_hour: int = 9
     scheduler_weekly_report_weekday: int = 0
+    prediction_network_timeout_seconds: float = 20.0
+    prediction_stop_poll_interval_seconds: float = 0.1
 
 
 def get_settings() -> Settings:
@@ -55,4 +57,6 @@ def get_settings() -> Settings:
         scheduler_daily_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_DAILY_REPORT_HOUR", "9")))),
         scheduler_weekly_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_WEEKLY_REPORT_HOUR", "9")))),
         scheduler_weekly_report_weekday=min(6, max(0, int(os.getenv("SCHEDULER_WEEKLY_REPORT_WEEKDAY", "0")))),
+        prediction_network_timeout_seconds=max(0.5, float(os.getenv("PREDICTION_NETWORK_TIMEOUT_SECONDS", "20"))),
+        prediction_stop_poll_interval_seconds=max(0.05, float(os.getenv("PREDICTION_STOP_POLL_INTERVAL_SECONDS", "0.1"))),
     )

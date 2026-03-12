@@ -2,7 +2,7 @@
 
 from typing import Dict, Any, Optional
 import json
-from gemini_client import GeminiClient
+from gemini_client import GeminiClient, GeminiRequestError
 from json_encoder import NpEncoder
 
 class GrowthDecisionEngine:
@@ -102,6 +102,8 @@ class GrowthDecisionEngine:
             action["player_id"] = player_id
             action["timing"] = "immediate"
             return action
+        except GeminiRequestError:
+            raise
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error processing AI response for next action: {e}")
             return self._fallback_action(player_profile, churn_estimate)

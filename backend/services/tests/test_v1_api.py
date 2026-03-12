@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 import threading
@@ -10,7 +11,9 @@ from fastapi.testclient import TestClient
 
 from app.application.imports import ImportService
 from app.core import db as db_module
+from app.core.deps import get_settings_dependency
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
+from app.core.settings import get_settings
 from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
@@ -213,9 +216,10 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     captured = {}
 
     class FakeGeminiClient:
-        def __init__(self, api_key=None, model_name=None):
+        def __init__(self, api_key=None, model_name=None, stop_checker=None):
             captured["api_key"] = api_key
             captured["model_name"] = model_name
+            captured["stop_checker_present"] = stop_checker is not None
 
         def get_ai_response(self, prompt: str):
             if "Provide JSON with keys" in prompt:
@@ -281,9 +285,126 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     assert payload["items"][0]["suggested_action"] == "Gemini save offer"
     assert captured["api_key"] == "google-api-key-from-connector"
     assert captured["model_name"] == "gemini-2.5-flash"
+    assert captured["stop_checker_present"] is True
     assert captured["gemini_client_present"] is True
     assert captured["estimate_called"] is True
     assert captured["job_id"] == import_job["id"]
+
+
+def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        prediction_network_timeout_seconds=0.2,
+        prediction_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Google AI",
+            "type": "google",
+            "config": {"api_key": "google-api-key-from-connector", "model_name": "gemini-2.5-flash"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    source_connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert source_connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+
+    class SlowGeminiClient:
+        def __init__(self, api_key=None, model_name=None, stop_checker=None):
+            self.stop_checker = stop_checker
+
+        def get_ai_response(self, prompt):
+            time.sleep(2.0)
+            return '{"churn_risk":"high","reason":"late","top_signals":[]}'
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            self.gemini_client = gemini_client
+
+        def get_all_player_ids(self):
+            return ["player-1"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": f"{player_id}@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            self.gemini_client.get_ai_response("slow")
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "high",
+                "reason": "slow network response",
+                "top_signals": [{"signal": "sessions", "value": 4}],
+            }
+
+    class FakeDecisionEngine:
+        def __init__(self, gemini_client):
+            self.gemini_client = gemini_client
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            return {"content": f"message for {player_profile['player_id']}"}
+
+    monkeypatch.setattr("app.application.predictions.GeminiClient", SlowGeminiClient)
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    started_at = time.monotonic()
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 1.5
+    assert run_prediction.status_code == 500
+    assert "timed out" in run_prediction.json()["detail"]
+    assert run_prediction.json()["job"]["status"] == "failed"
+
+    failed_job = client.get(prediction_job["links"]["self"])
+    assert failed_job.status_code == 200
+    assert failed_job.json()["status"] == "failed"
+    assert "timed out" in failed_job.json()["error"]
 
 
 def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch):
@@ -401,11 +522,12 @@ def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch)
     assert stop_prediction.status_code == 200
     assert stop_prediction.json()["status"] in {"stopping", "stopped"}
 
-    release_remaining_players.set()
-    thread.join(timeout=5)
+    thread.join(timeout=1.5)
     assert not thread.is_alive()
     assert run_result["response"].status_code == 200
     assert run_result["response"].json()["status"] == "stopped"
+
+    release_remaining_players.set()
 
     stopped_state = client.get(prediction_job["links"]["self"])
     assert stopped_state.status_code == 200

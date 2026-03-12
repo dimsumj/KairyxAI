@@ -6,16 +6,39 @@ import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
+from typing import Callable, Optional
 import google.generativeai as genai
 
 from app.core.runtime import is_shutdown_requested
+
+
+class GeminiRequestError(RuntimeError):
+    pass
+
+
+class GeminiRequestInterruptedError(GeminiRequestError):
+    pass
+
+
+class GeminiRequestTimeoutError(GeminiRequestError):
+    pass
+
+
+class GeminiRequestExecutionError(GeminiRequestError):
+    pass
+
 
 class GeminiClient:
     """
     A client to interact with the Google Gemini API.
     """
 
-    def __init__(self, api_key: str | None = None, model_name: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model_name: str | None = None,
+        stop_checker: Optional[Callable[[], bool]] = None,
+    ):
         """
         Initializes the Gemini client and configures it with an API key.
         """
@@ -43,6 +66,7 @@ class GeminiClient:
         self._circuit_open_sec = int(os.getenv("AI_LLM_CIRCUIT_OPEN_SEC", "60"))
         # Approximate cost per 1K total tokens (input + output) for budget enforcement.
         self._usd_per_1k_tokens = float(os.getenv("AI_COST_PER_1K_TOKENS_USD", "0.002"))
+        self._stop_checker = stop_checker
         
         print(f"GeminiClient initialized successfully with model: {model_name}")
 
@@ -57,7 +81,7 @@ class GeminiClient:
             The generated text response from the model.
         """
         if is_shutdown_requested():
-            raise RuntimeError("Service shutdown requested before Gemini call.")
+            raise GeminiRequestInterruptedError("Service shutdown requested before Gemini call.")
         prompt_hash = self._prompt_hash(prompt)
         cached = self._get_cached_response(prompt_hash)
         if cached is not None:
@@ -266,16 +290,28 @@ class GeminiClient:
                     backoff = self._retry_backoff_sec * (2 ** attempt)
                     time.sleep(max(0.0, backoff))
 
-        raise RuntimeError(f"Gemini request failed after retries: {last_error}")
+        raise GeminiRequestExecutionError(f"Gemini request failed after retries: {last_error}")
 
     def _generate_with_timeout(self, prompt: str):
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.model.generate_content, prompt)
-            try:
-                return future.result(timeout=self._request_timeout_sec)
-            except FuturesTimeoutError:
-                future.cancel()
-                raise RuntimeError("Gemini request timed out.")
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.model.generate_content, prompt)
+        deadline = time.monotonic() + max(0.1, self._request_timeout_sec)
+        poll_interval = min(0.25, max(0.05, self._request_timeout_sec / 10.0))
+        try:
+            while True:
+                if is_shutdown_requested() or (callable(self._stop_checker) and self._stop_checker()):
+                    future.cancel()
+                    raise GeminiRequestInterruptedError("Gemini request interrupted.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    future.cancel()
+                    raise GeminiRequestTimeoutError("Gemini request timed out.")
+                try:
+                    return future.result(timeout=min(poll_interval, remaining))
+                except FuturesTimeoutError:
+                    continue
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _load_circuit_state(self) -> dict:
         if not os.path.exists(self._circuit_path):
@@ -317,7 +353,7 @@ class GeminiClient:
     def _raise_if_circuit_open(self):
         snapshot = self._get_circuit_snapshot()
         if snapshot.get("is_open"):
-            raise RuntimeError(
+            raise GeminiRequestExecutionError(
                 f"Gemini circuit breaker is open until {snapshot.get('open_until')}. Last error: {snapshot.get('last_error')}"
             )
 
