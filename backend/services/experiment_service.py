@@ -6,12 +6,15 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
 
+from runtime_paths import resolve_runtime_file_path
+
 
 class ExperimentService:
     def __init__(self, base_dir: str = "."):
-        self.base = Path(base_dir)
+        self.base = resolve_runtime_file_path(base_dir, ensure_parent=True)
         self.exposure_file = self.base / ".experiments_exposure.jsonl"
         self.outcome_file = self.base / ".experiments_outcome.jsonl"
+        self.base.mkdir(parents=True, exist_ok=True)
 
     def assign(self, experiment_id: str, player_id: Any, holdout_pct: float = 0.1, b_variant_pct: float = 0.5) -> Dict[str, Any]:
         key = f"{experiment_id}:{player_id}".encode("utf-8")

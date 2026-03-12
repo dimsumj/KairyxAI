@@ -12,6 +12,7 @@ from connectors import create_connector
 from pipeline_models import ShardManifest
 from pubsub_service import PubSubService
 from local_job_store import save_ingestion_checkpoint
+from runtime_paths import resolve_runtime_file_path
 
 
 class IngestionService:
@@ -44,8 +45,7 @@ class IngestionService:
         self.local_shard_event_count = max(1, int(os.getenv("INGEST_LOCAL_SHARD_EVENT_COUNT", "5000")))
         self.retry_max_attempts = int(os.getenv("INGEST_RETRY_MAX_ATTEMPTS", "3"))
         self.retry_backoff_sec = float(os.getenv("INGEST_RETRY_BACKOFF_SEC", "1.5"))
-        self.dlq_path = Path(os.getenv("INGEST_DLQ_FILE", ".cache/ingest_dlq.jsonl"))
-        self.dlq_path.parent.mkdir(parents=True, exist_ok=True)
+        self.dlq_path = resolve_runtime_file_path(os.getenv("INGEST_DLQ_FILE", ".cache/ingest_dlq.jsonl"), ensure_parent=True)
         print(f"IngestionService initialized for connector={connector_type} (simulating Pub/Sub publisher).")
 
     def _record_dead_letter(self, start_date: str, end_date: str, error_text: str):

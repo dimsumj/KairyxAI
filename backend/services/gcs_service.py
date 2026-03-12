@@ -2,7 +2,10 @@
 
 import os
 import json
+from pathlib import Path
 from typing import List, Dict, Any
+
+from runtime_paths import resolve_runtime_file_path
 
 
 class GcsService:
@@ -38,8 +41,8 @@ class GcsService:
         self._bucket = self._client.bucket(self.bucket_name)
 
     def _init_mock_backend(self):
-        self._bucket_path = os.path.join(".cache", "raw", self.bucket_name)
-        self._legacy_bucket_path = os.path.join(".gcs_bucket", self.bucket_name)
+        self._bucket_path = str(resolve_runtime_file_path(Path(".cache") / "raw" / self.bucket_name, ensure_parent=True))
+        self._legacy_bucket_path = str(resolve_runtime_file_path(Path(".gcs_bucket") / self.bucket_name, ensure_parent=True))
         os.makedirs(self._bucket_path, exist_ok=True)
 
     def _encode_raw_events(self, events: List[Dict[str, Any]]) -> str:

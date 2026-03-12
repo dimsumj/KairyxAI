@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+from runtime_paths import resolve_runtime_file_path
+
 INT64_MAX = 2**63 - 1
 INT64_MIN = -(2**63)
 
@@ -135,11 +137,11 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
-        self._cache_path = ".cache/bigquery_table.parquet"
-        self._curated_cache_path = ".cache/events_curated.parquet"
-        self._player_latest_state_cache_path = ".cache/player_latest_state.parquet"
-        self._dead_letter_cache_path = ".cache/pipeline_dead_letters.parquet"
-        self._prediction_results_cache_path = ".cache/prediction_results.parquet"
+        self._cache_path = str(resolve_runtime_file_path(".cache/bigquery_table.parquet", ensure_parent=True))
+        self._curated_cache_path = str(resolve_runtime_file_path(".cache/events_curated.parquet", ensure_parent=True))
+        self._player_latest_state_cache_path = str(resolve_runtime_file_path(".cache/player_latest_state.parquet", ensure_parent=True))
+        self._dead_letter_cache_path = str(resolve_runtime_file_path(".cache/pipeline_dead_letters.parquet", ensure_parent=True))
+        self._prediction_results_cache_path = str(resolve_runtime_file_path(".cache/prediction_results.parquet", ensure_parent=True))
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)

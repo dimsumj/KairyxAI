@@ -31,6 +31,7 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    scheduler_default = "false" if str(os.getenv("VERCEL", "")).strip() else "true"
     database_url = normalize_sqlite_database_url(
         os.getenv("CONTROL_PLANE_DATABASE_URL")
         or os.getenv("DATABASE_URL")
@@ -50,7 +51,7 @@ def get_settings() -> Settings:
         export_batch_size=max(1, int(os.getenv("EXPORT_BATCH_SIZE", "500"))),
         export_retry_attempts=max(1, int(os.getenv("EXPORT_RETRY_ATTEMPTS", "3"))),
         job_retention_days=max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
-        scheduler_enabled=str(os.getenv("SCHEDULER_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"},
+        scheduler_enabled=str(os.getenv("SCHEDULER_ENABLED", scheduler_default)).strip().lower() not in {"0", "false", "no", "off"},
         scheduler_interval_seconds=max(5, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60"))),
         scheduler_daily_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_DAILY_REPORT_HOUR", "9")))),
         scheduler_weekly_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_WEEKLY_REPORT_HOUR", "9")))),

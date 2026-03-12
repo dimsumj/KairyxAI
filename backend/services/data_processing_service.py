@@ -11,6 +11,7 @@ from gcs_service import GcsService
 from ingestion_service import IngestionService
 from local_job_store import resolve_or_create_canonical_user_id
 from pipeline_models import PIPELINE_SCHEMA_VERSION, build_event_fingerprint, derive_event_date
+from runtime_paths import resolve_runtime_file_path
 
 class DataProcessingService:
     """
@@ -35,10 +36,8 @@ class DataProcessingService:
         self.gcs_service = gcs_service
         self.bigquery_service = bigquery_service
         self.job_identifier = job_identifier
-        self.rejection_file = Path(".cache/rejected_events.jsonl")
-        self.conflict_file = Path(".cache/conflict_log.jsonl")
-        self.rejection_file.parent.mkdir(parents=True, exist_ok=True)
-        self.conflict_file.parent.mkdir(parents=True, exist_ok=True)
+        self.rejection_file = resolve_runtime_file_path(".cache/rejected_events.jsonl", ensure_parent=True)
+        self.conflict_file = resolve_runtime_file_path(".cache/conflict_log.jsonl", ensure_parent=True)
         print("DataProcessingService initialized (simulating Dataflow).")
 
     def _apply_event_to_dedupe_state(

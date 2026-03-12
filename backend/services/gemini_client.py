@@ -9,6 +9,7 @@ from datetime import datetime
 import google.generativeai as genai
 
 from app.core.runtime import is_shutdown_requested
+from runtime_paths import resolve_runtime_file_path
 
 class GeminiClient:
     """
@@ -28,9 +29,9 @@ class GeminiClient:
         model_name = (model_name or os.getenv("GOOGLE_GEMINI_MODEL") or "gemini-2.5-flash").strip()
         self.model_name = model_name
         self.model = genai.GenerativeModel(model_name)
-        self._cache_path = ".cache/llm_response_cache.json"
-        self._usage_path = ".cache/llm_usage.json"
-        self._circuit_path = ".cache/llm_circuit_breaker.json"
+        self._cache_path = str(resolve_runtime_file_path(".cache/llm_response_cache.json", ensure_parent=True))
+        self._usage_path = str(resolve_runtime_file_path(".cache/llm_usage.json", ensure_parent=True))
+        self._circuit_path = str(resolve_runtime_file_path(".cache/llm_circuit_breaker.json", ensure_parent=True))
         self._cache_ttl_seconds = int(os.getenv("AI_RESPONSE_CACHE_TTL_SEC", "21600"))
         self._daily_token_limit = self._read_int_env("AI_DAILY_TOKEN_LIMIT")
         self._monthly_token_limit = self._read_int_env("AI_MONTHLY_TOKEN_LIMIT")

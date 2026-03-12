@@ -6,11 +6,13 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.core.settings import get_settings
 from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 import local_job_store
 from local_job_store import list_identity_links, resolve_or_create_canonical_user_id
+import runtime_paths
 
 
 def test_local_job_store_accepts_sqlite_url_override(tmp_path, monkeypatch):
@@ -114,6 +116,24 @@ def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, m
 
     assert service_a1 is service_a2
     assert service_a1 is not service_b
+
+
+def test_vercel_runtime_defaults_use_tmp_storage(tmp_path, monkeypatch):
+    monkeypatch.delenv("KAIRYX_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setattr(runtime_paths.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    control_plane_url = runtime_paths.default_control_plane_database_url()
+    local_job_db = runtime_paths.default_local_job_store_path()
+    cache_path = runtime_paths.resolve_runtime_file_path(".cache/demo.jsonl", ensure_parent=True)
+    settings = get_settings()
+
+    expected_root = tmp_path / "kairyxai-runtime"
+    assert control_plane_url == f"sqlite:///{expected_root / '.kairyx_control_plane.db'}"
+    assert local_job_db == expected_root / ".kairyx_local.db"
+    assert cache_path == expected_root / ".cache" / "demo.jsonl"
+    assert settings.scheduler_enabled is False
 
 
 def test_prediction_polling_access_filter_logs_only_first_request_per_job():
