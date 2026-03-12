@@ -2282,7 +2282,7 @@ dimensions: campaign,country,platform</pre>
                     console.error(`Import job ${jobId} failed:`, error);
                 } finally {
                     try {
-                        await loadImportedDataList();
+                        await syncImportDependentViews();
                     } catch (refreshError) {
                         console.error(`Unable to refresh import list for ${jobId}:`, refreshError);
                     }
@@ -2658,7 +2658,7 @@ dimensions: campaign,country,platform</pre>
                                 }
                                 try {
                                     await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
-                                    loadSavedConnectors(); // Refresh the list
+                                    await syncConnectorDependentViews();
                                 } catch (error) {
                                     alert(`Error: ${error.message}`);
                                 }
@@ -2671,6 +2671,27 @@ dimensions: campaign,country,platform</pre>
                     console.error('Error loading saved connectors:', error);
                     connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 }
+            }
+
+            async function syncConnectorDependentViews() {
+                const tasks = [
+                    loadConfiguredSources(),
+                    loadReadyImportsForOperatorHub(),
+                ];
+                if (activePageId === 'connectors') {
+                    tasks.unshift(loadSavedConnectors());
+                }
+                await Promise.allSettled(tasks);
+            }
+
+            async function syncImportDependentViews() {
+                const tasks = [
+                    loadReadyImportsForOperatorHub(),
+                ];
+                if (activePageId === 'player-cohorts') {
+                    tasks.push(loadImportedDataList());
+                }
+                await Promise.allSettled(tasks);
             }
 
             const connectorFields = {
@@ -2809,9 +2830,8 @@ dimensions: campaign,country,platform</pre>
 
                 try {
                     const connector = await createConnectorRecord(type, payload);
+                    await syncConnectorDependentViews();
                     alert(`${formatConnectorLabel(connector.type)} connector '${connector.name}' saved.`);
-
-                    loadSavedConnectors(); // Refresh the list of connectors
                     cancelBtn.click(); // Reset form
                 } catch (error) {
                     console.error('Error saving connector:', error);
@@ -3738,7 +3758,7 @@ dimensions: campaign,country,platform</pre>
                             }
                             await deleteImportRecord(jobId);
                         }
-                        await loadImportedDataList();
+                        await syncImportDependentViews();
                     } catch (error) {
                         actionButton.disabled = false;
                         alert(`Unable to ${action} import: ${error.message}`);
@@ -3799,15 +3819,15 @@ dimensions: campaign,country,platform</pre>
 
                 try {
                     const result = await createImportRecord(payload.source, payload.start_date, payload.end_date);
+                    await syncImportDependentViews();
                     const modeSuffix = result.raw_status === 'stopped'
                         ? 'was stopped.'
                         : backendMode === 'mock'
                         ? 'started locally. Status will update below.'
                         : 'queued. A worker must run it to completion.';
                     alert(`Import job '${result.name}' ${modeSuffix}`);
-                    loadImportedDataList(); // Refresh the list
                 } catch (error) {
-                    await loadImportedDataList();
+                    await syncImportDependentViews();
                     alert(`Error starting import: ${error.message}`);
                 }
             });
