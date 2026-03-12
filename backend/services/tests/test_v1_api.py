@@ -207,6 +207,8 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
 
     captured = {}
 
@@ -305,6 +307,8 @@ def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch)
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
 
     first_row_written = threading.Event()
     release_remaining_players = threading.Event()
@@ -435,6 +439,8 @@ def test_prediction_results_are_returned_newest_first(client, monkeypatch):
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
 
     class FakePlayerModelingEngine:
         def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
@@ -517,6 +523,8 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
 
     class FakePlayerModelingEngine:
         def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
@@ -838,6 +846,110 @@ def test_stop_and_delete_queued_import_job(client):
     assert get_deleted.status_code == 404
 
 
+def test_delete_connector_is_locked_by_active_import(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+
+    delete_connector = client.delete("/api/v1/connectors/Adjust%20Source")
+    assert delete_connector.status_code == 423
+    assert "locked by import jobs" in delete_connector.json()["detail"]
+
+
+def test_prediction_requires_completed_import_and_locks_import_deletion(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    locked_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert locked_prediction.status_code == 423
+    assert "cannot be used for prediction until completed" in locked_prediction.json()["detail"]
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    assert run_import.json()["status"] == "completed"
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+
+    delete_import = client.delete(import_job["links"]["self"])
+    assert delete_import.status_code == 423
+    assert "locked by prediction jobs" in delete_import.json()["detail"]
+
+
+def test_export_requires_completed_prediction(client):
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.create_prediction_job(
+            {
+                "id": "pred_pending",
+                "import_job_id": "imp_completed",
+                "status": "queued",
+                "spec": {"import_job_id": "imp_completed", "prediction_mode": "local"},
+                "progress": {"current": 0, "total": 0, "pct": 0.0, "details": {}},
+            }
+        )
+        session.commit()
+
+    create_export = client.post(
+        "/api/v1/exports",
+        json={
+            "prediction_job_id": "pred_pending",
+            "provider": "webhook",
+            "channel": "email",
+            "audience_name": "pending_prediction",
+            "webhook_url": "https://example.com/export",
+        },
+    )
+    assert create_export.status_code == 423
+    assert "cannot be used for export until completed" in create_export.json()["detail"]
+
+
 def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -1130,6 +1242,8 @@ def test_startup_retention_cleanup_removes_expired_import_and_prediction_cache(c
     )
     assert create_import.status_code == 201
     import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
 
     create_prediction = client.post(
         "/api/v1/predictions",

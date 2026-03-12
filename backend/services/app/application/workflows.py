@@ -9,6 +9,7 @@ from engagement_executor import EngagementExecutor
 
 from app.application.cohorts import CohortService
 from app.application.experiments import ExperimentConfigService
+from app.core.errors import MissingDependencyError, ResourceLockedError
 
 
 class WorkflowService:
@@ -148,6 +149,10 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
+        experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
+        if experiment_id:
+            self._require_active_experiment(experiment_id)
         preflight = self._build_publish_preflight(payload)
         if not preflight["eligible"]:
             raise ValueError("; ".join(preflight["reasons"]))
@@ -164,6 +169,17 @@ class WorkflowService:
         return self._set_status(workflow_id, "paused", "workflow_paused")
 
     def resume_workflow(self, workflow_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            raise KeyError(workflow_id)
+        payload = dict(record.get("payload") or {})
+        self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
+        experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
+        if experiment_id:
+            self._require_active_experiment(experiment_id)
+        preflight = self._build_publish_preflight(payload)
+        if not preflight["eligible"]:
+            raise ValueError("; ".join(preflight["reasons"]))
         return self._set_status(workflow_id, "published", "workflow_resumed")
 
     def set_kill_switch(self, enabled: bool) -> Dict[str, Any]:
@@ -666,6 +682,13 @@ class WorkflowService:
                 reasons.append("threshold_operator_invalid")
         if not workflow.get("experiment_id") and not definition.get("experiment_id"):
             reasons.append("experiment_missing")
+        else:
+            experiment_id = str(workflow.get("experiment_id") or definition.get("experiment_id") or "")
+            experiment = self.repository.get_resource("experiment", experiment_id)
+            if experiment is None:
+                reasons.append("experiment_not_found")
+            elif str(((experiment.get("payload") or {}).get("status") or experiment.get("status") or "")).lower() != "active":
+                reasons.append("experiment_not_active")
         policy = workflow.get("policy") or definition.get("policy") or {}
         for field in ("global_daily_limit", "channel_daily_limit", "cooldown_hours"):
             if int(policy.get(field) or 0) < 0:
@@ -1017,9 +1040,10 @@ class WorkflowService:
                 raise ValueError("Workflow requires confirmation before execution.")
             self._validate_confirmation(workflow["workflow_id"], confirmation_token)
 
-        cohort = self.cohorts.get_cohort(definition["cohort_id"])
-        if cohort is None:
-            raise KeyError(definition["cohort_id"])
+        cohort = self._require_active_cohort(str(definition["cohort_id"]))
+        experiment_id = workflow.get("experiment_id") or definition.get("experiment_id")
+        if experiment_id and not bool(sandbox):
+            self._require_active_experiment(str(experiment_id))
         if not manual_test and cohort.get("refresh_mode") == "daily":
             last_refreshed_at = cohort.get("last_refreshed_at")
             if not last_refreshed_at or last_refreshed_at[:10] < reference_time.date().isoformat():
@@ -1251,3 +1275,32 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="workflow_execution", payload=summary)
         self.repository.record_action("workflow_execution_completed", "workflow", workflow["workflow_id"], summary)
         return summary
+
+    def _require_active_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        if not cohort_id:
+            raise MissingDependencyError("cohort", cohort_id or "unknown", detail="Workflow cohort reference is missing.")
+        cohort = self.cohorts.get_cohort(cohort_id)
+        if cohort is None:
+            raise MissingDependencyError("cohort", cohort_id, detail=f"Cohort '{cohort_id}' referenced by workflow is missing.")
+        cohort_status = str(cohort.get("status") or "").lower()
+        if cohort_status != "active":
+            raise ResourceLockedError(
+                f"Cohort '{cohort_id}' is {cohort_status or 'unknown'} and is locked for workflow execution."
+            )
+        return cohort
+
+    def _require_active_experiment(self, experiment_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource("experiment", experiment_id)
+        if record is None:
+            raise MissingDependencyError(
+                "experiment",
+                experiment_id,
+                detail=f"Experiment '{experiment_id}' referenced by workflow is missing.",
+            )
+        payload = record.get("payload") or {}
+        experiment_status = str(payload.get("status") or record.get("status") or "").lower()
+        if experiment_status != "active":
+            raise ResourceLockedError(
+                f"Experiment '{experiment_id}' is {experiment_status or 'unknown'} and is locked for workflow execution."
+            )
+        return payload

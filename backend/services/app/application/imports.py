@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.application.mappings import MappingService
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import CheckpointStatus, JobStatus
 from dataflow.pipeline import DataflowNormalizationRunner
 from gcs_service import GcsService
@@ -460,6 +461,8 @@ class ImportService:
             updated_at = self._parse_timestamp(job.get("updated_at"))
             if updated_at is None or updated_at > cutoff:
                 continue
+            if self._active_prediction_dependencies(job["id"]):
+                continue
 
             try:
                 self.bigquery_service.delete_data_for_job(job["id"])
@@ -650,7 +653,12 @@ class ImportService:
 
         status = str(job.get("status") or "").lower()
         if status in {JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.STOPPING.value, JobStatus.READY.value}:
-            raise ValueError("Stop the import before deleting it.")
+            raise ResourceLockedError("Stop the import before deleting it.")
+        blocking_predictions = self._active_prediction_dependencies(job_id)
+        if blocking_predictions:
+            raise ResourceLockedError(
+                f"Import job '{job_id}' is locked by prediction jobs: {', '.join(blocking_predictions[:5])}."
+            )
 
         if self.repository.delete_import_job(job_id):
             self.repository.record_action("import_job_deleted", "import_job", job_id, job)
@@ -810,7 +818,11 @@ class ImportService:
 
         connector_record = self.repository.get_connector(job["spec"]["source_name"])
         if connector_record is None:
-            raise KeyError(job["spec"]["source_name"])
+            raise MissingDependencyError(
+                "connector",
+                str(job["spec"]["source_name"]),
+                detail=f"Connector '{job['spec']['source_name']}' required by import job '{job_id}' is missing.",
+            )
 
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
         if mapping_coverage < 95.0:
@@ -967,3 +979,14 @@ class ImportService:
             except Exception:
                 self.rollback_session()
             raise
+
+    def _active_prediction_dependencies(self, job_id: str) -> List[str]:
+        blocking_statuses = {JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.STOPPING.value}
+        return sorted(
+            [
+                str(item.get("id"))
+                for item in self.repository.list_prediction_jobs()
+                if str(item.get("import_job_id") or (item.get("spec") or {}).get("import_job_id") or "") == job_id
+                and str(item.get("status") or "").lower() in blocking_statuses
+            ]
+        )

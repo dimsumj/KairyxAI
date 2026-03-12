@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.api.schemas.jobs import build_job_response
 from app.application.imports import ImportService
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_import_service
 
@@ -54,6 +55,10 @@ def get_import(job_id: str, service: ImportService = Depends(get_import_service)
 def run_import(job_id: str, service: ImportService = Depends(get_import_service)):
     try:
         job = service.run_job(job_id)
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
     except Exception as exc:
@@ -92,6 +97,8 @@ def delete_import(job_id: str, request: Request, service: ImportService = Depend
         service.delete_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return None

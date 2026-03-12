@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import JobStatus
 from app.core.runtime import is_shutdown_requested
 from bigquery_service import BigQueryService, get_shared_bigquery_service
@@ -89,9 +90,7 @@ class PredictionService:
         return stopped
 
     def create_job(self, import_job_id: str, prediction_mode: str = "local") -> Dict[str, Any]:
-        import_job = self.repository.get_import_job(import_job_id)
-        if import_job is None:
-            raise KeyError(import_job_id)
+        self._require_completed_import(import_job_id)
         execution_details = self._prediction_execution_details(
             prediction_mode,
             gemini_available=self._has_configured_gemini(),
@@ -148,6 +147,8 @@ class PredictionService:
                 continue
             updated_at = self._parse_timestamp(job.get("updated_at"))
             if updated_at is None or updated_at > cutoff:
+                continue
+            if self._active_export_dependencies(job["id"]):
                 continue
 
             try:
@@ -212,9 +213,7 @@ class PredictionService:
         if str(job.get("status") or "").lower() == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id, self._stop_reason())
         import_job_id = job["spec"]["import_job_id"]
-        import_job = self.repository.get_import_job(import_job_id)
-        if import_job is None:
-            raise KeyError(import_job_id)
+        self._require_completed_import(import_job_id)
 
         mode = str(job["spec"].get("prediction_mode", "local")).lower()
         self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value, "error": None})
@@ -378,6 +377,32 @@ class PredictionService:
                 self.rollback_session()
                 logger.exception("Unable to mark prediction job %s failed.", job_id)
             raise
+
+    def _require_completed_import(self, import_job_id: str) -> Dict[str, Any]:
+        import_job = self.repository.get_import_job(import_job_id)
+        if import_job is None:
+            raise MissingDependencyError(
+                "import job",
+                import_job_id,
+                detail=f"Import job '{import_job_id}' required for prediction is missing.",
+            )
+        import_status = str(import_job.get("status") or "").lower()
+        if import_status != JobStatus.COMPLETED.value:
+            raise ResourceLockedError(
+                f"Import job '{import_job_id}' is {import_status or 'unknown'} and cannot be used for prediction until completed."
+            )
+        return import_job
+
+    def _active_export_dependencies(self, prediction_job_id: str) -> List[str]:
+        blocking_statuses = {JobStatus.QUEUED.value, JobStatus.READY.value, JobStatus.RUNNING.value}
+        return sorted(
+            [
+                str(item.get("id"))
+                for item in self.repository.list_export_jobs()
+                if str(item.get("prediction_job_id") or (item.get("spec") or {}).get("prediction_job_id") or "") == prediction_job_id
+                and str(item.get("status") or "").lower() in blocking_statuses
+            ]
+        )
 
     def _has_configured_gemini(self) -> bool:
         if self._select_google_connector() is not None:

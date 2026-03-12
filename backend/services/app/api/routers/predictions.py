@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.api.schemas.jobs import build_job_response
 from app.api.schemas.predictions import PredictionJobCreateRequest, PredictionResultsPage
 from app.application.predictions import PredictionService
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.deps import get_prediction_service, get_settings_dependency
 
 
@@ -30,8 +31,10 @@ def list_prediction_jobs(service: PredictionService = Depends(get_prediction_ser
 def create_prediction_job(request: PredictionJobCreateRequest, service: PredictionService = Depends(get_prediction_service)):
     try:
         job = service.create_job(request.import_job_id, request.prediction_mode)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Import job '{request.import_job_id}' not found.")
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
 
 
@@ -47,6 +50,10 @@ def get_prediction_job(job_id: str, service: PredictionService = Depends(get_pre
 def run_prediction_job(job_id: str, service: PredictionService = Depends(get_prediction_service)):
     try:
         job = service.run_job(job_id)
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Prediction job '{job_id}' not found.")
     except Exception as exc:

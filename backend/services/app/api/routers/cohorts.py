@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.schemas.cohorts import CohortCreateRequest, CohortMemberPage, CohortResponse, CohortUpdateRequest, CohortVersionListResponse
 from app.application.cohorts import CohortService
+from app.core.errors import ResourceLockedError
 from app.core.governance import ensure_permission, get_governance_context
 from app.core.deps import get_cohort_service
 
@@ -156,6 +157,8 @@ def archive_cohort(cohort_id: str, http_request: Request, service: CohortService
     ensure_permission(get_governance_context(http_request), "cohorts.archive")
     try:
         return service.archive_cohort(cohort_id)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
 
@@ -180,5 +183,7 @@ def permanently_delete_cohort(
     ensure_permission(get_governance_context(http_request), "cohorts.permanent_delete")
     try:
         return service.permanent_delete(cohort_id)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")

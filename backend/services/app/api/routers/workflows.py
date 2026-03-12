@@ -14,6 +14,7 @@ from app.api.schemas.workflows import (
     WorkflowUpdateRequest,
 )
 from app.application.workflows import WorkflowService
+from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_workflow_service
 
@@ -76,6 +77,10 @@ def publish_workflow(workflow_id: str, http_request: Request, service: WorkflowS
     ensure_permission(get_governance_context(http_request), "workflows.publish")
     try:
         return service.publish_workflow(workflow_id)
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
     except ValueError as exc:
@@ -96,8 +101,14 @@ def resume_workflow(workflow_id: str, http_request: Request, service: WorkflowSe
     ensure_permission(get_governance_context(http_request), "workflows.resume")
     try:
         return service.resume_workflow(workflow_id)
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @workflow_router.post("/{workflow_id}/test-run", response_model=dict)
@@ -117,6 +128,10 @@ def test_run_workflow(
             reference_time=request.reference_time,
             confirmation_token=request.confirmation_token,
         )
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
     except ValueError as exc:
@@ -208,6 +223,10 @@ def run_due_workflows(
             limit_per_workflow=request.limit_per_workflow,
             confirmation_tokens=request.confirmation_tokens,
         )
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -227,6 +246,10 @@ def ingest_orchestrator_event(
             reference_time=request.reference_time,
             confirmation_tokens=request.confirmation_tokens,
         )
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -245,5 +268,9 @@ def evaluate_orchestrator_threshold(
             reference_time=request.reference_time,
             confirmation_tokens=request.confirmation_tokens,
         )
+    except MissingDependencyError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail)
+    except ResourceLockedError as exc:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
