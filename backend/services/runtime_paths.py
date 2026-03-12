@@ -10,6 +10,13 @@ from sqlalchemy.engine import make_url
 SERVICES_DIR = Path(__file__).resolve().parent
 
 
+def normalize_env_text(raw_value: str | os.PathLike[str] | None) -> str:
+    text = str(raw_value or "")
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1]
+    return text.replace("\\n", "\n").replace("\\r", "\r").strip()
+
+
 def services_dir() -> Path:
     return SERVICES_DIR
 
@@ -31,13 +38,13 @@ def _resolve_path_from_cwd(raw_path: str | os.PathLike[str]) -> Path:
 
 
 def _runtime_storage_root() -> Path | None:
-    override = os.getenv("KAIRYX_RUNTIME_DIR", "").strip()
+    override = normalize_env_text(os.getenv("KAIRYX_RUNTIME_DIR", ""))
     if override:
         path = _resolve_path_from_cwd(override)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    if str(os.getenv("VERCEL", "")).strip():
+    if normalize_env_text(os.getenv("VERCEL", "")):
         path = (Path(tempfile.gettempdir()) / "kairyxai-runtime").resolve()
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -107,7 +114,7 @@ def normalize_sqlite_database_url(raw_url: str) -> str:
     if not raw_url:
         return raw_url
 
-    url_text = raw_url.strip()
+    url_text = normalize_env_text(raw_url)
     if not url_text.startswith("sqlite"):
         return url_text
 

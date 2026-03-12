@@ -141,3 +141,12 @@ class ControlPlaneResourceEventModel(Base):
     event_type: Mapped[str] = mapped_column(String(128), index=True)
     payload_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class MockWarehouseRowModel(Base):
+    __tablename__ = "mock_warehouse_rows_v1"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_name: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

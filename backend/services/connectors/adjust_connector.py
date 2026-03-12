@@ -8,6 +8,7 @@ import requests
 
 from .normalizer import canonical_attribution_event
 from .parsers import extract_rows
+from runtime_paths import normalize_env_text
 
 
 class AdjustConnector:
@@ -40,7 +41,7 @@ class AdjustConnector:
         return [canonical_attribution_event("adjust", raw, self.field_mapping)]
 
     def fetch_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        if os.getenv("DATA_BACKEND_MODE", "mock").lower() == "mock":
+        if normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower() == "mock":
             return self._mock_events(start_date, end_date)
 
         if not self.api_token:

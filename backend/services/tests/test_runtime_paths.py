@@ -63,6 +63,18 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
     assert response.status_code == 200
 
 
+def test_database_url_normalization_uses_psycopg_driver():
+    assert db_module.normalize_database_url("postgres://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+    assert db_module.normalize_database_url("postgresql://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+    assert db_module.normalize_database_url("postgresql+psycopg://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+
+
 def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
     target = tmp_path / "tracked" / "local_jobs.db"
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(target))

@@ -2887,6 +2887,7 @@ dimensions: campaign,country,platform</pre>
                             preferLocalMockState
                             && canUseLocalMockState
                             && String(payload.mode || '').toLowerCase() === 'mock'
+                            && !Boolean(payload.mock_state_persistent)
                         );
                         cachedHealthState = payload;
                         cachedHealthStateFetchedAt = Date.now();

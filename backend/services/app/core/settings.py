@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from runtime_paths import default_control_plane_database_url, normalize_sqlite_database_url
+from runtime_paths import default_control_plane_database_url, normalize_env_text, normalize_sqlite_database_url
 
 
 @dataclass(frozen=True)
@@ -31,29 +31,29 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    scheduler_default = "false" if str(os.getenv("VERCEL", "")).strip() else "true"
+    scheduler_default = "false" if normalize_env_text(os.getenv("VERCEL", "")) else "true"
     database_url = normalize_sqlite_database_url(
-        os.getenv("CONTROL_PLANE_DATABASE_URL")
-        or os.getenv("DATABASE_URL")
+        normalize_env_text(os.getenv("CONTROL_PLANE_DATABASE_URL"))
+        or normalize_env_text(os.getenv("DATABASE_URL"))
         or default_control_plane_database_url()
     )
     return Settings(
-        api_access_key=os.getenv("API_ACCESS_KEY", "").strip(),
+        api_access_key=normalize_env_text(os.getenv("API_ACCESS_KEY", "")),
         control_plane_database_url=database_url,
-        data_backend_mode=os.getenv("DATA_BACKEND_MODE", "mock").strip().lower(),
-        import_command_topic=os.getenv("IMPORT_COMMAND_TOPIC", "kairyx-import-jobs"),
-        prediction_command_topic=os.getenv("PREDICTION_COMMAND_TOPIC", "kairyx-prediction-jobs"),
-        export_command_topic=os.getenv("EXPORT_COMMAND_TOPIC", "kairyx-export-jobs"),
-        raw_shard_topic=os.getenv("PUBSUB_TOPIC_NAME", "kairyx-raw-shards"),
-        default_prediction_page_size=max(1, int(os.getenv("DEFAULT_PREDICTION_PAGE_SIZE", "100"))),
-        max_prediction_page_size=max(1, int(os.getenv("MAX_PREDICTION_PAGE_SIZE", "1000"))),
-        worker_page_size=max(1, int(os.getenv("WORKER_PAGE_SIZE", "1000"))),
-        export_batch_size=max(1, int(os.getenv("EXPORT_BATCH_SIZE", "500"))),
-        export_retry_attempts=max(1, int(os.getenv("EXPORT_RETRY_ATTEMPTS", "3"))),
-        job_retention_days=max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
-        scheduler_enabled=str(os.getenv("SCHEDULER_ENABLED", scheduler_default)).strip().lower() not in {"0", "false", "no", "off"},
-        scheduler_interval_seconds=max(5, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60"))),
-        scheduler_daily_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_DAILY_REPORT_HOUR", "9")))),
-        scheduler_weekly_report_hour=min(23, max(0, int(os.getenv("SCHEDULER_WEEKLY_REPORT_HOUR", "9")))),
-        scheduler_weekly_report_weekday=min(6, max(0, int(os.getenv("SCHEDULER_WEEKLY_REPORT_WEEKDAY", "0")))),
+        data_backend_mode=normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower(),
+        import_command_topic=normalize_env_text(os.getenv("IMPORT_COMMAND_TOPIC", "kairyx-import-jobs")),
+        prediction_command_topic=normalize_env_text(os.getenv("PREDICTION_COMMAND_TOPIC", "kairyx-prediction-jobs")),
+        export_command_topic=normalize_env_text(os.getenv("EXPORT_COMMAND_TOPIC", "kairyx-export-jobs")),
+        raw_shard_topic=normalize_env_text(os.getenv("PUBSUB_TOPIC_NAME", "kairyx-raw-shards")),
+        default_prediction_page_size=max(1, int(normalize_env_text(os.getenv("DEFAULT_PREDICTION_PAGE_SIZE", "100")))),
+        max_prediction_page_size=max(1, int(normalize_env_text(os.getenv("MAX_PREDICTION_PAGE_SIZE", "1000")))),
+        worker_page_size=max(1, int(normalize_env_text(os.getenv("WORKER_PAGE_SIZE", "1000")))),
+        export_batch_size=max(1, int(normalize_env_text(os.getenv("EXPORT_BATCH_SIZE", "500")))),
+        export_retry_attempts=max(1, int(normalize_env_text(os.getenv("EXPORT_RETRY_ATTEMPTS", "3")))),
+        job_retention_days=max(1, int(normalize_env_text(os.getenv("JOB_RETENTION_DAYS", "7")))),
+        scheduler_enabled=normalize_env_text(os.getenv("SCHEDULER_ENABLED", scheduler_default)).lower() not in {"0", "false", "no", "off"},
+        scheduler_interval_seconds=max(5, int(normalize_env_text(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60")))),
+        scheduler_daily_report_hour=min(23, max(0, int(normalize_env_text(os.getenv("SCHEDULER_DAILY_REPORT_HOUR", "9"))))),
+        scheduler_weekly_report_hour=min(23, max(0, int(normalize_env_text(os.getenv("SCHEDULER_WEEKLY_REPORT_HOUR", "9"))))),
+        scheduler_weekly_report_weekday=min(6, max(0, int(normalize_env_text(os.getenv("SCHEDULER_WEEKLY_REPORT_WEEKDAY", "0"))))),
     )

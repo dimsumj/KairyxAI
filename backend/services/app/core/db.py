@@ -8,16 +8,28 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .settings import get_settings
-from runtime_paths import normalize_sqlite_database_url
+from runtime_paths import normalize_env_text, normalize_sqlite_database_url
 
 
 Base = declarative_base()
 
 
+def normalize_database_url(raw_url: str) -> str:
+    database_url = normalize_sqlite_database_url(normalize_env_text(raw_url))
+    scheme, separator, remainder = database_url.partition("://")
+    if not separator:
+        return database_url
+    if scheme == "postgres":
+        return f"postgresql+psycopg://{remainder}"
+    if scheme == "postgresql":
+        return f"postgresql+psycopg://{remainder}"
+    return database_url
+
+
 @lru_cache(maxsize=1)
 def get_engine():
     settings = get_settings()
-    database_url = normalize_sqlite_database_url(settings.control_plane_database_url)
+    database_url = normalize_database_url(settings.control_plane_database_url)
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     return create_engine(database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
 

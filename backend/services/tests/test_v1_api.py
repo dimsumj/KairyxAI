@@ -15,6 +15,8 @@ from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 from bigquery_service import BigQueryService
+from connectors.adjust_connector import AdjustConnector
+from connectors.appsflyer_connector import AppsFlyerConnector
 from gcs_service import GcsService
 
 
@@ -78,9 +80,98 @@ def test_health_reports_local_cache_stats(client):
     assert health.status_code == 200
     payload = health.json()
     assert payload["mode"] == "mock"
+    assert payload["mock_state_backend"] == "local_files"
+    assert payload["mock_state_persistent"] is False
     assert payload["local_cache"]["retention_days"] == 7
     assert payload["local_cache"]["tables"]["events_staging"]["rows"] >= 0
     assert payload["local_cache"]["tables"]["prediction_results"]["rows"] >= 0
+
+
+def test_health_reports_database_mock_storage(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as database_client:
+        health = database_client.get("/api/v1/health")
+
+    assert health.status_code == 200
+    payload = health.json()
+    assert payload["mode"] == "mock"
+    assert payload["mock_state_backend"] == "database"
+    assert payload["mock_state_persistent"] is True
+    assert payload["local_cache"]["storage_backend"] == "database"
+
+
+def test_mock_database_storage_persists_between_service_instances(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    first_service = BigQueryService()
+    first_service.write_events_staging(
+        [
+            {
+                "job_id": "import_1",
+                "job_identifier": "import_1",
+                "source": "adjust",
+                "player_id": "player-1",
+                "canonical_user_id": "uid:player-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-12T12:00:00",
+                "event_properties": {"source_user_id": "player-1"},
+                "user_properties": {"email": "player-1@example.com"},
+                "data_quality_flags": [],
+            }
+        ],
+        job_id="import_1",
+    )
+    first_service.run_events_curation(job_id="import_1")
+    first_service.refresh_player_latest_state(job_id="import_1")
+    first_service.append_prediction_results(
+        "prediction_1",
+        [
+            {
+                "user_id": "player-1",
+                "canonical_user_id": "uid:player-1",
+                "email": "player-1@example.com",
+                "predicted_churn_risk": "medium",
+                "completed_at": "2026-03-12T12:05:00",
+            }
+        ],
+    )
+
+    second_service = BigQueryService()
+    staged_rows = second_service.get_rows_for_alias("standardized")
+    curated_rows = second_service.get_rows_for_alias("fact_events_unified")
+    latest_state = second_service.get_player_latest_state("player-1", job_id="import_1")
+    prediction_results = second_service.list_prediction_results("prediction_1")
+
+    assert len(staged_rows) == 1
+    assert len(curated_rows) == 1
+    assert latest_state is not None
+    assert latest_state["canonical_user_id"] == "uid:player-1"
+    assert prediction_results["total"] == 1
+    assert prediction_results["items"][0]["user_id"] == "player-1"
+
+
+def test_mock_connectors_accept_escaped_newline_backend_mode(monkeypatch):
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock\\n")
+
+    adjust_rows = AdjustConnector({"api_token": "adjust-token"}).fetch_events("20260301", "20260302")
+    appsflyer_rows = AppsFlyerConnector({"api_token": "af-token", "app_id": "demo-app"}).fetch_events("20260301", "20260302")
+
+    assert adjust_rows[0]["player_id"] == "adjust_user_1001"
+    assert appsflyer_rows[0]["player_id"] == "af_user_2001"
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):

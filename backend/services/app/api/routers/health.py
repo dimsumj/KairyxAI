@@ -22,11 +22,14 @@ class SchedulerTickRequest(BaseModel):
 def health(service: HealthMonitorService = Depends(get_health_monitor_service)):
     settings = get_settings()
     bigquery_service = get_shared_bigquery_service()
+    mock_state_backend = bigquery_service.get_mock_state_backend()
     snapshot = service.snapshot(persist=True)
     payload = {
         "status": "ok",
         "service": settings.app_name,
         "mode": settings.data_backend_mode,
+        "mock_state_backend": mock_state_backend,
+        "mock_state_persistent": bigquery_service.is_mock_state_persistent(),
         "data_aliases": bigquery_service.get_v1_table_aliases(),
         **snapshot,
     }
