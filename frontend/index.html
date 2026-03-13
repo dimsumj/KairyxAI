@@ -2335,28 +2335,42 @@ dimensions: campaign,country,platform</pre>
             }
 
             function getLatestPredictionJob(importJobId, completedOnly = false) {
+                return getLatestPredictionJobForMode(importJobId, completedOnly);
+            }
+
+            function getPredictionJobMode(job = {}) {
+                return String((((job || {}).spec || {}).prediction_mode) || 'local').toLowerCase();
+            }
+
+            function getLatestPredictionJobForMode(importJobId, completedOnly = false, predictionMode = '') {
+                const normalizedMode = String(predictionMode || '').toLowerCase();
                 return cachedPredictionJobs.find((job) => {
                     const matchesImport = String((job.spec || {}).import_job_id || '') === String(importJobId);
                     if (!matchesImport) return false;
+                    if (normalizedMode && getPredictionJobMode(job) !== normalizedMode) return false;
                     if (!completedOnly) return true;
                     return String(job.status || '').toLowerCase() === 'completed';
                 }) || null;
             }
 
-            function getLatestActivePredictionJob(importJobId) {
+            function getLatestActivePredictionJob(importJobId, predictionMode = '') {
+                const normalizedMode = String(predictionMode || '').toLowerCase();
                 return cachedPredictionJobs.find((job) => (
                     String((job.spec || {}).import_job_id || '') === String(importJobId)
+                    && (!normalizedMode || getPredictionJobMode(job) === normalizedMode)
                     && isPredictionJobActive(job)
                 )) || null;
             }
 
-            function getLatestCompletedPredictionJob(importJobId, excludeJobId = null) {
+            function getLatestCompletedPredictionJob(importJobId, excludeJobId = null, predictionMode = '') {
+                const normalizedMode = String(predictionMode || '').toLowerCase();
                 return cachedPredictionJobs.find((job) => {
                     if (excludeJobId && String(job.id || '') === String(excludeJobId)) {
                         return false;
                     }
                     return (
                         String((job.spec || {}).import_job_id || '') === String(importJobId)
+                        && (!normalizedMode || getPredictionJobMode(job) === normalizedMode)
                         && String(job.status || '').toLowerCase() === 'completed'
                     );
                 }) || null;
@@ -2413,14 +2427,18 @@ dimensions: campaign,country,platform</pre>
                 return rows;
             }
 
-            async function loadBaselinePredictionRows(importJobId, excludeJobId = null) {
+            async function loadBaselinePredictionRows(importJobId, excludeJobId = null, predictionMode = '') {
                 const normalizedImportJobId = String(importJobId || '');
                 if (!normalizedImportJobId) {
                     clearBaselinePredictionRows();
                     return [];
                 }
 
-                const latestCompletedJob = getLatestCompletedPredictionJob(normalizedImportJobId, excludeJobId);
+                const latestCompletedJob = getLatestCompletedPredictionJob(
+                    normalizedImportJobId,
+                    excludeJobId,
+                    predictionMode,
+                );
                 if (!latestCompletedJob) {
                     clearBaselinePredictionRows();
                     baselinePredictionImportJobId = normalizedImportJobId;
@@ -3171,7 +3189,7 @@ dimensions: campaign,country,platform</pre>
                 const normalizedImportJobId = String(importJobId || datasetSelect.value || '');
                 const [activeRows, existingRows] = await Promise.all([
                     fetchPredictionRows(jobId),
-                    loadBaselinePredictionRows(normalizedImportJobId, jobId),
+                    loadBaselinePredictionRows(normalizedImportJobId, jobId, getSelectedPredictionMode()),
                 ]);
                 allChurnPredictionPlayers = mergePredictionRows(activeRows, existingRows);
                 if (activePredictionJobId === jobId) {
@@ -3217,11 +3235,11 @@ dimensions: campaign,country,platform</pre>
                 try {
                     await ensureHealthState();
                     await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
-                    predictionJob = !forceRecalculate ? getLatestActivePredictionJob(importJobId) : null;
+                    predictionJob = !forceRecalculate ? getLatestActivePredictionJob(importJobId, selectedPredictionMode) : null;
                     if (!predictionJob && !forceRecalculate) {
-                        const completedJob = getLatestCompletedPredictionJob(importJobId);
+                        const completedJob = getLatestCompletedPredictionJob(importJobId, null, selectedPredictionMode);
                         if (completedJob) {
-                            const existingRows = await loadBaselinePredictionRows(importJobId);
+                            const existingRows = await loadBaselinePredictionRows(importJobId, null, selectedPredictionMode);
                             activePredictionJobId = null;
                             clearPersistedActivePredictionJob();
                             predictionStopRequested = false;
@@ -3237,7 +3255,11 @@ dimensions: campaign,country,platform</pre>
                         }
                     }
 
-                    const existingRows = await loadBaselinePredictionRows(importJobId, predictionJob ? predictionJob.id : null);
+                    const existingRows = await loadBaselinePredictionRows(
+                        importJobId,
+                        predictionJob ? predictionJob.id : null,
+                        selectedPredictionMode,
+                    );
                     allChurnPredictionPlayers = [...existingRows];
                     renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
 
@@ -3340,7 +3362,11 @@ dimensions: campaign,country,platform</pre>
                 setCampaignExportStatus(`Pushing audience to ${provider}...`);
                 try {
                     await refreshPredictionJobsState();
-                    const predictionJob = getLatestPredictionJob(jobName, true);
+                    const predictionJob = (
+                        baselinePredictionImportJobId === String(jobName)
+                        && baselinePredictionJobId
+                        && cachedPredictionJobs.find((job) => String(job.id || '') === String(baselinePredictionJobId))
+                    ) || getLatestPredictionJobForMode(jobName, true, getSelectedPredictionMode()) || getLatestPredictionJob(jobName, true);
                     if (!predictionJob) {
                         throw new Error('Run churn prediction for this dataset before exporting an audience.');
                     }
