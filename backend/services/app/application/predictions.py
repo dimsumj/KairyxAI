@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from app.application.churn_models import LocalChurnModelService
 from app.application.experiments import ExperimentConfigService
@@ -12,7 +15,7 @@ from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import JobStatus
 from app.core.runtime import is_shutdown_requested
 from bigquery_service import BigQueryService, get_shared_bigquery_service
-from cloud_churn_service import CloudChurnService
+from cloud_churn_service import CloudChurnRequestError, CloudChurnService
 from gemini_client import GeminiClient
 from growth_decision_engine import GrowthDecisionEngine
 from player_modeling_engine import PlayerModelingEngine
@@ -20,6 +23,14 @@ from pubsub_service import PubSubService
 
 
 logger = logging.getLogger(__name__)
+
+
+class PredictionInterruptedError(RuntimeError):
+    pass
+
+
+class PredictionTimeoutError(RuntimeError):
+    pass
 
 
 class PredictionService:
@@ -64,6 +75,52 @@ class PredictionService:
         if is_shutdown_requested():
             return "Stopped during server shutdown."
         return default_reason
+
+    def _interruptible_call(
+        self,
+        job_id: str,
+        *,
+        operation: str,
+        callback: Callable[[], Any],
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_queue.put(("result", callback()))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        worker = threading.Thread(
+            target=_runner,
+            name=f"prediction-{job_id}-{operation}",
+            daemon=True,
+        )
+        worker.start()
+
+        deadline = time.monotonic() + max(
+            0.1,
+            float(timeout_seconds if timeout_seconds is not None else self.settings.prediction_network_timeout_seconds),
+        )
+        poll_interval = max(0.05, float(self.settings.prediction_stop_poll_interval_seconds))
+
+        while True:
+            if self._should_stop(job_id):
+                raise PredictionInterruptedError(self._stop_reason())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PredictionTimeoutError(
+                    f"{operation.replace('_', ' ')} timed out after "
+                    f"{float(timeout_seconds if timeout_seconds is not None else self.settings.prediction_network_timeout_seconds):.1f}s."
+                )
+            try:
+                state, payload = result_queue.get(timeout=min(poll_interval, remaining))
+            except queue.Empty:
+                continue
+            if state == "error":
+                raise payload
+            return payload
 
     def _mark_stopped(self, job_id: str, reason: str = "Stopped by user.") -> Dict[str, Any]:
         job = self.repository.get_prediction_job(job_id)
@@ -238,7 +295,7 @@ class PredictionService:
         self._commit_session()
 
         try:
-            gemini_client = self._build_gemini_client()
+            gemini_client = self._build_gemini_client(job_id)
             self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
             active_model = self.local_models.get_latest_model_payload()
@@ -299,7 +356,7 @@ class PredictionService:
                     continue
 
                 model_score = self.local_models.score_profile(profile)
-                churn_estimate, prediction_source = self._estimate_prediction(mode, modeling_engine, player_id, profile)
+                churn_estimate, prediction_source = self._estimate_prediction(job_id, mode, modeling_engine, player_id, profile)
                 churn_estimate = self._merge_model_score(churn_estimate, model_score)
                 if prediction_source == "local" and model_score.model_status == "active":
                     prediction_source = "local_model"
@@ -312,7 +369,12 @@ class PredictionService:
                 )
                 next_action = (
                     self._build_recommended_action_from_policy(recommendation)
-                    or decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+                    or
+                    self._interruptible_call(
+                        job_id,
+                        operation="next_action",
+                        callback=lambda: decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn"),
+                    )
                     or {"content": "No action suggested."}
                 )
                 if self._should_stop(job_id):
@@ -392,7 +454,7 @@ class PredictionService:
         except Exception as exc:
             self.rollback_session()
             try:
-                if self._should_stop(job_id):
+                if self._should_stop(job_id) or isinstance(exc, PredictionInterruptedError):
                     return self._mark_stopped(job_id, self._stop_reason())
             except Exception:
                 self.rollback_session()
@@ -465,7 +527,7 @@ class PredictionService:
             return {"execution_mode": "ai", "execution_label": "AI"}
         return {"execution_mode": "local", "execution_label": "Local"}
 
-    def _build_gemini_client(self) -> GeminiClient | None:
+    def _build_gemini_client(self, job_id: str) -> GeminiClient | None:
         connector = self._select_google_connector()
         if connector is not None:
             config = connector.get("config") or {}
@@ -473,12 +535,12 @@ class PredictionService:
             model_name = str(config.get("model_name") or "").strip() or None
             if api_key:
                 try:
-                    return GeminiClient(api_key=api_key, model_name=model_name)
+                    return GeminiClient(api_key=api_key, model_name=model_name, stop_checker=lambda: self._should_stop(job_id))
                 except Exception:
                     return None
 
         try:
-            return GeminiClient()
+            return GeminiClient(stop_checker=lambda: self._should_stop(job_id))
         except Exception:
             return None
 
@@ -506,6 +568,7 @@ class PredictionService:
 
     def _estimate_prediction(
         self,
+        job_id: str,
         mode: str,
         modeling_engine: PlayerModelingEngine,
         player_id: Any,
@@ -513,27 +576,49 @@ class PredictionService:
     ) -> Tuple[Dict[str, Any], str]:
         local_estimate = None
         if mode in {"local", "parallel"}:
-            local_estimate = self._run_local_estimate(modeling_engine, player_id, profile)
+            local_estimate = self._run_local_estimate(job_id, modeling_engine, player_id, profile)
         if mode == "local":
             return local_estimate, "local"
         cloud_estimate = None
         if mode in {"cloud", "parallel"}:
             try:
-                cloud_estimate = CloudChurnService().estimate_churn_risk(player_id, profile)
-            except Exception:
+                cloud_estimate = self._interruptible_call(
+                    job_id,
+                    operation="cloud_churn_prediction",
+                    callback=lambda: CloudChurnService(
+                        timeout_sec=self.settings.prediction_network_timeout_seconds
+                    ).estimate_churn_risk(player_id, profile),
+                )
+            except CloudChurnRequestError:
+                if mode == "cloud":
+                    raise
+                cloud_estimate = None
+            except PredictionTimeoutError:
+                if mode == "cloud":
+                    raise
                 cloud_estimate = None
         if mode == "cloud" and cloud_estimate:
             return cloud_estimate, "cloud"
         if cloud_estimate:
             return cloud_estimate, "cloud"
-        return local_estimate or self._run_local_estimate(modeling_engine, player_id, profile), "local"
+        return local_estimate or self._run_local_estimate(job_id, modeling_engine, player_id, profile), "local"
 
-    def _run_local_estimate(self, modeling_engine: PlayerModelingEngine, player_id: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_local_estimate(
+        self,
+        job_id: str,
+        modeling_engine: PlayerModelingEngine,
+        player_id: Any,
+        profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
         import asyncio
 
         if is_shutdown_requested():
             raise RuntimeError("Prediction interrupted by server shutdown.")
-        return asyncio.run(modeling_engine.estimate_churn_risk(player_id, profile))
+        return self._interruptible_call(
+            job_id,
+            operation="local_churn_prediction",
+            callback=lambda: asyncio.run(modeling_engine.estimate_churn_risk(player_id, profile)),
+        )
 
     @staticmethod
     def _merge_model_score(churn_estimate: Dict[str, Any], model_score) -> Dict[str, Any]:

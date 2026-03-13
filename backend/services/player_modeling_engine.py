@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
 import pandas as pd
-from gemini_client import GeminiClient
+from gemini_client import GeminiClient, GeminiRequestError
 from json_encoder import NpEncoder
 from bigquery_service import BigQueryService
 
@@ -300,6 +300,8 @@ class PlayerModelingEngine:
                 "reason": ai_analysis.get("reason", "AI analysis failed."),
                 "top_signals": ai_analysis.get("top_signals", []),
             }
+        except GeminiRequestError:
+            raise
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error processing AI response for churn risk: {e}")
             return self._estimate_churn_risk_heuristic(player_id, player_profile)
