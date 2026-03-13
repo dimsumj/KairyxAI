@@ -126,7 +126,7 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
-    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local Model"
     assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
 
     results = client.get(prediction_job["links"]["results"])
@@ -173,7 +173,126 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     assert captured["json"]["count"] >= 1
 
 
-def test_prediction_uses_saved_google_connector(client, monkeypatch):
+def test_prediction_local_mode_ignores_saved_google_connector(client, monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GEMINI_MODEL", raising=False)
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    gemini_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Google Gemini 1",
+            "type": "google",
+            "config": {
+                "api_key": "google-api-key-from-connector",
+                "model_name": "gemini-2.5-flash",
+            },
+        },
+    )
+    assert gemini_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+
+    captured = {}
+
+    class UnexpectedGeminiClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("local prediction mode should not construct GeminiClient")
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            captured["modeling_gemini_client_present"] = gemini_client is not None
+            captured["job_id"] = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": "player-1@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            captured["estimate_called"] = True
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "high",
+                "reason": "Local model estimate",
+                "top_signals": [{"signal": "recent_drop", "value": 3}],
+            }
+
+    class FakeDecisionEngine:
+        def __init__(self, gemini_client):
+            captured["decision_gemini_client_present"] = gemini_client is not None
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            captured["decision_called"] = True
+            return {"content": "Local retention action"}
+
+    monkeypatch.setattr("app.application.predictions.GeminiClient", UnexpectedGeminiClient)
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local Model"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["churn_reason"] == "Local model estimate"
+    assert payload["items"][0]["suggested_action"] == "Local retention action"
+    assert captured["modeling_gemini_client_present"] is False
+    assert captured["decision_gemini_client_present"] is False
+    assert captured["estimate_called"] is True
+    assert captured["decision_called"] is True
+    assert captured["job_id"] == import_job["id"]
+
+
+def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GEMINI_MODEL", raising=False)
 
@@ -265,7 +384,7 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
         "/api/v1/predictions",
         json={
             "import_job_id": import_job["id"],
-            "prediction_mode": "local",
+            "prediction_mode": "ai",
         },
     )
     assert create_prediction.status_code == 201
@@ -275,7 +394,7 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
     assert run_prediction.json()["progress"]["details"]["execution_label"] == "AI"
-    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "ai"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
@@ -386,7 +505,7 @@ def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
         "/api/v1/predictions",
         json={
             "import_job_id": import_job["id"],
-            "prediction_mode": "local",
+            "prediction_mode": "ai",
         },
     )
     assert create_prediction.status_code == 201

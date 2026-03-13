@@ -2218,7 +2218,7 @@ dimensions: campaign,country,platform</pre>
             }
 
             function getSelectedPredictionMode() {
-                return String((predictionModeSelect && predictionModeSelect.value) || (hasConfiguredGeminiConnector() ? 'ai' : 'local')).toLowerCase();
+                return String((predictionModeSelect && predictionModeSelect.value) || 'local').toLowerCase();
             }
 
             function syncPredictionModeSelection(job = null) {
@@ -2981,19 +2981,30 @@ dimensions: campaign,country,platform</pre>
                 predictionProgressInfo.textContent = formatPredictionProgressText(job);
             }
 
+            function getPredictionExecutionLabel(details = {}) {
+                const explicitLabel = String(details.execution_label || '').trim();
+                if (explicitLabel) {
+                    return explicitLabel;
+                }
+                const predictionMode = String(details.prediction_mode || details.execution_mode || 'local').toLowerCase();
+                return getPredictionModeLabel(predictionMode);
+            }
+
             function formatPredictionProgressText(job = {}) {
                 const progress = job.progress || {};
                 const processed = job.processed_count ?? progress.current ?? 0;
                 const total = job.total_count ?? progress.total ?? 0;
                 const pct = job.progress_pct ?? progress.pct ?? 0;
-                const rawStatus = job.status || 'Processing';
+                const rawStatus = String(job.status || 'Processing').trim() || 'Processing';
+                const normalizedStatus = rawStatus.toLowerCase();
                 const details = progress.details || {};
-                const executionLabel = String(
-                    details.execution_label
-                    || details.execution_mode
-                    || (hasConfiguredGeminiConnector() ? 'AI' : 'Local')
-                )
-                    .trim()
+                if (normalizedStatus === 'stopped') {
+                    const stopReason = String(details.stop_reason || '').trim();
+                    return stopReason
+                        ? `Prediction job: ${rawStatus} · ${stopReason}`
+                        : `Prediction job: ${rawStatus}`;
+                }
+                const executionLabel = getPredictionExecutionLabel(details)
                     .replace(/\b\w/g, (c) => c.toUpperCase());
                 return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)`;
             }

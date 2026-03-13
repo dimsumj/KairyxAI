@@ -295,7 +295,7 @@ class PredictionService:
         self._commit_session()
 
         try:
-            gemini_client = self._build_gemini_client(job_id)
+            gemini_client = self._build_gemini_client(job_id) if self._mode_uses_gemini(mode) else None
             self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
             active_model = self.local_models.get_latest_model_payload()
@@ -514,6 +514,9 @@ class PredictionService:
             return True
         return bool(str(os.getenv("GOOGLE_API_KEY") or "").strip())
 
+    def _mode_uses_gemini(self, mode: str) -> bool:
+        return str(mode or "local").lower() in {"ai", "parallel"}
+
     def _prediction_execution_details(self, mode: str, *, gemini_available: bool) -> Dict[str, str]:
         normalized_mode = str(mode or "local").lower()
         if normalized_mode == "cloud":
@@ -523,9 +526,9 @@ class PredictionService:
                 "execution_mode": "parallel",
                 "execution_label": "AI + Cloud" if gemini_available else "Parallel",
             }
-        if gemini_available:
+        if normalized_mode == "ai" and gemini_available:
             return {"execution_mode": "ai", "execution_label": "AI"}
-        return {"execution_mode": "local", "execution_label": "Local"}
+        return {"execution_mode": "local_model", "execution_label": "Local Model"}
 
     def _build_gemini_client(self, job_id: str) -> GeminiClient | None:
         connector = self._select_google_connector()
