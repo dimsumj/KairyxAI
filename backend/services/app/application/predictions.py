@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
+from app.application.churn_models import LocalChurnModelService
+from app.application.experiments import ExperimentConfigService
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import JobStatus
 from app.core.runtime import is_shutdown_requested
@@ -25,6 +27,8 @@ class PredictionService:
         self.repository = repository
         self.settings = settings
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+        self.local_models = LocalChurnModelService(repository, self.bigquery_service)
+        self.experiments = ExperimentConfigService(repository)
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -129,6 +133,20 @@ class PredictionService:
     def list_results(self, job_id: str, page: int, page_size: int) -> Dict[str, Any]:
         return self.bigquery_service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
 
+    def train_local_model(self, *, reference_time: str | None = None, min_rows: int = 12) -> Dict[str, Any]:
+        payload = self.local_models.train_model(reference_time=reference_time, min_rows=min_rows)
+        return self.local_models.sanitize_payload(payload) or {}
+
+    def get_latest_model(self) -> Dict[str, Any] | None:
+        payload = self.local_models.get_latest_model_payload()
+        return self.local_models.sanitize_payload(payload) if payload else None
+
+    def list_model_versions(self) -> List[Dict[str, Any]]:
+        return [self.local_models.sanitize_payload(item.get("payload") or {}) or {} for item in self.local_models.list_model_versions()]
+
+    def get_model_training_status(self) -> Dict[str, Any]:
+        return self.local_models.get_training_status()
+
     def _parse_timestamp(self, value: Any) -> datetime | None:
         if not value:
             return None
@@ -223,6 +241,8 @@ class PredictionService:
             gemini_client = self._build_gemini_client()
             self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
+            active_model = self.local_models.get_latest_model_payload()
+            policy_snapshot = self.experiments.get_latest_policy_snapshot()
 
             modeling_engine = PlayerModelingEngine(
                 gemini_client=gemini_client,
@@ -278,13 +298,23 @@ class PredictionService:
                     self._commit_session()
                     continue
 
+                model_score = self.local_models.score_profile(profile)
                 churn_estimate, prediction_source = self._estimate_prediction(mode, modeling_engine, player_id, profile)
+                churn_estimate = self._merge_model_score(churn_estimate, model_score)
+                if prediction_source == "local" and model_score.model_status == "active":
+                    prediction_source = "local_model"
                 if self._should_stop(job_id):
                     return self._mark_stopped(job_id, self._stop_reason())
 
-                next_action = decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn") or {
-                    "content": "No action suggested.",
-                }
+                recommendation = self.experiments.recommend_policy_action(
+                    baseline_churn_score=model_score.baseline_churn_score,
+                    policy_snapshot=policy_snapshot,
+                )
+                next_action = (
+                    self._build_recommended_action_from_policy(recommendation)
+                    or decision_engine.decide_next_action(profile, churn_estimate, "reduce_churn")
+                    or {"content": "No action suggested."}
+                )
                 if self._should_stop(job_id):
                     return self._mark_stopped(job_id, self._stop_reason())
 
@@ -293,6 +323,7 @@ class PredictionService:
                     "import_job_id": import_job_id,
                     "completed_at": datetime.utcnow().isoformat(),
                     "user_id": str(player_id),
+                    "canonical_user_id": str(profile.get("canonical_user_id") or player_id),
                     "email": profile.get("email"),
                     "ltv": profile.get("total_revenue", 0.0),
                     "session_count": profile.get("total_sessions", 0),
@@ -304,6 +335,14 @@ class PredictionService:
                     "top_signals": churn_estimate.get("top_signals", []),
                     "prediction_source": prediction_source,
                     "suggested_action": next_action.get("content", "No action suggested."),
+                    "baseline_churn_score": round(model_score.baseline_churn_score, 4),
+                    "model_version": model_score.model_version,
+                    "score_timestamp": model_score.score_timestamp,
+                    "eligibility_reason": recommendation.get("eligibility_reason"),
+                    "recommended_template_id": recommendation.get("recommended_template_id"),
+                    "recommended_variant": recommendation.get("recommended_variant"),
+                    "policy_snapshot_id": recommendation.get("policy_snapshot_id"),
+                    "policy_status": recommendation.get("policy_status"),
                 }
                 self.bigquery_service.append_prediction_results(job_id=job_id, rows=[row])
                 rows_written += 1
@@ -319,6 +358,8 @@ class PredictionService:
                                 "import_job_id": import_job_id,
                                 "prediction_mode": mode,
                                 "last_user_id": str(player_id),
+                                "model_version": model_score.model_version,
+                                "policy_snapshot_id": recommendation.get("policy_snapshot_id"),
                                 **execution_details,
                             },
                         }
@@ -338,6 +379,8 @@ class PredictionService:
                             "rows_written": rows_written,
                             "import_job_id": import_job_id,
                             "prediction_mode": mode,
+                            "model_version": str((active_model or {}).get("model_version") or "heuristic_v1"),
+                            "policy_snapshot_id": str((policy_snapshot or {}).get("policy_snapshot_id") or ""),
                             **execution_details,
                         },
                     },
@@ -491,3 +534,32 @@ class PredictionService:
         if is_shutdown_requested():
             raise RuntimeError("Prediction interrupted by server shutdown.")
         return asyncio.run(modeling_engine.estimate_churn_risk(player_id, profile))
+
+    @staticmethod
+    def _merge_model_score(churn_estimate: Dict[str, Any], model_score) -> Dict[str, Any]:
+        payload = dict(churn_estimate or {})
+        payload["baseline_churn_score"] = round(float(model_score.baseline_churn_score), 4)
+        payload["model_version"] = model_score.model_version
+        payload["score_timestamp"] = model_score.score_timestamp
+        if model_score.model_status == "active":
+            payload["churn_risk"] = model_score.predicted_churn_risk
+            payload["reason"] = (
+                f"Local supervised baseline model predicted {round(model_score.baseline_churn_score, 4)} "
+                f"for 7d non-return. {payload.get('reason', '')}".strip()
+            )
+        return payload
+
+    @staticmethod
+    def _build_recommended_action_from_policy(recommendation: Dict[str, Any]) -> Dict[str, Any] | None:
+        if recommendation.get("eligible") is not True:
+            return None
+        content = str(recommendation.get("content") or "").strip()
+        if not content:
+            return None
+        return {
+            "channel": recommendation.get("channel") or "push_notification",
+            "content": content,
+            "subject": recommendation.get("subject"),
+            "template_id": recommendation.get("recommended_template_id"),
+            "variant_id": recommendation.get("recommended_variant"),
+        }

@@ -6,7 +6,9 @@ from typing import Any, Dict, List
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 from app.application.copilot import CopilotService
+from app.application.experiments import ExperimentConfigService
 from app.application.health_monitor import HealthMonitorService
+from app.application.predictions import PredictionService
 from app.application.workflows import WorkflowService
 from app.core.settings import Settings
 
@@ -19,6 +21,13 @@ class ControlLoopService:
         self.health = HealthMonitorService(repository, self.bigquery_service)
         self.workflows = WorkflowService(repository)
         self.copilot = CopilotService(repository, self.bigquery_service)
+        self.predictions = PredictionService(repository, settings, self.bigquery_service)
+        self.experiments = ExperimentConfigService(repository)
+
+    def _commit_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.commit()
 
     def ensure_default_jobs(self) -> List[Dict[str, Any]]:
         definitions = [
@@ -33,6 +42,12 @@ class ControlLoopService:
                 "name": "Due Workflow Runner",
                 "job_type": "workflow_run_due",
                 "schedule": {"type": "interval", "seconds": self.settings.scheduler_interval_seconds},
+            },
+            {
+                "job_id": "daily_churn_rescue_optimizer",
+                "name": "Daily Churn Rescue Optimizer",
+                "job_type": "daily_churn_rescue_optimizer",
+                "schedule": {"type": "daily", "hour": self.settings.scheduler_daily_optimizer_hour, "minute": 0},
             },
             {
                 "job_id": "daily_copilot_report",
@@ -79,6 +94,7 @@ class ControlLoopService:
                 payload=payload,
             )
             created.append(record.get("payload") or payload)
+        self._commit_session()
         return created
 
     def list_jobs(self) -> List[Dict[str, Any]]:
@@ -91,6 +107,7 @@ class ControlLoopService:
         results = [
             self._run_health_refresh(resolved_time),
             self._run_due_workflow_job(resolved_time),
+            self._run_churn_optimizer_job(resolved_time),
             self._run_report_job("daily_copilot_report", resolved_time),
             self._run_report_job("weekly_closed_loop_report", resolved_time),
         ]
@@ -123,6 +140,36 @@ class ControlLoopService:
             result_summary={"workflow_runs": len(payload.get("items") or [])},
         )
 
+    def _run_churn_optimizer_job(self, resolved_time: datetime) -> Dict[str, Any]:
+        job = self._get_job_payload("daily_churn_rescue_optimizer")
+        if not self._schedule_due(job, resolved_time):
+            return self._skip_job(job, resolved_time, "not_due")
+        model_payload = self.predictions.train_local_model(reference_time=resolved_time.isoformat())
+        active_experiments = self.experiments.list_active_experiments(scenario_type="churn_rescue")
+        optimizer_runs = [
+            self.experiments.run_optimizer(
+                str(experiment.get("experiment_id") or ""),
+                reference_time=resolved_time.isoformat(),
+                apply_changes=True,
+            )
+            for experiment in active_experiments
+            if str(experiment.get("experiment_id") or "").strip()
+        ]
+        status = "completed"
+        if str(model_payload.get("status") or "") == "fallback":
+            status = "fallback"
+        return self._mark_job_run(
+            "daily_churn_rescue_optimizer",
+            resolved_time,
+            status=status,
+            result_summary={
+                "model_version": model_payload.get("model_version"),
+                "model_status": model_payload.get("status"),
+                "optimizer_runs": len(optimizer_runs),
+                "optimized_experiments": [item.get("experiment_id") for item in optimizer_runs],
+            },
+        )
+
     def _run_report_job(self, job_id: str, resolved_time: datetime) -> Dict[str, Any]:
         job = self._get_job_payload(job_id)
         if not self._schedule_due(job, resolved_time):
@@ -149,6 +196,7 @@ class ControlLoopService:
             event_type="job_run",
             payload={"job_id": job_id, "status": status, "executed_at": resolved_time.isoformat(), "result_summary": result_summary},
         )
+        self._commit_session()
         return {
             "job_id": job_id,
             "status": status,
@@ -162,6 +210,7 @@ class ControlLoopService:
         if job_id:
             job["next_run_hint"] = next_hint
             self.repository.upsert_resource("scheduler_job", job_id, status="ready", name=job.get("name"), payload=job)
+            self._commit_session()
         return {
             "job_id": job_id,
             "status": "skipped",

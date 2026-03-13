@@ -313,8 +313,14 @@ class WorkflowService:
                         "user_id": delivery_payload.get("user_id"),
                         "group": delivery_payload.get("group") or "treatment",
                         "action_execution_id": delivery_payload.get("action_execution_id"),
+                        "delivery_id": delivery_payload.get("delivery_id"),
+                        "provider_callback_id": callback_id,
                         "occurred_at": occurred_at,
                         "outcome_name": outcome_name,
+                        "product_outcome_type": "return" if outcome_name == "returned" else ("purchase" if outcome_name == "purchase" else None),
+                        "attribution_window_days": int(callback.get("attribution_window_days") or 7),
+                        "variant_id": delivery_payload.get("variant_id"),
+                        "template_id": delivery_payload.get("template_id"),
                         "source": f"{provider}_callback",
                         "metadata": dict(callback.get("metadata") or {}),
                     },
@@ -380,8 +386,7 @@ class WorkflowService:
             trigger = workflow.get("trigger") or {}
             if str(trigger.get("type") or "") != "daily_schedule":
                 continue
-            scheduled_hour = int(trigger.get("hour") or 0)
-            scheduled_minute = int(trigger.get("minute") or 0)
+            scheduled_hour, scheduled_minute = self._resolve_scheduled_window(workflow, trigger)
             if (resolved_time.hour, resolved_time.minute) < (scheduled_hour, scheduled_minute):
                 continue
             if self._already_executed_for_date(workflow["workflow_id"], action_date):
@@ -708,6 +713,59 @@ class WorkflowService:
         except ValueError:
             return datetime.utcnow()
 
+    def _resolve_scheduled_window(self, workflow: Dict[str, Any], trigger: Dict[str, Any]) -> tuple[int, int]:
+        experiment_id = str(workflow.get("experiment_id") or (workflow.get("definition") or {}).get("experiment_id") or "").strip()
+        if not experiment_id:
+            return int(trigger.get("hour") or 0), int(trigger.get("minute") or 0)
+        snapshot = self.experiments.get_policy_snapshot(experiment_id) or {}
+        send_window = dict(snapshot.get("variant_actions", {}).get(snapshot.get("recommended_variant_id") or "", {}).get("send_window") or {})
+        if not send_window:
+            send_window = dict(snapshot.get("send_window") or {})
+        return int(send_window.get("hour") or trigger.get("hour") or 0), int(send_window.get("minute") or trigger.get("minute") or 0)
+
+    def _resolve_experiment_policy(
+        self,
+        experiment_id: str | None,
+        group: str | None,
+        channel_config: Dict[str, Any],
+        member: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not experiment_id:
+            return {
+                "channel_config": dict(channel_config or {}),
+                "eligibility_allowed": True,
+                "eligibility_reason": None,
+                "variant_id": None,
+                "template_id": None,
+                "policy_snapshot_id": None,
+            }
+        snapshot = self.experiments.get_policy_snapshot(str(experiment_id)) or {}
+        resolved = dict(channel_config or {})
+        baseline_score = member.get("baseline_churn_score")
+        if baseline_score in (None, ""):
+            baseline_score = member.get("attributes", {}).get("baseline_churn_score") if isinstance(member.get("attributes"), dict) else None
+        threshold = snapshot.get("eligibility_threshold")
+        eligibility_allowed = True
+        eligibility_reason = None
+        if baseline_score not in ("", None) and threshold not in ("", None):
+            eligibility_allowed = float(baseline_score) >= float(threshold)
+            eligibility_reason = (
+                f"baseline_churn_score {round(float(baseline_score), 4)} "
+                f"{'>=' if eligibility_allowed else '<'} threshold {round(float(threshold), 4)}"
+            )
+        variant_id = str(group or snapshot.get("recommended_variant_id") or "").strip() or None
+        variant_payload = dict((snapshot.get("variant_actions") or {}).get(str(variant_id or ""), {}) or {})
+        if variant_payload:
+            resolved.update({key: value for key, value in variant_payload.items() if key not in {"variant_id", "send_window"}})
+        return {
+            "channel_config": resolved,
+            "eligibility_allowed": eligibility_allowed,
+            "eligibility_reason": eligibility_reason,
+            "variant_id": variant_id,
+            "template_id": variant_payload.get("template_id"),
+            "policy_snapshot_id": snapshot.get("policy_snapshot_id"),
+        }
+
     def _filter_members_for_user_ids(self, cohort_id: str | None, user_ids: List[str]) -> List[Dict[str, Any]]:
         if not cohort_id:
             return []
@@ -816,6 +874,7 @@ class WorkflowService:
         channel_config: Dict[str, Any],
         provider_result: Dict[str, Any],
         sandbox: bool,
+        recorded_at: str,
     ) -> Dict[str, Any]:
         delivery_id = str(provider_result.get("action_id") or execution_payload.get("action_execution_id") or f"delivery_{uuid.uuid4().hex[:16]}")
         payload = {
@@ -829,6 +888,9 @@ class WorkflowService:
             "experiment_id": experiment_id,
             "user_id": execution_payload.get("user_id"),
             "group": execution_payload.get("group"),
+            "variant_id": execution_payload.get("variant_id"),
+            "template_id": execution_payload.get("template_id"),
+            "policy_snapshot_id": execution_payload.get("policy_snapshot_id"),
             "channel": execution_payload.get("channel"),
             "provider": provider_result.get("provider") or channel_config.get("provider") or execution_payload.get("channel"),
             "delivery_status": "delivered" if provider_result.get("ok") else "failed",
@@ -837,6 +899,7 @@ class WorkflowService:
                 "channel": channel_config.get("channel"),
                 "subject": channel_config.get("subject"),
                 "content": channel_config.get("content"),
+                "template_id": channel_config.get("template_id"),
             },
             "provider_response": {
                 "status_code": provider_result.get("status_code"),
@@ -850,7 +913,7 @@ class WorkflowService:
             },
             "callback_count": 0,
             "sandbox": bool(sandbox),
-            "recorded_at": datetime.utcnow().isoformat(),
+            "recorded_at": recorded_at,
         }
         self.repository.upsert_resource(
             "workflow_delivery",
@@ -966,6 +1029,7 @@ class WorkflowService:
         reference_time: datetime,
         snapshot_id: str,
         manual_test: bool,
+        trigger_type: str,
     ) -> Dict[str, Any]:
         user_id = str(member.get("canonical_user_id") or "")
         channel = str(channel_config.get("channel") or "push_notification")
@@ -979,12 +1043,13 @@ class WorkflowService:
         if user_id in blacklist:
             return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
 
-        quiet = policy.get("quiet_hours") or {}
-        start_hour = int(quiet.get("start", 22))
-        end_hour = int(quiet.get("end", 7))
-        current_hour = reference_time.hour
-        if current_hour >= start_hour or current_hour < end_hour:
-            return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
+        if trigger_type == "daily_schedule":
+            quiet = policy.get("quiet_hours") or {}
+            start_hour = int(quiet.get("start", 22))
+            end_hour = int(quiet.get("end", 7))
+            current_hour = reference_time.hour
+            if current_hour >= start_hour or current_hour < end_hour:
+                return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
 
         if self._idempotency_exists(key):
             return {"allowed": False, "reason": "duplicate_suppressed", "idempotency_key": key}
@@ -1073,7 +1138,7 @@ class WorkflowService:
             "invalid_target": 0,
             "failures": 0,
             "results": [],
-            "recorded_at": datetime.utcnow().isoformat(),
+            "recorded_at": reference_time.isoformat(),
         }
 
         policy = workflow.get("policy") or definition.get("policy") or {}
@@ -1086,7 +1151,11 @@ class WorkflowService:
             assignment = None
             group = None
             if experiment_id and not manual_test:
-                assignment = self.experiments.assign_user(experiment_id, member.get("canonical_user_id"))
+                assignment = self.experiments.assign_user(
+                    experiment_id,
+                    member.get("canonical_user_id"),
+                    assigned_at=reference_time.isoformat(),
+                )
                 group = assignment["group"]
 
             step_resolution = self._resolve_channel_config_from_steps(
@@ -1096,6 +1165,13 @@ class WorkflowService:
                 group=group,
             )
             resolved_channel_config = dict(step_resolution.get("channel_config") or channel_config)
+            policy_resolution = self._resolve_experiment_policy(
+                str(experiment_id) if experiment_id else None,
+                group,
+                resolved_channel_config,
+                member,
+            )
+            resolved_channel_config = dict(policy_resolution.get("channel_config") or resolved_channel_config)
             policy_result = self._evaluate_policy(
                 workflow["workflow_id"],
                 member,
@@ -1106,6 +1182,7 @@ class WorkflowService:
                 reference_time=reference_time,
                 snapshot_id=snapshot_id,
                 manual_test=manual_test,
+                trigger_type=summary["trigger_type"],
             )
 
             execution_payload = {
@@ -1118,9 +1195,12 @@ class WorkflowService:
                 "channel": resolved_channel_config.get("channel", channel_config.get("channel", "push_notification")),
                 "execution_status": "pending",
                 "group": group,
+                "variant_id": policy_resolution.get("variant_id"),
+                "template_id": policy_resolution.get("template_id") or resolved_channel_config.get("template_id"),
+                "policy_snapshot_id": policy_resolution.get("policy_snapshot_id"),
                 "sandbox": bool(sandbox),
                 "trigger_type": summary["trigger_type"],
-                "recorded_at": datetime.utcnow().isoformat(),
+                "recorded_at": reference_time.isoformat(),
                 "step_trace": step_resolution.get("trace") or [],
             }
 
@@ -1133,6 +1213,15 @@ class WorkflowService:
             if step_resolution["status"] == "ended":
                 execution_payload["execution_status"] = "ended"
                 summary["ended"] += 1
+                self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
+                summary["results"].append(execution_payload)
+                continue
+
+            if not policy_resolution.get("eligibility_allowed", True):
+                execution_payload["execution_status"] = "filtered_out"
+                execution_payload["reason"] = "eligibility_threshold"
+                execution_payload["eligibility_reason"] = policy_resolution.get("eligibility_reason")
+                summary["filtered_out"] += 1
                 self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
                 summary["results"].append(execution_payload)
                 continue
@@ -1179,7 +1268,9 @@ class WorkflowService:
                         **execution_payload,
                         "experiment_id": experiment_id,
                         "action_execution_id": None,
-                        "exposed_at": datetime.utcnow().isoformat(),
+                        "variant_id": execution_payload.get("variant_id"),
+                        "template_id": execution_payload.get("template_id"),
+                        "exposed_at": reference_time.isoformat(),
                     },
                 )
                 self._record_idempotency(
@@ -1218,6 +1309,7 @@ class WorkflowService:
                 channel_config=action,
                 provider_result=provider_result,
                 sandbox=sandbox,
+                recorded_at=reference_time.isoformat(),
             )
 
             if not provider_result.get("ok"):
@@ -1241,7 +1333,7 @@ class WorkflowService:
                     execution_payload["channel"],
                     action_date,
                     delivered=True,
-                    last_delivery_at=datetime.utcnow().isoformat(),
+                    last_delivery_at=reference_time.isoformat(),
                 )
                 self._upsert_budget_state(
                     workflow["workflow_id"],
@@ -1267,7 +1359,9 @@ class WorkflowService:
                             **delivery_payload,
                             "experiment_id": experiment_id,
                             "group": group or "treatment_a",
-                            "exposed_at": datetime.utcnow().isoformat(),
+                            "variant_id": delivery_payload.get("variant_id") or execution_payload.get("variant_id"),
+                            "template_id": delivery_payload.get("template_id") or execution_payload.get("template_id"),
+                            "exposed_at": reference_time.isoformat(),
                         },
                     )
             summary["results"].append(delivery_payload)

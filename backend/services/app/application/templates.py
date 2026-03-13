@@ -141,7 +141,8 @@ class ScenarioTemplateService:
                     "refresh_mode": "daily",
                     "definition": {
                         "sql": (
-                            "SELECT canonical_user_id, email, predicted_churn_risk, churn_state "
+                            "SELECT canonical_user_id, email, predicted_churn_risk, churn_state, "
+                            "baseline_churn_score, recommended_template_id, recommended_variant "
                             "FROM prediction_results "
                             "WHERE predicted_churn_risk = 'high' AND COALESCE(churn_state, 'active') != 'churned'"
                         )
@@ -168,6 +169,26 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 24,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.0,
+                    "scenario_type": "churn_rescue",
+                    "optimization_mode": "fixed_ab",
+                    "holdout_floor_pct": 0.1,
+                    "max_daily_shift_pct": 0.1,
+                    "approved_variants": [
+                        {
+                            "variant_id": "treatment_a",
+                            "template_id": "churn_rescue_push_a",
+                            "channel": "push_notification",
+                            "content": "Return today for a win-back reward.",
+                            "send_window": {"hour": 9, "minute": 0},
+                        },
+                        {
+                            "variant_id": "treatment_b",
+                            "template_id": "churn_rescue_push_b",
+                            "channel": "push_notification",
+                            "content": "Come back now to claim your comeback bonus.",
+                            "send_window": {"hour": 11, "minute": 0},
+                        },
+                    ],
                     "rollout_policy": "conservative",
                     "multiple_comparisons_method": "none",
                 },
@@ -217,6 +238,7 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 24,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.2,
+                    "scenario_type": "monetization_lift",
                     "rollout_policy": "balanced",
                     "multiple_comparisons_method": "holm_bonferroni",
                 },
@@ -262,6 +284,7 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 12,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.0,
+                    "scenario_type": "onboarding_activation",
                     "rollout_policy": "aggressive",
                     "multiple_comparisons_method": "none",
                 },

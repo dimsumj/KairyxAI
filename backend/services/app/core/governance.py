@@ -41,6 +41,7 @@ ROLE_PERMISSIONS = {
         "experiments.assignments.read",
         "experiments.rollout.read",
         "health.scheduler.read",
+        "predictions.models.read",
     },
     "operator": {
         "exports.create",
@@ -88,6 +89,7 @@ ROLE_PERMISSIONS = {
         "experiments.versions.read",
         "experiments.assignments.read",
         "experiments.rollout.read",
+        "experiments.optimizer.run",
         "sql_workspace.preview",
         "sql_workspace.queries.read",
         "sql_workspace.queries.create",
@@ -98,6 +100,8 @@ ROLE_PERMISSIONS = {
         "templates.instantiate",
         "health.scheduler.read",
         "health.scheduler.tick",
+        "predictions.models.read",
+        "predictions.models.train",
     },
 }
 

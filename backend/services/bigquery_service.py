@@ -301,6 +301,8 @@ class BigQueryService:
             "prediction_results": [
                 "prediction_job_id", "user_id", "canonical_user_id", "email", "churn_state",
                 "predicted_churn_risk", "prediction_source", "suggested_action", "completed_at",
+                "baseline_churn_score", "model_version", "score_timestamp", "eligibility_reason",
+                "recommended_template_id", "recommended_variant", "policy_snapshot_id",
             ],
             "pipeline_dead_letters": [
                 "job_id", "player_id", "event_type", "event_time", "rejection_reason",
@@ -1529,7 +1531,16 @@ class BigQueryService:
     def _deserialize_prediction_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         parsed = dict(row)
         for key, value in list(parsed.items()):
+            try:
+                if value is None or bool(pd.isna(value)):
+                    parsed[key] = None
+                    continue
+            except (TypeError, ValueError):
+                pass
             if not isinstance(value, str):
+                continue
+            if value.strip().lower() == "nan":
+                parsed[key] = None
                 continue
             if not value.startswith("{") and not value.startswith("["):
                 continue

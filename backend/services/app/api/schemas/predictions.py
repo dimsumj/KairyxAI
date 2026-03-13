@@ -10,6 +10,11 @@ class PredictionJobCreateRequest(BaseModel):
     prediction_mode: str = "local"
 
 
+class PredictionModelTrainRequest(BaseModel):
+    reference_time: str | None = None
+    min_rows: int = 12
+
+
 class PredictionResultItem(BaseModel):
     user_id: str
     churn_state: str
@@ -21,6 +26,13 @@ class PredictionResultItem(BaseModel):
     ltv: float | str | None = None
     session_count: int | str | None = None
     event_count: int | str | None = None
+    baseline_churn_score: float | str | None = None
+    model_version: str | None = None
+    score_timestamp: str | None = None
+    eligibility_reason: str | None = None
+    recommended_template_id: str | None = None
+    recommended_variant: str | None = None
+    policy_snapshot_id: str | None = None
     top_signals: List[Dict[str, Any]] = Field(default_factory=list)
 
 

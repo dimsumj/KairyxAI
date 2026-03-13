@@ -76,16 +76,21 @@ class PlayerModelingEngine:
         total_revenue = latest_state.get("total_revenue")
         if total_revenue is None:
             total_revenue = latest_state.get("lifetime_revenue_usd", 0.0)
+        sessions_7d = latest_state.get("sessions_7d")
+        sessions_30d = latest_state.get("sessions_30d")
 
         churn_state = "churned" if days_since_last_seen >= self.churn_inactive_days else "active"
         return {
             "player_id": latest_state.get("player_id") or player_id,
+            "canonical_user_id": latest_state.get("canonical_user_id") or latest_state.get("player_id") or player_id,
             "email": latest_state.get("email"),
             "first_seen_date": str(first_seen),
             "last_seen_date": str(last_seen),
             "total_sessions": int(total_sessions or 0),
             "total_events": int(total_events or 0),
             "total_revenue": float(total_revenue or 0.0),
+            "sessions_7d": int(sessions_7d or 0),
+            "sessions_30d": int(sessions_30d or total_sessions or 0),
             "days_since_last_seen": days_since_last_seen,
             "churn_state": churn_state,
             "churn_inactive_days": self.churn_inactive_days,
@@ -148,6 +153,10 @@ class PlayerModelingEngine:
         is_new_session = time_diffs > pd.Timedelta(minutes=15)
         # The total number of sessions is 1 (for the very first event) + the number of times a new session was started.        
         total_sessions = int(1 + is_new_session.sum()) # Ensure total_sessions is a standard Python int
+        window_7d = player_events[player_events["event_time"] >= (last_seen - pd.Timedelta(days=7))]
+        window_30d = player_events[player_events["event_time"] >= (last_seen - pd.Timedelta(days=30))]
+        sessions_7d = int(1 + (window_7d["event_time"].diff() > pd.Timedelta(minutes=15)).sum()) if not window_7d.empty else 0
+        sessions_30d = int(1 + (window_30d["event_time"].diff() > pd.Timedelta(minutes=15)).sum()) if not window_30d.empty else 0
         
         # Calculate total revenue from 'item_purchased' events
         purchases = player_events[player_events['event_type'] == 'item_purchased']
@@ -172,12 +181,15 @@ class PlayerModelingEngine:
 
         profile = {
             "player_id": player_id,
+            "canonical_user_id": player_id,
             "email": email,
             "first_seen_date": first_seen.isoformat(),
             "last_seen_date": last_seen.isoformat(),
             "total_sessions": total_sessions,
             "total_events": len(player_events),
             "total_revenue": total_revenue,
+            "sessions_7d": sessions_7d,
+            "sessions_30d": sessions_30d,
             "days_since_last_seen": days_since_last_seen,
             "churn_state": churn_state,
             "churn_inactive_days": self.churn_inactive_days,
