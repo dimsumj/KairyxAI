@@ -7,7 +7,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from typing import Callable, Optional
-import google.generativeai as genai
 
 from app.core.runtime import is_shutdown_requested
 from runtime_paths import resolve_runtime_file_path
@@ -29,6 +28,16 @@ class GeminiRequestExecutionError(GeminiRequestError):
     pass
 
 
+def _load_google_generativeai():
+    try:
+        import google.generativeai as genai
+    except ImportError as exc:
+        raise GeminiRequestError(
+            "google-generativeai is required to enable Gemini-backed features."
+        ) from exc
+    return genai
+
+
 class GeminiClient:
     """
     A client to interact with the Google Gemini API.
@@ -46,7 +55,8 @@ class GeminiClient:
         self.api_key = (api_key or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY environment variable must be set.")
-        
+
+        genai = _load_google_generativeai()
         genai.configure(api_key=self.api_key)
         # Use the model from environment variable, or default to 'gemini-2.5-flash'
         model_name = (model_name or os.getenv("GOOGLE_GEMINI_MODEL") or "gemini-2.5-flash").strip()
