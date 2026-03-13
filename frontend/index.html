@@ -2458,6 +2458,24 @@ dimensions: campaign,country,platform</pre>
                 return baselinePredictionPlayers;
             }
 
+            async function renderCompletedPredictionJob(completedJob, importJobId) {
+                const completedRows = await fetchPredictionRows(completedJob.id);
+                activePredictionJobId = null;
+                clearPersistedActivePredictionJob();
+                predictionStopRequested = false;
+                baselinePredictionPlayers = [...completedRows];
+                baselinePredictionImportJobId = String(importJobId || '');
+                baselinePredictionJobId = String(completedJob.id || '');
+                allChurnPredictionPlayers = [...completedRows];
+                renderChurnTable(completedRows.length > 0 ? undefined : 'No prediction results available.');
+                renderPredictionProgress({
+                    status: 'Ready',
+                    progress: completedJob.progress,
+                });
+                setPredictionActionState('idle');
+                pushAudienceBtn.disabled = completedRows.length === 0;
+            }
+
             async function createPredictionRecord(importJobId, predictionMode = 'local') {
                 await ensureHealthState();
                 const created = await apiRequest('/predictions', {
@@ -3008,6 +3026,16 @@ dimensions: campaign,country,platform</pre>
                 return getPredictionModeLabel(predictionMode);
             }
 
+            function getPredictionReusePromptMessage(completedJob, selectedPredictionMode) {
+                const cachedMode = getPredictionJobMode(completedJob);
+                const cachedLabel = getPredictionModeLabel(cachedMode);
+                const selectedLabel = getPredictionModeLabel(selectedPredictionMode);
+                if (cachedMode === String(selectedPredictionMode || '').toLowerCase()) {
+                    return `${cachedLabel} results for this dataset are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached results.`;
+                }
+                return `${cachedLabel} results for this dataset are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached ${cachedLabel} results.`;
+            }
+
             function formatPredictionProgressText(job = {}) {
                 const progress = job.progress || {};
                 const processed = job.processed_count ?? progress.current ?? 0;
@@ -3225,41 +3253,43 @@ dimensions: campaign,country,platform</pre>
                     return;
                 }
 
-                setPredictionActionState('starting');
                 predictionStopRequested = false;
                 const selectedPredictionMode = getSelectedPredictionMode();
-                predictionProgressInfo.textContent = getPredictionStartStatusMessage(null, selectedPredictionMode);
                 currentPage = 1;
+                let shouldForceRecalculate = Boolean(forceRecalculate);
 
                 let predictionJob = null;
                 try {
                     await ensureHealthState();
                     await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
-                    predictionJob = !forceRecalculate ? getLatestActivePredictionJob(importJobId, selectedPredictionMode) : null;
-                    if (!predictionJob && !forceRecalculate) {
-                        const completedJob = getLatestCompletedPredictionJob(importJobId, null, selectedPredictionMode);
+                    predictionJob = !shouldForceRecalculate ? getLatestActivePredictionJob(importJobId, selectedPredictionMode) : null;
+                    if (!predictionJob && !shouldForceRecalculate) {
+                        const completedJob = (
+                            getLatestCompletedPredictionJob(importJobId, null, selectedPredictionMode)
+                            || getLatestCompletedPredictionJob(importJobId)
+                        );
                         if (completedJob) {
-                            const existingRows = await loadBaselinePredictionRows(importJobId, null, selectedPredictionMode);
-                            activePredictionJobId = null;
-                            clearPersistedActivePredictionJob();
-                            predictionStopRequested = false;
-                            allChurnPredictionPlayers = [...existingRows];
-                            renderChurnTable(existingRows.length > 0 ? undefined : 'No prediction results available.');
-                            renderPredictionProgress({
-                                status: 'Ready',
-                                progress: completedJob.progress,
-                            });
-                            setPredictionActionState('idle');
-                            pushAudienceBtn.disabled = existingRows.length === 0;
-                            return;
+                            const shouldRerun = window.confirm(
+                                getPredictionReusePromptMessage(completedJob, selectedPredictionMode),
+                            );
+                            if (!shouldRerun) {
+                                await renderCompletedPredictionJob(completedJob, importJobId);
+                                return;
+                            }
+                            shouldForceRecalculate = true;
                         }
                     }
 
-                    const existingRows = await loadBaselinePredictionRows(
-                        importJobId,
-                        predictionJob ? predictionJob.id : null,
-                        selectedPredictionMode,
-                    );
+                    setPredictionActionState('starting');
+                    predictionProgressInfo.textContent = getPredictionStartStatusMessage(null, selectedPredictionMode);
+
+                    const existingRows = shouldForceRecalculate
+                        ? []
+                        : await loadBaselinePredictionRows(
+                            importJobId,
+                            predictionJob ? predictionJob.id : null,
+                            selectedPredictionMode,
+                        );
                     allChurnPredictionPlayers = [...existingRows];
                     renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
 
