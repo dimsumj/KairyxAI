@@ -630,7 +630,16 @@
                     <label for="dataset-select">Select Dataset</label>
                     <select id="dataset-select"></select>
                 </div>
-                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+                    <div class="form-group" style="margin-bottom: 0; min-width: 220px;">
+                        <label for="prediction-mode-select">Prediction Engine</label>
+                        <select id="prediction-mode-select">
+                            <option value="local">Local Model</option>
+                            <option value="ai">AI</option>
+                            <option value="cloud">Cloud</option>
+                            <option value="parallel">AI + Cloud</option>
+                        </select>
+                    </div>
                     <button id="predict-churn-btn">Predict Churn</button>
                     <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
                 </div>
@@ -2195,7 +2204,32 @@ dimensions: campaign,country,platform</pre>
                 ));
             }
 
-            function getPredictionStartStatusMessage(job = null) {
+            function getPredictionModeLabel(predictionMode = 'local') {
+                switch (String(predictionMode || 'local').toLowerCase()) {
+                    case 'ai':
+                        return 'AI';
+                    case 'cloud':
+                        return 'Cloud';
+                    case 'parallel':
+                        return 'AI + Cloud';
+                    default:
+                        return 'Local Model';
+                }
+            }
+
+            function getSelectedPredictionMode() {
+                return String((predictionModeSelect && predictionModeSelect.value) || (hasConfiguredGeminiConnector() ? 'ai' : 'local')).toLowerCase();
+            }
+
+            function syncPredictionModeSelection(job = null) {
+                if (!predictionModeSelect) {
+                    return;
+                }
+                const jobMode = String((((job || {}).spec || {}).prediction_mode) || '').toLowerCase();
+                predictionModeSelect.value = jobMode || getSelectedPredictionMode();
+            }
+
+            function getPredictionStartStatusMessage(job = null, predictionMode = getSelectedPredictionMode()) {
                 if (job) {
                     return formatPredictionProgressText({
                         status: mapPredictionStatus(job.status),
@@ -2209,7 +2243,7 @@ dimensions: campaign,country,platform</pre>
                         total: 0,
                         pct: 0,
                         details: {
-                            execution_label: hasConfiguredGeminiConnector() ? 'AI' : 'Local',
+                            execution_label: getPredictionModeLabel(predictionMode),
                         },
                     },
                 });
@@ -2821,6 +2855,7 @@ dimensions: campaign,country,platform</pre>
 
             // Operator Hub Logic
             const datasetSelect = document.getElementById('dataset-select');
+            const predictionModeSelect = document.getElementById('prediction-mode-select');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
             const predictionProgressInfo = document.getElementById('prediction-progress-info');
             const campaignProviderSelect = document.getElementById('campaign-provider-select');
@@ -2913,6 +2948,7 @@ dimensions: campaign,country,platform</pre>
                     predictChurnBtn.style.background = 'var(--primary-color)';
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionModeSelect.disabled = true;
                     return;
                 }
 
@@ -2921,6 +2957,7 @@ dimensions: campaign,country,platform</pre>
                     predictChurnBtn.style.background = 'var(--red)';
                     predictChurnBtn.disabled = false;
                     datasetSelect.disabled = true;
+                    predictionModeSelect.disabled = true;
                     return;
                 }
 
@@ -2929,6 +2966,7 @@ dimensions: campaign,country,platform</pre>
                     predictChurnBtn.style.background = 'var(--subtle-text)';
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionModeSelect.disabled = true;
                     return;
                 }
 
@@ -2936,6 +2974,7 @@ dimensions: campaign,country,platform</pre>
                 predictChurnBtn.style.background = '';
                 predictChurnBtn.disabled = false;
                 datasetSelect.disabled = false;
+                predictionModeSelect.disabled = false;
             }
 
             function renderPredictionProgress(job = {}) {
@@ -3041,6 +3080,7 @@ dimensions: campaign,country,platform</pre>
                     datasetSelect.innerHTML = ''; // Clear loading message
 
                     if (readyJobs.length > 0) {
+                        syncPredictionModeSelection();
                         readyJobs.forEach(job => {
                             const option = document.createElement('option');
                             option.value = job.id;
@@ -3059,6 +3099,7 @@ dimensions: campaign,country,platform</pre>
 
                         if (selectedActiveJob) {
                             activePredictionJobId = selectedActiveJob.id;
+                            syncPredictionModeSelection(selectedActiveJob);
                             persistActivePredictionJob(activePredictionJobId, selectedDataset);
                             predictionStopRequested = String(selectedActiveJob.status || '').toLowerCase() === 'stopping';
                             await syncPredictionRows(activePredictionJobId, selectedDataset);
@@ -3096,6 +3137,7 @@ dimensions: campaign,country,platform</pre>
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
+                        predictionModeSelect.disabled = true;
                         pushAudienceBtn.disabled = true;
                         setCampaignExportStatus('');
                     }
@@ -3105,6 +3147,7 @@ dimensions: campaign,country,platform</pre>
                     setPredictionActionState('idle');
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionModeSelect.disabled = true;
                     pushAudienceBtn.disabled = true;
                     console.error('Error loading datasets for Operator Hub:', error);
                 }
@@ -3155,7 +3198,8 @@ dimensions: campaign,country,platform</pre>
 
                 setPredictionActionState('starting');
                 predictionStopRequested = false;
-                predictionProgressInfo.textContent = getPredictionStartStatusMessage();
+                const selectedPredictionMode = getSelectedPredictionMode();
+                predictionProgressInfo.textContent = getPredictionStartStatusMessage(null, selectedPredictionMode);
                 currentPage = 1;
 
                 let predictionJob = null;
@@ -3187,9 +3231,10 @@ dimensions: campaign,country,platform</pre>
                     renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
 
                     if (!predictionJob) {
-                        predictionJob = await createPredictionRecord(importJobId, 'local');
+                        predictionJob = await createPredictionRecord(importJobId, selectedPredictionMode);
                     }
                     activePredictionJobId = predictionJob.id;
+                    syncPredictionModeSelection(predictionJob);
                     persistActivePredictionJob(activePredictionJobId, importJobId);
                     predictionStopRequested = String(predictionJob.status || '').toLowerCase() === 'stopping';
                     renderPredictionProgress({
