@@ -57,14 +57,6 @@ def _normalize_mock_storage_backend(raw_value: Any) -> str:
     raise ValueError("KAIRYX_MOCK_STORAGE_BACKEND must be 'local_files' or 'database'.")
 
 
-def _resolved_mock_storage_backend(raw_value: Any) -> str:
-    requested = _normalize_mock_storage_backend(raw_value)
-    platform_surface = normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE", "")).lower()
-    if requested == "database" and platform_surface != "vercel_demo":
-        return "local_files"
-    return requested
-
-
 def _shared_service_cache_key() -> tuple[Any, ...]:
     mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
     tenant_scope = _tenant_scope_key()
@@ -87,11 +79,9 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
         mode,
         tenant_scope,
         project_scope,
-        _resolved_mock_storage_backend(os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")),
+        _normalize_mock_storage_backend(os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")),
         normalize_env_text(os.getenv("CONTROL_PLANE_DATABASE_URL", "")),
         normalize_env_text(os.getenv("DATABASE_URL", "")),
-        normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE", "")),
-        normalize_env_text(os.getenv("KAIRYX_RUNTIME_DIR", "")),
         os.getcwd(),
     )
 
@@ -188,7 +178,7 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
-        self._mock_storage_backend = _resolved_mock_storage_backend(
+        self._mock_storage_backend = _normalize_mock_storage_backend(
             os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")
         )
         cache_root = Path(".cache") / _tenant_scope_key() / _project_scope_key()
@@ -1003,8 +993,7 @@ class BigQueryService:
                 rows = []
         else:
             rows = []
-            for target in ("events_curated", "events_staging"):
-                table = self._get_mock_table(target)
+            for table in (self._curated_table, self._table):
                 filtered_table = self._filter_table_by_job(table, job_id=normalized_job_id)
                 if filtered_table.empty:
                     continue
@@ -1540,7 +1529,8 @@ class BigQueryService:
             return []
 
         for target in ("player_latest_state", "events_curated", "events_staging"):
-            filtered_table = self._get_mock_table(target)
+            table = self._get_mock_table(target)
+            filtered_table = self._filter_table_by_job(table, job_id=job_id)
             if filtered_table.empty:
                 continue
             ids: List[str] = []

@@ -3,18 +3,27 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi.testclient import TestClient
 
 from app.core import db as db_module
 from app.core.errors import is_database_locked_error
+from app.core.settings import get_settings
 from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 import local_job_store
 from local_job_store import list_identity_links, resolve_or_create_canonical_user_id
-from runtime_paths import resolve_runtime_file_path
+import runtime_paths
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime_database_state():
+    db_module.clear_runtime_database_fallback()
+    clear_shared_bigquery_service_cache()
+    yield
+    clear_shared_bigquery_service_cache()
+    db_module.clear_runtime_database_fallback()
 
 
 def test_local_job_store_accepts_sqlite_url_override(tmp_path, monkeypatch):
@@ -63,6 +72,25 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
         response = client.get("/api/v1/health")
 
     assert response.status_code == 200
+
+
+def test_database_url_normalization_uses_psycopg_driver():
+    assert db_module.normalize_database_url("postgres://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+    assert db_module.normalize_database_url("postgresql://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+    assert db_module.normalize_database_url("postgresql+psycopg://user:pass@example.com:5432/demo") == (
+        "postgresql+psycopg://user:pass@example.com:5432/demo"
+    )
+
+
+def test_normalize_env_text_unwraps_nested_quotes_and_newlines():
+    assert runtime_paths.normalize_env_text('""postgresql://user:pass@example.com/demo"\\n"') == (
+        "postgresql://user:pass@example.com/demo"
+    )
+    assert runtime_paths.normalize_env_text('"mock\\n"') == "mock"
 
 
 def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):
@@ -148,72 +176,52 @@ def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, m
     assert service_a1 is not service_b
 
 
-def test_resolve_runtime_file_path_uses_runtime_root_override(tmp_path, monkeypatch):
-    runtime_root = tmp_path / "vercel-runtime"
+def test_vercel_runtime_defaults_use_tmp_storage(tmp_path, monkeypatch):
+    monkeypatch.delenv("KAIRYX_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setattr(runtime_paths.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    control_plane_url = runtime_paths.default_control_plane_database_url()
+    local_job_db = runtime_paths.default_local_job_store_path()
+    cache_path = runtime_paths.resolve_runtime_file_path(".cache/demo.jsonl", ensure_parent=True)
+    settings = get_settings()
+
+    expected_root = tmp_path / "kairyxai-runtime"
+    assert control_plane_url == f"sqlite:///{expected_root / '.kairyx_control_plane.db'}"
+    assert local_job_db == expected_root / ".kairyx_local.db"
+    assert cache_path == expected_root / ".cache" / "demo.jsonl"
+    assert settings.scheduler_enabled is False
+
+
+def test_vercel_remote_control_plane_db_falls_back_to_local_sqlite(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    local_db = tmp_path / "local_jobs.db"
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("KAIRYX_PLATFORM_SURFACE", "vercel_demo")
-    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(runtime_root))
-
-    resolved = resolve_runtime_file_path(".cache/demo/state.json", ensure_parent=True)
-
-    assert resolved == (runtime_root / ".cache" / "demo" / "state.json").resolve()
-    assert resolved.parent.exists()
-
-
-def test_init_db_falls_back_to_runtime_sqlite_only_for_vercel_demo(tmp_path, monkeypatch):
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("APP_ENV", "demo")
-    monkeypatch.setenv("KAIRYX_PLATFORM_SURFACE", "vercel_demo")
-    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setenv("VERCEL", "1")
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
-    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:1/kairyx")
-    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
-    monkeypatch.setenv("SCHEDULER_ENABLED", "false")
+    monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", "postgresql://demo:demo@127.0.0.1:1/kairyx")
     monkeypatch.setenv("CONTROL_PLANE_CONNECT_TIMEOUT_SECONDS", "1")
-    db_module.clear_runtime_database_fallback()
-    db_module.get_engine.cache_clear()
-    db_module.get_session_factory.cache_clear()
+    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(local_db))
 
     app = create_app()
     with TestClient(app) as client:
-        response = client.get("/api/v1/health/live")
+        response = client.get("/api/v1/health")
 
     payload = response.json()
+    fallback_db = runtime_dir / ".kairyx_control_plane.db"
+
     assert response.status_code == 200
+    assert payload["mock_state_backend"] == "database"
+    assert payload["mock_state_persistent"] is False
     assert payload["control_plane_database_backend"] == "sqlite"
-    assert payload["control_plane_database_fallback_active"] is True
     assert payload["control_plane_database_persistent"] is False
-    assert (runtime_root / ".kairyx_control_plane.db").exists()
-
-    db_module.clear_runtime_database_fallback()
-    db_module.get_engine.cache_clear()
-    db_module.get_session_factory.cache_clear()
-
-
-def test_init_db_does_not_fallback_outside_vercel_demo(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
-    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
-    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
-    db_module.clear_runtime_database_fallback()
-    db_module.get_engine.cache_clear()
-    db_module.get_session_factory.cache_clear()
-
-    def fail_initialize_schema():
-        raise SQLAlchemyError("database unavailable")
-
-    monkeypatch.setattr(db_module, "_initialize_schema", fail_initialize_schema)
-
-    try:
-        with pytest.raises(SQLAlchemyError):
-            db_module.init_db()
-        assert db_module.is_runtime_database_fallback_active() is False
-    finally:
-        db_module.clear_runtime_database_fallback()
-        db_module.get_engine.cache_clear()
-        db_module.get_session_factory.cache_clear()
+    assert payload["control_plane_database_fallback_active"] is True
+    assert payload["local_cache"]["storage_backend"] == "database"
+    assert payload["local_cache"]["persistent"] is False
+    assert fallback_db.exists()
 
 
 def test_prediction_polling_access_filter_logs_only_first_request_per_job():

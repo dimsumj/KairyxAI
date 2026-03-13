@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -9,8 +10,8 @@ from typing import Generator
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Engine
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
@@ -23,18 +24,15 @@ logger = logging.getLogger(__name__)
 _runtime_database_url_override: str | None = None
 _runtime_database_fallback_reason: str = ""
 
-CONTROL_PLANE_REVISION = "20260307_0001"
-RESOURCE_REVISION = "20260310_0002"
-MULTITENANT_REVISION = "20260322_0003"
-PROJECT_ONBOARDING_REVISION = "20260324_0004"
-
 
 def normalize_database_url(raw_url: str) -> str:
     database_url = normalize_sqlite_database_url(normalize_env_text(raw_url))
     scheme, separator, remainder = database_url.partition("://")
     if not separator:
         return database_url
-    if scheme in {"postgres", "postgresql"}:
+    if scheme == "postgres":
+        return f"postgresql+psycopg://{remainder}"
+    if scheme == "postgresql":
         return f"postgresql+psycopg://{remainder}"
     return database_url
 
@@ -63,10 +61,9 @@ def is_runtime_database_fallback_active() -> bool:
 
 
 def is_control_plane_database_persistent() -> bool:
-    settings = get_settings()
     effective_url = get_effective_database_url()
     if effective_url.startswith("sqlite"):
-        return settings.platform_surface != "vercel_demo"
+        return not bool(normalize_env_text(os.getenv("VERCEL", "")))
     return True
 
 
@@ -84,14 +81,13 @@ def get_runtime_database_status() -> dict[str, str | bool]:
 
 
 def _should_fallback_to_local_sqlite(database_url: str) -> bool:
-    settings = get_settings()
     if is_runtime_database_fallback_active():
         return False
     if database_url.startswith("sqlite"):
         return False
-    if settings.platform_surface != "vercel_demo":
+    if not normalize_env_text(os.getenv("VERCEL", "")):
         return False
-    return settings.data_backend_mode == "mock"
+    return normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower() == "mock"
 
 
 def _activate_runtime_database_fallback(database_url: str, exc: SQLAlchemyError) -> None:
@@ -106,6 +102,12 @@ def _activate_runtime_database_fallback(database_url: str, exc: SQLAlchemyError)
     get_engine.cache_clear()
     get_session_factory.cache_clear()
     logger.exception("Control plane database unavailable; falling back to local runtime SQLite database.")
+
+
+CONTROL_PLANE_REVISION = "20260307_0001"
+RESOURCE_REVISION = "20260310_0002"
+MULTITENANT_REVISION = "20260322_0003"
+PROJECT_ONBOARDING_REVISION = "20260324_0004"
 
 
 @lru_cache(maxsize=1)
