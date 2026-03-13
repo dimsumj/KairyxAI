@@ -335,10 +335,15 @@ def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
     captured = {}
 
     class FakeGeminiClient:
-        def __init__(self, api_key=None, model_name=None, stop_checker=None):
+        def __init__(self, api_key=None, model_name=None, stop_checker=None, circuit_namespace=None):
             captured["api_key"] = api_key
             captured["model_name"] = model_name
             captured["stop_checker_present"] = stop_checker is not None
+            captured["circuit_namespace"] = circuit_namespace
+            captured["reset_called"] = False
+
+        def reset_circuit_breaker(self):
+            captured["reset_called"] = True
 
         def get_ai_response(self, prompt: str):
             if "Provide JSON with keys" in prompt:
@@ -405,6 +410,8 @@ def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
     assert captured["api_key"] == "google-api-key-from-connector"
     assert captured["model_name"] == "gemini-2.5-flash"
     assert captured["stop_checker_present"] is True
+    assert captured["circuit_namespace"] == "predictions"
+    assert captured["reset_called"] is True
     assert captured["gemini_client_present"] is True
     assert captured["estimate_called"] is True
     assert captured["job_id"] == import_job["id"]
@@ -452,8 +459,11 @@ def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
     assert run_import.status_code == 200
 
     class SlowGeminiClient:
-        def __init__(self, api_key=None, model_name=None, stop_checker=None):
+        def __init__(self, api_key=None, model_name=None, stop_checker=None, circuit_namespace=None):
             self.stop_checker = stop_checker
+
+        def reset_circuit_breaker(self):
+            return None
 
         def get_ai_response(self, prompt):
             time.sleep(2.0)

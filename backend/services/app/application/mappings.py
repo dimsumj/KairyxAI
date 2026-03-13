@@ -286,12 +286,12 @@ class MappingService:
             model_name = str(config.get("model_name") or "").strip() or None
             if api_key:
                 try:
-                    return GeminiClient(api_key=api_key, model_name=model_name)
+                    return GeminiClient(api_key=api_key, model_name=model_name, circuit_namespace="mappings")
                 except Exception:
                     return None
         if str(os.getenv("GOOGLE_API_KEY") or "").strip():
             try:
-                return GeminiClient()
+                return GeminiClient(circuit_namespace="mappings")
             except Exception:
                 return None
         return None

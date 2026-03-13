@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import time
+import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from typing import Callable, Optional
@@ -38,6 +39,7 @@ class GeminiClient:
         api_key: str | None = None,
         model_name: str | None = None,
         stop_checker: Optional[Callable[[], bool]] = None,
+        circuit_namespace: str | None = None,
     ):
         """
         Initializes the Gemini client and configures it with an API key.
@@ -53,7 +55,8 @@ class GeminiClient:
         self.model = genai.GenerativeModel(model_name)
         self._cache_path = ".cache/llm_response_cache.json"
         self._usage_path = ".cache/llm_usage.json"
-        self._circuit_path = ".cache/llm_circuit_breaker.json"
+        self._circuit_namespace = self._normalize_circuit_namespace(circuit_namespace)
+        self._circuit_path = f".cache/llm_circuit_breaker_{self._circuit_namespace}.json"
         self._cache_ttl_seconds = int(os.getenv("AI_RESPONSE_CACHE_TTL_SEC", "21600"))
         self._daily_token_limit = self._read_int_env("AI_DAILY_TOKEN_LIMIT")
         self._monthly_token_limit = self._read_int_env("AI_MONTHLY_TOKEN_LIMIT")
@@ -69,6 +72,9 @@ class GeminiClient:
         self._stop_checker = stop_checker
         
         print(f"GeminiClient initialized successfully with model: {model_name}")
+
+    def reset_circuit_breaker(self):
+        self._save_circuit_state({"failure_count": 0, "open_until": None, "last_error": None})
 
     def get_ai_response(self, prompt: str) -> str:
         """
@@ -145,6 +151,11 @@ class GeminiClient:
             return parsed if parsed >= 0 else None
         except ValueError:
             return None
+
+    def _normalize_circuit_namespace(self, value: str | None) -> str:
+        raw_value = str(value or os.getenv("AI_LLM_CIRCUIT_NAMESPACE") or "default").strip().lower()
+        normalized = re.sub(r"[^a-z0-9._-]+", "_", raw_value).strip("._-")
+        return normalized or "default"
 
     def _prompt_hash(self, prompt: str) -> str:
         digest = hashlib.sha256()

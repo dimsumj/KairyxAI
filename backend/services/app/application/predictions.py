@@ -295,7 +295,11 @@ class PredictionService:
         self._commit_session()
 
         try:
-            gemini_client = self._build_gemini_client(job_id) if self._mode_uses_gemini(mode) else None
+            gemini_client = (
+                self._build_gemini_client(job_id, reset_circuit=True)
+                if self._mode_uses_gemini(mode)
+                else None
+            )
             self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
             active_model = self.local_models.get_latest_model_payload()
@@ -530,7 +534,7 @@ class PredictionService:
             return {"execution_mode": "ai", "execution_label": "AI"}
         return {"execution_mode": "local_model", "execution_label": "Local Model"}
 
-    def _build_gemini_client(self, job_id: str) -> GeminiClient | None:
+    def _build_gemini_client(self, job_id: str, *, reset_circuit: bool = False) -> GeminiClient | None:
         connector = self._select_google_connector()
         if connector is not None:
             config = connector.get("config") or {}
@@ -538,12 +542,26 @@ class PredictionService:
             model_name = str(config.get("model_name") or "").strip() or None
             if api_key:
                 try:
-                    return GeminiClient(api_key=api_key, model_name=model_name, stop_checker=lambda: self._should_stop(job_id))
+                    client = GeminiClient(
+                        api_key=api_key,
+                        model_name=model_name,
+                        stop_checker=lambda: self._should_stop(job_id),
+                        circuit_namespace="predictions",
+                    )
+                    if reset_circuit:
+                        client.reset_circuit_breaker()
+                    return client
                 except Exception:
                     return None
 
         try:
-            return GeminiClient(stop_checker=lambda: self._should_stop(job_id))
+            client = GeminiClient(
+                stop_checker=lambda: self._should_stop(job_id),
+                circuit_namespace="predictions",
+            )
+            if reset_circuit:
+                client.reset_circuit_breaker()
+            return client
         except Exception:
             return None
 
