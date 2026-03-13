@@ -6,6 +6,7 @@ from fastapi import Request
 
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
+from app.core import db as db_module
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.settings import get_settings
 from app.core.deps import get_control_loop_service, get_health_monitor_service
@@ -22,6 +23,7 @@ class SchedulerTickRequest(BaseModel):
 def health(service: HealthMonitorService = Depends(get_health_monitor_service)):
     settings = get_settings()
     bigquery_service = get_shared_bigquery_service()
+    database_status = db_module.get_runtime_database_status()
     mock_state_backend = bigquery_service.get_mock_state_backend()
     snapshot = service.snapshot(persist=True)
     payload = {
@@ -30,6 +32,9 @@ def health(service: HealthMonitorService = Depends(get_health_monitor_service)):
         "mode": settings.data_backend_mode,
         "mock_state_backend": mock_state_backend,
         "mock_state_persistent": bigquery_service.is_mock_state_persistent(),
+        "control_plane_database_backend": database_status["backend"],
+        "control_plane_database_persistent": database_status["persistent"],
+        "control_plane_database_fallback_active": database_status["fallback_active"],
         "data_aliases": bigquery_service.get_v1_table_aliases(),
         **snapshot,
     }

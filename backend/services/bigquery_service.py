@@ -185,7 +185,14 @@ class BigQueryService:
         return self._mock_storage_backend
 
     def is_mock_state_persistent(self) -> bool:
-        return self.mode == "gcp" or self._mock_storage_backend == "database"
+        if self.mode == "gcp":
+            return True
+        if self._mock_storage_backend != "database":
+            return False
+
+        from app.core.db import is_control_plane_database_persistent
+
+        return is_control_plane_database_persistent()
 
     def _uses_database_mock_storage(self) -> bool:
         return self.mode == "mock" and self._mock_storage_backend == "database"
@@ -1597,10 +1604,11 @@ class BigQueryService:
             }
 
         if self._uses_database_mock_storage():
+            persistent = self.is_mock_state_persistent()
             return {
                 "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
                 "storage_backend": "database",
-                "persistent": True,
+                "persistent": persistent,
                 "tables": {
                     "events_staging": {"rows": len(self._get_local_rows("events_staging")), "cache_path": "", "size_bytes": 0},
                     "events_curated": {"rows": len(self._get_local_rows("events_curated")), "cache_path": "", "size_bytes": 0},

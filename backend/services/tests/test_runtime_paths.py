@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import db as db_module
 from app.core.settings import get_settings
@@ -13,6 +15,15 @@ from bigquery_service import clear_shared_bigquery_service_cache, get_shared_big
 import local_job_store
 from local_job_store import list_identity_links, resolve_or_create_canonical_user_id
 import runtime_paths
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime_database_state():
+    db_module.clear_runtime_database_fallback()
+    clear_shared_bigquery_service_cache()
+    yield
+    clear_shared_bigquery_service_cache()
+    db_module.clear_runtime_database_fallback()
 
 
 def test_local_job_store_accepts_sqlite_url_override(tmp_path, monkeypatch):
@@ -146,6 +157,48 @@ def test_vercel_runtime_defaults_use_tmp_storage(tmp_path, monkeypatch):
     assert local_job_db == expected_root / ".kairyx_local.db"
     assert cache_path == expected_root / ".cache" / "demo.jsonl"
     assert settings.scheduler_enabled is False
+
+
+def test_vercel_remote_control_plane_db_falls_back_to_local_sqlite(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    local_db = tmp_path / "local_jobs.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", "postgresql://demo:demo@example.com:5432/kairyx")
+    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(local_db))
+
+    create_all_attempts: list[str] = []
+    real_create_all = db_module.Base.metadata.create_all
+
+    def flaky_create_all(bind=None, *args, **kwargs):
+        create_all_attempts.append(str(bind.url))
+        if len(create_all_attempts) == 1:
+            raise SQLAlchemyError("quota exceeded")
+        return real_create_all(bind=bind, *args, **kwargs)
+
+    monkeypatch.setattr(db_module.Base.metadata, "create_all", flaky_create_all)
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health")
+
+    payload = response.json()
+    fallback_db = runtime_dir / ".kairyx_control_plane.db"
+
+    assert response.status_code == 200
+    assert create_all_attempts[0].startswith("postgresql+psycopg://")
+    assert any(attempt.startswith(f"sqlite:///{fallback_db}") for attempt in create_all_attempts[1:])
+    assert payload["mock_state_backend"] == "database"
+    assert payload["mock_state_persistent"] is False
+    assert payload["control_plane_database_backend"] == "sqlite"
+    assert payload["control_plane_database_persistent"] is False
+    assert payload["control_plane_database_fallback_active"] is True
+    assert payload["local_cache"]["storage_backend"] == "database"
+    assert payload["local_cache"]["persistent"] is False
+    assert fallback_db.exists()
 
 
 def test_prediction_polling_access_filter_logs_only_first_request_per_job():

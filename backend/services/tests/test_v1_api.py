@@ -29,11 +29,13 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
     monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.clear_runtime_database_fallback()
     db_module.get_engine.cache_clear()
     db_module.get_session_factory.cache_clear()
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
+    db_module.clear_runtime_database_fallback()
 
 
 def test_v1_connectors_and_mappings_persist(client):
@@ -96,6 +98,7 @@ def test_health_reports_database_mock_storage(monkeypatch, tmp_path):
     monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
     monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.clear_runtime_database_fallback()
     db_module.get_engine.cache_clear()
     db_module.get_session_factory.cache_clear()
 
