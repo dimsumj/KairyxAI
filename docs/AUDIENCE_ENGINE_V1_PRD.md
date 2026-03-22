@@ -140,7 +140,7 @@
 
 ---
 
-## 7. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 7. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 7.1 当前已落地
 - Rule / SQL / List cohort 三入口已存在

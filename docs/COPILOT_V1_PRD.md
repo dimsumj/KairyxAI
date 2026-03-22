@@ -284,7 +284,7 @@
 
 ---
 
-## 11. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 11. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 11.1 当前已落地
 - `query / explain / recommend / report` API 已存在

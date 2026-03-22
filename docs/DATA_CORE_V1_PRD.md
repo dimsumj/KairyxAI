@@ -1,5 +1,23 @@
 # KairyxAI Data Core v1 PRD
 
+## 4.0 Connector Management（补充归属）
+
+### 目标
+将数据连接器配置、健康检查、freshness 与最近导入状态统一归到 Data Core 管理，作为所有 ingestion / mapping / SQL 能力的入口控制面。
+
+### 功能要求
+- 保存多个 connector 配置
+- 列出可用 connector 与数据来源
+- 支持 connector 删除
+- 支持 health check
+- 支持 freshness / last_ingestion_status / last_ingestion_at 展示
+
+### 归属说明
+- 当前 repo 中的 connector control plane 与 source freshness 属于 Data Core 范围
+- 连接器 secret 的生产化治理仍由 Master PRD 的 Production Readiness 持有
+
+---
+
 ## 4.1 数据源连接与数仓直查能力（新增）
 
 ### 目标
@@ -40,6 +58,19 @@
 4. 至少支持 1 个动态 cohort 定时刷新（如每天 1 次）
 5. 有查询审计日志和失败可追踪信息
 
+### 4.1.6 Backend Runtime / Persistence Ownership（补充归属）
+- `operator-api` 下的 `/api/v1/connectors`、`/mappings`、`/imports`、`/predictions` 是 Data Core 的主要 backend control-plane 面
+- `import-worker` 负责 connector 分页拉取、checkpoint-aware import 执行、raw shard 发布与恢复
+- `dataflow` 负责 `raw shard -> manifest -> standardized -> unified` 的规范化处理
+- `prediction-worker` 负责基于统一聚合层执行预测，并把结果写入 BigQuery-backed serving / result storage
+- prediction 结果读取必须支持分页，避免无界结果集读取
+- Data Core 持有的 control-plane persisted entities 至少包括：
+  - `connector configuration`
+  - `field mapping`
+  - `import job`
+  - `prediction job`
+  - `ingestion checkpoint`
+
 ---
 
 ## 4.2 多来源数据 Ingestion 与 Stitch（P0）
@@ -77,6 +108,96 @@
 #### Layer C: Unified（合并层）
 - 执行 dedupe + identity stitch
 - 产出 `fact_events_unified` 作为上层唯一消费入口
+
+#### 4.2.2.1 双运行模式（整体设计）
+Data Core 必须长期同时支持两种运行模式，共享 schema contract 与 service interface，但不强制共享同一运行时实现：
+
+- `Local demo mode`
+  - 用于本地 UI 调试、connector mock flow、无云基础设施的端到端演示
+  - 允许本地文件 raw storage、进程内或本地 queue simulation、parquet / sqlite persistence
+  - 保留当前 FastAPI 驱动的同步开发体验，但不以规模为优化目标
+- `Production GCP mode`
+  - 用于大体量 connector 拉取、可回放 ingestion、分布式 normalization、warehouse-backed dedupe 与 serving
+  - 运行形态固定为 `GCS + Pub/Sub + Dataflow + BigQuery`
+  - 目标是 replayable、observable、idempotent，且内存占用受控
+
+#### 4.2.2.2 生产数据平面（Scalable Ingestion Blueprint）
+生产模式下的数据主链路固定为：
+1. connector fetcher 按页拉取外部事件
+2. 每页写成一个有界 raw shard（压缩 JSONL）
+3. 仅发布 shard metadata manifest，不在消息里传 raw event list
+4. Dataflow 消费 manifest 并做 canonical normalization
+5. 有效事件写入 `events_staging`
+6. 无效事件写入 `pipeline_dead_letters`
+7. BigQuery SQL 生成 `events_curated` 与 serving / aggregate tables
+8. 上层 API、预测、决策默认读取 curated / aggregate tables，而不是直接扫 raw events
+
+#### 4.2.2.3 Raw Shard / Manifest Contract（P0）
+Raw shard 路径规范：
+- `gs://<bucket>/raw/source=<source>/dt=YYYY-MM-DD/hour=HH/job=<job_id>/part-000123.jsonl.gz`
+- 格式为 newline-delimited JSON，gzip compressed，一行一个 source event
+
+Shard manifest 至少包含：
+- `job_id`
+- `source`
+- `source_config_id`
+- `gcs_uri`
+- `event_count`
+- `start_date`
+- `end_date`
+- `schema_version`
+- `published_at`
+
+约束：
+- Pub/Sub 只承载 shard metadata，不承载完整事件数组
+- checkpoint 必须能追到 `job_id + source + shard_index`
+- replay / resume 以 shard 为最小恢复单元，而不是整 job 全量重跑
+
+#### 4.2.2.4 Canonical Event / Warehouse Contract（P0）
+标准化后的 canonical event 除基础字段外，还应显式持有：
+- `schema_version`
+- `source_config_id`
+- `raw_gcs_uri`
+- `event_date`
+- `event_fingerprint`
+- `campaign`
+- `adset`
+- `media_source`
+
+推荐表布局：
+- `raw_ingestion_audit`
+- `events_staging`（对应 standardized 层）
+- `pipeline_dead_letters`
+- `events_curated`（对应 unified / curated 层）
+- `identity_links`
+- `player_daily_metrics`
+- `player_latest_state`
+- `player_churn_features`
+
+当前 v1 命名与 canonical alias 对齐关系：
+- `events_staging` -> `stg_events_standardized`
+- `events_curated` -> `fact_events_unified`
+- `player_latest_state` -> `mart_user_daily`
+
+设计要求：
+- `events_staging` 作为 append-only landing table，支持 replay/debug
+- `events_curated` 作为 deduped / cleaned downstream source of truth
+- churn / profile / actioning 默认优先读取 `player_latest_state` 与 `player_churn_features`
+- 只有 drill-down 场景才回查 curated event history
+
+#### 4.2.2.5 组件职责边界（P0）
+- `IngestionService`
+  - `mock`：保留当前开发流，本地 shard / queue simulation 可接受
+  - `gcp`：分页拉取、写 GCS shard、发布 Pub/Sub manifest、持久化 checkpoint
+- `DataProcessingService / dataflow`
+  - `mock`：保留本地 shard-by-shard 处理与 rejected/conflict 日志
+  - `gcp`：normalization 执行迁移到 Dataflow；FastAPI 请求内不允许处理整批大 job
+- `BigQueryService`
+  - 演进为 warehouse facade，显式提供 staging / dead-letter / curated / latest-state 方法
+  - `mock` 模式可以继续落 parquet / sqlite，但 public method 要与生产概念一致
+- `connectors/normalizer.py`
+  - 只负责 deterministic field extraction、timestamp coercion、schema version、fingerprint、required field validation
+  - 不负责全历史 dedupe、不负责跨 job reconciliation、不负责全量内存状态
 
 ### 4.2.3 Stitch 规则引擎（P0）
 采用“确定性优先”的 v1 策略，按优先级拼接：
@@ -223,6 +344,33 @@
 - 归因字段（`campaign/adset/media_source/channel`）coverage ≥ 85%
 - `revenue_usd` 类型有效率 ≥ 98%
 - 任一关键字段低于阈值，任务自动进入 `Awaiting Mapping`
+
+### 4.2.11 Scalable Ingestion 演进阶段（整体设计）
+#### Phase 1：Interface Refactor Without Behavior Break
+- 在不破坏当前 local demo 的前提下，引入 production-shaped interfaces
+- 增加 shard manifest model、`fetch_and_stage_events()`、显式 `event_fingerprint`
+
+#### Phase 2：Local Shard Processing
+- local mode 改成按 shard 写本地 JSONL 并逐 shard 处理
+- 移除 job 级全量内存累积，提升生产路径逼真度
+
+#### Phase 3：GCP Ingestion Path
+- connector fetch 默认写入 `GCS + Pub/Sub`
+- checkpoint persistence 与失败恢复路径正式化
+
+#### Phase 4：Dataflow Normalization Path
+- normalization 从 FastAPI 请求路径迁出
+- Dataflow 消费 manifest、写 `events_staging`、把 invalid rows 写到 dead-letter table
+
+#### Phase 5：Curated And Aggregate Serving
+- 建立 `events_curated`、`player_latest_state`、`player_churn_features`
+- player modeling / churn / decision 服务默认读 aggregate-first
+
+### 4.2.12 首次扩容重构的非目标
+- 不做完整实时 identity graph resolution
+- 不做 online feature store
+- 不承诺所有外部 connector 的 exactly-once semantics
+- 不把完整统计实验引擎纳入 ingestion 扩容重构范围
 
 ---
 
@@ -486,19 +634,37 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - `event_time` 有效率
 - `revenue_usd` 类型有效率
 - conflict rate / reject rate
+- events ingested per connector
+- shard creation latency
+- Pub/Sub backlog age
+- Dataflow processing latency
+- dead-letter volume
+- duplicate rate
+- BigQuery staging-to-curated lag
+- aggregate refresh lag
 
-### 4.4.3 告警规则（P0）
+### 4.4.3 观测落点（P0）
+- 生产默认观测落点：
+  - BigQuery audit tables
+  - Cloud Logging
+  - Cloud Monitoring alerts
+- `mock` 模式继续保留本地 JSONL / 文件日志，便于调试和回放
+
+### 4.4.4 告警规则（P0）
 - required coverage < 95%
 - canonical 覆盖率 < 90%
 - reject rate > 5%
 - 动态 cohort 刷新失败
+- dead-letter volume 异常升高
+- staging-to-curated lag 超阈值
+- aggregate refresh lag 超阈值
 
-### 4.4.4 可追溯与回放
+### 4.4.5 可追溯与回放
 - 保留 raw/stg/unified 三层数据痕迹
 - 支持按 job_id/source 回放处理
 - 保留审计日志（配置变更、字段覆盖、规则命中）
 
-### 4.4.5 v1 验收标准
+### 4.4.6 v1 验收标准
 1. 每个 job 有完整的 source + processing + quality 报告
 2. 告警规则能自动触发并记录
 3. 关键问题（mapping 错误、冲突）可在 15 分钟内定位到 source/job
@@ -636,13 +802,16 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 
 ---
 
-## 6. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 6. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 6.1 当前已落地
 - import 任务状态机、quality gate、resume / replay 已存在
 - mapping version / rollback / suggestions / quality coverage 已存在
 - SQL workspace、saved queries、query audit、query -> cohort 已存在
 - identity summary / conflict / rejected 查询与健康告警已存在
+- `operator-api + import-worker + prediction-worker + dataflow` 的基础运行形态已存在
+- SQLAlchemy + Alembic control-plane persistence 已存在；本地 SQLite fallback 与生产 Postgres 目标已在代码结构中体现
+- paged connector ingestion、ingestion checkpoints、BigQuery-backed prediction result storage 与分页读取已存在
 
 ### 6.2 仍未完成的 Gap
 
@@ -680,6 +849,7 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 #### Gap-D5 GCP-shaped Mode 仍是部分实现
 - 当前：
   - 已有 GCS / PubSub / Dataflow / BigQuery 抽象
+  - `import-worker / prediction-worker / dataflow` 的基础 entrypoint 已存在
   - mock 仍是默认主运行路径
 - 未完成项：
   - 生产模式的默认运行契约、失败恢复和 observability 还未完全对齐
@@ -690,6 +860,13 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - 未完成项：
   - 缺少正式 secret manager
   - 缺少 warehouse/data connector 的生产级访问边界和权限轮转策略
+
+#### Gap-D7 Data Core Console / Contract Hardening 仍未完成
+- 当前：
+  - connector / import / mapping / SQL / quality 能力都已有 API 与单页入口
+- 未完成项：
+  - Data Sandbox / connector / import / SQL workspace 仍缺少独立 E2E 契约覆盖
+  - freshness / quality / DLQ / mapping remediation 仍需要更清晰的后端 view model 与 UI 契约
 
 ### 6.3 本文档持有的下一阶段 Owner
 - `Phase 3 Data Platform Completion`

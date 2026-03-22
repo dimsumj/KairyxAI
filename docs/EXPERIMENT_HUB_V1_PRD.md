@@ -161,7 +161,7 @@
 
 ---
 
-## 9. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 9. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 9.1 当前已落地
 - experiment config / versions / assignments / exposures / outcomes / summary / decision 已存在

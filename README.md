@@ -130,7 +130,7 @@ The repository keeps its current local-first demo flow and is evolving toward a 
 
 - Local play-around mode remains centered on `DATA_BACKEND_MODE=mock`
 - Production scale target is GCS + Pub/Sub + Dataflow + BigQuery
-- The implementation blueprint lives in [docs/scalable-ingestion-blueprint.md](/Users/jeremyz/Projects/KairyxAI/docs/scalable-ingestion-blueprint.md)
+- The ingestion architecture contract now lives in [docs/DATA_CORE_V1_PRD.md](/Users/jeremyz/Projects/KairyxAI/docs/DATA_CORE_V1_PRD.md)
 
 **Disclaimer**
 
