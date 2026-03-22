@@ -128,13 +128,100 @@ class CopilotService:
     def list_anomalies(self) -> List[Dict[str, Any]]:
         items = [item.get("payload") or {} for item in self.repository.list_resources("anomaly_event")]
         if items:
-            return items
-        return [item.get("payload") or {} for item in self.repository.list_resources("copilot_anomaly")]
+            return sorted(items, key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        fallback = [item.get("payload") or {} for item in self.repository.list_resources("copilot_anomaly")]
+        return sorted(fallback, key=lambda item: str(item.get("created_at") or ""), reverse=True)
 
     def list_reports(self) -> List[Dict[str, Any]]:
-        items = [item.get("payload") or {} for item in self.repository.list_resources("copilot_report")]
-        weekly = [item.get("payload") or {} for item in self.repository.list_resources("weekly_closed_loop_report")]
-        return items + weekly
+        reports: Dict[str, Dict[str, Any]] = {}
+        for resource_type in ("copilot_report", "weekly_closed_loop_report"):
+            for item in self.repository.list_resources(resource_type):
+                payload = dict(item.get("payload") or {})
+                report_id = str(payload.get("report_id") or item.get("resource_id") or "")
+                if report_id and report_id not in reports:
+                    reports[report_id] = payload
+        return [self._hydrate_report_payload(payload) for payload in sorted(reports.values(), key=lambda item: str(item.get("created_at") or ""), reverse=True)]
+
+    def get_report(self, report_id: str) -> Dict[str, Any] | None:
+        record = self._get_report_record(report_id)
+        if record is None:
+            return None
+        return self._hydrate_report_payload(dict(record.get("payload") or {}), include_runs=True)
+
+    def list_report_runs(self, report_id: str) -> Dict[str, Any]:
+        record = self._get_report_record(report_id)
+        if record is None:
+            raise KeyError(report_id)
+        payload = dict(record.get("payload") or {})
+        root_report_id = str(payload.get("root_report_id") or payload.get("report_id") or report_id)
+        items = self._report_runs_for_root(root_report_id)
+        return {
+            "report_id": str(payload.get("report_id") or report_id),
+            "root_report_id": root_report_id,
+            "items": items,
+        }
+
+    def review_report(self, report_id: str, *, reviewed_by: str, disposition: str, notes: str = "") -> Dict[str, Any]:
+        record = self._get_report_record(report_id)
+        if record is None:
+            raise KeyError(report_id)
+        payload = dict(record.get("payload") or {})
+        disposition_value = str(disposition or "acknowledged").strip().lower() or "acknowledged"
+        review_payload = {
+            "status": disposition_value,
+            "notes": str(notes or ""),
+            "reviewed_by": reviewed_by,
+            "reviewed_at": datetime.utcnow().isoformat(),
+        }
+        triage = dict(payload.get("triage") or {})
+        triage["status"] = "reviewed" if disposition_value in {"acknowledged", "accepted", "closed"} else disposition_value
+        triage["required"] = False if disposition_value in {"acknowledged", "accepted", "closed"} else bool(triage.get("required"))
+        payload["review"] = review_payload
+        payload["triage"] = triage
+        self._save_report_payload(payload)
+        self.repository.record_resource_event(
+            "copilot_report",
+            report_id,
+            event_type="report_reviewed",
+            payload={"report_id": report_id, "review": review_payload, "triage": triage},
+        )
+        return self._hydrate_report_payload(payload, include_runs=True)
+
+    def get_overview(self) -> Dict[str, Any]:
+        reports = self.list_reports()
+        anomalies = self.list_anomalies()
+        query_logs = [item.get("payload") or {} for item in self.repository.list_resources("copilot_query_log")]
+        insufficient_logs = [
+            item
+            for item in query_logs
+            if str((item.get("response") or {}).get("conclusion") or "") == "insufficient_evidence"
+        ]
+        counts_by_status: Dict[str, int] = {}
+        counts_by_type: Dict[str, int] = {}
+        pending_reviews = []
+        for report in reports:
+            status = str(report.get("status") or "ready")
+            counts_by_status[status] = counts_by_status.get(status, 0) + 1
+            report_type = str(report.get("report_type") or "daily")
+            counts_by_type[report_type] = counts_by_type.get(report_type, 0) + 1
+            if str((report.get("review") or {}).get("status") or "pending") == "pending":
+                pending_reviews.append(report)
+        return {
+            "report_counts": {
+                "total": len(reports),
+                "by_status": counts_by_status,
+                "by_type": counts_by_type,
+                "pending_review": len(pending_reviews),
+            },
+            "query_health": {
+                "total_logs": len(query_logs),
+                "insufficient_evidence_logs": len(insufficient_logs),
+                "insufficient_evidence_rate": round(len(insufficient_logs) / max(1, len(query_logs)), 4),
+            },
+            "recent_reports": reports[:5],
+            "pending_reviews": pending_reviews[:5],
+            "recent_anomalies": anomalies[:5],
+        }
 
     def query(self, question: str, *, time_window: str | None = None, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
         parsed = self._parse_question(question, time_window=time_window, filters=filters or {})
@@ -292,14 +379,26 @@ class CopilotService:
                 )
             },
         )
+        experiment_evidence = self._latest_experiment_evidence()
+        workflow_evidence = self._latest_workflow_evidence()
         response = self._build_response(
             conclusion="Recommend refreshing the Churn Rescue cohort before the next scheduled workflow run.",
             evidence=[
                 {"metric_id": "high_risk_users", "value": eligible_users, "alias": "prediction_results"},
                 {"cohort_id": cohort_draft.get("cohort_id"), "member_count": cohort_draft.get("member_count", 0)},
+                experiment_evidence,
+                workflow_evidence,
             ],
             impact_scope={"eligible_users": cohort_draft.get("member_count", 0)},
-            recommended_action={"type": "refresh_cohort", "cohort_draft": cohort_draft},
+            recommended_action={
+                "type": "refresh_cohort",
+                "cohort_draft": cohort_draft,
+                "evidence_binding": {
+                    "experiment_id": experiment_evidence.get("experiment_id"),
+                    "workflow_id": workflow_evidence.get("workflow_id"),
+                    "measurement_sources": ["prediction_results", "experiment_summary", "workflow_delivery"],
+                },
+            },
             confidence="medium",
             metric_window="7d",
             risk_notes=["Recommendation creates a draft cohort and does not auto-activate it."],
@@ -314,6 +413,10 @@ class CopilotService:
         return self._record_query_log("recommend", response, {"metric_context": metric_context, "cohort_id": cohort_draft.get("cohort_id")})
 
     def report(self, report_type: str = "daily", *, time_window: str = "7d") -> Dict[str, Any]:
+        response = self._build_report_response(report_type, time_window=time_window)
+        return self._record_report(report_type, time_window, response, trigger="manual")
+
+    def _build_report_response(self, report_type: str = "daily", *, time_window: str = "7d") -> Dict[str, Any]:
         experiment_records = [item for item in self.repository.list_resources("experiment")]
         workflow_records = [item for item in self.repository.list_resources("workflow")]
         cohort_records = [item for item in self.repository.list_resources("cohort")]
@@ -354,14 +457,25 @@ class CopilotService:
                 "observation_mode": "non-experiment execution outcomes",
             },
         )
-        return self._record_report(report_type, time_window, response)
+        return response
 
     def retry_report(self, report_id: str) -> Dict[str, Any]:
-        record = self.repository.get_resource("copilot_report", report_id) or self.repository.get_resource("weekly_closed_loop_report", report_id)
+        record = self._get_report_record(report_id)
         if record is None:
             raise KeyError(report_id)
         payload = record.get("payload") or {}
-        return self.report(payload.get("report_type") or "daily", time_window=payload.get("time_window") or "7d")
+        root_report_id = str(payload.get("root_report_id") or payload.get("report_id") or report_id)
+        response = self._build_report_response(payload.get("report_type") or "daily", time_window=payload.get("time_window") or "7d")
+        retried = self._record_report(
+            payload.get("report_type") or "daily",
+            payload.get("time_window") or "7d",
+            response,
+            root_report_id=root_report_id,
+            retry_of_report_id=report_id,
+            trigger="retry",
+        )
+        self._update_report_lineage(root_report_id, report_id, retried.get("report_id"))
+        return retried
 
     def _record_query_log(self, log_type: str, response: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         query_id = f"copq_{uuid.uuid4().hex[:20]}"
@@ -377,29 +491,188 @@ class CopilotService:
         response["query_id"] = query_id
         return response
 
-    def _record_report(self, report_type: str, time_window: str, response: Dict[str, Any]) -> Dict[str, Any]:
+    def _record_report(
+        self,
+        report_type: str,
+        time_window: str,
+        response: Dict[str, Any],
+        *,
+        root_report_id: str | None = None,
+        retry_of_report_id: str | None = None,
+        trigger: str = "manual",
+    ) -> Dict[str, Any]:
         response = self._record_query_log("report", response, {"report_type": report_type, "time_window": time_window})
         report_id = f"copr_{uuid.uuid4().hex[:20]}"
+        root_id = str(root_report_id or report_id)
+        run_id = f"coprr_{uuid.uuid4().hex[:20]}"
+        linked_resources = self._extract_linked_resources(response)
+        triage = self._build_triage_state(response, retry_of_report_id=retry_of_report_id)
         payload = {
             "report_id": report_id,
+            "root_report_id": root_id,
+            "retry_of_report_id": retry_of_report_id,
             "report_type": report_type,
             "time_window": time_window,
             "response": response,
+            "query_id": response.get("query_id"),
+            "linked_resources": linked_resources,
             "status": "ready" if response.get("conclusion") != "insufficient_evidence" else "insufficient_evidence",
+            "review": {"status": "pending", "reviewed_by": None, "reviewed_at": None, "notes": ""},
+            "triage": triage,
+            "latest_run_id": run_id,
             "created_at": datetime.utcnow().isoformat(),
         }
-        self.repository.upsert_resource("copilot_report", report_id, status=payload["status"], name=report_type, payload=payload)
+        self._save_report_payload(payload)
         self.repository.upsert_resource(
             "copilot_report_run",
-            f"{report_id}:run",
+            run_id,
             status=payload["status"],
             name=report_type,
-            payload={"report_id": report_id, "report_type": report_type, "time_window": time_window, "status": payload["status"], "created_at": payload["created_at"]},
+            payload={
+                "run_id": run_id,
+                "report_id": report_id,
+                "root_report_id": root_id,
+                "retry_of_report_id": retry_of_report_id,
+                "report_type": report_type,
+                "time_window": time_window,
+                "status": payload["status"],
+                "trigger": trigger,
+                "query_id": response.get("query_id"),
+                "linked_resources": linked_resources,
+                "created_at": payload["created_at"],
+            },
         )
-        if report_type == "weekly":
-            self.repository.upsert_resource("weekly_closed_loop_report", report_id, status=payload["status"], name=report_type, payload=payload)
+        self.repository.record_resource_event(
+            "copilot_report",
+            report_id,
+            event_type="report_generated",
+            payload={
+                "report_id": report_id,
+                "root_report_id": root_id,
+                "retry_of_report_id": retry_of_report_id,
+                "run_id": run_id,
+                "status": payload["status"],
+                "trigger": trigger,
+            },
+        )
         response["report_id"] = report_id
         return response
+
+    def _save_report_payload(self, payload: Dict[str, Any]) -> None:
+        report_id = str(payload.get("report_id") or "")
+        if not report_id:
+            return
+        status = str(payload.get("status") or "ready")
+        name = str(payload.get("report_type") or "daily")
+        self.repository.upsert_resource("copilot_report", report_id, status=status, name=name, payload=payload)
+        if name == "weekly":
+            self.repository.upsert_resource("weekly_closed_loop_report", report_id, status=status, name=name, payload=payload)
+
+    def _get_report_record(self, report_id: str) -> Dict[str, Any] | None:
+        return self.repository.get_resource("copilot_report", report_id) or self.repository.get_resource("weekly_closed_loop_report", report_id)
+
+    def _report_runs_for_root(self, root_report_id: str) -> List[Dict[str, Any]]:
+        items = []
+        for record in self.repository.list_resources("copilot_report_run"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("root_report_id") or payload.get("report_id") or "") != root_report_id:
+                continue
+            items.append(payload)
+        return sorted(items, key=lambda item: str(item.get("created_at") or ""), reverse=True)
+
+    def _hydrate_report_payload(self, payload: Dict[str, Any], *, include_runs: bool = False) -> Dict[str, Any]:
+        report_id = str(payload.get("report_id") or "")
+        root_report_id = str(payload.get("root_report_id") or report_id)
+        runs = self._report_runs_for_root(root_report_id)
+        hydrated = {
+            **payload,
+            "root_report_id": root_report_id,
+            "review": payload.get("review") or {"status": "pending", "reviewed_by": None, "reviewed_at": None, "notes": ""},
+            "triage": payload.get("triage") or {"required": False, "status": "ready", "reason": None},
+            "linked_resources": payload.get("linked_resources") or [],
+            "run_count": len(runs),
+            "latest_run": runs[0] if runs else None,
+        }
+        if include_runs:
+            hydrated["runs"] = runs
+        return hydrated
+
+    def _update_report_lineage(self, root_report_id: str, retried_report_id: str, new_report_id: str | None) -> None:
+        if not new_report_id:
+            return
+        for target_report_id in {root_report_id, retried_report_id}:
+            record = self._get_report_record(target_report_id)
+            if record is None:
+                continue
+            payload = dict(record.get("payload") or {})
+            retry_ids = list(payload.get("retry_report_ids") or [])
+            if new_report_id not in retry_ids:
+                retry_ids.append(new_report_id)
+            payload["retry_report_ids"] = retry_ids
+            payload["latest_retry_report_id"] = new_report_id
+            self._save_report_payload(payload)
+
+    def _extract_linked_resources(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for evidence_item in list(response.get("evidence") or []) + [{"query_id": response.get("query_id")}]:
+            if not isinstance(evidence_item, dict):
+                continue
+            for field, resource_type in (
+                ("cohort_id", "cohort"),
+                ("workflow_id", "workflow"),
+                ("experiment_id", "experiment"),
+                ("snapshot_id", "cohort_snapshot"),
+                ("query_id", "copilot_query_log"),
+                ("anomaly_id", "anomaly_event"),
+            ):
+                value = evidence_item.get(field)
+                if value:
+                    items.append({"resource_type": resource_type, "resource_id": str(value)})
+        deduped: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            key = f"{item['resource_type']}:{item['resource_id']}"
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    @staticmethod
+    def _build_triage_state(response: Dict[str, Any], *, retry_of_report_id: str | None = None) -> Dict[str, Any]:
+        required = str(response.get("conclusion") or "") == "insufficient_evidence"
+        return {
+            "required": required,
+            "status": "retry" if retry_of_report_id else ("open" if required else "ready"),
+            "reason": "insufficient_evidence" if required else None,
+        }
+
+    def _latest_experiment_evidence(self) -> Dict[str, Any]:
+        experiments = [item.get("payload") or {} for item in self.repository.list_resources("experiment")]
+        if not experiments:
+            return {"experiment_id": None, "decision": None, "decision_reason": "no_experiment_linked"}
+        latest = experiments[0]
+        summary = self.experiments.get_summary(str(latest.get("experiment_id") or ""))
+        return {
+            "experiment_id": summary.get("experiment_id"),
+            "decision": summary.get("decision"),
+            "decision_reason": summary.get("decision_reason"),
+            "sample_size": summary.get("sample_size"),
+        }
+
+    def _latest_workflow_evidence(self) -> Dict[str, Any]:
+        workflows = [item.get("payload") or {} for item in self.repository.list_resources("workflow")]
+        if not workflows:
+            return {"workflow_id": None, "workflow_status": None, "delivery_status": "no_workflow_linked"}
+        latest = workflows[0]
+        summary = self._workflow_summary(str(latest.get("workflow_id") or ""))
+        return {
+            "workflow_id": latest.get("workflow_id"),
+            "workflow_status": latest.get("status"),
+            "success": summary.get("success"),
+            "policy_blocked": summary.get("policy_blocked"),
+            "delivery_status": "ready" if summary.get("success", 0) > 0 else "missing",
+        }
 
     def _build_response(
         self,

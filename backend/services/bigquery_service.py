@@ -1,12 +1,13 @@
 # bigquery_service.py
 
+from collections import Counter
 from functools import lru_cache
 import os
 import json
 import re
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
@@ -689,6 +690,93 @@ class BigQueryService:
                 }
             )
         return explanations
+
+    @staticmethod
+    def _row_matches_job(row: Dict[str, Any], job_id: Optional[str]) -> bool:
+        if not job_id:
+            return True
+        match_value = str(job_id)
+        return str(row.get("job_id") or row.get("job_identifier") or "") == match_value
+
+    @staticmethod
+    def _parse_datetime_value(value: Any) -> datetime | None:
+        if value in (None, "", []):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return None
+
+    def get_pipeline_lag_summary(self, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        standardized_rows = [row for row in self.get_rows_for_alias("standardized") if self._row_matches_job(row, job_id)]
+        curated_rows = [row for row in self.get_rows_for_alias("fact_events_unified") if self._row_matches_job(row, job_id)]
+        latest_state_rows = [row for row in self.get_rows_for_alias("mart_user_daily") if self._row_matches_job(row, job_id)]
+        dead_letter_rows = [row for row in self.get_pipeline_dead_letters(job_id=job_id, limit=5000)]
+
+        def _latest(rows: List[Dict[str, Any]], *fields: str) -> str | None:
+            latest_value: datetime | None = None
+            for row in rows:
+                for field in fields:
+                    parsed = self._parse_datetime_value(row.get(field))
+                    if parsed is not None and (latest_value is None or parsed > latest_value):
+                        latest_value = parsed
+            return latest_value.isoformat() if latest_value is not None else None
+
+        latest_standardized_event_time = _latest(standardized_rows, "event_time")
+        latest_curated_event_time = _latest(curated_rows, "event_time")
+        latest_player_state_time = _latest(latest_state_rows, "last_seen_at", "updated_at", "event_time")
+        latest_dead_letter_time = _latest(dead_letter_rows, "event_time", "ingested_at", "created_at")
+
+        standardized_dt = self._parse_datetime_value(latest_standardized_event_time)
+        curated_dt = self._parse_datetime_value(latest_curated_event_time)
+        latest_state_dt = self._parse_datetime_value(latest_player_state_time)
+
+        staging_to_curated_lag_seconds = 0
+        if standardized_dt is not None and curated_dt is not None and standardized_dt > curated_dt:
+            staging_to_curated_lag_seconds = int((standardized_dt - curated_dt).total_seconds())
+
+        curated_to_latest_state_lag_seconds = 0
+        if curated_dt is not None and latest_state_dt is not None and curated_dt > latest_state_dt:
+            curated_to_latest_state_lag_seconds = int((curated_dt - latest_state_dt).total_seconds())
+
+        return {
+            "job_id": job_id,
+            "table_counts": {
+                "standardized_rows": len(standardized_rows),
+                "curated_rows": len(curated_rows),
+                "player_latest_state_rows": len(latest_state_rows),
+                "dead_letter_rows": len(dead_letter_rows),
+            },
+            "freshness": {
+                "latest_standardized_event_time": latest_standardized_event_time,
+                "latest_curated_event_time": latest_curated_event_time,
+                "latest_player_latest_state_at": latest_player_state_time,
+                "latest_dead_letter_at": latest_dead_letter_time,
+                "staging_to_curated_lag_seconds": staging_to_curated_lag_seconds,
+                "curated_to_latest_state_lag_seconds": curated_to_latest_state_lag_seconds,
+            },
+        }
+
+    def get_dead_letter_summary(self, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        explanations = self.get_rejected_event_explanations(job_id=job_id, limit=5000)
+        reason_counts = Counter(str(item.get("reason") or "unknown_rejection") for item in explanations)
+        top_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in reason_counts.most_common(5)
+        ]
+        return {
+            "job_id": job_id,
+            "count": len(explanations),
+            "top_reasons": top_reasons,
+            "examples": explanations[:10],
+        }
 
     def get_identity_links(self, *, job_id: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
         rows = self.get_rows_for_alias("fact_events_unified")
