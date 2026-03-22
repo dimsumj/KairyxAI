@@ -40,11 +40,11 @@
 
 ### 2.4 Action Orchestrator（执行编排层）
 - 能力：触发器、动作编排、流程画布、执行控制
-- Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`（待完善）
+- Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
 
 ### 2.5 Experiment Hub（实验层）
 - 能力：A/B + Holdout、指标归因、实验结论与推荐
-- Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`（待完善）
+- Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
 
 ---
 
@@ -275,8 +275,8 @@
 - Data Core Sub PRD：`KairyxAI/docs/DATA_CORE_V1_PRD.md`
 - Copilot Sub PRD：`KairyxAI/docs/COPILOT_V1_PRD.md`
 - Audience Sub PRD：`KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
-- Action Orchestrator Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`（待完善）
-- Experiment Hub Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`（待完善）
+- Action Orchestrator Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
+- Experiment Hub Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
 
 ---
 
@@ -337,3 +337,32 @@
 - Cohort Lifecycle / Refresh / Activation / Feedback：写入 `AUDIENCE_ENGINE_V1_PRD.md`
 - Workflow / Trigger / Delivery / Policy / Safety：写入 `ACTION_ORCHESTRATOR_V1_PRD.md`
 - Assignment / Exposure / Outcome / Summary / Rollout：写入 `EXPERIMENT_HUB_V1_PRD.md`
+
+---
+
+## 13) V1 Backlog（按优先级）
+
+### 13.1 P0 收尾
+1. `Operator Console Hardening`
+   - 为 Data Core / Audience / Action / Experiment / Copilot 补齐关键 operator flows
+   - 建立模块级 Playwright / E2E 回归覆盖
+2. `Production Readiness Baseline`
+   - 明确 authN / authZ、tenant boundary、secret handling、环境隔离与运维 runbook
+   - 保证模块级审计、告警、权限边界不再停留在 mock/header contract
+3. `Real Activation & Measurement Stabilization`
+   - 打通 provider delivery / callback / outcome / return / conversion 的稳定契约
+   - 让 Audience、Experiment、Copilot 的 evidence loop 建立在真实回流上，而非部分模拟/部分手动
+4. `Human-in-the-loop Optimization Boundary`
+   - 保持自动优化默认关闭
+   - 但要求所有建议、rollout 与策略变更都绑定真实 measurement evidence 与人工确认链
+
+### 13.2 P1
+1. `Controlled Closed-Loop Optimization`
+   - 让 Copilot / Experiment / Action 在人工确认前提下形成受控 rollout controller
+   - 支持 outcome-driven recommendation refresh 与策略建议迭代
+2. `Module Console Productization`
+   - 从单页控制台演进到更稳定的模块化 operator console 与专门 backend view model
+   - 降低前端拼装通用资源的比例
+3. `Production-grade Deployment Model`
+   - 完成更强的 deploy topology、监控、告警、租户隔离、凭据轮换与 runbook
+   - 把当前 single-tenant demo/control-plane 形态推进到更可运营的生产模型

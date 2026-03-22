@@ -222,3 +222,25 @@
 - `Phase 1 Frontend Hardening` 中 execution / delivery / policy 页面
 - `Phase 4 Activation And Measurement` 中 provider-grade delivery + callback + outcome 契约
 - `Phase 5 Production Readiness` 中 provider credentials / auth / tenant boundary
+
+### 8.4 V1 Backlog
+
+#### P0 收尾
+1. `Provider-grade Delivery Stabilization`
+   - 强化 provider callback 归一、失败分类、延迟回流、retry / fallback 契约
+   - 把真实 engagement outcome 更稳定地回流到执行层与实验层
+2. `Reduce Simulator Dependence`
+   - 让 push/email 主链路进一步脱离 simulator 语义
+   - 确保生产通道的执行、诊断与回执路径一致可审计
+
+#### P1
+1. `Channel Capability Expansion`
+   - 将 in-app / webhook 提升到与 push / email 同等级的产品能力
+   - 补齐更完整的 provider-specific retry / diagnostics
+2. `Execution Console Hardening`
+   - 为 workflow / delivery / policy / budget 页面补独立 E2E
+   - 建立更产品化的执行排查与运维视图
+3. `Credentials / Boundary Productionization`
+   - 完成 provider credentials、正式 auth、环境隔离与租户边界
+4. `Outcome-driven Policy Optimization`
+   - 在人工确认前提下，逐步支持 rollout / retry / policy 调优建议

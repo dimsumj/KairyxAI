@@ -332,3 +332,27 @@
 - `Phase 1 Frontend Hardening` 中 Copilot 页面与契约部分
 - `Phase 4 Activation And Measurement` 中 evidence feedback 对 Copilot 的依赖部分
 - `Phase 5 Production Readiness` 中 Copilot 的访问边界与治理部分
+
+### 11.4 V1 Backlog
+
+#### P0 收尾
+1. `Auto Report Ops Workflow`
+   - 为日报/周报补齐订阅、审核、失败分诊与运营消费流程
+   - 让报告不只是“可生成”，而是“可被稳定消费”
+2. `Evidence Loop Hardening`
+   - 强化 Copilot 对真实 provider outcome、experiment summary、workflow summary 的证据依赖
+   - 降低在 measurement 不完整时的证据退化
+3. `Recommendation Traceability`
+   - 让 recommendation 模板、cohort draft 与实验建议更明确绑定 outcome evidence
+   - 保持建议态，不自动执行高风险动作
+
+#### P1
+1. `Copilot Console Hardening`
+   - 为 query / explain / anomaly / report 页面补独立 Playwright / E2E
+   - 形成更稳定的 operator console，而不是单页静态组织
+2. `Outcome-driven Recommendation Refresh`
+   - 基于真实 outcome 迭代 recommendation template 与建议排序
+   - 仍保留人在回路，不直接自动执行
+3. `Production Access Boundary`
+   - 完成正式 authN / tenant boundary / production-grade access control
+   - 让 Copilot 数据访问边界符合生产要求
