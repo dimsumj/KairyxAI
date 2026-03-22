@@ -102,6 +102,38 @@ def get_import_backfill(backfill_id: str, request: Request, service: ImportServi
         raise HTTPException(status_code=404, detail=f"Import backfill '{backfill_id}' not found.")
 
 
+@router.get("/schema-contracts")
+def list_import_schema_contracts(request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.schema.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_schema_contracts_read",
+        resource_type="import_schema_contract",
+        resource_id=None,
+        payload=service.list_schema_contracts(),
+    )
+
+
+@router.get("/schema-contracts/{alias}")
+def get_import_schema_contract(alias: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.schema.read")
+    try:
+        payload = service.get_schema_contract(alias)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Schema contract '{alias}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_schema_contract_read",
+        resource_type="import_schema_contract",
+        resource_id=alias,
+        payload=payload,
+    )
+
+
 @router.get("/{job_id}")
 def get_import(job_id: str, service: ImportService = Depends(get_import_service)):
     job = service.get_job(job_id)
@@ -186,6 +218,24 @@ def get_import_quality(job_id: str, request: Request, service: ImportService = D
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
+@router.get("/{job_id}/manifests")
+def get_import_manifests(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.operations.read")
+    try:
+        payload = service.list_manifests(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_manifests_read",
+        resource_type="import_job",
+        resource_id=job_id,
+        payload=payload,
+    )
 
 
 @router.get("/{job_id}/operations")

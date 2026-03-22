@@ -750,6 +750,54 @@
                     <!-- Import jobs will be listed here -->
                 </div>
             </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Import Operations</h2>
+                        <span class="pill">Manifest & Remediation</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-detail-select">Import Job</label>
+                            <select id="import-detail-select">
+                                <option value="">Load imports first</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-load-operations-btn">Load Operations</button>
+                            <button id="import-load-quality-btn">Load Quality</button>
+                            <button id="import-load-manifests-btn">Load Manifests</button>
+                        </div>
+                    </div>
+                    <span id="import-detail-status" class="subtle"></span>
+                    <pre id="import-detail-output" class="json-output">Import operations and quality detail will appear here.</pre>
+                    <div id="import-manifests-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Schema Contracts</h2>
+                        <span class="pill">Warehouse Contract</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-schema-alias-select">Alias</label>
+                            <select id="import-schema-alias-select">
+                                <option value="standardized" selected>standardized</option>
+                                <option value="fact_events_unified">fact_events_unified</option>
+                                <option value="mart_user_daily">mart_user_daily</option>
+                                <option value="prediction_results">prediction_results</option>
+                                <option value="pipeline_dead_letters">pipeline_dead_letters</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-load-schema-btn">Load Contract</button>
+                            <button id="import-load-schema-list-btn">List All</button>
+                        </div>
+                    </div>
+                    <span id="import-schema-status" class="subtle"></span>
+                    <pre id="import-schema-output" class="json-output">Schema contract details will appear here.</pre>
+                </div>
+            </div>
         </section>
 
         <section id="action-history" class="page">
@@ -1316,7 +1364,11 @@ WHERE predicted_churn_risk = 'high'
                         <h2>Deliveries</h2>
                         <span class="pill">Audited</span>
                     </div>
+                    <div class="inline-actions">
+                        <button id="workflow-load-delivery-diagnostics-btn">Load Diagnostics</button>
+                    </div>
                     <div id="workflow-deliveries-list"></div>
+                    <pre id="workflow-delivery-diagnostics-output" class="json-output">Workflow delivery diagnostics will appear here.</pre>
                 </div>
             </div>
         </section>
@@ -1387,9 +1439,13 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card split-card">
                     <div class="module-section-header">
                         <h2>Summary</h2>
-                        <button id="experiment-refresh-btn">Refresh Summary</button>
+                        <div class="inline-actions">
+                            <button id="experiment-refresh-btn">Refresh Summary</button>
+                            <button id="experiment-load-integrity-btn">Load Integrity</button>
+                        </div>
                     </div>
                     <pre id="experiment-summary-output" class="json-output">Experiment summary will appear here.</pre>
+                    <pre id="experiment-integrity-output" class="json-output">Experiment integrity will appear here.</pre>
                 </div>
             </div>
             <div class="grid-2">
@@ -1875,6 +1931,7 @@ dimensions: campaign,country,platform</pre>
                 if (pageId === 'player-cohorts') {
                     loadConfiguredSources();
                     loadImportedDataList();
+                    loadImportSchemaContracts(true);
                     importListInterval = setInterval(loadImportedDataList, 3000);
                 }
                 if (pageId === 'action-history') {
@@ -3516,7 +3573,14 @@ dimensions: campaign,country,platform</pre>
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
             const importListContainer = document.getElementById('import-list-container');
+            const importDetailSelect = document.getElementById('import-detail-select');
+            const importDetailStatus = document.getElementById('import-detail-status');
+            const importDetailOutput = document.getElementById('import-detail-output');
+            const importManifestsList = document.getElementById('import-manifests-list');
+            const importSchemaStatus = document.getElementById('import-schema-status');
+            const importSchemaOutput = document.getElementById('import-schema-output');
             let importListInterval = null;
+            let selectedImportJobId = null;
 
     
             async function loadConfiguredSources() {
@@ -3570,6 +3634,92 @@ dimensions: campaign,country,platform</pre>
             }
 
             let countdownInterval = null;
+            function populateImportDetailSelect(imports = []) {
+                if (!importDetailSelect) return;
+                const previous = selectedImportJobId || importDetailSelect.value;
+                importDetailSelect.innerHTML = '';
+                if (!imports.length) {
+                    importDetailSelect.innerHTML = '<option value="">No import jobs available</option>';
+                    selectedImportJobId = null;
+                    renderJsonOutput(importDetailOutput, null, 'Select an import job to inspect operations.');
+                    renderSimpleTable(importManifestsList, [], [], 'No manifests available.');
+                    return;
+                }
+                imports.forEach((job) => {
+                    const option = document.createElement('option');
+                    option.value = job.id;
+                    option.textContent = `${job.name} (${job.status})`;
+                    importDetailSelect.appendChild(option);
+                });
+                if (imports.some((job) => job.id === previous)) {
+                    importDetailSelect.value = previous;
+                    selectedImportJobId = previous;
+                } else {
+                    importDetailSelect.value = imports[0].id;
+                    selectedImportJobId = imports[0].id;
+                }
+            }
+
+            async function loadImportOperatorView(view = 'operations', silent = false) {
+                const jobId = importDetailSelect?.value;
+                if (!jobId) {
+                    renderJsonOutput(importDetailOutput, null, 'Select an import job to inspect operations.');
+                    renderSimpleTable(importManifestsList, [], [], 'No manifests available.');
+                    return;
+                }
+                selectedImportJobId = jobId;
+                try {
+                    if (!silent) {
+                        setInlineStatus(importDetailStatus, `Loading import ${view}...`);
+                    }
+                    if (view === 'manifests') {
+                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/manifests`);
+                        renderSimpleTable(
+                            importManifestsList,
+                            [
+                                { label: 'Shard', render: (item) => escapeHtml(String(item.shard_index ?? '-')) },
+                                { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
+                                { label: 'Events', render: (item) => escapeHtml(String(item.event_count || 0)) },
+                                { label: 'Schema', render: (item) => escapeHtml(item.schema_version || 'v1') },
+                                { label: 'Path', render: (item) => `<span class="subtle">${escapeHtml(item.gcs_uri || item.manifest?.gcs_path || '-')}</span>` },
+                            ],
+                            payload.items || [],
+                            'No shard manifests recorded yet.',
+                        );
+                        renderJsonOutput(importDetailOutput, payload, 'Manifest detail unavailable.');
+                    } else if (view === 'quality') {
+                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/quality`);
+                        renderJsonOutput(importDetailOutput, payload, 'Import quality unavailable.');
+                    } else {
+                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/operations`);
+                        renderJsonOutput(importDetailOutput, payload, 'Import operations unavailable.');
+                    }
+                    if (!silent) {
+                        setInlineStatus(importDetailStatus, `Loaded import ${view} for ${jobId}.`);
+                    }
+                } catch (error) {
+                    renderJsonOutput(importDetailOutput, { error: error.message }, 'Import detail unavailable.');
+                    if (view === 'manifests') {
+                        renderSimpleTable(importManifestsList, [], [], 'Manifest detail unavailable.');
+                    }
+                    setInlineStatus(importDetailStatus, error.message || 'Failed to load import detail.', true);
+                }
+            }
+
+            async function loadImportSchemaContracts(listAll = false) {
+                try {
+                    setInlineStatus(importSchemaStatus, listAll ? 'Loading all schema contracts...' : 'Loading schema contract...');
+                    const payload = listAll
+                        ? await apiRequest('/imports/schema-contracts')
+                        : await apiRequest(`/imports/schema-contracts/${encodeURIComponent(document.getElementById('import-schema-alias-select').value || 'standardized')}`);
+                    renderJsonOutput(importSchemaOutput, payload, 'Schema contract detail unavailable.');
+                    setInlineStatus(importSchemaStatus, listAll ? `Loaded ${payload.items?.length || 0} schema contract(s).` : `Loaded schema contract for ${(payload.alias || document.getElementById('import-schema-alias-select').value)}.`);
+                } catch (error) {
+                    renderJsonOutput(importSchemaOutput, { error: error.message }, 'Schema contract detail unavailable.');
+                    setInlineStatus(importSchemaStatus, error.message || 'Failed to load schema contract.', true);
+                }
+            }
+
             async function loadImportedDataList() {
                 // Show loading message only if the container is empty initially
                 if (!importListContainer.innerHTML.trim()) {
@@ -3585,8 +3735,10 @@ dimensions: campaign,country,platform</pre>
                             countdownInterval = null;
                         }
                         importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        populateImportDetailSelect([]);
                         return;
                     }
+                    const priorSelectedImport = selectedImportJobId;
 
                     // If table doesn't exist, create it
                     let table = importListContainer.querySelector('table');
@@ -3663,6 +3815,10 @@ dimensions: campaign,country,platform</pre>
                             addActionListeners(newRow, job);
                         }
                     });
+                    populateImportDetailSelect(imports);
+                    if (!priorSelectedImport && selectedImportJobId) {
+                        await loadImportOperatorView('operations', true);
+                    }
 
                 } catch (error) {
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
@@ -3923,6 +4079,12 @@ dimensions: campaign,country,platform</pre>
                     alert(`Error starting import: ${error.message}`);
                 }
             });
+            importDetailSelect?.addEventListener('change', () => loadImportOperatorView('operations', true));
+            document.getElementById('import-load-operations-btn')?.addEventListener('click', () => loadImportOperatorView('operations'));
+            document.getElementById('import-load-quality-btn')?.addEventListener('click', () => loadImportOperatorView('quality'));
+            document.getElementById('import-load-manifests-btn')?.addEventListener('click', () => loadImportOperatorView('manifests'));
+            document.getElementById('import-load-schema-btn')?.addEventListener('click', () => loadImportSchemaContracts(false));
+            document.getElementById('import-load-schema-list-btn')?.addEventListener('click', () => loadImportSchemaContracts(true));
 
             // Service Health Page Logic
             const serviceStatusListDiv = document.getElementById('service-status-list');
@@ -4424,6 +4586,7 @@ dimensions: campaign,country,platform</pre>
             const workflowSelectedLabel = document.getElementById('workflow-selected-label');
             const workflowExecutionsList = document.getElementById('workflow-executions-list');
             const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
+            const workflowDeliveryDiagnosticsOutput = document.getElementById('workflow-delivery-diagnostics-output');
             const workflowPolicyOutput = document.getElementById('workflow-policy-output');
             const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
             const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
@@ -4431,6 +4594,7 @@ dimensions: campaign,country,platform</pre>
             const exportDiagnosticsOutput = document.getElementById('export-diagnostics-output');
             const experimentStatus = document.getElementById('experiment-status');
             const experimentSummaryOutput = document.getElementById('experiment-summary-output');
+            const experimentIntegrityOutput = document.getElementById('experiment-integrity-output');
             const experimentExposuresList = document.getElementById('experiment-exposures-list');
             const experimentOutcomesList = document.getElementById('experiment-outcomes-list');
             const experimentIngestStatus = document.getElementById('experiment-ingest-status');
@@ -4934,12 +5098,14 @@ dimensions: campaign,country,platform</pre>
                     workflowExecutionsList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
                     workflowDeliveriesList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
                     renderJsonOutput(workflowPolicyOutput, null, 'Policy counters will appear here.');
+                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, null, 'Workflow delivery diagnostics will appear here.');
                     return;
                 }
-                const [executionsPayload, deliveriesPayload, policyPayload] = await Promise.all([
+                const [executionsPayload, deliveriesPayload, policyPayload, diagnosticsPayload] = await Promise.all([
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/executions`),
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/deliveries`),
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/policy-counters`),
+                    apiRequest(`/workflows/${encodeURIComponent(workflowId)}/delivery-diagnostics`),
                 ]);
                 renderSimpleTable(
                     workflowExecutionsList,
@@ -4964,6 +5130,7 @@ dimensions: campaign,country,platform</pre>
                     'No deliveries recorded yet.',
                 );
                 renderJsonOutput(workflowPolicyOutput, policyPayload, 'No policy counters recorded.');
+                renderJsonOutput(workflowDeliveryDiagnosticsOutput, diagnosticsPayload, 'No workflow delivery diagnostics recorded.');
             }
 
             async function createWorkflow() {
@@ -5132,14 +5299,16 @@ dimensions: campaign,country,platform</pre>
             async function loadExperimentWorkspace() {
                 const experimentId = getCurrentExperimentId();
                 try {
-                    const [configPayload, summaryPayload, exposuresPayload, outcomesPayload] = await Promise.all([
+                    const [configPayload, summaryPayload, integrityPayload, exposuresPayload, outcomesPayload] = await Promise.all([
                         apiRequest(`/experiments/config?experiment_id=${encodeURIComponent(experimentId)}`),
                         apiRequest(`/experiments/${encodeURIComponent(experimentId)}/summary`),
+                        apiRequest(`/experiments/${encodeURIComponent(experimentId)}/integrity`),
                         apiRequest(`/experiments/${encodeURIComponent(experimentId)}/exposures`),
                         apiRequest(`/experiments/${encodeURIComponent(experimentId)}/outcomes`),
                     ]);
                     fillExperimentForm(configPayload.experiment || {});
                     renderJsonOutput(experimentSummaryOutput, summaryPayload, 'No experiment summary available.');
+                    renderJsonOutput(experimentIntegrityOutput, integrityPayload, 'No experiment integrity payload available.');
                     renderSimpleTable(
                         experimentExposuresList,
                         [
@@ -5322,11 +5491,31 @@ dimensions: campaign,country,platform</pre>
             document.getElementById('activation-ingest-btn').addEventListener('click', ingestProviderCallbacks);
             document.getElementById('export-diagnostics-btn').addEventListener('click', loadExportDiagnostics);
             document.getElementById('export-retry-btn').addEventListener('click', retryExportDiagnostics);
+            document.getElementById('workflow-load-delivery-diagnostics-btn').addEventListener('click', async () => {
+                if (!selectedWorkflowId) {
+                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, null, 'Select a workflow first.');
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/workflows/${encodeURIComponent(selectedWorkflowId)}/delivery-diagnostics`);
+                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, payload, 'No workflow delivery diagnostics recorded.');
+                } catch (error) {
+                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, { error: error.message }, 'Failed to load workflow delivery diagnostics.');
+                }
+            });
             document.getElementById('experiment-load-btn').addEventListener('click', loadExperimentWorkspace);
             document.getElementById('experiment-save-btn').addEventListener('click', saveExperimentConfig);
             document.getElementById('experiment-start-btn').addEventListener('click', () => updateExperimentLifecycle('start'));
             document.getElementById('experiment-stop-btn').addEventListener('click', () => updateExperimentLifecycle('stop'));
             document.getElementById('experiment-refresh-btn').addEventListener('click', loadExperimentWorkspace);
+            document.getElementById('experiment-load-integrity-btn').addEventListener('click', async () => {
+                try {
+                    const payload = await apiRequest(`/experiments/${encodeURIComponent(getCurrentExperimentId())}/integrity`);
+                    renderJsonOutput(experimentIntegrityOutput, payload, 'No experiment integrity payload available.');
+                } catch (error) {
+                    renderJsonOutput(experimentIntegrityOutput, { error: error.message }, 'Failed to load experiment integrity.');
+                }
+            });
             document.getElementById('experiment-decision-btn').addEventListener('click', decideExperiment);
             document.getElementById('experiment-ingest-outcomes-btn').addEventListener('click', ingestExperimentOutcomes);
             document.getElementById('copilot-query-btn').addEventListener('click', async () => {

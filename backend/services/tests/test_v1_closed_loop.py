@@ -805,6 +805,20 @@ def test_import_operations_and_backfill_control_plane(client):
     assert operations.json()["dead_letters"]["count"] == 1
     assert operations.json()["dead_letters"]["replayable_count"] == 1
     assert operations.json()["remediation"]["recommended_action"] == "replay_rejected_rows"
+    assert operations.json()["schema_contracts"]
+
+    manifests = client.get("/api/v1/imports/imp_ops_1/manifests", headers={"x-actor-role": "analyst"})
+    assert manifests.status_code == 200
+    assert manifests.json()["items"][0]["manifest_id"] == "imp_ops_1:0"
+
+    schema_contract = client.get("/api/v1/imports/schema-contracts/standardized", headers={"x-actor-role": "analyst"})
+    assert schema_contract.status_code == 200
+    assert schema_contract.json()["alias"] == "standardized"
+    assert "player_id" in schema_contract.json()["required_fields"]
+
+    schema_contracts = client.get("/api/v1/imports/schema-contracts", headers={"x-actor-role": "analyst"})
+    assert schema_contracts.status_code == 200
+    assert any(item["alias"] == "fact_events_unified" for item in schema_contracts.json()["items"])
 
     backfill = client.post(
         "/api/v1/imports/backfills",
@@ -875,6 +889,7 @@ def test_health_snapshot_includes_data_core_lag_alerts(client):
                 "event_time": "2026-03-10T10:00:00",
                 "event_properties": {"platform": "ios", "revenue_usd": 1.99},
                 "user_properties": {},
+                "unexpected_field": "schema_drift",
             }
         ],
         job_id="lag_pending",
@@ -884,9 +899,11 @@ def test_health_snapshot_includes_data_core_lag_alerts(client):
     assert health.status_code == 200
     assert health.json()["operational_metrics"]["staging_to_curated_lag_seconds"] > 0
     assert health.json()["operational_metrics"]["aggregate_refresh_lag_seconds"] > 0
+    assert health.json()["operational_metrics"]["schema_drift_count"] > 0
     alert_codes = {item["code"] for item in health.json()["alerts"]}
     assert "curation_lag_present" in alert_codes
     assert "aggregate_refresh_lag_present" in alert_codes
+    assert "schema_drift_present" in alert_codes
 
 
 def test_workflow_event_threshold_confirmation_and_experiment_extensions(client):
@@ -985,6 +1002,7 @@ def test_workflow_event_threshold_confirmation_and_experiment_extensions(client)
             "action": {
                 "channel": "webhook",
                 "content": "Threshold fallback",
+                "webhook_url": "http://127.0.0.1:9/unreachable",
                 "retry_policy": {"max_retries": 2, "base_backoff_seconds": 1},
             },
             "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
@@ -1006,6 +1024,12 @@ def test_workflow_event_threshold_confirmation_and_experiment_extensions(client)
     deliveries = client.get(f"/api/v1/workflows/{threshold_workflow_id}/deliveries", headers={"x-actor-role": "operator"})
     assert deliveries.status_code == 200
     assert deliveries.json()["items"][0]["delivery_diagnostics"]["attempt_count"] == 3
+    assert deliveries.json()["items"][0]["provider_mode"] == "live"
+
+    diagnostics = client.get(f"/api/v1/workflows/{threshold_workflow_id}/delivery-diagnostics", headers={"x-actor-role": "operator"})
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["by_status"]["failed"] >= 1
+    assert diagnostics.json()["failure_classifications"]["provider_error"] >= 1
 
 
 def test_workflow_lifecycle_guards_return_locked(client):
@@ -1188,6 +1212,11 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
         },
     )
     assert callback.status_code == 200
+
+    integrity = client.get("/api/v1/experiments/weekly_report_exp/integrity", headers={"x-actor-role": "analyst"})
+    assert integrity.status_code == 200
+    assert integrity.json()["outcome_count"] >= 1
+    assert integrity.json()["orphan_outcomes"] == 0
 
     metrics = client.get("/api/v1/copilot/metrics", headers={"x-actor-role": "analyst"})
     assert metrics.status_code == 200

@@ -673,6 +673,75 @@ class BigQueryService:
             "fields": fields,
         }
 
+    @staticmethod
+    def _schema_field_type(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        try:
+            datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return "datetime"
+        except ValueError:
+            return "string"
+
+    def get_schema_contract(self, alias: str, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        resolved_alias = str(alias or "").strip()
+        aliases = self.get_v1_table_aliases()
+        targets = set(aliases.keys()) | set(aliases.values())
+        if resolved_alias not in targets:
+            raise KeyError(resolved_alias)
+        canonical_alias = next((name for name, target in aliases.items() if resolved_alias in {name, target}), resolved_alias)
+        rows = self.get_rows_for_alias(canonical_alias)
+        if job_id:
+            rows = [row for row in rows if self._row_matches_job(row, job_id)]
+        expected_fields = self._default_columns_for_alias(canonical_alias)
+        observed_fields: set[str] = set()
+        observed_types: Dict[str, str] = {}
+        schema_versions: Counter[str] = Counter()
+        for row in rows:
+            for field, value in row.items():
+                observed_fields.add(str(field))
+                observed_types.setdefault(str(field), self._schema_field_type(value))
+            schema_version = str(row.get("schema_version") or "").strip()
+            if schema_version:
+                schema_versions[schema_version] += 1
+        missing_required_fields = sorted(field for field in expected_fields if field not in observed_fields)
+        extra_fields = sorted(field for field in observed_fields if field not in expected_fields)
+        if not rows:
+            compatibility_status = "no_data"
+        elif missing_required_fields:
+            compatibility_status = "missing_required_fields"
+        elif extra_fields:
+            compatibility_status = "drifted"
+        else:
+            compatibility_status = "compatible"
+        return {
+            "alias": canonical_alias,
+            "table_name": aliases.get(canonical_alias, canonical_alias),
+            "job_id": job_id,
+            "schema_version": schema_versions.most_common(1)[0][0] if schema_versions else "v1",
+            "required_fields": expected_fields,
+            "observed_fields": sorted(observed_fields),
+            "observed_field_types": observed_types,
+            "missing_required_fields": missing_required_fields,
+            "extra_fields": extra_fields,
+            "compatibility_status": compatibility_status,
+            "row_count": len(rows),
+        }
+
+    def list_schema_contracts(self, *, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = []
+        for alias in self.get_v1_table_aliases():
+            items.append(self.get_schema_contract(alias, job_id=job_id))
+        return items
+
     def get_rejected_event_explanations(self, *, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         items = self.get_pipeline_dead_letters(job_id=job_id, limit=limit)
         explanations: List[Dict[str, Any]] = []

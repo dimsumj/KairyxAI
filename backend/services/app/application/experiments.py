@@ -178,6 +178,119 @@ class ExperimentConfigService:
             "items": self.repository.list_resource_versions("experiment", experiment_id),
         }
 
+    def get_measurement_integrity(self, experiment_id: str) -> Dict[str, Any]:
+        config = self.get_config(experiment_id)
+        exposures = self.list_exposures(experiment_id)
+        outcomes = self.list_outcomes(experiment_id)
+        latest_outcome_at = self._latest_outcome_at(experiment_id)
+        now = datetime.utcnow()
+        matched_outcome_keys: set[str] = set()
+        exposures_without_outcome = 0
+        pending_outcomes = 0
+        eligible_exposures = 0
+        recent_rates: List[tuple[str, float]] = []
+        outcomes_by_action = self._index_outcomes(outcomes, "action_execution_id")
+        outcomes_by_delivery = self._index_outcomes(outcomes, "delivery_id")
+        outcomes_by_user = self._index_outcomes(outcomes, "user_id")
+        exposures_by_user = self._index_exposures_by_user(exposures)
+        for exposure in exposures:
+            group = str(exposure.get("group") or "holdout")
+            if group == "excluded":
+                continue
+            exposure_time = self._parse_datetime(exposure.get("exposed_at") or exposure.get("recorded_at"))
+            if exposure_time is None:
+                continue
+            eligible_exposures += 1
+            matched = self._match_outcomes_for_exposure(
+                exposure=exposure,
+                outcomes_by_action=outcomes_by_action,
+                outcomes_by_delivery=outcomes_by_delivery,
+                outcomes_by_user=outcomes_by_user,
+                exposures_by_user=exposures_by_user,
+            )
+            for item in matched:
+                matched_outcome_keys.add(self._outcome_key(item))
+            attribution_window_days = max(1, int(exposure.get("attribution_window_days") or 7))
+            if matched:
+                returned = any(str(item.get("outcome_name") or "").lower() in {"returned", "returned_to_game"} for item in matched)
+                recent_rates.append((exposure_time.date().isoformat(), 1.0 if returned else 0.0))
+                continue
+            if exposure_time + timedelta(days=attribution_window_days) < now:
+                exposures_without_outcome += 1
+                recent_rates.append((exposure_time.date().isoformat(), 0.0))
+            else:
+                pending_outcomes += 1
+
+        orphan_outcomes = [
+            outcome
+            for outcome in outcomes
+            if self._outcome_key(outcome) not in matched_outcome_keys
+        ]
+        outcome_lag_seconds = 0
+        if latest_outcome_at is not None:
+            outcome_lag_seconds = int((now - latest_outcome_at).total_seconds())
+        stale = bool(eligible_exposures) and (latest_outcome_at is None or outcome_lag_seconds > 172800)
+        baseline_rate = 0.0
+        recent_rate = 0.0
+        drift_status = "insufficient_data"
+        if recent_rates:
+            grouped_rates: Dict[str, List[float]] = {}
+            for date_key, rate in recent_rates:
+                grouped_rates.setdefault(date_key, []).append(rate)
+            ordered_days = sorted(grouped_rates.keys())
+            if len(ordered_days) >= 2:
+                recent_slice = ordered_days[-1:]
+                baseline_slice = ordered_days[:-1]
+                recent_values = [value for key in recent_slice for value in grouped_rates[key]]
+                baseline_values = [value for key in baseline_slice for value in grouped_rates[key]]
+                if recent_values:
+                    recent_rate = round(sum(recent_values) / len(recent_values), 4)
+                if baseline_values:
+                    baseline_rate = round(sum(baseline_values) / len(baseline_values), 4)
+                if baseline_values:
+                    delta = recent_rate - baseline_rate
+                    if abs(delta) >= 0.2:
+                        drift_status = "drifted"
+                    else:
+                        drift_status = "stable"
+        warnings: List[str] = []
+        if stale:
+            warnings.append("outcomes_stale")
+        if orphan_outcomes:
+            warnings.append("orphan_outcomes_present")
+        if eligible_exposures and (exposures_without_outcome / max(1, eligible_exposures)) > 0.5:
+            warnings.append("missing_outcomes_high")
+        if drift_status == "drifted":
+            warnings.append("return_rate_drift_detected")
+        payload = {
+            "experiment_id": experiment_id,
+            "status": config.get("status") or "draft",
+            "exposure_count": len(exposures),
+            "outcome_count": len(outcomes),
+            "eligible_exposure_count": eligible_exposures,
+            "exposures_without_outcome": exposures_without_outcome,
+            "pending_outcomes": pending_outcomes,
+            "orphan_outcomes": len(orphan_outcomes),
+            "latest_outcome_at": latest_outcome_at.isoformat() if latest_outcome_at is not None else None,
+            "outcome_lag_seconds": outcome_lag_seconds,
+            "stale": stale,
+            "drift_status": drift_status,
+            "baseline_return_rate": baseline_rate,
+            "recent_return_rate": recent_rate,
+            "warning_count": len(warnings),
+            "warnings": warnings,
+            "missing_outcome_rate": round(exposures_without_outcome / max(1, eligible_exposures), 4) if eligible_exposures else 0.0,
+            "orphan_outcome_examples": orphan_outcomes[:10],
+        }
+        self.repository.upsert_resource(
+            "experiment_measurement_integrity",
+            experiment_id,
+            status="warning" if warnings else "ok",
+            name=experiment_id,
+            payload=payload,
+        )
+        return payload
+
     def list_active_experiments(self, *, scenario_type: str | None = None) -> List[Dict[str, Any]]:
         items = []
         for record in self.repository.list_resources("experiment"):
@@ -740,6 +853,42 @@ class ExperimentConfigService:
             if occurred_at is not None and (latest is None or occurred_at > latest):
                 latest = occurred_at
         return latest
+
+    @staticmethod
+    def _outcome_key(outcome: Dict[str, Any]) -> str:
+        return "|".join(
+            [
+                str(outcome.get("provider_callback_id") or ""),
+                str(outcome.get("delivery_id") or ""),
+                str(outcome.get("action_execution_id") or ""),
+                str(outcome.get("user_id") or ""),
+                str(outcome.get("occurred_at") or ""),
+                str(outcome.get("outcome_name") or ""),
+            ]
+        )
+
+    @staticmethod
+    def _index_outcomes(items: List[Dict[str, Any]], field: str) -> Dict[str, List[Dict[str, Any]]]:
+        indexed: Dict[str, List[Dict[str, Any]]] = {}
+        for item in items:
+            key = str(item.get(field) or "").strip()
+            if not key:
+                continue
+            indexed.setdefault(key, []).append(item)
+        return indexed
+
+    def _index_exposures_by_user(self, exposures: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        indexed: Dict[str, List[Dict[str, Any]]] = {}
+        for exposure in exposures:
+            user_id = str(exposure.get("user_id") or "").strip()
+            if not user_id:
+                continue
+            indexed.setdefault(user_id, []).append(exposure)
+        for user_id in indexed:
+            indexed[user_id].sort(
+                key=lambda item: self._parse_datetime(item.get("exposed_at") or item.get("recorded_at")) or datetime.min
+            )
+        return indexed
 
     def _match_outcomes_for_exposure(
         self,

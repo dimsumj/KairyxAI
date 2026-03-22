@@ -375,6 +375,24 @@ class ImportService:
                     "event_count": int(notification.get("event_count") or 0),
                 }
             )
+            resource_id = f"{job_id}:{int(notification.get('shard_index') or 0)}"
+            existing = self.repository.get_resource("import_manifest", resource_id)
+            payload = dict((existing or {}).get("payload") or {})
+            payload.update(
+                {
+                    "manifest_id": resource_id,
+                    "job_id": job_id,
+                    "source_name": source_name,
+                    "status": status,
+                    "gcs_uri": notification.get("gcs_path"),
+                    "message_id": notification.get("message_id"),
+                    "event_count": int(notification.get("event_count") or 0),
+                    "manifest": notification,
+                    "schema_version": notification.get("schema_version"),
+                    "shard_index": int(notification.get("shard_index") or 0),
+                }
+            )
+            self.repository.upsert_resource("import_manifest", resource_id, status=status, name=job_id, payload=payload)
 
     def _process_notifications(
         self,
@@ -575,6 +593,10 @@ class ImportService:
         checkpoint_state = details.get("checkpoint_state") or self._summarize_checkpoints(job_id)
         conflicts = self.bigquery_service.get_field_conflicts(job_id=job_id, limit=200)
         rejected = self.bigquery_service.get_rejected_event_explanations(job_id=job_id, limit=200)
+        schema_contracts = [
+            self.bigquery_service.get_schema_contract("standardized", job_id=job_id),
+            self.bigquery_service.get_schema_contract("fact_events_unified", job_id=job_id),
+        ]
         return {
             "job_id": job_id,
             "status": job["status"],
@@ -586,7 +608,54 @@ class ImportService:
             "source_of_truth": identity_summary.get("source_of_truth_decisions") or [],
             "conflict_summary": {"count": len(conflicts), "items": conflicts[:25]},
             "rejected_summary": {"count": len(rejected), "items": rejected[:25]},
+            "schema_contracts": schema_contracts,
         }
+
+    def list_manifests(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        items = []
+        for record in self.repository.list_resources("import_manifest"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("job_id") or "") != job_id:
+                continue
+            items.append(
+                {
+                    "manifest_id": record.get("resource_id"),
+                    "status": record.get("status"),
+                    "created_at": record.get("created_at"),
+                    "updated_at": record.get("updated_at"),
+                    **payload,
+                }
+            )
+        if not items:
+            for checkpoint in self.repository.list_checkpoints(job_id):
+                manifest = dict(checkpoint.get("manifest") or {})
+                items.append(
+                    {
+                        "manifest_id": f"{job_id}:{checkpoint.get('shard_index')}",
+                        "status": checkpoint.get("status"),
+                        "created_at": checkpoint.get("updated_at"),
+                        "updated_at": checkpoint.get("updated_at"),
+                        "job_id": job_id,
+                        "source_name": checkpoint.get("source_name"),
+                        "event_count": checkpoint.get("event_count"),
+                        "schema_version": manifest.get("schema_version"),
+                        "shard_index": checkpoint.get("shard_index"),
+                        "gcs_uri": checkpoint.get("gcs_uri"),
+                        "message_id": checkpoint.get("message_id"),
+                        "manifest": manifest,
+                    }
+                )
+        items.sort(key=lambda item: int(item.get("shard_index") or 0))
+        return {"job_id": job_id, "items": items}
+
+    def list_schema_contracts(self) -> Dict[str, Any]:
+        return {"items": self.bigquery_service.list_schema_contracts()}
+
+    def get_schema_contract(self, alias: str, *, job_id: str | None = None) -> Dict[str, Any]:
+        return self.bigquery_service.get_schema_contract(alias, job_id=job_id)
 
     def get_identity_links(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
@@ -715,6 +784,8 @@ class ImportService:
             },
             "checkpoint_state": details.get("checkpoint_state") or self._summarize_checkpoints(job_id),
             "quality_report": quality.get("quality_report") or {},
+            "manifest_summary": self.list_manifests(job_id),
+            "schema_contracts": quality.get("schema_contracts") or [],
             "lag_summary": lag_summary,
             "dead_letters": {
                 **dead_letter_summary,
@@ -1128,6 +1199,24 @@ class ImportService:
                     },
                 )
                 notification["message_id"] = message_id
+                resource_id = f"{job_id}:{int(manifest['shard_index'])}"
+                self.repository.upsert_resource(
+                    "import_manifest",
+                    resource_id,
+                    status=CheckpointStatus.PUBLISHED.value,
+                    name=job_id,
+                    payload={
+                        "manifest_id": resource_id,
+                        "job_id": job_id,
+                        "source_name": connector_record["name"],
+                        "event_count": int(manifest["event_count"] or 0),
+                        "schema_version": manifest["schema_version"],
+                        "shard_index": int(manifest["shard_index"]),
+                        "gcs_uri": manifest["gcs_uri"],
+                        "message_id": message_id,
+                        "manifest": manifest,
+                    },
+                )
                 self.repository.upsert_checkpoint(
                     {
                         "job_id": job_id,
