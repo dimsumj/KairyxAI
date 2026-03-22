@@ -677,6 +677,190 @@ def test_data_core_identity_conflicts_and_sql_guardrails(client):
     assert preview_scan_blocked.status_code == 400
 
 
+def test_import_operations_and_backfill_control_plane(client):
+    service = get_shared_bigquery_service()
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.upsert_connector("Adjust Source", "adjust", {"api_token": "adjust-token"})
+        repository.create_import_job(
+            {
+                "id": "imp_ops_1",
+                "source_name": "Adjust Source",
+                "status": "completed",
+                "spec": {"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260302"},
+                "progress": {
+                    "current": 1,
+                    "total": 1,
+                    "pct": 100.0,
+                    "details": {
+                        "mapping_coverage": 100.0,
+                        "checkpoint_state": {"total": 1, "processed": 1, "pending": 0, "counts": {"processed": 1}},
+                    },
+                },
+            }
+        )
+        repository.upsert_checkpoint(
+            {
+                "job_id": "imp_ops_1",
+                "shard_index": 0,
+                "source_name": "Adjust Source",
+                "status": "processed",
+                "cursor": "0",
+                "gcs_uri": "gs://mock/raw/source=adjust/job=imp_ops_1/part-000001.jsonl.gz",
+                "message_id": "msg-1",
+                "manifest": {"job_id": "imp_ops_1", "source": "adjust", "shard_index": 0},
+                "event_count": 1,
+            }
+        )
+        repository.create_import_job(
+            {
+                "id": "imp_ops_2",
+                "source_name": "Adjust Source",
+                "status": "awaiting_mapping",
+                "spec": {"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260303"},
+                "progress": {
+                    "current": 0,
+                    "total": 0,
+                    "pct": 0.0,
+                    "details": {
+                        "mapping_coverage": 60.0,
+                        "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
+                    },
+                },
+            }
+        )
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "imp_ops_1",
+                "source": "adjust",
+                "player_id": "u_ops_1",
+                "canonical_user_id": "u_ops_1",
+                "event_type": "session_start",
+                "event_time": "2026-03-08T10:00:00",
+                "event_fingerprint": "fp_existing",
+                "event_properties": {"campaign": "ops_campaign"},
+                "user_properties": {"email": "ops1@example.com"},
+            }
+        ],
+        job_id="imp_ops_1",
+    )
+    service.run_events_curation(job_id="imp_ops_1")
+    service.refresh_player_latest_state(job_id="imp_ops_1")
+    service.write_pipeline_dead_letters(
+        [
+            {
+                "job_id": "imp_ops_1",
+                "rejection_reason": "missing_campaign_mapping",
+                "normalized_event": {
+                    "job_id": "imp_ops_1",
+                    "source": "adjust",
+                    "player_id": "u_ops_1",
+                    "canonical_user_id": "u_ops_1",
+                    "event_type": "promo_view",
+                    "event_time": "2026-03-08T11:00:00",
+                    "event_fingerprint": "fp_replay_1",
+                    "data_quality_flags": [],
+                    "event_properties": {"campaign": "ops_campaign"},
+                    "user_properties": {"email": "ops1@example.com"},
+                },
+            }
+        ],
+        job_id="imp_ops_1",
+    )
+
+    operations = client.get("/api/v1/imports/imp_ops_1/operations", headers={"x-actor-role": "analyst"})
+    assert operations.status_code == 200
+    assert operations.json()["processing_contract"]["mode"] == "manifest-driven"
+    assert operations.json()["dead_letters"]["count"] == 1
+    assert operations.json()["dead_letters"]["replayable_count"] == 1
+    assert operations.json()["remediation"]["recommended_action"] == "replay_rejected_rows"
+
+    backfill = client.post(
+        "/api/v1/imports/backfills",
+        headers={"x-actor-role": "operator"},
+        json={"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260303"},
+    )
+    assert backfill.status_code == 200
+    assert backfill.json()["matched_jobs"] == 2
+    assert any(item["job_id"] == "imp_ops_1" and item["status"] == "completed" for item in backfill.json()["items"])
+    assert any(item["job_id"] == "imp_ops_2" and item["status"] == "blocked" for item in backfill.json()["items"])
+
+    listed = client.get("/api/v1/imports/backfills", headers={"x-actor-role": "analyst"})
+    assert listed.status_code == 200
+    assert any(item["backfill_id"] == backfill.json()["backfill_id"] for item in listed.json()["items"])
+
+    fetched = client.get(f"/api/v1/imports/backfills/{backfill.json()['backfill_id']}", headers={"x-actor-role": "analyst"})
+    assert fetched.status_code == 200
+    assert fetched.json()["backfill_id"] == backfill.json()["backfill_id"]
+    assert fetched.json()["completed_jobs"] == 1
+
+
+def test_health_snapshot_includes_data_core_lag_alerts(client):
+    service = get_shared_bigquery_service()
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_seed",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "session_start",
+                "event_time": "2026-03-08T10:00:00",
+                "event_properties": {"platform": "ios"},
+                "user_properties": {},
+            }
+        ],
+        job_id="lag_seed",
+    )
+    service.run_events_curation(job_id="lag_seed")
+    service.refresh_player_latest_state(job_id="lag_seed")
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_curated",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "promo_view",
+                "event_time": "2026-03-09T10:00:00",
+                "event_properties": {"platform": "ios"},
+                "user_properties": {},
+            }
+        ],
+        job_id="lag_curated",
+    )
+    service.run_events_curation(job_id="lag_curated")
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_pending",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "item_purchased",
+                "event_time": "2026-03-10T10:00:00",
+                "event_properties": {"platform": "ios", "revenue_usd": 1.99},
+                "user_properties": {},
+            }
+        ],
+        job_id="lag_pending",
+    )
+
+    health = client.get("/api/v1/health")
+    assert health.status_code == 200
+    assert health.json()["operational_metrics"]["staging_to_curated_lag_seconds"] > 0
+    assert health.json()["operational_metrics"]["aggregate_refresh_lag_seconds"] > 0
+    alert_codes = {item["code"] for item in health.json()["alerts"]}
+    assert "curation_lag_present" in alert_codes
+    assert "aggregate_refresh_lag_present" in alert_codes
+
+
 def test_workflow_event_threshold_confirmation_and_experiment_extensions(client):
     _seed_mock_warehouse()
     _seed_prediction_job()

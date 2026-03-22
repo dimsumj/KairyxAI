@@ -615,6 +615,239 @@ class ImportService:
             "items": self.bigquery_service.get_rejected_event_explanations(job_id=job_id, limit=500),
         }
 
+    def _classify_dead_letter_replay(self, job_id: str) -> Dict[str, Any]:
+        dead_letters = self.bigquery_service.get_pipeline_dead_letters(job_id=job_id, limit=5000)
+        existing_rows = self.bigquery_service.get_rows_for_alias("standardized") + self.bigquery_service.get_rows_for_alias("fact_events_unified")
+        existing_fingerprints = {
+            str(row.get("event_fingerprint") or "")
+            for row in existing_rows
+            if row.get("event_fingerprint")
+        }
+        replayable_rows: List[Dict[str, Any]] = []
+        skipped_rows: List[Dict[str, Any]] = []
+        reason_counts: Dict[str, int] = {}
+
+        for dead_letter in dead_letters:
+            event = dict(dead_letter.get("normalized_event") or {})
+            if not event:
+                reason = "missing_normalized_event"
+                skipped_rows.append({"reason": reason, "dead_letter": dead_letter})
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                continue
+
+            flags = {str(flag) for flag in event.get("data_quality_flags") or []}
+            if {"missing_player_id", "invalid_event_time"} & flags:
+                reason = "critical_quality_failure"
+                skipped_rows.append({"reason": reason, "event_fingerprint": event.get("event_fingerprint")})
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                continue
+
+            fingerprint = str(event.get("event_fingerprint") or "")
+            if fingerprint and fingerprint in existing_fingerprints:
+                reason = "duplicate_suppressed"
+                skipped_rows.append({"reason": reason, "event_fingerprint": fingerprint})
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                continue
+
+            event.setdefault("job_id", job_id)
+            event.setdefault("job_identifier", job_id)
+            replayable_rows.append(event)
+            if fingerprint:
+                existing_fingerprints.add(fingerprint)
+
+        return {
+            "dead_letters": dead_letters,
+            "replayable_rows": replayable_rows,
+            "skipped_rows": skipped_rows,
+            "skip_reason_counts": reason_counts,
+        }
+
+    @staticmethod
+    def _normalize_date_key(value: Any) -> str:
+        text = str(value or "").strip().replace("-", "")
+        return text
+
+    def _job_in_backfill_scope(self, job: Dict[str, Any], *, source_name: str, start_date: str, end_date: str) -> bool:
+        spec = job.get("spec") or {}
+        if str(spec.get("source_name") or "") != str(source_name):
+            return False
+        job_start = self._normalize_date_key(spec.get("start_date"))
+        job_end = self._normalize_date_key(spec.get("end_date"))
+        range_start = self._normalize_date_key(start_date)
+        range_end = self._normalize_date_key(end_date)
+        if not job_start or not job_end or not range_start or not range_end:
+            return False
+        return not (job_end < range_start or job_start > range_end)
+
+    def get_operations(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+
+        details = (job.get("progress") or {}).get("details") or {}
+        replay_analysis = self._classify_dead_letter_replay(job_id)
+        dead_letter_summary = self.bigquery_service.get_dead_letter_summary(job_id=job_id)
+        lag_summary = self.bigquery_service.get_pipeline_lag_summary(job_id=job_id)
+        quality = self.get_quality(job_id)
+
+        status = str(job.get("status") or "").lower()
+        can_resume = status in {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}
+        can_replay = len(replay_analysis["replayable_rows"]) > 0 and float(quality.get("mapping_coverage") or 0.0) >= 95.0
+
+        recommended_action = "no_action_required"
+        if status == JobStatus.AWAITING_MAPPING.value:
+            recommended_action = "fix_mapping_and_resume"
+        elif can_replay:
+            recommended_action = "replay_rejected_rows"
+        elif int((lag_summary.get("table_counts") or {}).get("dead_letter_rows") or 0) > 0:
+            recommended_action = "review_dead_letters"
+
+        return {
+            "job_id": job_id,
+            "status": job["status"],
+            "source_name": (job.get("spec") or {}).get("source_name"),
+            "processing_contract": {
+                "mode": "manifest-driven",
+                "runtime_path": "gcp" if self.settings.data_backend_mode == "gcp" else "local_demo",
+                "checkpoint_unit": "shard",
+                "replay_unit": "shard",
+                "canonical_aliases": self._canonical_aliases(),
+            },
+            "checkpoint_state": details.get("checkpoint_state") or self._summarize_checkpoints(job_id),
+            "quality_report": quality.get("quality_report") or {},
+            "lag_summary": lag_summary,
+            "dead_letters": {
+                **dead_letter_summary,
+                "replayable_count": len(replay_analysis["replayable_rows"]),
+                "blocked_count": len(replay_analysis["skipped_rows"]),
+                "blocked_reasons": replay_analysis["skip_reason_counts"],
+            },
+            "remediation": {
+                "can_resume": can_resume,
+                "can_replay": can_replay,
+                "backfill_supported": True,
+                "recommended_action": recommended_action,
+                "suggested_backfill_scope": {
+                    "source_name": (job.get("spec") or {}).get("source_name"),
+                    "start_date": (job.get("spec") or {}).get("start_date"),
+                    "end_date": (job.get("spec") or {}).get("end_date"),
+                    "mode": "replay_rejected_rows",
+                },
+            },
+        }
+
+    def create_backfill(self, *, source_name: str, start_date: str, end_date: str, mode: str = "replay_rejected_rows", limit_jobs: int = 50) -> Dict[str, Any]:
+        backfill_id = f"backfill_{uuid.uuid4().hex[:20]}"
+        candidate_jobs = [
+            job
+            for job in self.repository.list_import_jobs()
+            if self._job_in_backfill_scope(job, source_name=source_name, start_date=start_date, end_date=end_date)
+        ]
+        candidate_jobs = candidate_jobs[: max(1, int(limit_jobs))]
+
+        items: List[Dict[str, Any]] = []
+        total_replayed_rows = 0
+        total_skipped_rows = 0
+
+        for job in candidate_jobs:
+            job_id = str(job["id"])
+            status = str(job.get("status") or "").lower()
+            if status in {JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.STOPPING.value, JobStatus.READY.value}:
+                items.append({"job_id": job_id, "status": "locked", "reason": "active_job"})
+                continue
+
+            mapping_coverage = float((((job.get("progress") or {}).get("details") or {}).get("mapping_coverage") or self._mapping_coverage(source_name, job_id=job_id)))
+            if mapping_coverage < 95.0:
+                items.append({"job_id": job_id, "status": "blocked", "reason": "mapping_below_gate", "mapping_coverage": mapping_coverage})
+                continue
+
+            replay_analysis = self._classify_dead_letter_replay(job_id)
+            if not replay_analysis["dead_letters"]:
+                items.append({"job_id": job_id, "status": "skipped", "reason": "no_dead_letters"})
+                continue
+            if not replay_analysis["replayable_rows"]:
+                items.append(
+                    {
+                        "job_id": job_id,
+                        "status": "skipped",
+                        "reason": "no_replayable_rows",
+                        "blocked_reasons": replay_analysis["skip_reason_counts"],
+                    }
+                )
+                continue
+
+            try:
+                replay_result = self.replay_job(job_id)
+                total_replayed_rows += int(replay_result.get("replayed_rows") or 0)
+                total_skipped_rows += int(replay_result.get("skipped_rows") or 0)
+                items.append({"job_id": job_id, "status": "completed", **replay_result})
+            except Exception as exc:
+                self.rollback_session()
+                items.append({"job_id": job_id, "status": "failed", "reason": str(exc)})
+
+        completed_jobs = sum(1 for item in items if item.get("status") == "completed")
+        failed_jobs = sum(1 for item in items if item.get("status") == "failed")
+        resource_status = "completed"
+        if failed_jobs and completed_jobs:
+            resource_status = "partial"
+        elif failed_jobs and not completed_jobs:
+            resource_status = "failed"
+        elif not items:
+            resource_status = "empty"
+
+        payload = {
+            "backfill_id": backfill_id,
+            "source_name": source_name,
+            "start_date": start_date,
+            "end_date": end_date,
+            "mode": mode,
+            "matched_jobs": len(candidate_jobs),
+            "completed_jobs": completed_jobs,
+            "failed_jobs": failed_jobs,
+            "replayed_rows": total_replayed_rows,
+            "skipped_rows": total_skipped_rows,
+            "items": items,
+            "executed_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource("import_backfill", backfill_id, status=resource_status, name=f"{source_name}:{start_date}-{end_date}", payload=payload)
+        self.repository.record_resource_event("import_backfill", backfill_id, event_type="import_backfill_completed", payload=payload)
+        self.repository.record_action("import_backfill_created", "import_backfill", backfill_id, payload)
+        self._commit_session()
+        return {
+            "backfill_id": backfill_id,
+            "status": resource_status,
+            **payload,
+        }
+
+    def list_backfills(self) -> Dict[str, Any]:
+        items = []
+        for resource in self.repository.list_resources("import_backfill"):
+            payload = dict(resource.get("payload") or {})
+            items.append(
+                {
+                    "backfill_id": resource.get("resource_id"),
+                    "status": resource.get("status"),
+                    "name": resource.get("name"),
+                    "created_at": resource.get("created_at"),
+                    "updated_at": resource.get("updated_at"),
+                    **payload,
+                }
+            )
+        return {"items": items}
+
+    def get_backfill(self, backfill_id: str) -> Dict[str, Any]:
+        resource = self.repository.get_resource("import_backfill", backfill_id)
+        if resource is None:
+            raise KeyError(backfill_id)
+        return {
+            "backfill_id": resource.get("resource_id"),
+            "status": resource.get("status"),
+            "name": resource.get("name"),
+            "created_at": resource.get("created_at"),
+            "updated_at": resource.get("updated_at"),
+            **dict(resource.get("payload") or {}),
+        }
+
     def stop_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
         if job is None:
@@ -727,33 +960,10 @@ class ImportService:
         job = self.repository.get_import_job(job_id)
         if job is None:
             raise KeyError(job_id)
-        dead_letters = self.bigquery_service.get_pipeline_dead_letters(job_id=job_id, limit=5000)
-        existing_rows = self.bigquery_service.get_rows_for_alias("standardized") + self.bigquery_service.get_rows_for_alias("fact_events_unified")
-        existing_fingerprints = {
-            str(row.get("event_fingerprint") or "")
-            for row in existing_rows
-            if row.get("event_fingerprint")
-        }
-        replayable_rows: List[Dict[str, Any]] = []
-        skipped_rows: List[Dict[str, Any]] = []
-        for dead_letter in dead_letters:
-            event = dict(dead_letter.get("normalized_event") or {})
-            if not event:
-                skipped_rows.append({"reason": "missing_normalized_event", "dead_letter": dead_letter})
-                continue
-            flags = {str(flag) for flag in event.get("data_quality_flags") or []}
-            if {"missing_player_id", "invalid_event_time"} & flags:
-                skipped_rows.append({"reason": "critical_quality_failure", "event_fingerprint": event.get("event_fingerprint")})
-                continue
-            fingerprint = str(event.get("event_fingerprint") or "")
-            if fingerprint and fingerprint in existing_fingerprints:
-                skipped_rows.append({"reason": "duplicate_suppressed", "event_fingerprint": fingerprint})
-                continue
-            event.setdefault("job_id", job_id)
-            event.setdefault("job_identifier", job_id)
-            replayable_rows.append(event)
-            if fingerprint:
-                existing_fingerprints.add(fingerprint)
+        replay_analysis = self._classify_dead_letter_replay(job_id)
+        dead_letters = replay_analysis["dead_letters"]
+        replayable_rows = replay_analysis["replayable_rows"]
+        skipped_rows = replay_analysis["skipped_rows"]
 
         warehouse_stats: Dict[str, Any] = {}
         if replayable_rows:

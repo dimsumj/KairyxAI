@@ -237,7 +237,7 @@ class ScenarioTemplateService:
                         "logic": "AND",
                         "conditions": [
                             {"field": "sessions_7d", "op": "<=", "value": 2},
-                            {"field": "days_since_last_seen", "op": "<=", "value": 7},
+                            {"field": "days_since_last_seen", "op": "<=", "value": 30},
                         ],
                     },
                     "tags": ["onboarding", "activation"],

@@ -50,6 +50,9 @@ class HealthMonitorService:
         identity_summary = self.bigquery_service.build_identity_summary()
         rejected_count = len(self.bigquery_service.get_pipeline_dead_letters(limit=5000))
         standardized_rows = len(self.bigquery_service.get_rows_for_alias("standardized"))
+        lag_summary = self.bigquery_service.get_pipeline_lag_summary()
+        lag_freshness = lag_summary.get("freshness") or {}
+        lag_counts = lag_summary.get("table_counts") or {}
         invalid_decisions = sum(
             1
             for item in decision_logs
@@ -74,6 +77,9 @@ class HealthMonitorService:
             "canonical_user_id_coverage": round(float(identity_summary.get("canonical_user_id_coverage") or 0.0), 2),
             "reject_rate": round(rejected_count / max(1, standardized_rows + rejected_count), 4),
             "provider_failure_rate": round(provider_failures / max(1, len(deliveries)), 4),
+            "dead_letter_rows": int(lag_counts.get("dead_letter_rows") or 0),
+            "staging_to_curated_lag_seconds": int(lag_freshness.get("staging_to_curated_lag_seconds") or 0),
+            "aggregate_refresh_lag_seconds": int(lag_freshness.get("curated_to_latest_state_lag_seconds") or 0),
         }
         alerts = []
         if metrics["awaiting_mapping_count"] > 0:
@@ -82,6 +88,12 @@ class HealthMonitorService:
             alerts.append(self._alert("data_core", "canonical_coverage_low", "critical", metrics["canonical_user_id_coverage"], "canonical_user_id coverage is below 90%.", resolved_at))
         if metrics["reject_rate"] > 0.05:
             alerts.append(self._alert("data_core", "reject_rate_high", "critical", metrics["reject_rate"], "Reject rate exceeded the 5% gate.", resolved_at))
+        if metrics["dead_letter_rows"] > 0:
+            alerts.append(self._alert("data_core", "dead_letters_present", "warning", metrics["dead_letter_rows"], "Dead-letter rows require remediation review.", resolved_at))
+        if metrics["staging_to_curated_lag_seconds"] > 0:
+            alerts.append(self._alert("data_core", "curation_lag_present", "warning", metrics["staging_to_curated_lag_seconds"], "events_staging is ahead of events_curated.", resolved_at))
+        if metrics["aggregate_refresh_lag_seconds"] > 0:
+            alerts.append(self._alert("data_core", "aggregate_refresh_lag_present", "warning", metrics["aggregate_refresh_lag_seconds"], "player_latest_state is behind curated events.", resolved_at))
         if metrics["cohort_refresh_failure_rate"] > 0.05:
             alerts.append(self._alert("audience_engine", "refresh_failure_high", "warning", metrics["cohort_refresh_failure_rate"], "Dynamic cohort refresh success is below 95%.", resolved_at))
         if metrics["provider_failure_rate"] > 0.1:
@@ -92,7 +104,18 @@ class HealthMonitorService:
             alerts.append(self._alert("insight_copilot", "insufficient_evidence_high", "warning", metrics["copilot_insufficient_evidence_rate"], "Copilot insufficient evidence rate is above 25%.", resolved_at))
 
         modules = {
-            "data_core": self._module_status("data_core", alerts, {"canonical_user_id_coverage": metrics["canonical_user_id_coverage"], "reject_rate": metrics["reject_rate"]}, resolved_at),
+            "data_core": self._module_status(
+                "data_core",
+                alerts,
+                {
+                    "canonical_user_id_coverage": metrics["canonical_user_id_coverage"],
+                    "reject_rate": metrics["reject_rate"],
+                    "dead_letter_rows": metrics["dead_letter_rows"],
+                    "staging_to_curated_lag_seconds": metrics["staging_to_curated_lag_seconds"],
+                    "aggregate_refresh_lag_seconds": metrics["aggregate_refresh_lag_seconds"],
+                },
+                resolved_at,
+            ),
             "audience_engine": self._module_status("audience_engine", alerts, {"cohort_refresh_failure_rate": metrics["cohort_refresh_failure_rate"]}, resolved_at),
             "action_orchestrator": self._module_status("action_orchestrator", alerts, {"provider_failure_rate": metrics["provider_failure_rate"], "policy_block_rate": metrics["policy_block_rate"]}, resolved_at),
             "experiment_hub": self._module_status("experiment_hub", alerts, {"invalid_experiment_decision_rate": metrics["invalid_experiment_decision_rate"]}, resolved_at),
