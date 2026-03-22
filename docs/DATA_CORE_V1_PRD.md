@@ -1,5 +1,23 @@
 # KairyxAI Data Core v1 PRD
 
+## 4.0 Connector Management（补充归属）
+
+### 目标
+将数据连接器配置、健康检查、freshness 与最近导入状态统一归到 Data Core 管理，作为所有 ingestion / mapping / SQL 能力的入口控制面。
+
+### 功能要求
+- 保存多个 connector 配置
+- 列出可用 connector 与数据来源
+- 支持 connector 删除
+- 支持 health check
+- 支持 freshness / last_ingestion_status / last_ingestion_at 展示
+
+### 归属说明
+- 当前 repo 中的 connector control plane 与 source freshness 属于 Data Core 范围
+- 连接器 secret 的生产化治理仍由 Master PRD 的 Production Readiness 持有
+
+---
+
 ## 4.1 数据源连接与数仓直查能力（新增）
 
 ### 目标
@@ -636,7 +654,7 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 
 ---
 
-## 6. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 6. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 6.1 当前已落地
 - import 任务状态机、quality gate、resume / replay 已存在
@@ -690,6 +708,13 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - 未完成项：
   - 缺少正式 secret manager
   - 缺少 warehouse/data connector 的生产级访问边界和权限轮转策略
+
+#### Gap-D7 Data Core Console / Contract Hardening 仍未完成
+- 当前：
+  - connector / import / mapping / SQL / quality 能力都已有 API 与单页入口
+- 未完成项：
+  - Data Sandbox / connector / import / SQL workspace 仍缺少独立 E2E 契约覆盖
+  - freshness / quality / DLQ / mapping remediation 仍需要更清晰的后端 view model 与 UI 契约
 
 ### 6.3 本文档持有的下一阶段 Owner
 - `Phase 3 Data Platform Completion`

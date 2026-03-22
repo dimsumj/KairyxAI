@@ -13,6 +13,7 @@
 - Workflow 编排：条件分支、限频、冷却窗口
 - 执行控制：草稿、发布、暂停、停止
 - 执行日志：发送、失败、重试、跳过原因
+- Audience export jobs：面向 Braze / SendGrid / Webhook 的导出、状态、重试、诊断
 - 安全机制：人工确认、Kill Switch、预算与频控门槛
 
 ### 2.2 Out-of-scope
@@ -66,11 +67,16 @@
 - 发送前校验：用户可触达、频控、退订状态
 - 重试策略：失败重试（指数退避）
 - 降级策略：渠道失败时 fallback（可选）
+- Audience export：
+  - 支持 Braze / SendGrid / Webhook 导出 job
+  - 返回 provider response、delivery/export diagnostics 与 retry 状态
+  - 导出 payload 以 `user_id / email / predicted_churn_risk / suggested_action / metadata` 为主
 
 ### DoD
 1. 至少 2 个渠道稳定可用（建议 push+email）
 2. 失败重试可配置并可追踪
 3. 每次发送有 delivery_id 与状态
+4. audience export job 具备 status / retry / diagnostics
 
 ---
 
@@ -162,7 +168,7 @@
 
 ---
 
-## 8. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+## 8. 当前 Gap Register（对照 2026-03 仓库状态评审）
 
 ### 8.1 当前已落地
 - workflow / trigger / policy / budget / confirmation / kill switch 已存在

@@ -5,6 +5,23 @@
 
 ---
 
+## 1.1) 目标用户（沿用当前产品定义）
+- PM / Growth PM
+- CRM / LiveOps / 运营同学
+- 数据分析师 / 数据工程师
+- 市场与投放负责人
+- 创始人或早期运营负责人
+
+## 1.2) 当前版本非目标（沿用 current-state scope）
+- 不做多租户生产级 SaaS 交付
+- 不做完整认证体系替代企业 IAM
+- 不做强 secret management 成品化之外的通用平台
+- 不做实时流式决策引擎
+- 不做完全自动化的高风险闭环优化
+- 不做前端技术栈重写作为当前阶段目标
+
+---
+
 ## 2) v1 核心模块（模块化 PRD 架构）
 
 > 说明：总 PRD 只保留目标、边界、里程碑与验收门槛。每个核心模块维护独立 Sub PRD。
@@ -247,10 +264,10 @@
 
 ---
 
-## 12) 当前仓库 Gap Ownership（对照 `current-state-product-spec.md`，2026-03）
+## 12) 当前仓库 Gap Ownership（对照 2026-03 仓库状态评审）
 
 ### 12.1 现状判断
-- 当前 repo 已经超出 `current-state-product-spec.md` 的“当前产品”描述，尤其是 `/api/v1` 资源化控制面、Cohort / Workflow / Experiment / Copilot / Template / Health / Audit 能力。
+- 当前 repo 已经超出 2026-03 仓库状态评审时的“当前产品”描述，尤其是 `/api/v1` 资源化控制面、Cohort / Workflow / Experiment / Copilot / Template / Health / Audit 能力。
 - 但仍未达到 Master PRD 所要求的完整上线门槛，剩余缺口以“跨模块产品化与生产化”居多，而不是“有没有基础 API”。
 
 ### 12.2 由总 PRD 持有的跨模块 Gap
