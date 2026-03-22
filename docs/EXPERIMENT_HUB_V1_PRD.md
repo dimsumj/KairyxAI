@@ -158,3 +158,54 @@
   - 目标：在并行评估多个指标/多个实验时，降低假阳性风险
   - 候选方法：Bonferroni / Holm-Bonferroni / Benjamini-Hochberg（FDR）
   - 备注：v1 保持基础显著性提示，v1.1 评估并引入统一校正策略
+
+---
+
+## 9. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+
+### 9.1 当前已落地
+- experiment config / versions / assignments / exposures / outcomes / summary / decision 已存在
+- holdout / treatment_a / treatment_b、SRM、guardrails、rollout suggestion 已存在
+- 与 Audience / Action / Copilot 的基础联动已存在
+
+### 9.2 仍未完成的 Gap
+
+#### Gap-E1 Outcome Robustness 仍依赖 Action / Provider 成熟度
+- 当前：
+  - outcome ingest、callback -> outcome、summary / decision 已存在
+- 未完成项：
+  - 真实 return / conversion / downstream engagement signal 还没有在所有 provider 上稳定打通
+  - outcome completeness 与延迟处理仍需要更强的数据契约
+
+#### Gap-E2 Measurement Integrity Tooling 仍偏轻量
+- 当前：
+  - SRM、guardrails、summary、decision 已可输出
+- 未完成项：
+  - outcome lag、数据缺失、measurement drift 的监控与告警还不够成熟
+  - experiment health 的 operator triage 还未形成稳定工作流
+
+#### Gap-E3 Experiment Review Console 仍未硬化
+- 当前：
+  - 前端已能调用 experiment 相关接口
+- 未完成项：
+  - 缺少独立 Playwright / E2E 契约覆盖
+  - summary / assignment / rollout / alert 的 operator 视图仍是单页静态控制台
+
+#### Gap-E4 Rollout 仍是“建议态”
+- 当前：
+  - 系统可输出 rollout suggestion
+- 未完成项：
+  - 还没有由 Experiment 直接驱动的受控 rollout controller
+  - 仍然需要 Action 层和人工确认来执行扩量/停发
+
+#### Gap-E5 生产级权限与边界尚未完成
+- 当前：
+  - 已有最小 RBAC、审计和高风险确认链路
+- 未完成项：
+  - 缺少正式 authN / tenant boundary / secret isolation
+  - 还不能视为生产级实验平台
+
+### 9.3 本文档持有的下一阶段 Owner
+- `Phase 4 Activation And Measurement` 中真实 outcome 与 summary integrity
+- `Phase 1 Frontend Hardening` 中 experiment review / rollout UI
+- `Phase 5 Production Readiness` 中 experiment 权限与隔离边界

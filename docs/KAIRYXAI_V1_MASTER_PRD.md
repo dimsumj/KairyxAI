@@ -244,3 +244,62 @@
 - Audience Sub PRD：`KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
 - Action Orchestrator Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`（待完善）
 - Experiment Hub Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`（待完善）
+
+---
+
+## 12) 当前仓库 Gap Ownership（对照 `current-state-product-spec.md`，2026-03）
+
+### 12.1 现状判断
+- 当前 repo 已经超出 `current-state-product-spec.md` 的“当前产品”描述，尤其是 `/api/v1` 资源化控制面、Cohort / Workflow / Experiment / Copilot / Template / Health / Audit 能力。
+- 但仍未达到 Master PRD 所要求的完整上线门槛，剩余缺口以“跨模块产品化与生产化”居多，而不是“有没有基础 API”。
+
+### 12.2 由总 PRD 持有的跨模块 Gap
+
+#### Gap-M1 Operator Console / Frontend Hardening
+- 现状：
+  - 前端仍然只有 `frontend/index.html` 单页实现
+  - 缺少正式的 Playwright / E2E 契约测试
+  - 部分运营视图仍由前端基于通用资源自行组织，而非消费清晰的后端 view model
+- owner 拆分：
+  - Data Core：导入 / Mapping / SQL / 质量视图契约
+  - Audience Engine：cohort lifecycle / metrics / compare / refresh history 契约
+  - Action Orchestrator：execution / delivery / policy / diagnostics 契约
+  - Experiment Hub：summary / assignment / rollout / alert 契约
+  - Insight Copilot：query / explain / anomaly / report 契约
+- 出线标准：
+  - 一个前端信息架构
+  - 一套稳定的 operator flows
+  - 关键页面具备端到端回归覆盖
+
+#### Gap-M2 Production Readiness
+- 现状：
+  - 当前只有最小 API key guard 和 header-based mock governance
+  - 还没有真正的认证、授权、secret manager、多租户边界、环境隔离和 runbook
+- owner 拆分：
+  - Master：authN / authZ / tenant / deploy topology / monitoring / runbook
+  - Data Core：数据与连接器 secret / warehouse access boundary
+  - Audience / Action / Experiment / Copilot：模块级 RBAC、审计和高风险操作边界
+- 出线标准：
+  - 明确的 tenant/operator 边界
+  - 正式 secret handling
+  - 独立环境和运维手册
+
+#### Gap-M3 Fully Automated Closed-Loop Optimization
+- 现状：
+  - 当前具备建议、报告、实验总结和基础 outcome 回流
+  - 但还没有“真实 outcome -> 自动策略迭代 -> 自动优化执行”的全自动闭环
+- owner 拆分：
+  - Copilot：基于真实 outcome 的 recommendation refresh
+  - Audience Engine：基于效果回流的人群版本演进
+  - Action Orchestrator：动作策略自动调优仍未开放
+  - Experiment Hub：结论只给建议，不直接驱动 rollout controller
+- 出线标准：
+  - 自动优化链路默认仍需人工确认
+  - 但每个建议都必须绑定真实 measurement evidence
+
+#### Gap-M4 当前 Gap 文档归属规则
+- Data Platform / Ingestion / Identity / SQL / Schema / Replay：写入 `DATA_CORE_V1_PRD.md`
+- NL2Metric / Explain / Recommend / Report / Evidence：写入 `COPILOT_V1_PRD.md`
+- Cohort Lifecycle / Refresh / Activation / Feedback：写入 `AUDIENCE_ENGINE_V1_PRD.md`
+- Workflow / Trigger / Delivery / Policy / Safety：写入 `ACTION_ORCHESTRATOR_V1_PRD.md`
+- Assignment / Exposure / Outcome / Summary / Rollout：写入 `EXPERIMENT_HUB_V1_PRD.md`
