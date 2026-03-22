@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from app.application.experiments import ExperimentConfigService
 from app.core.errors import ResourceLockedError
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
@@ -12,6 +13,7 @@ class CohortService:
     def __init__(self, repository, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+        self.experiments = ExperimentConfigService(repository)
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -161,6 +163,40 @@ class CohortService:
             payload["metrics_summary"] = metrics
             self.repository.upsert_resource("cohort", cohort_id, status=payload.get("status") or "draft", name=payload.get("name"), payload=payload)
         return metrics
+
+    def get_overview(self, cohort_id: str) -> Dict[str, Any]:
+        cohort = self.get_cohort(cohort_id)
+        if cohort is None:
+            raise KeyError(cohort_id)
+        metrics = self.get_metrics(cohort_id)
+        refresh_jobs = self.list_refresh_jobs(cohort_id).get("items") or []
+        current_version = int(cohort.get("version_id") or cohort.get("version") or 1)
+        compare = None
+        if current_version > 1:
+            try:
+                compare = self.compare_versions(cohort_id, base_version=current_version - 1, target_version=current_version)
+            except KeyError:
+                compare = None
+        linked_workflows = self._linked_workflows(cohort_id)
+        linked_experiments = self._linked_experiments(cohort_id, metrics)
+        failed_refreshes = [item for item in refresh_jobs if str(item.get("status") or "") == "failed"]
+        return {
+            "cohort": cohort,
+            "metrics": metrics,
+            "measurement_state": metrics.get("measurement_state") or {},
+            "linked_workflows": linked_workflows,
+            "linked_experiments": linked_experiments,
+            "refresh_summary": {
+                "total_runs": len(refresh_jobs),
+                "failed_runs": len(failed_refreshes),
+                "last_status": refresh_jobs[0].get("status") if refresh_jobs else None,
+                "latest_snapshot_id": cohort.get("latest_snapshot_id"),
+                "consecutive_failures": int(cohort.get("refresh_failures") or 0),
+                "auto_pause_after_failures": int((cohort.get("refresh_policy") or {}).get("auto_pause_after_failures") or 2),
+            },
+            "recent_refresh_jobs": refresh_jobs[:5],
+            "latest_compare": compare,
+        }
 
     def compare_versions(self, cohort_id: str, *, base_version: int, target_version: int) -> Dict[str, Any]:
         cohort = self.get_cohort(cohort_id)
@@ -376,6 +412,7 @@ class CohortService:
             payload = record.get("payload") or {}
             if str(payload.get("cohort_id") or "") == cohort_id:
                 items.append(payload)
+        items = sorted(items, key=lambda item: str(item.get("requested_at") or item.get("completed_at") or ""), reverse=True)
         return {"cohort_id": cohort_id, "items": items}
 
     def permanent_delete(self, cohort_id: str) -> Dict[str, Any]:
@@ -614,7 +651,26 @@ class CohortService:
                 if str(((item.get("payload") or {}).get("cohort_id") or "")) == cohort_id
             }
         )
+        experiment_summaries = []
+        for experiment_id in experiment_ids:
+            summary = self.experiments.get_summary(experiment_id)
+            experiment_summaries.append(
+                {
+                    "experiment_id": experiment_id,
+                    "decision": summary.get("decision"),
+                    "decision_reason": summary.get("decision_reason"),
+                    "sample_size": summary.get("sample_size"),
+                    "runtime_hours": summary.get("runtime_hours"),
+                }
+            )
         member_count = int(default_member_count if default_member_count is not None else snapshot.get("member_count") or 0)
+        measurement_state = self._build_measurement_state(
+            member_count=member_count,
+            delivered_users=len(delivered_users),
+            conversion_users=len(conversion_users),
+            workflow_ids=workflow_ids,
+            experiment_summaries=experiment_summaries,
+        )
         return {
             "cohort_id": cohort_id,
             "snapshot_id": snapshot_id,
@@ -626,8 +682,76 @@ class CohortService:
             "conversion_rate": round((len(conversion_users) / member_count), 4) if member_count else 0.0,
             "workflow_ids": workflow_ids,
             "experiment_ids": experiment_ids,
+            "experiment_summaries": experiment_summaries,
+            "measurement_state": measurement_state,
             "last_calculated_at": datetime.utcnow().isoformat(),
         }
+
+    @staticmethod
+    def _build_measurement_state(
+        *,
+        member_count: int,
+        delivered_users: int,
+        conversion_users: int,
+        workflow_ids: List[str],
+        experiment_summaries: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        warnings = []
+        delivery_status = "ready" if delivered_users > 0 else ("missing" if workflow_ids else "not_configured")
+        outcome_status = "ready" if conversion_users > 0 else ("missing" if delivered_users > 0 else "not_observed")
+        experiment_status = "ready" if experiment_summaries else "missing"
+        if member_count > 0 and workflow_ids and delivered_users == 0:
+            warnings.append("delivery_signal_missing")
+        if delivered_users > 0 and conversion_users == 0:
+            warnings.append("outcome_signal_missing")
+        if workflow_ids and not experiment_summaries:
+            warnings.append("experiment_summary_missing")
+        return {
+            "delivery_signal_status": delivery_status,
+            "outcome_signal_status": outcome_status,
+            "experiment_summary_status": experiment_status,
+            "warnings": warnings,
+        }
+
+    def _linked_workflows(self, cohort_id: str) -> List[Dict[str, Any]]:
+        items = []
+        for record in self.repository.list_resources("workflow"):
+            payload = record.get("payload") or {}
+            definition = payload.get("definition") or {}
+            if str(definition.get("cohort_id") or payload.get("cohort_id") or "") != cohort_id:
+                continue
+            items.append(
+                {
+                    "workflow_id": payload.get("workflow_id") or record.get("resource_id"),
+                    "name": payload.get("name"),
+                    "status": payload.get("status") or record.get("status"),
+                    "experiment_id": definition.get("experiment_id") or payload.get("experiment_id"),
+                    "trigger_type": ((definition.get("trigger") or {}).get("type") or (payload.get("trigger") or {}).get("type")),
+                }
+            )
+        return sorted(items, key=lambda item: str(item.get("workflow_id") or ""))
+
+    def _linked_experiments(self, cohort_id: str, metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
+        items = list(metrics.get("experiment_summaries") or [])
+        known_ids = {str(item.get("experiment_id") or "") for item in items if item.get("experiment_id")}
+        for record in self.repository.list_resources("experiment"):
+            payload = record.get("payload") or {}
+            experiment_id = str(payload.get("experiment_id") or record.get("resource_id") or "")
+            if not experiment_id or experiment_id in known_ids:
+                continue
+            if str(payload.get("cohort_id") or "") != cohort_id:
+                continue
+            summary = self.experiments.get_summary(experiment_id)
+            items.append(
+                {
+                    "experiment_id": experiment_id,
+                    "decision": summary.get("decision"),
+                    "decision_reason": summary.get("decision_reason"),
+                    "sample_size": summary.get("sample_size"),
+                    "runtime_hours": summary.get("runtime_hours"),
+                }
+            )
+        return sorted(items, key=lambda item: str(item.get("experiment_id") or ""))
 
     def _referencing_workflows(self, cohort_id: str, *, statuses: set[str] | None = None) -> List[str]:
         items: List[str] = []

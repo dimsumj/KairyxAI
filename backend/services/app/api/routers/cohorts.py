@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from app.api.schemas.cohorts import CohortCreateRequest, CohortMemberPage, CohortResponse, CohortUpdateRequest, CohortVersionListResponse
 from app.application.cohorts import CohortService
 from app.core.errors import ResourceLockedError
-from app.core.governance import ensure_permission, get_governance_context
+from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_cohort_service
 
 
@@ -120,6 +120,28 @@ def list_cohort_refresh_jobs(
         return service.list_refresh_jobs(cohort_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
+
+
+@router.get("/{cohort_id}/overview", response_model=dict)
+def get_cohort_overview(
+    cohort_id: str,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "cohorts.overview.read")
+    try:
+        payload = service.get_overview(cohort_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Cohort '{cohort_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="cohort_overview_read",
+        resource_type="cohort",
+        resource_id=cohort_id,
+        payload=payload,
+    )
 
 
 @router.get("/{cohort_id}/metrics", response_model=dict)

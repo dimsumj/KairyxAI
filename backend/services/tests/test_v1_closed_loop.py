@@ -369,14 +369,42 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert copilot_report.json()["methodology"]["report_type"] == "daily"
     assert len(copilot_report.json()["evidence"]) == 3
     assert copilot_report.json()["report_id"]
+    report_id = copilot_report.json()["report_id"]
+
+    report_detail = client.get(f"/api/v1/copilot/reports/{report_id}", headers={"x-actor-role": "analyst"})
+    assert report_detail.status_code == 200
+    assert report_detail.json()["run_count"] >= 1
+    assert any(item["resource_type"] == "copilot_query_log" for item in report_detail.json()["linked_resources"])
+
+    report_runs = client.get(f"/api/v1/copilot/reports/{report_id}/runs", headers={"x-actor-role": "analyst"})
+    assert report_runs.status_code == 200
+    assert len(report_runs.json()["items"]) >= 1
+
+    report_review = client.post(
+        f"/api/v1/copilot/reports/{report_id}/review",
+        json={"disposition": "acknowledged", "notes": "Reviewed for operator handoff"},
+        headers={"x-actor-role": "analyst", "x-actor-id": "qa_reviewer"},
+    )
+    assert report_review.status_code == 200
+    assert report_review.json()["review"]["status"] == "acknowledged"
 
     reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
     assert reports.status_code == 200
     assert len(reports.json()["items"]) >= 1
+    assert len({item["report_id"] for item in reports.json()["items"]}) == len(reports.json()["items"])
+
+    copilot_overview = client.get("/api/v1/copilot/overview", headers={"x-actor-role": "analyst"})
+    assert copilot_overview.status_code == 200
+    assert copilot_overview.json()["report_counts"]["total"] >= 1
 
     health_after = client.get("/api/v1/health")
     assert health_after.status_code == 200
     assert "operational_metrics" in health_after.json()
+
+    cohort_overview = client.get(f"/api/v1/cohorts/{cohort_id}/overview", headers={"x-actor-role": "analyst"})
+    assert cohort_overview.status_code == 200
+    assert cohort_overview.json()["metrics"]["measurement_state"]["delivery_signal_status"] == "ready"
+    assert cohort_overview.json()["linked_workflows"][0]["workflow_id"] == workflow_id
 
 
 def test_import_quality_resume_and_replay(client):
@@ -1183,6 +1211,15 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     retry = client.post(f"/api/v1/copilot/reports/{report_id}/retry", headers={"x-actor-role": "analyst"})
     assert retry.status_code == 200
     assert retry.json()["report_id"]
+    retry_report_id = retry.json()["report_id"]
+
+    report_detail = client.get(f"/api/v1/copilot/reports/{report_id}", headers={"x-actor-role": "analyst"})
+    assert report_detail.status_code == 200
+    assert report_detail.json()["latest_retry_report_id"] == retry_report_id
+
+    report_runs = client.get(f"/api/v1/copilot/reports/{report_id}/runs", headers={"x-actor-role": "analyst"})
+    assert report_runs.status_code == 200
+    assert len(report_runs.json()["items"]) >= 2
 
     reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
     assert reports.status_code == 200

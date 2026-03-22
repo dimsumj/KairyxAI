@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api.schemas.copilot import (
     CopilotExplainRequest,
     CopilotQueryRequest,
+    CopilotReportReviewRequest,
     CopilotRecommendRequest,
     CopilotReportRequest,
     CopilotResponse,
@@ -42,6 +43,20 @@ def list_copilot_metrics(http_request: Request, service: CopilotService = Depend
         resource_type="copilot_metric_registry",
         resource_id=None,
         payload=service.get_metrics(),
+    )
+
+
+@router.get("/overview", response_model=dict)
+def get_copilot_overview(http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.overview.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_overview_read",
+        resource_type="copilot_report",
+        resource_id=None,
+        payload=service.get_overview(),
     )
 
 
@@ -149,6 +164,41 @@ def list_copilot_reports(http_request: Request, service: CopilotService = Depend
     )
 
 
+@router.get("/reports/{report_id}", response_model=dict)
+def get_copilot_report(report_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.reports.read")
+    payload = service.get_report(report_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Copilot report '{report_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_report_read",
+        resource_type="copilot_report",
+        resource_id=report_id,
+        payload=payload,
+    )
+
+
+@router.get("/reports/{report_id}/runs", response_model=dict)
+def list_copilot_report_runs(report_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.reports.read")
+    try:
+        payload = service.list_report_runs(report_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot report '{report_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_report_runs_read",
+        resource_type="copilot_report_run",
+        resource_id=report_id,
+        payload=payload,
+    )
+
+
 @router.post("/reports/{report_id}/retry", response_model=CopilotResponse)
 def retry_copilot_report(report_id: str, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
     context = get_governance_context(http_request)
@@ -161,6 +211,34 @@ def retry_copilot_report(report_id: str, http_request: Request, service: Copilot
         service.repository,
         context,
         action_type="copilot_report_retry",
+        resource_type="copilot_report",
+        resource_id=report_id,
+        payload=payload,
+    )
+
+
+@router.post("/reports/{report_id}/review", response_model=dict)
+def review_copilot_report(
+    report_id: str,
+    request: CopilotReportReviewRequest,
+    http_request: Request,
+    service: CopilotService = Depends(get_copilot_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.report.review")
+    try:
+        payload = service.review_report(
+            report_id,
+            reviewed_by=context.actor_id,
+            disposition=request.disposition,
+            notes=request.notes,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot report '{report_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_report_review",
         resource_type="copilot_report",
         resource_id=report_id,
         payload=payload,
