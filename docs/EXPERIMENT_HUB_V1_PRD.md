@@ -209,3 +209,26 @@
 - `Phase 4 Activation And Measurement` 中真实 outcome 与 summary integrity
 - `Phase 1 Frontend Hardening` 中 experiment review / rollout UI
 - `Phase 5 Production Readiness` 中 experiment 权限与隔离边界
+
+### 9.4 V1 Backlog
+
+#### P0 收尾
+1. `Outcome Robustness`
+   - 提升 return / conversion / downstream engagement signal 的 completeness 与延迟处理
+   - 让 summary / decision 更稳定地建立在真实回流上
+2. `Measurement Integrity Tooling`
+   - 增强 outcome lag、数据缺失、measurement drift 的监控与告警
+   - 建立 experiment health 的 operator triage 工作流
+
+#### P1
+1. `Experiment Review Console Hardening`
+   - 为 summary / assignment / rollout / alert 页面补独立 Playwright / E2E
+   - 形成更稳定的 experiment operator review UX
+2. `Controlled Rollout Controller`
+   - 将 rollout 从“建议态”推进到受控执行器
+   - 保持与 Action 层、人审链路的联动
+3. `Production Boundary`
+   - 完成正式 authN / tenant boundary / secret isolation
+   - 让 Experiment Hub 达到更接近生产级的权限与隔离要求
+4. `Advanced Experimentation`
+   - 在 v1.1+ 引入多重比较校正等更强的统计保护

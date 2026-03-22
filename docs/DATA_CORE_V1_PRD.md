@@ -871,3 +871,30 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 ### 6.3 本文档持有的下一阶段 Owner
 - `Phase 3 Data Platform Completion`
 - `Phase 5 Production Readiness` 中与数据、连接器、数仓权限相关的部分
+
+### 6.4 V1 Backlog
+
+#### P0 收尾
+1. `Manifest-driven Default Path`
+   - 将 `raw shard -> manifest -> standardized -> unified` 升级为默认处理语义
+   - 降低应用层 job orchestration 对主链路的主导程度
+2. `Replay / Backfill Tooling`
+   - 补齐 source/date/job-range 维度的 raw-shard backfill / replay
+   - 支持“不重新拉源”的批量回放控制面
+3. `Warehouse Schema Contract`
+   - 正式化 `events_staging / events_curated / player_latest_state / player_churn_features` 的 schema version 与兼容门禁
+   - 明确上游写入、下游消费与变更审查规则
+4. `Dead-letter / Quality Remediation`
+   - 提供 operator 视角的 DLQ remediation 流程
+   - 完成 freshness / quality gate / dead-letter / lag 的稳定 dashboard 与升级告警
+
+#### P1
+1. `GCP-shaped Runtime Default`
+   - 将当前部分实现的 GCS / PubSub / Dataflow / BigQuery 路径进一步推进为生产默认运行契约
+   - 补齐失败恢复与 observability
+2. `Secret / Access Productionization`
+   - 引入正式 secret manager、连接器与数仓权限轮换策略
+   - 强化 warehouse/data connector 的访问边界
+3. `Data Core Console Hardening`
+   - 为 connector / import / mapping / SQL / quality 页面补独立 E2E 契约
+   - 收紧 Data Core backend view model 与前端 contract

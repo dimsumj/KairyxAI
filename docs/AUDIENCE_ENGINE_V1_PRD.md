@@ -180,3 +180,21 @@
 - `Phase 1 Frontend Hardening` 中 cohort UI / metrics / compare 契约
 - `Phase 4 Activation And Measurement` 中 cohort feedback loop 的真实测量依赖
 - `Phase 5 Production Readiness` 中 cohort 权限与租户边界
+
+### 7.4 V1 Backlog
+
+#### P0 收尾
+1. `Feedback Loop Stabilization`
+   - 让 cohort metrics 建立在更稳定的 provider delivery / outcome / conversion 信号上
+   - 降低 Audience feedback 对下游 measurement 波动的敏感度
+2. `Audience View Model Tightening`
+   - 为 metrics / compare / refresh history 等运营视图补更稳定的聚合接口
+   - 降低前端基于通用资源的拼装逻辑
+
+#### P1
+1. `Audience Console Hardening`
+   - 为 cohort lifecycle / metrics / compare / refresh flows 补独立 E2E 覆盖
+   - 从单页静态控制台推进到更产品化的 operator UX
+2. `Production Access Boundary`
+   - 完成正式身份认证、租户隔离与高风险 cohort 操作边界
+   - 让 Audience 资产具备生产级权限控制
