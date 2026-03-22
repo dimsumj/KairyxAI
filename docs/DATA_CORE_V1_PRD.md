@@ -1,70 +1,70 @@
 # KairyxAI Data Core v1 PRD
 
-## 4.0 Connector Management（补充归属）
+## 4.0 Connector Management (Ownership Clarification)
 
-### 目标
-将数据连接器配置、健康检查、freshness 与最近导入状态统一归到 Data Core 管理，作为所有 ingestion / mapping / SQL 能力的入口控制面。
+### Goal
+Own connector configuration, health checks, freshness, and latest-ingestion status under Data Core as the entry control plane for all ingestion, mapping, and SQL capabilities.
 
-### 功能要求
-- 保存多个 connector 配置
-- 列出可用 connector 与数据来源
-- 支持 connector 删除
-- 支持 health check
-- 支持 freshness / last_ingestion_status / last_ingestion_at 展示
+### Functional Requirements
+- Save multiple connector configurations
+- List available connectors and data sources
+- Support connector deletion
+- Support health checks
+- Show freshness, `last_ingestion_status`, and `last_ingestion_at`
 
-### 归属说明
-- 当前 repo 中的 connector control plane 与 source freshness 属于 Data Core 范围
-- 连接器 secret 的生产化治理仍由 Master PRD 的 Production Readiness 持有
+### Ownership Notes
+- In the current repository, connector control-plane functionality and source freshness belong to Data Core
+- Production-grade governance for connector secrets is still owned by the Master PRD's Production Readiness workstream
 
 ---
 
-## 4.1 数据源连接与数仓直查能力（新增）
+## 4.1 Direct Warehouse Query and Data-Source Access
 
-### 目标
-在连接 Data Lake / Database（如 BigQuery）后，支持用户直接在数仓层做条件查询，并将查询结果一键生成为 cohort。
+### Goal
+After connecting a Data Lake or database such as BigQuery, allow users to query directly at the warehouse layer and materialize query results into cohorts with one click.
 
-### 功能要求
+### Functional Requirements
 
-#### FR-4.1.1 数据源直连
-- 支持配置并验证 BigQuery 连接（后续可扩 Snowflake/Redshift）
-- 支持选择 project / dataset / table（或视图）
-- 支持只读权限模式（最小权限）
+#### FR-4.1.1 Direct Data-Source Connectivity
+- Support configuring and validating BigQuery connections, with Snowflake and Redshift as future expansion targets
+- Support selecting project, dataset, and table or view
+- Support read-only mode with least privilege
 
 #### FR-4.1.2 SQL Query Workspace
-- 提供可执行 SQL 的查询工作台（模板 + 参数）
-- 支持 where/filter、时间窗口、聚合条件
-- 支持结果预览（前 N 条）与行数估计
-- 支持保存查询模板（Saved Queries）
+- Provide an executable SQL workspace with templates and parameters
+- Support `where/filter`, time windows, and aggregation conditions
+- Support result preview for the first N rows and row-count estimation
+- Support saved query templates
 
-#### FR-4.1.3 Query → Cohort 生成
-- 查询结果必须包含统一主键字段（`canonical_user_id` 或 `player_id`）
-- 一键将结果写入 cohort（命名、描述、来源SQL、创建时间）
-- 支持静态 cohort（快照）与动态 cohort（定时刷新）
+#### FR-4.1.3 Query to Cohort Generation
+- Query results must contain a unified primary key, either `canonical_user_id` or `player_id`
+- Support one-click write into a cohort with name, description, source SQL, and creation time
+- Support both static cohorts (snapshot) and dynamic cohorts (scheduled refresh)
 
-#### FR-4.1.4 Cohort 管理
-- cohort 列表、用户数、最近刷新时间
-- 支持版本化（同名 cohort 的迭代）
-- 支持导出/下游调用（供 Engage/Experiment 使用）
+#### FR-4.1.4 Cohort Management
+- Cohort list, audience size, and most recent refresh time
+- Versioning support for iterative updates of the same cohort name
+- Export and downstream invocation for Engage and Experiment
 
-#### FR-4.1.5 安全与治理
-- SQL 白名单/只读限制（禁 DDL/DML）
-- 查询超时与扫描量限制（防大查询炸成本）
-- 审计日志：谁在何时执行了什么 SQL、生成了哪个 cohort
+#### FR-4.1.5 Security and Governance
+- SQL whitelist and read-only restrictions that block DDL and DML
+- Query timeout and scan-limit controls to avoid excessive query cost
+- Audit logs showing who ran which SQL and generated which cohort
 
-### v1 验收标准（Definition of Done）
-1. BigQuery 连通后，可在 UI 执行 SQL 并返回结果预览
-2. 能把 SQL 结果（含 user id）一键生成为 cohort
-3. cohort 可被后续 `predict/engage/experiment` 模块直接调用
-4. 至少支持 1 个动态 cohort 定时刷新（如每天 1 次）
-5. 有查询审计日志和失败可追踪信息
+### v1 Definition of Done
+1. After BigQuery connectivity is configured, SQL can be executed in the UI and return a preview
+2. SQL results containing user identifiers can be turned into a cohort with one click
+3. The resulting cohort can be consumed directly by `predict / engage / experiment`
+4. At least one dynamic cohort supports scheduled refresh, such as once per day
+5. Query audit logs and failure traceability are available
 
-### 4.1.6 Backend Runtime / Persistence Ownership（补充归属）
-- `operator-api` 下的 `/api/v1/connectors`、`/mappings`、`/imports`、`/predictions` 是 Data Core 的主要 backend control-plane 面
-- `import-worker` 负责 connector 分页拉取、checkpoint-aware import 执行、raw shard 发布与恢复
-- `dataflow` 负责 `raw shard -> manifest -> standardized -> unified` 的规范化处理
-- `prediction-worker` 负责基于统一聚合层执行预测，并把结果写入 BigQuery-backed serving / result storage
-- prediction 结果读取必须支持分页，避免无界结果集读取
-- Data Core 持有的 control-plane persisted entities 至少包括：
+### 4.1.6 Backend Runtime and Persistence Ownership
+- Under `operator-api`, `/api/v1/connectors`, `/mappings`, `/imports`, and `/predictions` form the main Data Core backend control-plane surface
+- `import-worker` owns connector paging, checkpoint-aware import execution, raw-shard publishing, and recovery
+- `dataflow` owns normalization from `raw shard -> manifest -> standardized -> unified`
+- `prediction-worker` owns predictions on top of the unified aggregate layer and writes results into BigQuery-backed serving / result storage
+- Prediction-result reads must support pagination to avoid unbounded reads
+- Data Core owns at least these persisted control-plane entities:
   - `connector configuration`
   - `field mapping`
   - `import job`
@@ -73,20 +73,20 @@
 
 ---
 
-## 4.2 多来源数据 Ingestion 与 Stitch（P0）
+## 4.2 Multi-Source Ingestion and Stitching (P0)
 
-> 优先级：**P0（立即处理）**
+> Priority: **P0 (Immediate)**
 
-### 目标
-解决从不同来源导出的异构数据在进入系统后的统一接入、清洗、合并、去重与身份拼接问题，产出可直接用于分群与策略执行的统一事件层。
+### Goal
+Solve heterogeneous data ingestion, standardization, merge, dedupe, and identity stitching across multiple exported data sources, and produce a unified event layer that can be consumed directly by segmentation and strategy execution.
 
-### 4.2.1 Canonical Event Contract（统一事件协议）
-所有来源（Analytics 平台 / MMP / 游戏后端）进入标准化层后，必须映射到统一结构：
+### 4.2.1 Canonical Event Contract
+After all sources such as analytics platforms, MMPs, and game backends enter the standardized layer, they must map to a unified structure:
 - `job_id`
 - `source`
 - `source_event_id`
 - `player_id`
-- `canonical_user_id`（stitch后补齐）
+- `canonical_user_id` (filled after stitching)
 - `event_type`
 - `event_time`
 - `event_properties`
@@ -94,50 +94,50 @@
 - `ingested_at`
 - `data_quality_flags`
 
-### 4.2.2 三层 Ingestion 架构（P0）
+### 4.2.2 Three-Layer Ingestion Architecture (P0)
 
-#### Layer A: Raw Landing（原样落地）
-- 原始 JSON 按 `source/date/job_id` 落地保存
-- 仅追加不覆盖，支持回放与审计
+#### Layer A: Raw Landing
+- Store raw JSON by `source/date/job_id`
+- Append-only, never overwrite, to support replay and audit
 
-#### Layer B: Standardized（标准化清洗）
-- 统一字段映射、时区与时间格式、金额/币种标准化
-- 标记质量问题（如 `missing_player_id`, `invalid_event_time`）
-- 产出 `stg_events_standardized`
+#### Layer B: Standardized
+- Normalize field mapping, timezone and timestamp formats, and amount/currency conventions
+- Mark quality problems such as `missing_player_id` and `invalid_event_time`
+- Produce `stg_events_standardized`
 
-#### Layer C: Unified（合并层）
-- 执行 dedupe + identity stitch
-- 产出 `fact_events_unified` 作为上层唯一消费入口
+#### Layer C: Unified
+- Run dedupe and identity stitch
+- Produce `fact_events_unified` as the only upstream source for higher layers
 
-#### 4.2.2.1 双运行模式（整体设计）
-Data Core 必须长期同时支持两种运行模式，共享 schema contract 与 service interface，但不强制共享同一运行时实现：
+#### 4.2.2.1 Dual Runtime Modes (Overall Design)
+Data Core must support two runtime modes over the long term. They share schema contracts and service interfaces, but do not have to share exactly the same runtime implementation:
 
 - `Local demo mode`
-  - 用于本地 UI 调试、connector mock flow、无云基础设施的端到端演示
-  - 允许本地文件 raw storage、进程内或本地 queue simulation、parquet / sqlite persistence
-  - 保留当前 FastAPI 驱动的同步开发体验，但不以规模为优化目标
+  - Used for local UI debugging, connector mock flow, and end-to-end demos without cloud infrastructure
+  - Local raw storage, in-process or local queue simulation, and parquet/sqlite persistence are acceptable
+  - The current synchronous FastAPI-driven developer experience may remain, but scale is not the optimization target
 - `Production GCP mode`
-  - 用于大体量 connector 拉取、可回放 ingestion、分布式 normalization、warehouse-backed dedupe 与 serving
-  - 运行形态固定为 `GCS + Pub/Sub + Dataflow + BigQuery`
-  - 目标是 replayable、observable、idempotent，且内存占用受控
+  - Used for high-volume connector fetch, replayable ingestion, distributed normalization, and warehouse-backed dedupe and serving
+  - Runtime shape is fixed as `GCS + Pub/Sub + Dataflow + BigQuery`
+  - The goal is replayable, observable, idempotent, and memory-controlled execution
 
-#### 4.2.2.2 生产数据平面（Scalable Ingestion Blueprint）
-生产模式下的数据主链路固定为：
-1. connector fetcher 按页拉取外部事件
-2. 每页写成一个有界 raw shard（压缩 JSONL）
-3. 仅发布 shard metadata manifest，不在消息里传 raw event list
-4. Dataflow 消费 manifest 并做 canonical normalization
-5. 有效事件写入 `events_staging`
-6. 无效事件写入 `pipeline_dead_letters`
-7. BigQuery SQL 生成 `events_curated` 与 serving / aggregate tables
-8. 上层 API、预测、决策默认读取 curated / aggregate tables，而不是直接扫 raw events
+#### 4.2.2.2 Production Data Plane (Scalable Ingestion Blueprint)
+In production mode, the ingestion data plane is fixed as:
+1. Connector fetcher pulls external events page by page
+2. Each page is written as a bounded raw shard in compressed JSONL
+3. Only shard metadata manifests are published, not raw event arrays
+4. Dataflow consumes the manifest and performs canonical normalization
+5. Valid events are written to `events_staging`
+6. Invalid events are written to `pipeline_dead_letters`
+7. BigQuery SQL produces `events_curated` and serving / aggregate tables
+8. Upper-layer APIs, prediction, and decision services read curated / aggregate tables by default rather than scanning raw events
 
-#### 4.2.2.3 Raw Shard / Manifest Contract（P0）
-Raw shard 路径规范：
+#### 4.2.2.3 Raw Shard and Manifest Contract (P0)
+Raw shard path convention:
 - `gs://<bucket>/raw/source=<source>/dt=YYYY-MM-DD/hour=HH/job=<job_id>/part-000123.jsonl.gz`
-- 格式为 newline-delimited JSON，gzip compressed，一行一个 source event
+- Format: gzip-compressed newline-delimited JSON, one source event per line
 
-Shard manifest 至少包含：
+Shard manifest must include at least:
 - `job_id`
 - `source`
 - `source_config_id`
@@ -148,13 +148,13 @@ Shard manifest 至少包含：
 - `schema_version`
 - `published_at`
 
-约束：
-- Pub/Sub 只承载 shard metadata，不承载完整事件数组
-- checkpoint 必须能追到 `job_id + source + shard_index`
-- replay / resume 以 shard 为最小恢复单元，而不是整 job 全量重跑
+Constraints:
+- Pub/Sub only carries shard metadata and never full event arrays
+- Checkpoints must be traceable to `job_id + source + shard_index`
+- Replay and resume operate at shard granularity instead of full-job reruns
 
-#### 4.2.2.4 Canonical Event / Warehouse Contract（P0）
-标准化后的 canonical event 除基础字段外，还应显式持有：
+#### 4.2.2.4 Canonical Event and Warehouse Contract (P0)
+In addition to the core event fields, the standardized canonical event must explicitly hold:
 - `schema_version`
 - `source_config_id`
 - `raw_gcs_uri`
@@ -164,50 +164,50 @@ Shard manifest 至少包含：
 - `adset`
 - `media_source`
 
-推荐表布局：
+Recommended table layout:
 - `raw_ingestion_audit`
-- `events_staging`（对应 standardized 层）
+- `events_staging` (standardized layer)
 - `pipeline_dead_letters`
-- `events_curated`（对应 unified / curated 层）
+- `events_curated` (unified / curated layer)
 - `identity_links`
 - `player_daily_metrics`
 - `player_latest_state`
 - `player_churn_features`
 
-当前 v1 命名与 canonical alias 对齐关系：
+Current v1 naming and canonical-alias alignment:
 - `events_staging` -> `stg_events_standardized`
 - `events_curated` -> `fact_events_unified`
 - `player_latest_state` -> `mart_user_daily`
 
-设计要求：
-- `events_staging` 作为 append-only landing table，支持 replay/debug
-- `events_curated` 作为 deduped / cleaned downstream source of truth
-- churn / profile / actioning 默认优先读取 `player_latest_state` 与 `player_churn_features`
-- 只有 drill-down 场景才回查 curated event history
+Design requirements:
+- `events_staging` acts as an append-only landing table for replay and debugging
+- `events_curated` acts as the deduped and cleaned source of truth for downstream consumption
+- Churn, profile, and actioning paths should read `player_latest_state` and `player_churn_features` first by default
+- Drill-down use cases may read curated event history as needed
 
-#### 4.2.2.5 组件职责边界（P0）
+#### 4.2.2.5 Component Responsibility Boundaries (P0)
 - `IngestionService`
-  - `mock`：保留当前开发流，本地 shard / queue simulation 可接受
-  - `gcp`：分页拉取、写 GCS shard、发布 Pub/Sub manifest、持久化 checkpoint
+  - `mock`: keep the current local development flow, where local shard and queue simulation are acceptable
+  - `gcp`: page through connectors, write GCS shards, publish Pub/Sub manifests, and persist checkpoints
 - `DataProcessingService / dataflow`
-  - `mock`：保留本地 shard-by-shard 处理与 rejected/conflict 日志
-  - `gcp`：normalization 执行迁移到 Dataflow；FastAPI 请求内不允许处理整批大 job
+  - `mock`: keep local shard-by-shard processing plus rejected/conflict logs
+  - `gcp`: move normalization into Dataflow; FastAPI request paths must never process large jobs inline
 - `BigQueryService`
-  - 演进为 warehouse facade，显式提供 staging / dead-letter / curated / latest-state 方法
-  - `mock` 模式可以继续落 parquet / sqlite，但 public method 要与生产概念一致
+  - Evolve into the warehouse facade with explicit staging, dead-letter, curated, and latest-state methods
+  - `mock` mode may continue to write parquet or sqlite, but public methods should match production concepts
 - `connectors/normalizer.py`
-  - 只负责 deterministic field extraction、timestamp coercion、schema version、fingerprint、required field validation
-  - 不负责全历史 dedupe、不负责跨 job reconciliation、不负责全量内存状态
+  - Only owns deterministic field extraction, timestamp coercion, schema versioning, fingerprinting, and required-field validation
+  - Does not own full-history dedupe, cross-job reconciliation, or full in-memory state
 
-### 4.2.3 Stitch 规则引擎（P0）
-采用“确定性优先”的 v1 策略，按优先级拼接：
+### 4.2.3 Stitch Rule Engine (P0)
+v1 follows a deterministic-first stitching strategy with the following priority:
 1. `internal_account_id / game_uid`
 2. `login_user_id`
-3. `device_id + 登录绑定行为`
+3. `device_id + login binding behavior`
 4. `email_hash / phone_hash`
-5. fallback：`source:source_user_id`
+5. Fallback: `source:source_user_id`
 
-产出 `identity_links`：
+Output `identity_links`:
 - `source`
 - `source_user_id`
 - `canonical_user_id`
@@ -216,245 +216,246 @@ Shard manifest 至少包含：
 - `first_seen_at`
 - `last_seen_at`
 
-要求：每条 stitch 关系必须可追踪、可解释。
+Requirement: every stitch relationship must be traceable and explainable.
 
-### 4.2.4 Dedupe 规则（P0）
-- 优先规则：`(source, source_event_id)`
-- 回退规则：`(canonical_or_source_user_id, event_type, event_time_rounded, source)`
+### 4.2.4 Dedupe Rules (P0)
+- Primary rule: `(source, source_event_id)`
+- Fallback rule: `(canonical_or_source_user_id, event_type, event_time_rounded, source)`
 
-输出统计：
+Output metrics:
 - `raw_normalized_events`
 - `deduped_events`
 - `duplicates_removed`
 - `dedupe_rate`
 
-### 4.2.5 Source-of-Truth Matrix（P0）
-按字段定义真相源优先级（而非全局一刀切）：
+### 4.2.5 Source-of-Truth Matrix (P0)
+Field-level source-of-truth precedence is defined per field family rather than globally:
 
-#### 用户主身份字段（Identity）
-优先级：`游戏后端 > 分析SDK > MMP`
+#### Identity Fields
+Priority: `game backend > analytics SDK > MMP`
 
-适用字段示例：
+Applicable fields:
 - `internal_account_id`
 - `game_uid`
 - `login_user_id`
-- `player_id`（最终写入 canonical 前的候选ID）
+- `player_id` as a candidate ID before canonicalization
 
-#### 归因字段（Attribution）
-优先级：`分析SDK > MMP`
+#### Attribution Fields
+Priority: `analytics SDK > MMP`
 
-适用字段示例：
+Applicable fields:
 - `campaign`
 - `adset`
 - `media_source`
 - `channel`
 
-说明：考虑 Apple 隐私策略下 MMP 在部分链路的信号损耗/延迟，v1 中归因口径以 Analytics SDK 为优先来源。
+Note: because of privacy-related signal loss and delay on some MMP paths, v1 treats Analytics SDK as the preferred attribution source.
 
-### 4.2.6 冲突与异常处理（P0）
-- 对跨源冲突字段（`campaign/adset/media_source`）记录冲突日志
-- 字段覆盖需记录审计信息：`old_value/new_value/source/ts/rule_id`
-- 严重质量问题事件进入 rejected 队列，不进入 unified 层
-- 所有 rejected/conflict 均可按 `job_id/source` 查询
+### 4.2.6 Conflict and Exception Handling (P0)
+- Record conflict logs for cross-source field conflicts such as `campaign / adset / media_source`
+- Field overwrite must record audit info: `old_value / new_value / source / ts / rule_id`
+- Events with severe quality issues enter a rejected queue and do not enter the unified layer
+- All rejected rows and conflicts must be queryable by `job_id / source`
 
-### 4.2.7 Mapping Strengthening（P0）
+### 4.2.7 Mapping Strengthening (P0)
 
-#### 4.2.7.1 分层 Mapping 体系
-- `Global Mapping`：跨来源通用默认映射
-- `Source Mapping`：来源级映射（任意 Analytics 平台 / MMP / 游戏后端来源）
-- `Job Override`：单次导入任务临时覆盖
+#### 4.2.7.1 Layered Mapping System
+- `Global Mapping`: shared defaults across sources
+- `Source Mapping`: source-level mapping for analytics platforms, MMPs, or game-backend sources
+- `Job Override`: one-off override for a single import job
 
-优先级：`Job Override > Source Mapping > Global Mapping`
+Priority: `Job Override > Source Mapping > Global Mapping`
 
-#### 4.2.7.2 必填字段门禁（Hard Gate）
-以下字段是 unified 入湖前门禁：
-- `player_id`（或 canonical candidate id）
+#### 4.2.7.2 Required-Field Hard Gate
+The following fields are mandatory before data can enter the unified layer:
+- `player_id` or a canonical-candidate ID
 - `event_type`
 - `event_time`
 
-规则：required mapping coverage < 95% 时，任务自动进入 `Awaiting Mapping`，禁止写入 unified。
+Rule: if required mapping coverage is below 95%, the job automatically enters `Awaiting Mapping` and cannot write into unified.
 
-#### 4.2.7.3 Mapping 质量报表增强
-- 除 hit rate 外，增加：
-  - null rate
-  - type mismatch rate
-  - sample values（前 N 条）
-  - impacted row count（受影响行数）
+#### 4.2.7.3 Mapping Quality Report Enhancements
+In addition to hit rate, the mapping-quality report must include:
+- null rate
+- type mismatch rate
+- sample values (first N rows)
+- impacted row count
 
-#### 4.2.7.4 Mapping 版本与回滚
-- 每次映射变更记录：
-  - `mapping_version`
-  - `changed_by`
-  - `changed_at`
-  - `diff`
-- 支持一键回滚到历史版本
+#### 4.2.7.4 Mapping Versioning and Rollback
+Each mapping change records:
+- `mapping_version`
+- `changed_by`
+- `changed_at`
+- `diff`
 
-#### 4.2.7.5 AI 辅助建议（默认只建议不自动生效）
-- 基于字段名相似度 + 样本值模式识别生成建议映射
-- 默认进入“建议态”，由用户确认后才写入 mapping
+Support one-click rollback to a previous version.
 
-#### 4.2.7.6 Mapping 后重放（Replay）
-- 映射修正后，支持 `standardized -> unified` 的重处理
-- 不重复拉取源数据，降低重跑成本与时延
+#### 4.2.7.5 AI-Assisted Suggestions (Recommendation-Only by Default)
+- Generate suggested mappings from field-name similarity and sample-value patterns
+- Suggestions remain recommendation-only until the user confirms them
 
-### 4.2.8 v1 验收标准（Definition of Done）
-1. 至少 2 个来源可稳定接入并进入 `fact_events_unified`
-2. `canonical_user_id` 覆盖率 > 90%
-3. 关键事件（login/purchase）重复率可解释且可追踪
-4. dedupe/stitch 统计可在 job 维度查询
-5. 基于 unified 层可直接生成 cohort（无需按来源分别写 SQL）
-6. required mapping coverage 门禁生效（<95% 自动 Awaiting Mapping）
-7. 映射版本可审计、可回滚，且支持 mapping 修复后 replay
+#### 4.2.7.6 Replay After Mapping Fix
+- After a mapping fix, support reprocessing from `standardized -> unified`
+- Do not re-fetch source data, so reruns stay cheaper and faster
 
-### 4.2.9 字段映射优先处理清单（Top 20，P0）
+### 4.2.8 v1 Definition of Done
+1. At least 2 sources can stably ingest into `fact_events_unified`
+2. `canonical_user_id` coverage is above 90%
+3. Duplicate rates for key events such as login and purchase are explainable and traceable
+4. Dedupe and stitch statistics are queryable by job
+5. Cohorts can be generated directly from the unified layer without source-specific SQL
+6. The required mapping-coverage gate is enforced, with jobs below 95% automatically entering `Awaiting Mapping`
+7. Mapping versions are auditable and reversible, and replay after mapping fixes is supported
 
-> 目标：优先打通“可分群、可归因、可策略执行”的最小字段集。
+### 4.2.9 Top 20 Mapping Priority List (P0)
 
-#### A. 身份与设备（Identity）
-1. `player_id`（统一候选主键）
+> Goal: prioritize the minimum field set needed for segmentation, attribution, and strategy execution.
+
+#### A. Identity and Device
+1. `player_id` (unified candidate primary key)
 2. `internal_account_id`
 3. `game_uid`
 4. `login_user_id`
 5. `anonymous_id`
 6. `device_id`
-7. `idfa/idfv/gaid`（广告标识，按隐私策略可空）
-8. `email_hash/phone_hash`
+7. `idfa / idfv / gaid` (ad identifiers, nullable by privacy policy)
+8. `email_hash / phone_hash`
 
-#### B. 事件核心（Event Core）
+#### B. Event Core
 9. `event_type`
 10. `event_time`
 11. `source_event_id`
 12. `session_id`
 13. `app_version`
-14. `platform`（ios/android/web）
+14. `platform` (`ios / android / web`)
 
-#### C. 归因与渠道（Attribution）
+#### C. Attribution and Channel
 15. `campaign`
 16. `adset`
 17. `media_source`
 18. `channel`
 
-#### D. 商业与地域（Business & Geo）
+#### D. Business and Geography
 19. `revenue_usd`
-20. `country/region`
+20. `country / region`
 
-### 4.2.10 Top 20 映射验收门槛（P0）
-- Top 20 字段整体 coverage ≥ 90%
-- 关键字段（`player_id`, `event_type`, `event_time`）coverage ≥ 95%
-- 归因字段（`campaign/adset/media_source/channel`）coverage ≥ 85%
-- `revenue_usd` 类型有效率 ≥ 98%
-- 任一关键字段低于阈值，任务自动进入 `Awaiting Mapping`
+### 4.2.10 Top-20 Mapping Acceptance Gates (P0)
+- Overall Top-20 field coverage >= 90%
+- Critical field coverage (`player_id`, `event_type`, `event_time`) >= 95%
+- Attribution field coverage (`campaign / adset / media_source / channel`) >= 85%
+- Type-validity rate for `revenue_usd` >= 98%
+- If any critical field falls below threshold, the job automatically enters `Awaiting Mapping`
 
-### 4.2.11 Scalable Ingestion 演进阶段（整体设计）
-#### Phase 1：Interface Refactor Without Behavior Break
-- 在不破坏当前 local demo 的前提下，引入 production-shaped interfaces
-- 增加 shard manifest model、`fetch_and_stage_events()`、显式 `event_fingerprint`
+### 4.2.11 Scalable Ingestion Evolution Phases (Overall Design)
+#### Phase 1: Interface Refactor Without Behavior Break
+- Introduce production-shaped interfaces without breaking the current local demo
+- Add shard-manifest models, `fetch_and_stage_events()`, and explicit `event_fingerprint`
 
-#### Phase 2：Local Shard Processing
-- local mode 改成按 shard 写本地 JSONL 并逐 shard 处理
-- 移除 job 级全量内存累积，提升生产路径逼真度
+#### Phase 2: Local Shard Processing
+- Change local mode to write per-shard local JSONL and process shard-by-shard
+- Remove full job-level in-memory accumulation so local mode more closely resembles production
 
-#### Phase 3：GCP Ingestion Path
-- connector fetch 默认写入 `GCS + Pub/Sub`
-- checkpoint persistence 与失败恢复路径正式化
+#### Phase 3: GCP Ingestion Path
+- Default connector fetch writes to `GCS + Pub/Sub`
+- Formalize checkpoint persistence and failure recovery
 
-#### Phase 4：Dataflow Normalization Path
-- normalization 从 FastAPI 请求路径迁出
-- Dataflow 消费 manifest、写 `events_staging`、把 invalid rows 写到 dead-letter table
+#### Phase 4: Dataflow Normalization Path
+- Move normalization out of the FastAPI request path
+- Let Dataflow consume manifests, write `events_staging`, and write invalid rows to the dead-letter table
 
-#### Phase 5：Curated And Aggregate Serving
-- 建立 `events_curated`、`player_latest_state`、`player_churn_features`
-- player modeling / churn / decision 服务默认读 aggregate-first
+#### Phase 5: Curated and Aggregate Serving
+- Build `events_curated`, `player_latest_state`, and `player_churn_features`
+- Make player modeling, churn, and decision services read aggregate-first by default
 
-### 4.2.12 首次扩容重构的非目标
-- 不做完整实时 identity graph resolution
-- 不做 online feature store
-- 不承诺所有外部 connector 的 exactly-once semantics
-- 不把完整统计实验引擎纳入 ingestion 扩容重构范围
+### 4.2.12 Non-Goals of the First Scale-Up Refactor
+- No full real-time identity-graph resolution
+- No online feature store
+- No guarantee of exactly-once semantics for all external connectors
+- No full statistical experiment engine as part of ingestion scale-up
 
 ---
 
-## 4.3 Audience / Cohort Engine（P0）
+## 4.3 Audience / Cohort Engine (P0)
 
-> 优先级：**P0（与 4.2 并行）**
+> Priority: **P0 (in parallel with 4.2)**
 
-### 目标
-将 unified 数据层直接转化为可复用的人群资产，供策略执行、实验框架与预测模块统一消费。
+### Goal
+Turn the unified data layer directly into reusable audience assets that can be consumed consistently by strategy execution, experimentation, and prediction modules.
 
-### 4.3.1 Cohort 类型
-- 静态 Cohort（Snapshot）
-- 动态 Cohort（Rule-based，按调度刷新）
-- SQL Cohort（由查询直接生成）
+### 4.3.1 Cohort Types
+- Static cohort (snapshot)
+- Dynamic cohort (rule-based with scheduled refresh)
+- SQL cohort (generated directly from a query)
 
-### 4.3.2 Cohort 对象模型（统一）
-每个 cohort 至少包含：
+### 4.3.2 Unified Cohort Object Model
+Every cohort must contain at least:
 - `cohort_id`
 - `name`
-- `type`（static / dynamic / sql）
-- `definition`（规则JSON或SQL）
-- `refresh_mode`（manual / daily / hourly）
-- `status`（draft / validating / ready / materializing / active / paused / failed）
+- `type` (`static / dynamic / sql`)
+- `definition` (rule JSON or SQL)
+- `refresh_mode` (`manual / daily / hourly`)
+- `status` (`draft / validating / ready / materializing / active / paused / failed`)
 - `member_count`
 - `last_refreshed_at`
 - `version`
 - `owner`
 - `source_job_ids`
 
-### 4.3.3 Cohort 生成功能定义（P0）
+### 4.3.3 Cohort Generation Definition (P0)
 
-#### 生成入口（3种）
-- Rule Builder（无代码条件拼装）
-- SQL Builder（高级查询）
-- Import List（上传 user_id / canonical_user_id 列表）
+#### Entry Points (3)
+- Rule Builder (no-code condition builder)
+- SQL Builder (advanced query path)
+- Import List (upload of `user_id` / `canonical_user_id` lists)
 
-#### 统一生成流程
-1. 输入定义（规则/SQL/列表）
-2. 预校验（字段合法性、主键完整性、扫描量预估）
-3. 预览（sample + 预估人数）
-4. 执行生成（materialize snapshot）
-5. 输出元数据（member_count、version、source）
-6. 可选：立即激活给 Engage/Experiment
+#### Unified Generation Flow
+1. Input definition (rule / SQL / list)
+2. Pre-validation (field legality, primary-key completeness, scan-cost estimation)
+3. Preview (sample + estimated audience size)
+4. Execute materialization (snapshot)
+5. Output metadata (`member_count`, `version`, `source`)
+6. Optional immediate activation for Engage / Experiment
 
-#### 必须校验（Hard Checks）
-- 结果必须包含 `canonical_user_id`（或可映射到它）
-- 空人群禁止激活（允许保存草稿）
-- 大查询超限需阻断并提示优化
+#### Hard Checks
+- Result must contain `canonical_user_id` or be mappable to it
+- Empty cohorts cannot be activated, though drafts may still be saved
+- Oversized queries must be blocked and return optimization guidance
 
-#### 生成产物
+#### Generated Artifacts
 - `cohort_definition`
 - `cohort_snapshot`
 - `cohort_stats`
 
-### 4.3.4 Cohort 存储与命名管理（P0）
+### 4.3.4 Cohort Storage and Naming Management (P0)
 
-#### 存储要求
-- cohort 生成后必须持久化存储（metadata + definition + latest snapshot）
-- 支持按 `cohort_id` 与 `name` 检索
-- 支持软删除（`deleted_at`）与可恢复（restore）
+#### Storage Requirements
+- Persist metadata, definition, and the latest snapshot after cohort generation
+- Support lookup by `cohort_id` and `name`
+- Support soft delete with `deleted_at` and restore
 
-#### 命名与目录管理
-- `name` 全局唯一（或在 workspace/project 维度唯一）
-- 支持重命名（保留历史名称变更日志）
-- 支持标签（tags）与分组（folder）
-- 支持按 name/type/owner/tag/status 搜索和过滤
+#### Naming and Catalog Management
+- `name` must be globally unique, or unique within a workspace/project scope
+- Support rename with historical name-change logs
+- Support tags and folders
+- Support search and filters by name, type, owner, tag, and status
 
-#### 生命周期操作（CRUD）
-- 新增：创建 cohort（草稿/激活）
-- 读取：查看定义、成员规模、最近刷新状态
-- 更新：修改 definition、刷新策略、名称、标签
-- 删除：软删除 + 可恢复；高权限可永久删除（审计记录）
+#### Lifecycle Operations (CRUD)
+- Create: create cohort as draft or active
+- Read: inspect definition, audience size, and recent refresh state
+- Update: change definition, refresh policy, name, and tags
+- Delete: soft delete plus restore; privileged permanent delete must be audited
 
-### 4.3.5 Cohort 刷新与存储策略（P0）
-- 采用 Hybrid：永久存 definition + 最近快照（snapshot）
-- 动态 cohort 支持定时刷新与手动刷新
-- 刷新后记录差异（新增/流失人数）
+### 4.3.5 Cohort Refresh and Storage Strategy (P0)
+- Use a hybrid model: persist the definition permanently and keep the latest snapshot
+- Dynamic cohorts support both scheduled and manual refresh
+- Record audience delta after refresh, including added and dropped members
 
-### 4.3.5 Cohort 消费接口（对内）
-- 预测模块：按 cohort 拉取用户集合
-- 策略模块：按 cohort 触发动作
-- 实验模块：按 cohort 进行 A/B/Holdout 分流
+### 4.3.5 Cohort Consumption Interfaces (Internal)
+- Prediction module: pull user sets by cohort
+- Strategy module: trigger actions by cohort
+- Experiment module: run A/B/Holdout allocation by cohort
 
-建议接口：
+Suggested interfaces:
 - `POST /cohorts`
 - `GET /cohorts/{id}`
 - `GET /cohorts/{id}/members`
@@ -462,54 +463,54 @@ Shard manifest 至少包含：
 - `POST /cohorts/{id}/activate`
 - `POST /cohorts/{id}/pause`
 
-### 4.3.6 Cohort 质量门槛（P0）
-- 同一 cohort 重跑（同时间窗）成员偏差 <= 2%
-- 动态 cohort 刷新失败可重试并告警
-- cohort 成员全部具备 `canonical_user_id`
+### 4.3.6 Cohort Quality Gates (P0)
+- Member variance on rerun for the same cohort and time window must be <= 2%
+- Dynamic cohort refresh failures must support retry and alerting
+- Every cohort member must have a `canonical_user_id`
 
-### 4.3.7 Rule Builder（P0）
+### 4.3.7 Rule Builder (P0)
 
-#### v1 语法范围（受控 DSL）
-Rule Builder 采用“规则 JSON -> SQL 编译执行”的模式，v1 支持：
-- 条件组合：AND / OR（最多 3 层嵌套）
-- 用户属性条件：`country/platform/app_version/payer_status` 等
-- 事件行为条件：`event_type`、`count(event)`、`last_event_time`
-- 数值指标条件：`revenue/session_count/ltv/last_active_days`
-- 时间窗口条件：`within_last / before / after`
+#### v1 Syntax Scope (Controlled DSL)
+Rule Builder follows a "rule JSON -> SQL compile and execute" pattern. v1 supports:
+- Condition combinators: `AND / OR` with up to 3 levels of nesting
+- User-attribute conditions such as `country / platform / app_version / payer_status`
+- Event-behavior conditions such as `event_type`, `count(event)`, and `last_event_time`
+- Numeric metric conditions such as `revenue / session_count / ltv / last_active_days`
+- Time-window conditions such as `within_last / before / after`
 
-支持操作符：
-- 文本：`=`, `!=`, `in`, `not in`, `contains`
-- 数值：`>`, `>=`, `<`, `<=`, `between`
-- 时间：`within_last`, `before`, `after`
+Supported operators:
+- Text: `=`, `!=`, `in`, `not in`, `contains`
+- Numeric: `>`, `>=`, `<`, `<=`, `between`
+- Time: `within_last`, `before`, `after`
 
-#### 规则模板（v1 预置）
-1. 最近 7 天活跃用户
-2. 最近 14 天未登录用户
-3. 最近 30 天有付费用户
-4. 高价值用户（LTV > X）
-5. 新用户（注册 <= N 天）
-6. 高流失风险用户（risk = high）
-7. 看过活动但未购买用户
-8. 指定渠道拉新用户（campaign/media_source）
+#### Built-In Rule Templates (v1)
+1. Active users in the last 7 days
+2. Users not logged in during the last 14 days
+3. Users with payments in the last 30 days
+4. High-value users (`LTV > X`)
+5. New users (`registration <= N days`)
+6. High-churn-risk users (`risk = high`)
+7. Users who viewed a promotion but did not purchase
+8. Newly acquired users from a specific channel (`campaign / media_source`)
 
-#### 交互与执行要求
-- 支持规则可视化编辑（条件组 + 逻辑关系）
-- 生成前显示人群估算（estimate）
-- 提供样本预览（前 N 个用户）
-- 支持查看编译后的 SQL（只读）
-- 一键保存为 cohort 并可选择立即激活
+#### Interaction and Execution Requirements
+- Support visual rule editing through condition groups and logical operators
+- Show audience-size estimates before execution
+- Provide sample previews for the first N users
+- Support read-only display of compiled SQL
+- Support one-click save as cohort with optional immediate activation
 
-#### 护栏与限制
-- 最大条件条数：30
-- 最大嵌套层级：3
-- 查询超时/扫描量超限自动阻断
-- 空人群禁止激活（允许保存草稿）
+#### Guardrails and Limits
+- Maximum condition count: 30
+- Maximum nesting depth: 3
+- Automatically block queries that exceed timeout or scan limits
+- Empty cohorts cannot be activated, though drafts may be saved
 
-### 4.3.8 Rule DSL 示例（附录，P0）
+### 4.3.8 Rule DSL Examples (Appendix, P0)
 
-#### 示例 A：最近 7 天活跃 + 最近 30 天未付费 + 高流失风险
+#### Example A: Active in the last 7 days + no payment in the last 30 days + high churn risk
 
-Rule JSON（DSL）：
+Rule JSON (DSL):
 ```json
 {
   "name": "active_7d_no_pay_30d_high_risk",
@@ -541,7 +542,7 @@ Rule JSON（DSL）：
 }
 ```
 
-编译 SQL（示例）：
+Compiled SQL (example):
 ```sql
 SELECT
   canonical_user_id
@@ -552,9 +553,9 @@ WHERE
   AND churn_risk IN ('high');
 ```
 
-#### 示例 B：过去 14 天看过活动但未购买
+#### Example B: Viewed a promotion but did not purchase in the last 14 days
 
-Rule JSON（DSL）：
+Rule JSON (DSL):
 ```json
 {
   "name": "view_promo_no_purchase_14d",
@@ -578,7 +579,7 @@ Rule JSON（DSL）：
 }
 ```
 
-编译 SQL（示例）：
+Compiled SQL (example):
 ```sql
 WITH base AS (
   SELECT
@@ -598,303 +599,303 @@ WHERE promo_views_14d >= 1
   AND purchases_14d = 0;
 ```
 
-### 4.3.9 v1 验收标准
-1. 支持静态、动态、SQL 三类 cohort
-2. 三种入口（规则/SQL/列表）都可生成 cohort
-3. Rule Builder 可生成可执行 SQL 并返回预估规模
-4. 生成前有预览与人数预估
-5. 至少 1 个动态 cohort 支持每日自动刷新
-6. cohort 可被 predict/engage/experiment 三模块直接调用
-7. cohort 生成全流程可审计（创建人、定义、时间、版本）
+### 4.3.9 v1 Acceptance Criteria
+1. Support static, dynamic, and SQL cohorts
+2. All three entry points (Rule / SQL / List) can generate cohorts
+3. Rule Builder can generate executable SQL and return estimated audience size
+4. Preview and audience-size estimation exist before generation
+5. At least one dynamic cohort supports stable daily auto-refresh
+6. Cohorts can be consumed directly by predict, engage, and experiment
+7. The entire cohort generation flow is auditable with creator, definition, time, and version
 
-### 4.3.10 详细设计引用
-Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立文档：
+### 4.3.10 Detailed Design Reference
+Audience Engine's detailed scope, module design, and launch gates are maintained in a dedicated document:
 - `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
 
-总 PRD 中仅保留目标、核心能力与高层验收标准。
+The master and Data Core PRDs keep only goals, core capabilities, and high-level acceptance criteria.
 
 ---
 
-## 4.4 Data Quality & Observability（P0）
+## 4.4 Data Quality and Observability (P0)
 
-> 优先级：**P0（上线前必须具备）**
+> Priority: **P0 (required before launch)**
 
-### 目标
-建立从 source 到 cohort 的全链路可观测能力，确保数据问题可发现、可定位、可回放。
+### Goal
+Build full-chain observability from source to cohort so that data issues can be detected, diagnosed, and replayed.
 
-### 4.4.1 Job 级观测
-- source ingest 成功/失败统计
-- processing 阶段耗时
-- dedupe/stitch/reject/conflict 指标
-- 当前步骤 + 进度百分比
+### 4.4.1 Job-Level Observability
+- Source ingest success/failure statistics
+- Processing-stage latency
+- Dedupe / stitch / reject / conflict metrics
+- Current step plus progress percentage
 
-### 4.4.2 数据质量监控指标
-- required mapping coverage
-- `canonical_user_id` 覆盖率
-- `event_time` 有效率
-- `revenue_usd` 类型有效率
-- conflict rate / reject rate
-- events ingested per connector
-- shard creation latency
+### 4.4.2 Data-Quality Monitoring Metrics
+- Required mapping coverage
+- `canonical_user_id` coverage
+- Valid-rate of `event_time`
+- Type-validity rate of `revenue_usd`
+- Conflict rate and reject rate
+- Events ingested per connector
+- Shard creation latency
 - Pub/Sub backlog age
 - Dataflow processing latency
-- dead-letter volume
-- duplicate rate
+- Dead-letter volume
+- Duplicate rate
 - BigQuery staging-to-curated lag
-- aggregate refresh lag
+- Aggregate refresh lag
 
-### 4.4.3 观测落点（P0）
-- 生产默认观测落点：
+### 4.4.3 Observability Sinks (P0)
+- Production default sinks:
   - BigQuery audit tables
   - Cloud Logging
   - Cloud Monitoring alerts
-- `mock` 模式继续保留本地 JSONL / 文件日志，便于调试和回放
+- `mock` mode continues to keep local JSONL and file logs for debugging and replay
 
-### 4.4.4 告警规则（P0）
-- required coverage < 95%
-- canonical 覆盖率 < 90%
-- reject rate > 5%
-- 动态 cohort 刷新失败
-- dead-letter volume 异常升高
-- staging-to-curated lag 超阈值
-- aggregate refresh lag 超阈值
+### 4.4.4 Alert Rules (P0)
+- Required coverage < 95%
+- Canonical coverage < 90%
+- Reject rate > 5%
+- Dynamic cohort refresh failure
+- Abnormal increase in dead-letter volume
+- Staging-to-curated lag breaches threshold
+- Aggregate refresh lag breaches threshold
 
-### 4.4.5 可追溯与回放
-- 保留 raw/stg/unified 三层数据痕迹
-- 支持按 job_id/source 回放处理
-- 保留审计日志（配置变更、字段覆盖、规则命中）
+### 4.4.5 Traceability and Replay
+- Keep traces across raw, standardized, and unified layers
+- Support replay by `job_id / source`
+- Keep audit logs for configuration changes, field overrides, and rule hits
 
-### 4.4.6 v1 验收标准
-1. 每个 job 有完整的 source + processing + quality 报告
-2. 告警规则能自动触发并记录
-3. 关键问题（mapping 错误、冲突）可在 15 分钟内定位到 source/job
-4. 支持按 job 触发 replay 恢复
-
----
-
-## 4.5 Data Governance & Access Control（P0）
-
-> 优先级：**P0（最小治理能力）**
-
-### 目标
-在 v1 建立最小可用的数据治理与权限控制，满足安全、合规与团队协作要求。
-
-### 4.5.1 访问控制
-- SQL 只读权限（禁 DDL/DML）
-- 分角色权限：Admin / Analyst / Operator
-- 高风险操作（覆盖映射、批量 replay）需审计
-
-### 4.5.2 数据分级与脱敏
-- PII 字段默认脱敏或 hash（email/phone）
-- 导出 cohort 时按权限控制字段可见性
-- 外部导出记录审计
-
-### 4.5.3 配置治理
-- source 配置、mapping、stitch 规则均版本化
-- 支持变更 diff 与回滚
-- 关键配置变更自动写审计日志
-
-### 4.5.4 成本与资源治理
-- 查询超时、扫描量上限
-- replay 并发限制
-- 动态 cohort 刷新频率上限
-
-### 4.5.5 v1 验收标准
-1. 具备角色化访问控制与操作审计
-2. PII 字段可按策略脱敏输出
-3. 配置变更可追踪、可回滚
-4. 查询与重放具备基础资源保护策略
-
-### 4.6 Default Settings（v1 默认配置）
-
-> 以下默认值作为 v1 环境基线，可在项目级配置中覆盖。
-
-#### 4.6.1 数据质量门槛
-- required mapping coverage：`95%`
-- canonical_user_id 覆盖率：`90%`
-- reject rate 告警线：`5%`
-
-#### 4.6.2 Cohort 刷新默认值
-- dynamic cohort refresh_mode：`daily`
-- static cohort refresh_mode：`manual`
-
-#### 4.6.3 回放与资源控制
-- replay 并发上限：`1~2 jobs`
-- 查询超时：启用（项目级可配置）
-- 扫描量上限：启用（项目级可配置）
-
-#### 4.6.4 权限与审计默认值
-- 角色模型：`Admin / Analyst / Operator`
-- 高风险操作（规则变更、批量 replay、永久删除）默认强制审计
+### 4.4.6 v1 Acceptance Criteria
+1. Every job has a complete source, processing, and quality report
+2. Alert rules can trigger automatically and be recorded
+3. Key issues such as mapping errors and conflicts can be traced to source and job within 15 minutes
+4. Replay-based recovery can be triggered by job
 
 ---
 
-## 5. P0 实施清单（按优先级）
+## 4.5 Data Governance and Access Control (P0)
 
-### P0-1（最高优先级）多来源 Ingestion 主链路可用
-- 目标：至少 2 个来源稳定进入 `fact_events_unified`
-- 关键交付：
-  - source 配置/连通性检查
-  - raw -> standardized -> unified 三层链路
-  - dedupe + stitch 基础统计
-- 完成标准：
-  - 日常导入可跑通
-  - job 状态完整（Processing / Awaiting Mapping / Ready / Failed）
+> Priority: **P0 (minimum governance capability)**
 
-### P0-2 Mapping 门禁与版本化
-- 目标：确保关键字段映射质量可控、可回滚
-- 关键交付：
-  - required coverage 门禁（<95% 自动 Awaiting Mapping）
-  - mapping 版本、diff、回滚
-  - mapping 修复后 replay
-- 完成标准：
-  - 关键字段映射质量稳定达标
-  - 错误映射可快速恢复
+### Goal
+Establish a minimum viable governance and access-control baseline in v1 to satisfy security, compliance, and team collaboration needs.
 
-### P0-3 Identity Stitch + Source-of-Truth 生效
-- 目标：建立可解释的主身份与归因口径
-- 关键交付：
-  - deterministic stitch 规则
-  - source-of-truth matrix（身份：后端>分析SDK>MMP；归因：分析SDK>MMP）
-  - 冲突日志（old/new/source/rule）
-- 完成标准：
-  - canonical_user_id 覆盖率 >= 90%
-  - 冲突可追踪可解释
+### 4.5.1 Access Control
+- SQL read-only permission with DDL/DML blocked
+- Role-based permissions: `Admin / Analyst / Operator`
+- High-risk actions such as mapping override and bulk replay must be audited
 
-### P0-4 Cohort 生成与管理（Rule/SQL/List）
-- 目标：把数据能力转化为可执行人群资产
-- 关键交付：
-  - Rule Builder / SQL Builder / Import List 三入口
-  - cohort 持久化、命名管理、软删除与恢复
-  - cohort 可直接供 engage/experiment/predict 调用
-- 完成标准：
-  - 生成、检索、刷新、激活全流程可用
+### 4.5.2 Data Classification and Masking
+- PII fields are masked or hashed by default, such as email and phone
+- Exported cohort field visibility is controlled by permission
+- External exports are audited
 
-### P0-5 Data Quality & Observability
-- 目标：问题可发现、可定位、可回放
-- 关键交付：
-  - job/source/quality 看板
-  - P0 告警（coverage/canonical/reject）
-  - replay 与审计链路
-- 完成标准：
-  - 关键质量问题 15 分钟内定位到 job/source
+### 4.5.3 Configuration Governance
+- Source configs, mappings, and stitch rules are all versioned
+- Diff and rollback are supported
+- Critical configuration changes automatically write audit logs
 
-### P0-6 Governance & Access Control
-- 目标：在 v1 建立最小治理闭环
-- 关键交付：
-  - RBAC（Admin/Analyst/Operator）
-  - PII 脱敏输出策略
-  - 高风险操作审计
-- 完成标准：
-  - 关键操作全量可审计
-  - 导出与查询具备权限边界
+### 4.5.4 Cost and Resource Governance
+- Query timeout and scan-limit controls
+- Replay concurrency limits
+- Dynamic cohort refresh-frequency limits
 
-### 5.1 建议执行顺序（两周冲刺版）
-- Week 1：P0-1 + P0-2 + P0-3
-- Week 2：P0-4 + P0-5 + P0-6
+### 4.5.5 v1 Acceptance Criteria
+1. Role-based access control and action audit are available
+2. PII fields can be masked according to policy
+3. Configuration changes are traceable and reversible
+4. Queries and replays have foundational resource protection
 
-### 5.2 上线门槛（Go/No-Go）
-- required mapping coverage >= 95%
-- canonical_user_id coverage >= 90%
-- reject rate <= 5%
-- 至少 1 个动态 cohort 每日刷新稳定运行
-- 高风险操作审计开启且可查询
+### 4.6 Default Settings (v1)
+
+> The following defaults act as the v1 environment baseline and may be overridden at the project level.
+
+#### 4.6.1 Data-Quality Thresholds
+- Required mapping coverage: `95%`
+- `canonical_user_id` coverage: `90%`
+- Reject-rate alert line: `5%`
+
+#### 4.6.2 Cohort Refresh Defaults
+- Dynamic cohort `refresh_mode`: `daily`
+- Static cohort `refresh_mode`: `manual`
+
+#### 4.6.3 Replay and Resource Controls
+- Replay concurrency limit: `1~2 jobs`
+- Query timeout: enabled and project-configurable
+- Scan limit: enabled and project-configurable
+
+#### 4.6.4 Permissions and Audit Defaults
+- Role model: `Admin / Analyst / Operator`
+- High-risk operations such as rule changes, bulk replay, and permanent delete require audit by default
 
 ---
 
-## 6. 当前 Gap Register（对照 2026-03 仓库状态评审）
+## 5. P0 Implementation Checklist (Prioritized)
 
-### 6.1 当前已落地
-- import 任务状态机、quality gate、resume / replay 已存在
-- mapping version / rollback / suggestions / quality coverage 已存在
-- SQL workspace、saved queries、query audit、query -> cohort 已存在
-- identity summary / conflict / rejected 查询与健康告警已存在
-- `operator-api + import-worker + prediction-worker + dataflow` 的基础运行形态已存在
-- SQLAlchemy + Alembic control-plane persistence 已存在；本地 SQLite fallback 与生产 Postgres 目标已在代码结构中体现
-- paged connector ingestion、ingestion checkpoints、BigQuery-backed prediction result storage 与分页读取已存在
+### P0-1 Highest Priority: Multi-Source Ingestion Main Path Available
+- Goal: make at least 2 sources ingest stably into `fact_events_unified`
+- Key deliverables:
+  - source configuration and connectivity checks
+  - raw -> standardized -> unified three-layer path
+  - foundational dedupe and stitch statistics
+- Completion criteria:
+  - regular imports can run successfully
+  - job states are complete (`Processing / Awaiting Mapping / Ready / Failed`)
 
-### 6.2 仍未完成的 Gap
+### P0-2 Mapping Gates and Versioning
+- Goal: keep critical field-mapping quality controllable and reversible
+- Key deliverables:
+  - required-coverage gate with `<95% => Awaiting Mapping`
+  - mapping version, diff, and rollback
+  - replay after mapping fixes
+- Completion criteria:
+  - critical field-mapping quality reaches threshold stably
+  - broken mappings can be recovered quickly
 
-#### Gap-D1 Manifest-driven Processing 还不是默认路径
-- 当前：
-  - 导入主链路已具备 raw shard / standardized / unified 结构
-  - 但默认工作方式仍然是 job 驱动的应用层 orchestration
-- 未完成项：
-  - 将 manifest-driven processing 升级为默认入口
-  - 统一 raw shard -> manifest -> standardized -> unified 的默认调度语义
+### P0-3 Identity Stitch and Source-of-Truth in Production
+- Goal: establish explainable primary identity and attribution conventions
+- Key deliverables:
+  - deterministic stitch rules
+  - source-of-truth matrix (`backend > analytics SDK > MMP` for identity, `analytics SDK > MMP` for attribution)
+  - conflict log (`old / new / source / rule`)
+- Completion criteria:
+  - `canonical_user_id` coverage >= 90%
+  - conflicts are traceable and explainable
 
-#### Gap-D2 Replay / Backfill Tooling 不完整
-- 当前：
-  - 已支持 mapping 修复后的 replay
-  - 已支持按 job 恢复和 rejected rows 重放
-- 未完成项：
-  - 缺少面向 source/date/job range 的通用 raw-shard backfill / replay 工具
-  - 缺少“无需重新拉源”的批量回放控制面
+### P0-4 Cohort Generation and Management (Rule / SQL / List)
+- Goal: turn data capability into executable audience assets
+- Key deliverables:
+  - Rule Builder / SQL Builder / Import List entry points
+  - cohort persistence, naming management, soft delete, and restore
+  - direct cohort consumption by engage, experiment, and predict
+- Completion criteria:
+  - generation, lookup, refresh, and activation all work
 
-#### Gap-D3 Warehouse Schema Contract 仍未正式化
-- 当前：
-  - `events_staging / events_curated / player_latest_state` 已可用
-  - canonical alias 也已存在
-- 未完成项：
-  - serving / experimentation tables 的 schema version 没有形成正式 contract 文档
-  - 上游/下游兼容规则与变更门禁还不够显式
+### P0-5 Data Quality and Observability
+- Goal: make issues detectable, diagnosable, and replayable
+- Key deliverables:
+  - dashboards for job, source, and quality
+  - P0 alerts for coverage, canonical coverage, and reject rate
+  - replay and audit chain
+- Completion criteria:
+  - critical quality issues can be traced to a specific job and source within 15 minutes
 
-#### Gap-D4 Dead-letter / Quality Observability 仍偏工程态
-- 当前：
-  - rejected events、health alerts、identity summary 已可查
-- 未完成项：
-  - 缺少 operator 视角的 dead-letter remediation 流程
-  - 缺少围绕 DLQ / quality gate / source freshness 的稳定 dashboard 与升级告警
+### P0-6 Governance and Access Control
+- Goal: establish the minimum governance loop in v1
+- Key deliverables:
+  - RBAC (`Admin / Analyst / Operator`)
+  - PII-masked output policy
+  - audit coverage for high-risk operations
+- Completion criteria:
+  - critical actions are fully auditable
+  - export and query paths have permission boundaries
 
-#### Gap-D5 GCP-shaped Mode 仍是部分实现
-- 当前：
-  - 已有 GCS / PubSub / Dataflow / BigQuery 抽象
-  - `import-worker / prediction-worker / dataflow` 的基础 entrypoint 已存在
-  - mock 仍是默认主运行路径
-- 未完成项：
-  - 生产模式的默认运行契约、失败恢复和 observability 还未完全对齐
+### 5.1 Suggested Execution Order (Two-Week Sprint Version)
+- Week 1: `P0-1 + P0-2 + P0-3`
+- Week 2: `P0-4 + P0-5 + P0-6`
 
-#### Gap-D6 Secret / Access Boundary 仍未达到生产级
-- 当前：
-  - 连接器和数仓访问主要依赖本地配置与环境变量
-- 未完成项：
-  - 缺少正式 secret manager
-  - 缺少 warehouse/data connector 的生产级访问边界和权限轮转策略
+### 5.2 Launch Gates (Go/No-Go)
+- Required mapping coverage >= 95%
+- `canonical_user_id` coverage >= 90%
+- Reject rate <= 5%
+- At least one dynamic cohort refreshes reliably every day
+- High-risk action audit is enabled and queryable
 
-#### Gap-D7 Data Core Console / Contract Hardening 仍未完成
-- 当前：
-  - connector / import / mapping / SQL / quality 能力都已有 API 与单页入口
-- 未完成项：
-  - Data Sandbox / connector / import / SQL workspace 仍缺少独立 E2E 契约覆盖
-  - freshness / quality / DLQ / mapping remediation 仍需要更清晰的后端 view model 与 UI 契约
+---
 
-### 6.3 本文档持有的下一阶段 Owner
+## 6. Current Gap Register (Based on the 2026-03 Repository State Review)
+
+### 6.1 Already Implemented
+- Import job state machine, quality gate, and resume / replay already exist
+- Mapping versioning, rollback, suggestions, and quality-coverage reporting already exist
+- SQL workspace, saved queries, query audit, and query-to-cohort already exist
+- Identity summary, conflict, rejected-row queries, and health alerts already exist
+- The foundational runtime shape of `operator-api + import-worker + prediction-worker + dataflow` already exists
+- SQLAlchemy + Alembic control-plane persistence already exists, with local SQLite fallback and a production Postgres target reflected in the code structure
+- Paged connector ingestion, ingestion checkpoints, BigQuery-backed prediction-result storage, and paginated reads already exist
+
+### 6.2 Remaining Gaps
+
+#### Gap-D1 Manifest-Driven Processing Is Not Yet the Default Path
+- Current state:
+  - The import main path already has raw-shard, standardized, and unified structure
+  - The default operating model is still job-driven orchestration at the application layer
+- Remaining work:
+  - Promote manifest-driven processing to the default entry path
+  - Standardize scheduling semantics for `raw shard -> manifest -> standardized -> unified`
+
+#### Gap-D2 Replay and Backfill Tooling Is Incomplete
+- Current state:
+  - Replay after mapping fixes already exists
+  - Replay from a job and rejected-row reprocessing already exist
+- Remaining work:
+  - Build general raw-shard backfill and replay tooling for source, date, and job ranges
+  - Provide a bulk replay control plane that does not require refetching the source
+
+#### Gap-D3 Warehouse Schema Contract Is Not Yet Formalized
+- Current state:
+  - `events_staging`, `events_curated`, and `player_latest_state` are already usable
+  - Canonical aliases already exist
+- Remaining work:
+  - Schema-version contracts for serving and experimentation tables are not yet formalized
+  - Upstream/downstream compatibility rules and change gates are not explicit enough
+
+#### Gap-D4 Dead-Letter and Quality Observability Still Feels Too Engineering-Oriented
+- Current state:
+  - Rejected events, health alerts, and identity summaries are already queryable
+- Remaining work:
+  - An operator-facing dead-letter remediation flow is still missing
+  - Stable dashboards and escalation alerts for DLQ, quality gate, and source freshness are still missing
+
+#### Gap-D5 GCP-Shaped Mode Is Still Partial
+- Current state:
+  - GCS, Pub/Sub, Dataflow, and BigQuery abstractions already exist
+  - Foundational entrypoints for `import-worker`, `prediction-worker`, and `dataflow` already exist
+  - Mock remains the default primary runtime path
+- Remaining work:
+  - The production runtime contract, failure recovery, and observability are not yet fully aligned
+
+#### Gap-D6 Secret and Access Boundary Is Not Production-Grade Yet
+- Current state:
+  - Connector and warehouse access still rely mainly on local config and environment variables
+- Remaining work:
+  - A formal secret manager is still missing
+  - Production-grade access boundaries and credential-rotation strategy for warehouse and data connectors are still missing
+
+#### Gap-D7 Data Core Console and Contract Hardening Is Not Complete
+- Current state:
+  - Connector, import, mapping, SQL, and quality capabilities all already have APIs and single-page entry points
+- Remaining work:
+  - Data Sandbox, connector, import, and SQL workspace still lack dedicated E2E contract coverage
+  - Freshness, quality, DLQ, and mapping-remediation views still need clearer backend view models and UI contracts
+
+### 6.3 Next-Phase Ownership Held by This Document
 - `Phase 3 Data Platform Completion`
-- `Phase 5 Production Readiness` 中与数据、连接器、数仓权限相关的部分
+- Data, connector, and warehouse permission boundaries under `Phase 5 Production Readiness`
 
 ### 6.4 V1 Backlog
 
-#### P0 收尾
-1. `Manifest-driven Default Path`
-   - 将 `raw shard -> manifest -> standardized -> unified` 升级为默认处理语义
-   - 降低应用层 job orchestration 对主链路的主导程度
+#### P0 Finish-Up
+1. `Manifest-Driven Default Path`
+   - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic
+   - Reduce the degree to which application-layer job orchestration dominates the main path
 2. `Replay / Backfill Tooling`
-   - 补齐 source/date/job-range 维度的 raw-shard backfill / replay
-   - 支持“不重新拉源”的批量回放控制面
+   - Complete raw-shard backfill and replay across source, date, and job-range dimensions
+   - Support bulk replay without refetching from source
 3. `Warehouse Schema Contract`
-   - 正式化 `events_staging / events_curated / player_latest_state / player_churn_features` 的 schema version 与兼容门禁
-   - 明确上游写入、下游消费与变更审查规则
-4. `Dead-letter / Quality Remediation`
-   - 提供 operator 视角的 DLQ remediation 流程
-   - 完成 freshness / quality gate / dead-letter / lag 的稳定 dashboard 与升级告警
+   - Formalize schema versions and compatibility gates for `events_staging / events_curated / player_latest_state / player_churn_features`
+   - Define explicit upstream write, downstream consumption, and change-review rules
+4. `Dead-Letter / Quality Remediation`
+   - Provide an operator-facing dead-letter remediation flow
+   - Deliver stable dashboards and escalation alerts for freshness, quality gate, dead-letter, and lag
 
 #### P1
-1. `GCP-shaped Runtime Default`
-   - 将当前部分实现的 GCS / PubSub / Dataflow / BigQuery 路径进一步推进为生产默认运行契约
-   - 补齐失败恢复与 observability
+1. `GCP-Shaped Runtime Default`
+   - Push the partially implemented GCS / PubSub / Dataflow / BigQuery path toward the production-default runtime contract
+   - Complete failure recovery and observability
 2. `Secret / Access Productionization`
-   - 引入正式 secret manager、连接器与数仓权限轮换策略
-   - 强化 warehouse/data connector 的访问边界
+   - Introduce a formal secret manager and connector / warehouse permission rotation
+   - Strengthen warehouse and data-connector access boundaries
 3. `Data Core Console Hardening`
-   - 为 connector / import / mapping / SQL / quality 页面补独立 E2E 契约
-   - 收紧 Data Core backend view model 与前端 contract
+   - Add dedicated E2E coverage for connector, import, mapping, SQL, and quality pages
+   - Tighten the Data Core backend view model and frontend contract

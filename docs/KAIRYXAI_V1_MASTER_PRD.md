@@ -1,368 +1,376 @@
-# KairyxAI v1 Master PRD（总 PRD）
+# KairyxAI v1 Master PRD
 
-## 1) 产品定位（一句话）
-用“实时数据 + AI决策 + 自动执行”把增长运营从分析工具升级为闭环增长引擎。
+## 1) Product Positioning (One Line)
+Upgrade growth operations from an analysis tool into a closed-loop growth engine with real-time data, AI decisioning, and automated execution.
 
 ---
 
-## 1.1) 目标用户（沿用当前产品定义）
+## 1.1) Target Users (Inherited from the Current Product Definition)
 - PM / Growth PM
-- CRM / LiveOps / 运营同学
-- 数据分析师 / 数据工程师
-- 市场与投放负责人
-- 创始人或早期运营负责人
+- CRM / LiveOps / Operations teams
+- Data analysts / data engineers
+- Marketing and acquisition leads
+- Founders or early-stage operations owners
 
-## 1.2) 当前版本非目标（沿用 current-state scope）
-- 不做多租户生产级 SaaS 交付
-- 不做完整认证体系替代企业 IAM
-- 不做强 secret management 成品化之外的通用平台
-- 不做实时流式决策引擎
-- 不做完全自动化的高风险闭环优化
-- 不做前端技术栈重写作为当前阶段目标
-
----
-
-## 2) v1 核心模块（模块化 PRD 架构）
-
-> 说明：总 PRD 只保留目标、边界、里程碑与验收门槛。每个核心模块维护独立 Sub PRD。
-
-### 2.1 Data Core（实时事件层）
-- 能力：事件采集、清洗标准化、ID Stitch、质量门禁、可回放
-- Sub PRD：`KairyxAI/docs/DATA_CORE_V1_PRD.md`
-
-### 2.2 Insight Copilot（智能分析层）
-- 能力：自然语言问数、异常解释、行动建议、自动报告
-- Sub PRD：`KairyxAI/docs/COPILOT_V1_PRD.md`
-
-### 2.3 Audience Engine（动态分群层）
-- 能力：Rule/SQL/List 生群、刷新、命名管理、激活分发、效果回流
-- Sub PRD：`KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
-
-### 2.4 Action Orchestrator（执行编排层）
-- 能力：触发器、动作编排、流程画布、执行控制
-- Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
-
-### 2.5 Experiment Hub（实验层）
-- 能力：A/B + Holdout、指标归因、实验结论与推荐
-- Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+## 1.2) Current-Version Non-Goals (Inherited from Current-State Scope)
+- No multi-tenant production SaaS delivery
+- No full authentication stack replacing enterprise IAM
+- No general-purpose secret-management platform beyond what is required for productization
+- No real-time streaming decision engine
+- No fully automated high-risk closed-loop optimization
+- No frontend stack rewrite as a goal for the current phase
 
 ---
 
-## 3) v1 关键闭环（结果导向）
-洞察发现 → AI解释 → 生成人群 → 触发动作 → 实验验证 → 效果回流 → 策略迭代
+## 2) v1 Core Modules (Modular PRD Architecture)
 
-### 3.1 改善观测时间窗（v1）
-- T+1 天：执行层指标（触达率、点击率、执行成功率）
-- T+7 天：中间业务指标（回访率、短期转化率）
-- T+28 天：核心业务指标（留存、付费、召回）
+> Note: the master PRD only keeps goals, boundaries, milestones, and launch gates. Each core module maintains its own sub-PRD.
 
-### 3.2 观测指标数据来源（v1）
-- 执行层指标（触达率/点击率/执行成功率）：`action_execution`, `action_delivery`（Action Orchestrator）
-- 中间业务指标（回访率/短期转化率）：`experiment_summary`, `experiment_outcome`, `mart_user_daily`（Experiment Hub + Data Core）
-- 核心业务指标（留存/付费/召回）：`mart_user_daily`, `fact_events_unified`, `experiment_summary`（Data Core + Experiment Hub）
+### 2.1 Data Core (Real-Time Event Layer)
+- Capabilities: event collection, cleaning and standardization, ID stitching, quality gates, replayability
+- Sub PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
 
-### 3.3 归因约束（v1）
-- 改善结论优先来自 Experiment Hub（有对照组）
-- 无对照组结果仅标记为“观察结果”，不计入收益归因
-- 每周输出闭环收益报告（执行→实验→收益）
+### 2.2 Insight Copilot (Intelligence Layer)
+- Capabilities: natural-language metric queries, anomaly explanation, action recommendation, automated reporting
+- Sub PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
 
----
+### 2.3 Audience Engine (Dynamic Segmentation Layer)
+- Capabilities: Rule/SQL/List cohort creation, refresh, naming and management, activation and delivery, feedback loop
+- Sub PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
 
-## 4) 首批高价值场景（v1，应用层）
+### 2.4 Action Orchestrator (Execution Layer)
+- Capabilities: triggers, action orchestration, workflow canvas, execution control
+- Sub PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
 
-### 4.1 场景A：流失预警挽回（Churn Rescue）
-**业务目标**
-- 降低中高风险用户流失，提升回访与召回。
-
-**应用层流程**
-1. Copilot 识别流失风险上升与关键驱动
-2. Audience Engine 生成“高风险待挽回”人群（动态 cohort）
-3. Action Orchestrator 执行挽回动作（push/email/in-app）
-4. Experiment Hub 对比 holdout 与 treatment 效果
-
-**核心指标**
-- 7日回访率
-- 14日召回率
-- 被触达用户负反馈率（护栏）
-
-**v1 上线标准（场景级）**
-- 每日自动刷新挽回人群
-- 至少 1 条挽回工作流稳定运行
-- 4~8 周内召回率相对提升 >= 15%
+### 2.5 Experiment Hub (Experiment Layer)
+- Capabilities: A/B + Holdout, metric attribution, experiment conclusions and recommendations
+- Sub PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
 
 ---
 
-### 4.2 场景B：付费提升（Monetization Lift）
-**业务目标**
-- 提升高潜用户转化效率与付费质量。
+## 3) v1 Core Closed Loop (Outcome-Driven)
+Insight detection -> AI explanation -> audience generation -> action trigger -> experiment validation -> effect feedback -> strategy iteration
 
-**应用层流程**
-1. Data Core + Copilot 识别高潜未付费/低频付费人群
-2. Audience Engine 输出分层人群（高潜、观望、沉默）
-3. Action Orchestrator 下发差异化优惠/权益策略
-4. Experiment Hub 验证 uplift 与护栏指标
+### 3.1 Observation Windows to Improve (v1)
+- T+1 day: execution-layer metrics (reach rate, click-through rate, execution success rate)
+- T+7 days: intermediate business metrics (return rate, short-term conversion rate)
+- T+28 days: core business metrics (retention, monetization, win-back)
 
-**核心指标**
-- 付费转化率
-- ARPPU / 收入 uplift
-- 退款率或投诉率（护栏）
+### 3.2 Data Sources for Observation Metrics (v1)
+- Execution-layer metrics (reach rate / CTR / execution success rate): `action_execution`, `action_delivery` (Action Orchestrator)
+- Intermediate business metrics (return rate / short-term conversion rate): `experiment_summary`, `experiment_outcome`, `mart_user_daily` (Experiment Hub + Data Core)
+- Core business metrics (retention / monetization / win-back): `mart_user_daily`, `fact_events_unified`, `experiment_summary` (Data Core + Experiment Hub)
 
-**v1 上线标准（场景级）**
-- 支持按人群层级执行不同策略
-- 实验结论可输出 winner/neutral/inconclusive/invalid
-- 2~4 周内触达转化率相对提升 >= 10%
+### 3.3 Attribution Constraints (v1)
+- Improvement conclusions should come from Experiment Hub first when a control group exists
+- Results without a control group are marked only as "observational results" and are not counted as attributed revenue impact
+- Output a weekly closed-loop impact report (execution -> experiment -> business impact)
 
 ---
 
-### 4.3 场景C：新手转化（Onboarding Activation）
-**业务目标**
-- 提升新用户关键路径通过率与首周留存。
+## 4) First High-Value Scenarios (v1, Application Layer)
 
-**应用层流程**
-1. Copilot 定位新手漏斗关键流失点
-2. Audience Engine 生成功能卡点人群（如“看过引导未完成”）
-3. Action Orchestrator 触发引导动作（教程提示、奖励触发）
-4. Experiment Hub 对比不同引导策略效果
+### 4.1 Scenario A: Churn Rescue
+**Business goal**
+- Reduce churn among medium- and high-risk users and improve return and win-back.
 
-**核心指标**
-- 新手关键步骤完成率
-- D1 / D7 留存
-- 触达打扰率（护栏）
+**Application-layer flow**
+1. Copilot identifies rising churn risk and key drivers
+2. Audience Engine generates a "high-risk users to rescue" dynamic cohort
+3. Action Orchestrator executes rescue actions (push/email/in-app)
+4. Experiment Hub compares holdout and treatment performance
 
-**v1 上线标准（场景级）**
-- 至少覆盖 1 条新手关键漏斗
-- 支持漏斗卡点自动触发
-- 4 周内关键步骤完成率显著提升（以实验结果为准）
+**Core metrics**
+- 7-day return rate
+- 14-day win-back rate
+- Negative feedback rate among contacted users (guardrail)
 
----
-
-### 4.4 应用层共性约束（v1）
-- 每个场景必须绑定：`目标人群 + 执行动作 + 实验验证 + 护栏指标`
-- 无实验对照组的结果仅计为观察，不计为收益归因
-- 每周输出场景级收益看板（覆盖人数、触达、转化、护栏、净提升）
+**v1 launch standard (scenario-level)**
+- Rescue cohort refreshes automatically every day
+- At least one rescue workflow runs stably
+- Win-back rate improves by at least 15% relative within 4 to 8 weeks
 
 ---
 
-## 5) 成功指标（上线 90 天）
-- 运营策略上线周期：天级 → 小时级
-- 触达转化率提升：+10% ~ +20%
-- 流失用户召回率：+15%
-- 分析到执行闭环比例：>60%
+### 4.2 Scenario B: Monetization Lift
+**Business goal**
+- Improve conversion efficiency and payment quality for high-potential users.
 
-### 5.1 v1 最小改善目标（阶段）
-- 2~4 周：触达转化率相对提升 >= 10%
-- 4~8 周：流失召回率相对提升 >= 15%
-- 2 周内：策略上线周期由“天级”降到“小时级”
+**Application-layer flow**
+1. Data Core + Copilot identify high-potential non-payers or low-frequency payers
+2. Audience Engine outputs stratified cohorts (high-potential, hesitant, silent)
+3. Action Orchestrator delivers differentiated offers and benefit strategies
+4. Experiment Hub validates uplift and guardrail metrics
 
----
+**Core metrics**
+- Payment conversion rate
+- ARPPU / revenue uplift
+- Refund rate or complaint rate (guardrail)
 
-## 6) 技术/架构原则（详细版）
-
-### 6.1 实时优先（分钟级）
-**原则**：核心业务链路默认按分钟级可见设计，不依赖单一 T+1 批处理。
-
-**执行要求**：
-- 关键事件（登录、付费、流失信号）进入统一层后，1~5 分钟内可用于分群/触发
-- 动态人群默认 daily 刷新，并支持手动即时刷新
-- 动作执行回执（delivery/outcome）快速回流，支持 T+1 天观察早期效果
-
-### 6.2 可解释优先（Evidence-first AI）
-**原则**：所有 Copilot 结论和策略建议必须可追溯、可验证。
-
-**执行要求**：
-- 每条结论必须附：口径、时间窗、数据来源（表/模块）
-- 每条建议必须附：目标人群定义、预期影响、风险提示
-- 实验结论统一为：winner / neutral / inconclusive / invalid
-- 无对照组结果仅计为观察，不计收益归因
-
-### 6.3 人在回路（Human-in-the-loop）
-**原则**：高风险动作默认人工确认，避免自动化失控。
-
-**执行要求**：
-- 高风险动作（大规模触达/敏感人群/预算超阈）需人工确认
-- Kill Switch 一键停发，1 分钟内生效
-- 频控、冷却、静默时段默认启用
-- test-run 必须沙箱隔离，禁止触达真实用户
-
-### 6.4 可扩展部署（SaaS + 私有化）
-**原则**：模块边界稳定，支持 SaaS 与私有化部署并存。
-
-**执行要求**：
-- 模块之间以 API contract 对接，避免跨模块硬依赖
-- 配置版本化（mapping/规则/实验）并支持回滚
-- 数据边界可配置，满足不同部署模式合规要求
-
-### 6.5 模块解耦与故障隔离（P0 强制）
-**原则**：每个模块与执行层解耦，单点故障可局部降级，不允许全系统连带 shutdown。
-
-**执行要求**：
-- Data Core / Copilot / Audience / Action / Experiment 通过稳定接口通信，不共享进程内强耦合状态
-- 任一模块异常时，其他模块保持可用并进入降级模式（例如：Copilot 不可用时仍可执行既有 workflow）
-- 每个模块具备独立健康检查、重试策略和故障告警
-- 禁止单模块失败触发全局停机；仅允许该模块局部隔离并修复
-- 修复策略以“局部修复 + 回放恢复”为默认路径，不影响其他模块持续运行
-
-### 6.6 治理与审计默认开启
-**原则**：关键行为可追踪、可审计、可回溯。
-
-**执行要求**：
-- RBAC：Admin / Analyst / Operator
-- 审计覆盖：配置变更、分群变更、实验决策、执行动作
-- PII 脱敏默认开启
-- 查询与重放具备资源保护（超时/扫描量/并发上限）
-
-### 6.7 后端 Control Plane 与 Runtime Contract（沿用已实现 backend refactor）
-**原则**：所有新增 backend 能力统一挂到 `/api/v1` 资源化控制面，旧 `main_service.py` 只保留兼容 shim，不再作为新功能承载面。
-
-**执行要求**：
-- 目标运行形态固定为：
-  - `operator-api`：FastAPI control plane
-  - `import-worker`：connector paging、checkpoint-aware ingestion、raw shard publishing
-  - `prediction-worker`：聚合表预测执行与结果持久化
-  - `export-worker`：provider export execution 与 retry-aware job state
-  - `dataflow`：manifest-driven normalization 到 standardized / unified / curated tables
-- 目标 operating model 固定为 `single-tenant + GCP-native + batch/nearline`
-- Control-plane metadata 的 system of record 固定为 `SQLAlchemy + Alembic`，生产默认目标为 `Postgres`，本地开发 fallback 为 `SQLite`
-- 长任务资源统一遵循标准 job contract：`id / type / status / created_at / updated_at / progress / error / links`
-- 大结果集默认分页，不允许依赖无界列表响应
-- Persisted control-plane entities 至少包括：`connector configuration / field mapping / import job / prediction job / export job / experiment configuration / action history / ingestion checkpoint`
+**v1 launch standard (scenario-level)**
+- Support different strategies by audience layer
+- Experiment conclusions can output `winner / neutral / inconclusive / invalid`
+- Relative contacted-user conversion lift reaches at least 10% within 2 to 4 weeks
 
 ---
 
-## 7) 范围管理（总 PRD 与 Sub PRD 分工）
+### 4.3 Scenario C: Onboarding Activation
+**Business goal**
+- Improve critical-path completion and first-week retention for new users.
 
-### 总 PRD 负责
-- 产品目标与边界
-- 模块依赖关系
-- 跨模块里程碑
-- 总体验收门槛（Go/No-Go）
+**Application-layer flow**
+1. Copilot identifies the main onboarding funnel drop-off points
+2. Audience Engine generates cohorts for blocked steps, such as "viewed tutorial but did not finish"
+3. Action Orchestrator triggers onboarding actions, such as tutorial prompts or reward nudges
+4. Experiment Hub compares the performance of different onboarding strategies
 
-### Sub PRD 负责
-- 模块详细 Scope（In/Out）
-- 数据模型与 API 设计
-- 任务拆解与 DoD
-- 模块级上线标准
+**Core metrics**
+- Completion rate of critical onboarding steps
+- D1 / D7 retention
+- Contact disturbance rate (guardrail)
 
----
-
-## 8) 跨模块依赖关系
-1. Data Core 为 Copilot/Audience/Experiment 提供统一口径数据
-2. Copilot 输出建议并生成 Audience 草稿
-3. Audience 为 Action 与 Experiment 提供人群输入
-4. Action 执行结果回流 Data Core
-5. Experiment 结果回流 Copilot 与 Audience 优化
+**v1 launch standard (scenario-level)**
+- Cover at least one key onboarding funnel
+- Support automated triggering for funnel blockage events
+- Achieve a statistically meaningful improvement in critical-step completion rate within 4 weeks, based on experiment results
 
 ---
 
-## 9) 跨模块里程碑（建议）
-- M1：Data Core + Audience 基础链路可用
-- M2：Copilot 问数/解释 + Audience 联动
-- M3：Action 编排 + Experiment 闭环联调
+### 4.4 Shared Application-Layer Constraints (v1)
+- Every scenario must bind together: `target audience + execution action + experiment validation + guardrail metrics`
+- Results without an experimental control group count only as observations, not attributed revenue impact
+- Output a weekly scenario-level impact dashboard with audience size, reach, conversion, guardrails, and net uplift
 
 ---
 
-## 10) 总体上线门槛（Go/No-Go）
-1. Data Core 质量门禁达标（coverage/canonical/reject）
-2. Audience 动态刷新稳定可用
-3. Copilot 输出具备证据链与口径说明
-4. Action 执行具备人工确认与审计能力
-5. Experiment 可输出可读结论并可回流
+## 5) Success Metrics (90 Days After Launch)
+- Strategy launch cycle: from days to hours
+- Reach-to-conversion rate lift: +10% to +20%
+- Win-back rate of churned users: +15%
+- Analysis-to-execution closed-loop rate: >60%
+
+### 5.1 Minimum v1 Improvement Targets (Phase)
+- Within 2 to 4 weeks: contacted-user conversion rate improves by at least 10% relative
+- Within 4 to 8 weeks: churn win-back rate improves by at least 15% relative
+- Within 2 weeks: strategy launch cycle drops from days to hours
 
 ---
 
-## 11) 文档清单
-- Master PRD（本文件）：`KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
-- Data Core Sub PRD：`KairyxAI/docs/DATA_CORE_V1_PRD.md`
-- Copilot Sub PRD：`KairyxAI/docs/COPILOT_V1_PRD.md`
-- Audience Sub PRD：`KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
-- Action Orchestrator Sub PRD：`KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
-- Experiment Hub Sub PRD：`KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+## 6) Technical and Architecture Principles (Detailed)
+
+### 6.1 Real-Time First (Minute-Level)
+**Principle**: core business paths are designed to become visible within minutes by default, without relying on a single T+1 batch cycle.
+
+**Execution requirements**
+- Once critical events such as login, purchase, and churn signals enter the unified layer, they should be usable for segmentation and triggering within 1 to 5 minutes
+- Dynamic cohorts refresh daily by default and support immediate manual refresh
+- Action delivery receipts and outcomes must return quickly enough to support T+1 early-effect evaluation
+
+### 6.2 Explainability First (Evidence-First AI)
+**Principle**: every Copilot conclusion and strategy recommendation must be traceable and verifiable.
+
+**Execution requirements**
+- Every conclusion must include metric definition, time window, and data source (table/module)
+- Every recommendation must include target audience definition, expected directional impact, and risk notes
+- Experiment conclusions are standardized as: `winner / neutral / inconclusive / invalid`
+- Results without a control group count only as observations and not revenue attribution
+
+### 6.3 Human in the Loop
+**Principle**: high-risk actions require manual confirmation by default to avoid uncontrolled automation.
+
+**Execution requirements**
+- High-risk actions, such as broad outreach, sensitive cohorts, and over-budget sends, require manual confirmation
+- Kill Switch must stop new sends within 1 minute
+- Frequency caps, cooldowns, and quiet hours are enabled by default
+- Test runs must be sandboxed and must never reach real users
+
+### 6.4 Deployment Flexibility (SaaS + Private Deployment)
+**Principle**: module boundaries remain stable and support both SaaS and private deployment models.
+
+**Execution requirements**
+- Modules communicate through API contracts and avoid hard cross-module runtime dependencies
+- Configurations such as mappings, rules, and experiments are versioned and reversible
+- Data boundaries are configurable to satisfy compliance needs across deployment modes
+
+### 6.5 Module Decoupling and Failure Isolation (P0 Mandatory)
+**Principle**: each module is decoupled from the execution layer, and single-module failures degrade locally instead of shutting down the whole system.
+
+**Execution requirements**
+- Data Core, Copilot, Audience, Action, and Experiment communicate through stable interfaces and do not share tightly coupled in-process state
+- If one module fails, the others remain available and enter degraded mode as needed, for example existing workflows continue even when Copilot is unavailable
+- Every module has an independent health check, retry policy, and failure alerting
+- Single-module failure must never trigger global shutdown; only local isolation and repair are allowed
+- Default repair strategy is local remediation plus replay-based recovery without interrupting other modules
+
+### 6.6 Governance and Audit Enabled by Default
+**Principle**: critical behavior must be traceable, auditable, and reviewable.
+
+**Execution requirements**
+- RBAC: `Admin / Analyst / Operator`
+- Audit coverage: configuration changes, cohort changes, experiment decisions, execution actions
+- PII masking is enabled by default
+- Queries and replays must be protected by resource limits such as timeout, scan caps, and concurrency limits
+
+### 6.7 Backend Control Plane and Runtime Contract (Inherited from Implemented Backend Refactor)
+**Principle**: all new backend capabilities must land on the resource-oriented `/api/v1` control plane. Legacy `main_service.py` remains only as a compatibility shim and is no longer the place for new functionality.
+
+**Execution requirements**
+- The target operating model is fixed as:
+  - `operator-api`: FastAPI control plane
+  - `import-worker`: connector paging, checkpoint-aware ingestion, raw shard publishing
+  - `prediction-worker`: aggregate-table prediction execution and result persistence
+  - `export-worker`: provider export execution with retry-aware job state
+  - `dataflow`: manifest-driven normalization into standardized / unified / curated tables
+- The target operating model is fixed as `single-tenant + GCP-native + batch/nearline`
+- The system of record for control-plane metadata is `SQLAlchemy + Alembic`; the production default target is `Postgres`, and local development falls back to `SQLite`
+- Long-running resources must follow the standard job contract: `id / type / status / created_at / updated_at / progress / error / links`
+- Large result sets are paginated by default and cannot rely on unbounded list responses
+- Persisted control-plane entities must include at least:
+  - `connector configuration`
+  - `field mapping`
+  - `import job`
+  - `prediction job`
+  - `export job`
+  - `experiment configuration`
+  - `action history`
+  - `ingestion checkpoint`
 
 ---
 
-## 12) 当前仓库 Gap Ownership（对照 2026-03 仓库状态评审）
+## 7) Scope Management (Division of Responsibility Between Master and Sub PRDs)
 
-### 12.1 现状判断
-- 当前 repo 已经超出 2026-03 仓库状态评审时的“当前产品”描述，尤其是 `/api/v1` 资源化控制面、Cohort / Workflow / Experiment / Copilot / Template / Health / Audit 能力。
-- backend control-plane refactor 的核心骨架也已落到仓库：`app/main.py`、SQLAlchemy/Alembic、worker entrypoints、BigQuery-backed prediction results、legacy `main_service.py` shim 都已存在。
-- 但仍未达到 Master PRD 所要求的完整上线门槛，剩余缺口以“跨模块产品化与生产化”居多，而不是“有没有基础 API”。
+### Owned by the Master PRD
+- Product goals and boundaries
+- Module dependency relationships
+- Cross-module milestones
+- Overall launch gates (Go/No-Go)
 
-### 12.2 由总 PRD 持有的跨模块 Gap
+### Owned by the Sub PRDs
+- Detailed module scope (In/Out)
+- Data models and API design
+- Task breakdown and Definition of Done
+- Module-level launch standards
+
+---
+
+## 8) Cross-Module Dependencies
+1. Data Core provides unified, governed data for Copilot, Audience, and Experiment
+2. Copilot outputs recommendations and generates audience drafts
+3. Audience provides audience inputs for Action and Experiment
+4. Action execution outcomes flow back into Data Core
+5. Experiment results flow back into Copilot and Audience optimization
+
+---
+
+## 9) Cross-Module Milestones (Suggested)
+- M1: Data Core + Audience base path available
+- M2: Copilot query/explain + Audience linkage
+- M3: Action orchestration + Experiment closed-loop integration
+
+---
+
+## 10) Overall Launch Gates (Go/No-Go)
+1. Data Core quality gates meet thresholds for coverage, canonical identity, and reject rate
+2. Audience dynamic refresh is stable
+3. Copilot output includes evidence chain and metric-definition explanation
+4. Action execution supports manual confirmation and auditability
+5. Experiment can output readable conclusions and feed them back downstream
+
+---
+
+## 11) Document List
+- Master PRD (this document): `KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
+- Data Core sub-PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
+- Copilot sub-PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
+- Audience Engine sub-PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
+- Action Orchestrator sub-PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
+- Experiment Hub sub-PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+
+---
+
+## 12) Current Repository Gap Ownership (Based on the 2026-03 Repository State Review)
+
+### 12.1 Current-State Assessment
+- The current repository already goes beyond the "current product" snapshot described in the March 2026 repository review, especially through the resource-oriented `/api/v1` control plane and the Cohort, Workflow, Experiment, Copilot, Template, Health, and Audit capabilities
+- The core backend control-plane refactor is already in the repository: `app/main.py`, SQLAlchemy/Alembic, worker entrypoints, BigQuery-backed prediction results, and the legacy `main_service.py` shim all exist
+- The remaining gaps are primarily cross-module productization and production-readiness gaps, rather than missing foundational APIs
+
+### 12.2 Cross-Module Gaps Owned by the Master PRD
 
 #### Gap-M1 Operator Console / Frontend Hardening
-- 现状：
-  - 前端仍然只有 `frontend/index.html` 单页实现
-  - 缺少正式的 Playwright / E2E 契约测试
-  - 部分运营视图仍由前端基于通用资源自行组织，而非消费清晰的后端 view model
-- owner 拆分：
-  - Data Core：导入 / Mapping / SQL / 质量视图契约
-  - Audience Engine：cohort lifecycle / metrics / compare / refresh history 契约
-  - Action Orchestrator：execution / delivery / policy / diagnostics 契约
-  - Experiment Hub：summary / assignment / rollout / alert 契约
-  - Insight Copilot：query / explain / anomaly / report 契约
-- 出线标准：
-  - 一个前端信息架构
-  - 一套稳定的 operator flows
-  - 关键页面具备端到端回归覆盖
+- Current state:
+  - The frontend is still implemented as a single `frontend/index.html` page
+  - Formal Playwright / E2E contract coverage is still missing
+  - Some operator views are still assembled by the frontend from generic resources instead of consuming clear backend view models
+- Ownership split:
+  - Data Core: import / mapping / SQL / quality view contracts
+  - Audience Engine: cohort lifecycle / metrics / compare / refresh history contracts
+  - Action Orchestrator: execution / delivery / policy / diagnostics contracts
+  - Experiment Hub: summary / assignment / rollout / alert contracts
+  - Insight Copilot: query / explain / anomaly / report contracts
+- Exit criteria:
+  - one coherent frontend information architecture
+  - one stable set of operator flows
+  - end-to-end regression coverage for key pages
 
 #### Gap-M2 Production Readiness
-- 现状：
-  - 当前只有最小 API key guard 和 header-based mock governance
-  - 还没有真正的认证、授权、secret manager、多租户边界、环境隔离和 runbook
-- owner 拆分：
-  - Master：authN / authZ / tenant / deploy topology / monitoring / runbook
-  - Data Core：数据与连接器 secret / warehouse access boundary
-  - Audience / Action / Experiment / Copilot：模块级 RBAC、审计和高风险操作边界
-- 出线标准：
-  - 明确的 tenant/operator 边界
-  - 正式 secret handling
-  - 独立环境和运维手册
+- Current state:
+  - The product currently has only a minimal API-key guard and header-based mock governance
+  - There is still no real authentication, authorization, secret manager, multi-tenant boundary, environment isolation, or runbook
+- Ownership split:
+  - Master: authN / authZ / tenant model / deployment topology / monitoring / runbook
+  - Data Core: data and connector secrets / warehouse access boundary
+  - Audience / Action / Experiment / Copilot: module-level RBAC, audit, and high-risk action boundaries
+- Exit criteria:
+  - explicit tenant and operator boundaries
+  - formal secret handling
+  - isolated environments and operations runbooks
 
 #### Gap-M3 Fully Automated Closed-Loop Optimization
-- 现状：
-  - 当前具备建议、报告、实验总结和基础 outcome 回流
-  - 但还没有“真实 outcome -> 自动策略迭代 -> 自动优化执行”的全自动闭环
-- owner 拆分：
-  - Copilot：基于真实 outcome 的 recommendation refresh
-  - Audience Engine：基于效果回流的人群版本演进
-  - Action Orchestrator：动作策略自动调优仍未开放
-  - Experiment Hub：结论只给建议，不直接驱动 rollout controller
-- 出线标准：
-  - 自动优化链路默认仍需人工确认
-  - 但每个建议都必须绑定真实 measurement evidence
+- Current state:
+  - Recommendations, reports, experiment summaries, and basic outcome feedback already exist
+  - There is still no fully automated loop of "real outcome -> automatic strategy iteration -> optimized execution"
+- Ownership split:
+  - Copilot: recommendation refresh based on real outcome
+  - Audience Engine: audience version evolution based on performance feedback
+  - Action Orchestrator: action policy auto-tuning is not yet open
+  - Experiment Hub: conclusions still provide recommendations only and do not directly drive a rollout controller
+- Exit criteria:
+  - automated optimization remains manually confirmed by default
+  - every recommendation is backed by real measurement evidence
 
-#### Gap-M4 当前 Gap 文档归属规则
-- Data Platform / Ingestion / Identity / SQL / Schema / Replay：写入 `DATA_CORE_V1_PRD.md`
-- NL2Metric / Explain / Recommend / Report / Evidence：写入 `COPILOT_V1_PRD.md`
-- Cohort Lifecycle / Refresh / Activation / Feedback：写入 `AUDIENCE_ENGINE_V1_PRD.md`
-- Workflow / Trigger / Delivery / Policy / Safety：写入 `ACTION_ORCHESTRATOR_V1_PRD.md`
-- Assignment / Exposure / Outcome / Summary / Rollout：写入 `EXPERIMENT_HUB_V1_PRD.md`
+#### Gap-M4 Gap-Document Ownership Rules
+- Data platform / ingestion / identity / SQL / schema / replay: write into `DATA_CORE_V1_PRD.md`
+- NL2Metric / explain / recommend / report / evidence: write into `COPILOT_V1_PRD.md`
+- Cohort lifecycle / refresh / activation / feedback: write into `AUDIENCE_ENGINE_V1_PRD.md`
+- Workflow / trigger / delivery / policy / safety: write into `ACTION_ORCHESTRATOR_V1_PRD.md`
+- Assignment / exposure / outcome / summary / rollout: write into `EXPERIMENT_HUB_V1_PRD.md`
 
 ---
 
-## 13) V1 Backlog（按优先级）
+## 13) V1 Backlog (Prioritized)
 
-### 13.1 P0 收尾
+### 13.1 P0 Finish-Up
 1. `Operator Console Hardening`
-   - 为 Data Core / Audience / Action / Experiment / Copilot 补齐关键 operator flows
-   - 建立模块级 Playwright / E2E 回归覆盖
+   - Complete critical operator flows for Data Core, Audience, Action, Experiment, and Copilot
+   - Add module-level Playwright / E2E regression coverage
 2. `Production Readiness Baseline`
-   - 明确 authN / authZ、tenant boundary、secret handling、环境隔离与运维 runbook
-   - 保证模块级审计、告警、权限边界不再停留在 mock/header contract
-3. `Real Activation & Measurement Stabilization`
-   - 打通 provider delivery / callback / outcome / return / conversion 的稳定契约
-   - 让 Audience、Experiment、Copilot 的 evidence loop 建立在真实回流上，而非部分模拟/部分手动
+   - Define authN / authZ, tenant boundaries, secret handling, environment isolation, and operations runbooks
+   - Ensure module-level audit, alerting, and access boundaries move beyond a mock/header contract
+3. `Real Activation and Measurement Stabilization`
+   - Establish stable provider contracts for delivery, callback, outcome, return, and conversion
+   - Move the Audience, Experiment, and Copilot evidence loop onto real feedback instead of mixed simulation and partial manual handling
 4. `Human-in-the-loop Optimization Boundary`
-   - 保持自动优化默认关闭
-   - 但要求所有建议、rollout 与策略变更都绑定真实 measurement evidence 与人工确认链
+   - Keep automated optimization disabled by default
+   - Require all recommendations, rollout decisions, and strategy changes to bind to real measurement evidence and a manual confirmation chain
 
 ### 13.2 P1
 1. `Controlled Closed-Loop Optimization`
-   - 让 Copilot / Experiment / Action 在人工确认前提下形成受控 rollout controller
-   - 支持 outcome-driven recommendation refresh 与策略建议迭代
+   - Let Copilot, Experiment, and Action form a controlled rollout controller under manual confirmation
+   - Support outcome-driven recommendation refresh and strategy iteration
 2. `Module Console Productization`
-   - 从单页控制台演进到更稳定的模块化 operator console 与专门 backend view model
-   - 降低前端拼装通用资源的比例
-3. `Production-grade Deployment Model`
-   - 完成更强的 deploy topology、监控、告警、租户隔离、凭据轮换与 runbook
-   - 把当前 single-tenant demo/control-plane 形态推进到更可运营的生产模型
+   - Evolve the single-page console into a more stable module-oriented operator console with dedicated backend view models
+   - Reduce frontend-side assembly of generic resources
+3. `Production-Grade Deployment Model`
+   - Complete stronger deployment topology, monitoring, alerting, tenant isolation, credential rotation, and runbooks
+   - Move the current single-tenant demo/control-plane shape toward a more operable production model
