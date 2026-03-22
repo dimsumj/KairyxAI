@@ -2030,6 +2030,7 @@ dimensions: campaign,country,platform</pre>
             const apiBaseUrl = `${backendUrl}/api/v1`;
             const HEALTH_CHECK_INTERVAL_MS = 30000;
             const HEALTH_CACHE_TTL_MS = 30000;
+            const HEALTH_LIVE_TIMEOUT_MS = 3000;
             const PREDICTION_POLL_INTERVAL_MS = 1000;
             const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
             const connectorTypeLabels = {
@@ -2041,7 +2042,7 @@ dimensions: campaign,country,platform</pre>
                 sendgrid: 'SendGrid',
                 braze: 'Braze',
             };
-            let backendMode = 'mock';
+            let backendMode = 'unknown';
             let cachedConnectors = [];
             let cachedImports = [];
             let cachedPredictionJobs = [];
@@ -2050,8 +2051,7 @@ dimensions: campaign,country,platform</pre>
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
 
-            async function apiRequest(path, options = {}) {
-                const { method = 'GET', body } = options;
+            function buildApiHeaders(includeJsonContentType = false) {
                 const headers = {
                     'x-actor-role': actorRoleSelect.value || 'admin',
                     'x-actor-id': (actorIdInput.value || actorRoleSelect.value || 'admin').trim(),
@@ -2060,9 +2060,15 @@ dimensions: campaign,country,platform</pre>
                 if ((apiKeyInput.value || '').trim()) {
                     headers['x-api-key'] = apiKeyInput.value.trim();
                 }
-                if (body) {
+                if (includeJsonContentType) {
                     headers['Content-Type'] = 'application/json';
                 }
+                return headers;
+            }
+
+            async function apiRequest(path, options = {}) {
+                const { method = 'GET', body } = options;
+                const headers = buildApiHeaders(Boolean(body));
                 const response = await fetch(`${apiBaseUrl}${path}`, {
                     method,
                     headers,
@@ -2076,6 +2082,33 @@ dimensions: campaign,country,platform</pre>
                     throw new Error(payload.detail || payload.message || `Request failed (${response.status})`);
                 }
                 return payload;
+            }
+
+            async function fetchHealthLiveState() {
+                const controller = new AbortController();
+                const timeoutId = window.setTimeout(() => controller.abort(), HEALTH_LIVE_TIMEOUT_MS);
+                try {
+                    const response = await fetch(`${apiBaseUrl}/health/live`, {
+                        method: 'GET',
+                        headers: buildApiHeaders(false),
+                        signal: controller.signal,
+                    });
+                    if (response.status === 204) {
+                        return null;
+                    }
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || payload.message || `Request failed (${response.status})`);
+                    }
+                    return payload;
+                } catch (error) {
+                    if (error && error.name === 'AbortError') {
+                        throw new Error('Backend health check timed out.');
+                    }
+                    throw error;
+                } finally {
+                    window.clearTimeout(timeoutId);
+                }
             }
 
             function parseIsoDate(value) {
@@ -2315,9 +2348,9 @@ dimensions: campaign,country,platform</pre>
                     return healthStateRequest;
                 }
 
-                healthStateRequest = apiRequest('/health')
+                healthStateRequest = fetchHealthLiveState()
                     .then((payload) => {
-                        backendMode = payload.mode || backendMode;
+                        backendMode = payload?.mode || backendMode;
                         cachedHealthState = payload;
                         cachedHealthStateFetchedAt = Date.now();
                         return payload;
@@ -2350,7 +2383,7 @@ dimensions: campaign,country,platform</pre>
             }
 
             async function createImportRecord(sourceName, startDate, endDate) {
-                await ensureHealthState();
+                await ensureHealthState().catch(() => null);
                 const created = await apiRequest('/imports', {
                     method: 'POST',
                     body: {
@@ -2362,8 +2395,10 @@ dimensions: campaign,country,platform</pre>
                 if (backendMode === 'mock') {
                     queueMockImportRun(created.id);
                 }
-                await refreshImportsState();
-                return cachedImports.find((job) => job.id === created.id) || normalizeImportJob(created);
+                refreshImportsState().catch((error) => {
+                    console.error('Unable to refresh import jobs after create:', error);
+                });
+                return normalizeImportJob(created);
             }
 
             async function queueMockImportRun(jobId) {
@@ -2534,7 +2569,7 @@ dimensions: campaign,country,platform</pre>
             }
 
             async function createPredictionRecord(importJobId, predictionMode = 'local') {
-                await ensureHealthState();
+                await ensureHealthState().catch(() => null);
                 const created = await apiRequest('/predictions', {
                     method: 'POST',
                     body: {
@@ -2569,7 +2604,7 @@ dimensions: campaign,country,platform</pre>
             }
 
             async function createExportRecord(predictionJobId, payload) {
-                await ensureHealthState();
+                await ensureHealthState().catch(() => null);
                 const created = await apiRequest('/exports', {
                     method: 'POST',
                     body: {

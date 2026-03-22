@@ -42,7 +42,12 @@ def create_app() -> FastAPI:
     async def _api_key_guard(request: Request, call_next):
         protected_prefix = settings.api_v1_prefix.rstrip("/")
         if settings.api_access_key and request.url.path.startswith(protected_prefix):
-            if request.url.path not in {f"{protected_prefix}/health", "/health"}:
+            if request.url.path not in {
+                f"{protected_prefix}/health",
+                f"{protected_prefix}/health/live",
+                "/health",
+                "/health/live",
+            }:
                 provided = str(request.headers.get("x-api-key") or "").strip()
                 if provided != settings.api_access_key:
                     return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
@@ -63,12 +68,25 @@ def create_app() -> FastAPI:
                 ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
                 ImportService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
                 PredictionService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
-                HealthMonitorService(repository, bigquery_service).snapshot(persist=True)
                 ControlLoopService(repository, settings, bigquery_service).ensure_default_jobs()
             except Exception:
                 logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
         finally:
             session.close()
+        if getattr(app.state, "health_warmup_thread", None) is None:
+            def _warm_health_snapshot() -> None:
+                session = get_session_factory()()
+                try:
+                    repository = SqlAlchemyControlPlaneRepository(session)
+                    HealthMonitorService(repository, get_shared_bigquery_service()).snapshot(persist=True)
+                except Exception:
+                    logger.exception("Health snapshot warm-up failed.")
+                finally:
+                    session.close()
+
+            thread = threading.Thread(target=_warm_health_snapshot, name="kairyx-health-warmup", daemon=True)
+            app.state.health_warmup_thread = thread
+            thread.start()
         if settings.scheduler_enabled and getattr(app.state, "control_loop_thread", None) is None:
             stop_event = threading.Event()
 
@@ -115,6 +133,10 @@ def create_app() -> FastAPI:
             return health.health(service=HealthMonitorService(repository, get_shared_bigquery_service()))
         finally:
             session.close()
+
+    @app.get("/health/live")
+    def root_health_live():
+        return health.health_live()
 
     app.include_router(health.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)

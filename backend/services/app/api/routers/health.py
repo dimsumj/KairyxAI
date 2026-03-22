@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from fastapi import Request
@@ -18,19 +20,31 @@ class SchedulerTickRequest(BaseModel):
     reference_time: str | None = None
 
 
-@router.get("/health")
-def health(service: HealthMonitorService = Depends(get_health_monitor_service)):
+def build_live_payload() -> dict:
     settings = get_settings()
-    bigquery_service = get_shared_bigquery_service()
-    snapshot = service.snapshot(persist=True)
-    payload = {
+    return {
         "status": "ok",
         "service": settings.app_name,
         "mode": settings.data_backend_mode,
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/health/live")
+def health_live():
+    return build_live_payload()
+
+
+@router.get("/health")
+def health(service: HealthMonitorService = Depends(get_health_monitor_service)):
+    payload = build_live_payload()
+    bigquery_service = get_shared_bigquery_service()
+    snapshot = service.snapshot(persist=True)
+    payload.update({
         "data_aliases": bigquery_service.get_v1_table_aliases(),
         **snapshot,
-    }
-    if settings.data_backend_mode == "mock":
+    })
+    if payload["mode"] == "mock":
         payload["local_cache"] = bigquery_service.get_local_cache_stats()
     return payload
 

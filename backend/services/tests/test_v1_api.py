@@ -76,6 +76,24 @@ def test_root_health_alias(client):
     assert resp.json()["service"] == "KairyxAI Operator API"
 
 
+def test_health_live_aliases_return_lightweight_payload(client):
+    root_resp = client.get("/health/live")
+    assert root_resp.status_code == 200
+    root_payload = root_resp.json()
+    assert root_payload["status"] == "ok"
+    assert root_payload["mode"] == "mock"
+    assert "data_aliases" not in root_payload
+
+    api_resp = client.get("/api/v1/health/live")
+    assert api_resp.status_code == 200
+    api_payload = api_resp.json()
+    assert api_payload["status"] == "ok"
+    assert api_payload["mode"] == "mock"
+    assert "data_aliases" not in api_payload
+    assert api_payload["service"] == "KairyxAI Operator API"
+    assert api_payload["time"]
+
+
 def test_health_reports_local_cache_stats(client):
     health = client.get("/api/v1/health")
     assert health.status_code == 200
@@ -84,6 +102,25 @@ def test_health_reports_local_cache_stats(client):
     assert payload["local_cache"]["retention_days"] == 7
     assert payload["local_cache"]["tables"]["events_staging"]["rows"] >= 0
     assert payload["local_cache"]["tables"]["prediction_results"]["rows"] >= 0
+
+
+def test_health_live_bypasses_api_key_guard(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("API_ACCESS_KEY", "top-secret")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        live_resp = test_client.get("/api/v1/health/live")
+        assert live_resp.status_code == 200
+        assert live_resp.json()["status"] == "ok"
+
+        protected_resp = test_client.get("/api/v1/connectors")
+        assert protected_resp.status_code == 401
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
