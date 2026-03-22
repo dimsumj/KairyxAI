@@ -211,6 +211,22 @@
 - PII 脱敏默认开启
 - 查询与重放具备资源保护（超时/扫描量/并发上限）
 
+### 6.7 后端 Control Plane 与 Runtime Contract（沿用已实现 backend refactor）
+**原则**：所有新增 backend 能力统一挂到 `/api/v1` 资源化控制面，旧 `main_service.py` 只保留兼容 shim，不再作为新功能承载面。
+
+**执行要求**：
+- 目标运行形态固定为：
+  - `operator-api`：FastAPI control plane
+  - `import-worker`：connector paging、checkpoint-aware ingestion、raw shard publishing
+  - `prediction-worker`：聚合表预测执行与结果持久化
+  - `export-worker`：provider export execution 与 retry-aware job state
+  - `dataflow`：manifest-driven normalization 到 standardized / unified / curated tables
+- 目标 operating model 固定为 `single-tenant + GCP-native + batch/nearline`
+- Control-plane metadata 的 system of record 固定为 `SQLAlchemy + Alembic`，生产默认目标为 `Postgres`，本地开发 fallback 为 `SQLite`
+- 长任务资源统一遵循标准 job contract：`id / type / status / created_at / updated_at / progress / error / links`
+- 大结果集默认分页，不允许依赖无界列表响应
+- Persisted control-plane entities 至少包括：`connector configuration / field mapping / import job / prediction job / export job / experiment configuration / action history / ingestion checkpoint`
+
 ---
 
 ## 7) 范围管理（总 PRD 与 Sub PRD 分工）
@@ -268,6 +284,7 @@
 
 ### 12.1 现状判断
 - 当前 repo 已经超出 2026-03 仓库状态评审时的“当前产品”描述，尤其是 `/api/v1` 资源化控制面、Cohort / Workflow / Experiment / Copilot / Template / Health / Audit 能力。
+- backend control-plane refactor 的核心骨架也已落到仓库：`app/main.py`、SQLAlchemy/Alembic、worker entrypoints、BigQuery-backed prediction results、legacy `main_service.py` shim 都已存在。
 - 但仍未达到 Master PRD 所要求的完整上线门槛，剩余缺口以“跨模块产品化与生产化”居多，而不是“有没有基础 API”。
 
 ### 12.2 由总 PRD 持有的跨模块 Gap

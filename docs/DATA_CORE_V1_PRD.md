@@ -58,6 +58,19 @@
 4. 至少支持 1 个动态 cohort 定时刷新（如每天 1 次）
 5. 有查询审计日志和失败可追踪信息
 
+### 4.1.6 Backend Runtime / Persistence Ownership（补充归属）
+- `operator-api` 下的 `/api/v1/connectors`、`/mappings`、`/imports`、`/predictions` 是 Data Core 的主要 backend control-plane 面
+- `import-worker` 负责 connector 分页拉取、checkpoint-aware import 执行、raw shard 发布与恢复
+- `dataflow` 负责 `raw shard -> manifest -> standardized -> unified` 的规范化处理
+- `prediction-worker` 负责基于统一聚合层执行预测，并把结果写入 BigQuery-backed serving / result storage
+- prediction 结果读取必须支持分页，避免无界结果集读取
+- Data Core 持有的 control-plane persisted entities 至少包括：
+  - `connector configuration`
+  - `field mapping`
+  - `import job`
+  - `prediction job`
+  - `ingestion checkpoint`
+
 ---
 
 ## 4.2 多来源数据 Ingestion 与 Stitch（P0）
@@ -661,6 +674,9 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - mapping version / rollback / suggestions / quality coverage 已存在
 - SQL workspace、saved queries、query audit、query -> cohort 已存在
 - identity summary / conflict / rejected 查询与健康告警已存在
+- `operator-api + import-worker + prediction-worker + dataflow` 的基础运行形态已存在
+- SQLAlchemy + Alembic control-plane persistence 已存在；本地 SQLite fallback 与生产 Postgres 目标已在代码结构中体现
+- paged connector ingestion、ingestion checkpoints、BigQuery-backed prediction result storage 与分页读取已存在
 
 ### 6.2 仍未完成的 Gap
 
@@ -698,6 +714,7 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 #### Gap-D5 GCP-shaped Mode 仍是部分实现
 - 当前：
   - 已有 GCS / PubSub / Dataflow / BigQuery 抽象
+  - `import-worker / prediction-worker / dataflow` 的基础 entrypoint 已存在
   - mock 仍是默认主运行路径
 - 未完成项：
   - 生产模式的默认运行契约、失败恢复和 observability 还未完全对齐

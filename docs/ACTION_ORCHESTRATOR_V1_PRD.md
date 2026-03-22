@@ -72,6 +72,11 @@
   - 返回 provider response、delivery/export diagnostics 与 retry 状态
   - 导出 payload 以 `user_id / email / predicted_churn_risk / suggested_action / metadata` 为主
 
+### 运行时归属（补充）
+- `/api/v1/exports` 资源属于 Action Orchestrator 的执行控制面
+- `export-worker` 负责 provider export execution、重试、诊断回写与 retry-aware job state
+- export 任务资源默认遵循标准 job contract：`id / type / status / created_at / updated_at / progress / error / links`
+
 ### DoD
 1. 至少 2 个渠道稳定可用（建议 push+email）
 2. 失败重试可配置并可追踪
@@ -174,6 +179,7 @@
 - workflow / trigger / policy / budget / confirmation / kill switch 已存在
 - delivery diagnostics、provider callbacks、policy counters、event/threshold trigger 已存在
 - 与 Audience / Experiment 的最小闭环已打通
+- `audience export job` 已具备独立 `/api/v1/exports` 资源与 `export-worker` entrypoint
 
 ### 8.2 仍未完成的 Gap
 
