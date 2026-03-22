@@ -159,3 +159,54 @@
 3. 频控/冷却/Kill Switch
 4. 执行观测与审计
 5. 与 Audience + Experiment 联调
+
+---
+
+## 8. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+
+### 8.1 当前已落地
+- workflow / trigger / policy / budget / confirmation / kill switch 已存在
+- delivery diagnostics、provider callbacks、policy counters、event/threshold trigger 已存在
+- 与 Audience / Experiment 的最小闭环已打通
+
+### 8.2 仍未完成的 Gap
+
+#### Gap-O1 Delivery Engine 仍偏 demo / simulator 形态
+- 当前：
+  - push/email/braze 适配器与执行日志已存在
+- 未完成项：
+  - push 仍明显依赖 simulator 语义
+  - in-app / webhook 还未形成与 push/email 同等级的稳定产品能力
+
+#### Gap-O2 Real Provider Measurement 仍未完全稳态化
+- 当前：
+  - delivery callbacks 与 diagnostics 已存在
+- 未完成项：
+  - 不同 provider 的回执归一、失败分类、延迟回流、重试/fallback 仍不够完整
+  - “真实 engagement outcome” 还没有在所有渠道上形成一致的数据契约
+
+#### Gap-O3 Operator Console / Execution UX 仍未硬化
+- 当前：
+  - workflow / delivery / policy 相关能力已在单页控制台中可见
+- 未完成项：
+  - 缺少独立 Playwright / E2E 覆盖
+  - 执行失败、重试、预算消耗、policy block 的产品化排查视图仍偏运维态
+
+#### Gap-O4 Provider Credentials 与运行边界仍未生产化
+- 当前：
+  - 已有最小治理、审计和 header-based role boundary
+- 未完成项：
+  - 缺少正式 secret management
+  - 缺少 provider 级身份认证、环境隔离和租户边界
+
+#### Gap-O5 自动优化仍未开放
+- 当前：
+  - Action 层已能执行、记录和回流结果
+- 未完成项：
+  - rollout / retry / policy 调优仍需要人工判断
+  - 系统不会基于真实 outcome 自动修改 workflow 策略
+
+### 8.3 本文档持有的下一阶段 Owner
+- `Phase 1 Frontend Hardening` 中 execution / delivery / policy 页面
+- `Phase 4 Activation And Measurement` 中 provider-grade delivery + callback + outcome 契约
+- `Phase 5 Production Readiness` 中 provider credentials / auth / tenant boundary

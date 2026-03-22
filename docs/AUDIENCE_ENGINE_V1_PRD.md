@@ -137,3 +137,46 @@
 
 ## 6. 与总 PRD 关系
 本文件是 Audience Engine 的详细设计文档。总 PRD（`DATA_CORE_V1_PRD.md`）保留高层目标与验收标准，本文件用于工程实现与排期。
+
+---
+
+## 7. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+
+### 7.1 当前已落地
+- Rule / SQL / List cohort 三入口已存在
+- lifecycle、版本、rollback、archive / restore、refresh jobs、metrics / compare 已存在
+- 激活前 preflight、分页 members、基础效果回流已存在
+
+### 7.2 仍未完成的 Gap
+
+#### Gap-A1 效果回流仍依赖下游 measurement 成熟度
+- 当前：
+  - cohort metrics 已可读取 workflow delivery、experiment summary、outcome 结果
+- 未完成项：
+  - 真实 provider 级 return / conversion / delivery 信号还没有完全稳定
+  - Audience feedback loop 仍受 Action / Experiment 真实回流质量限制
+
+#### Gap-A2 Audience Operator Console 仍未硬化
+- 当前：
+  - 前端已具备 cohort 管理入口
+- 未完成项：
+  - 仍然没有独立 Playwright / E2E 覆盖
+  - cohort metrics / compare / refresh history 的 operator UX 仍是单页静态控制台形态
+
+#### Gap-A3 部分运营视图仍缺少专门 backend view model
+- 当前：
+  - 已有 members / versions / metrics / compare / refresh-jobs API
+- 未完成项：
+  - 某些页面仍由前端基于通用资源拼接，而非消费更稳定的聚合接口
+  - 需要进一步收紧前后端 contract，降低 UI 侧合成逻辑
+
+#### Gap-A4 生产级权限与租户边界尚未完成
+- 当前：
+  - 已有最小 RBAC 与审计
+- 未完成项：
+  - 跨租户隔离、正式身份认证和高风险 cohort 操作边界仍未完成
+
+### 7.3 本文档持有的下一阶段 Owner
+- `Phase 1 Frontend Hardening` 中 cohort UI / metrics / compare 契约
+- `Phase 4 Activation And Measurement` 中 cohort feedback loop 的真实测量依赖
+- `Phase 5 Production Readiness` 中 cohort 权限与租户边界

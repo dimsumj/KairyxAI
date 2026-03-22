@@ -633,3 +633,64 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - reject rate <= 5%
 - 至少 1 个动态 cohort 每日刷新稳定运行
 - 高风险操作审计开启且可查询
+
+---
+
+## 6. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+
+### 6.1 当前已落地
+- import 任务状态机、quality gate、resume / replay 已存在
+- mapping version / rollback / suggestions / quality coverage 已存在
+- SQL workspace、saved queries、query audit、query -> cohort 已存在
+- identity summary / conflict / rejected 查询与健康告警已存在
+
+### 6.2 仍未完成的 Gap
+
+#### Gap-D1 Manifest-driven Processing 还不是默认路径
+- 当前：
+  - 导入主链路已具备 raw shard / standardized / unified 结构
+  - 但默认工作方式仍然是 job 驱动的应用层 orchestration
+- 未完成项：
+  - 将 manifest-driven processing 升级为默认入口
+  - 统一 raw shard -> manifest -> standardized -> unified 的默认调度语义
+
+#### Gap-D2 Replay / Backfill Tooling 不完整
+- 当前：
+  - 已支持 mapping 修复后的 replay
+  - 已支持按 job 恢复和 rejected rows 重放
+- 未完成项：
+  - 缺少面向 source/date/job range 的通用 raw-shard backfill / replay 工具
+  - 缺少“无需重新拉源”的批量回放控制面
+
+#### Gap-D3 Warehouse Schema Contract 仍未正式化
+- 当前：
+  - `events_staging / events_curated / player_latest_state` 已可用
+  - canonical alias 也已存在
+- 未完成项：
+  - serving / experimentation tables 的 schema version 没有形成正式 contract 文档
+  - 上游/下游兼容规则与变更门禁还不够显式
+
+#### Gap-D4 Dead-letter / Quality Observability 仍偏工程态
+- 当前：
+  - rejected events、health alerts、identity summary 已可查
+- 未完成项：
+  - 缺少 operator 视角的 dead-letter remediation 流程
+  - 缺少围绕 DLQ / quality gate / source freshness 的稳定 dashboard 与升级告警
+
+#### Gap-D5 GCP-shaped Mode 仍是部分实现
+- 当前：
+  - 已有 GCS / PubSub / Dataflow / BigQuery 抽象
+  - mock 仍是默认主运行路径
+- 未完成项：
+  - 生产模式的默认运行契约、失败恢复和 observability 还未完全对齐
+
+#### Gap-D6 Secret / Access Boundary 仍未达到生产级
+- 当前：
+  - 连接器和数仓访问主要依赖本地配置与环境变量
+- 未完成项：
+  - 缺少正式 secret manager
+  - 缺少 warehouse/data connector 的生产级访问边界和权限轮转策略
+
+### 6.3 本文档持有的下一阶段 Owner
+- `Phase 3 Data Platform Completion`
+- `Phase 5 Production Readiness` 中与数据、连接器、数仓权限相关的部分

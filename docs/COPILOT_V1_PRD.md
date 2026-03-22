@@ -281,3 +281,54 @@
 - 任意 Copilot 结论可追溯到数据证据
 - 越权字段不可见
 - 高风险动作存在审计记录与确认链路
+
+---
+
+## 11. 当前 Gap Register（对照 repo / `current-state-product-spec.md`，2026-03）
+
+### 11.1 当前已落地
+- `query / explain / recommend / report` API 已存在
+- query logs、anomalies、reports、weekly report 资源已存在
+- 结构化输出、evidence envelope、cohort draft 生成已存在
+
+### 11.2 仍未完成的 Gap
+
+#### Gap-C1 Copilot Operator Console 仍未硬化
+- 当前：
+  - Copilot 页面已经在单页 operator console 中可用
+- 未完成项：
+  - 仍然没有独立 Playwright / E2E 契约覆盖
+  - query / explain / anomaly / report 视图仍依赖单页静态控制台组织
+
+#### Gap-C2 Auto Report 的运营工作流仍偏轻量
+- 当前：
+  - 日报/周报资源与 retry 已存在
+- 未完成项：
+  - 报告订阅、审核、失败分诊和运营消费流程还没有独立产品化
+  - 前端侧还没有成熟的报告管理控制台
+
+#### Gap-C3 Recommendation 仍是“建议态”，还不是 outcome-driven 自动优化
+- 当前：
+  - Copilot 能给建议并生成 cohort draft
+- 未完成项：
+  - 还没有“真实 outcome -> 自动更新建议模板 / 自动策略调优”的稳定闭环
+  - recommendation 仍依赖 Experiment / Action 的 measurement maturity
+
+#### Gap-C4 Evidence Loop 仍受下游测量成熟度限制
+- 当前：
+  - experiment summary、cohort snapshot、workflow summary 已可作为证据输入
+- 未完成项：
+  - 当真实 provider outcome / return / conversion 信号不完整时，Copilot 证据链仍会退化
+  - 需要与 Action / Experiment 的真实 measurement pipeline 联动补齐
+
+#### Gap-C5 Production Access Boundary 不完整
+- 当前：
+  - 已有最小 RBAC 与脱敏
+- 未完成项：
+  - 缺少正式 authN / tenant boundary / production-grade access control
+  - 仍不能把当前 Copilot 数据访问边界视为生产完成态
+
+### 11.3 本文档持有的下一阶段 Owner
+- `Phase 1 Frontend Hardening` 中 Copilot 页面与契约部分
+- `Phase 4 Activation And Measurement` 中 evidence feedback 对 Copilot 的依赖部分
+- `Phase 5 Production Readiness` 中 Copilot 的访问边界与治理部分
