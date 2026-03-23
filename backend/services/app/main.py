@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
@@ -15,6 +17,7 @@ from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
+from app.core.errors import is_database_locked_error
 from app.core.logging import configure_access_log_filters
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
@@ -54,6 +57,20 @@ def create_app() -> FastAPI:
                 if provided != settings.api_access_key:
                     return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
         return await call_next(request)
+
+    @app.middleware("http")
+    async def _sqlite_lock_guard(request: Request, call_next):
+        try:
+            return await call_next(request)
+        except (SQLAlchemyOperationalError, sqlite3.OperationalError) as exc:
+            if is_database_locked_error(exc):
+                logger.warning("Control plane database lock while handling %s %s", request.method, request.url.path)
+                return JSONResponse(
+                    status_code=423,
+                    headers={"Retry-After": "1"},
+                    content={"detail": "Control plane database is busy; retry shortly."},
+                )
+            raise
 
     @app.on_event("startup")
     def _startup() -> None:

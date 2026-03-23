@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+import sqlite3
 import threading
 import time
 
@@ -134,6 +135,72 @@ def test_health_live_bypasses_api_key_guard(monkeypatch, tmp_path):
 
         protected_resp = test_client.get("/api/v1/connectors")
         assert protected_resp.status_code == 401
+
+
+def test_sqlite_control_plane_uses_wal_and_busy_timeout(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "12")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        engine = db_module.get_engine()
+        connection = engine.raw_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA journal_mode;")
+            assert str(cursor.fetchone()[0]).lower() == "wal"
+            cursor.execute("PRAGMA busy_timeout;")
+            assert int(cursor.fetchone()[0]) >= 12000
+        finally:
+            cursor.close()
+            connection.close()
+
+
+def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "0.1")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        connector_resp = test_client.post(
+            "/api/v1/connectors",
+            json={
+                "name": "Adjust Source",
+                "type": "adjust",
+                "config": {"api_token": "adjust-token"},
+            },
+        )
+        assert connector_resp.status_code == 201
+
+        lock_connection = sqlite3.connect(tmp_path / "control_plane.db", timeout=0.01, isolation_level=None)
+        try:
+            lock_connection.execute("PRAGMA busy_timeout=10;")
+            lock_connection.execute("BEGIN EXCLUSIVE;")
+            response = test_client.post(
+                "/api/v1/imports",
+                json={
+                    "source_name": "Adjust Source",
+                    "start_date": "20260301",
+                    "end_date": "20260302",
+                },
+            )
+        finally:
+            lock_connection.rollback()
+            lock_connection.close()
+
+    assert response.status_code == 423
+    assert response.json()["detail"] == "Control plane database is busy; retry shortly."
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
