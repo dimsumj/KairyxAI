@@ -411,11 +411,11 @@
         }
 
         table {
-            width: max-content;
+            width: 100%;
             min-width: 100%;
             border-collapse: collapse;
             margin-top: 1rem;
-            table-layout: auto;
+            table-layout: fixed;
         }
 
         #service-status-list .service-item {
@@ -465,15 +465,22 @@
             padding: 0.75rem;
             border-bottom: 1px solid var(--border-color);
             vertical-align: top;
-            white-space: normal;
-            overflow-wrap: normal;
-            word-break: normal;
+            min-width: 0;
             line-height: 1.45;
+        }
+
+        td {
+            white-space: normal;
+            overflow-wrap: break-word;
+            word-break: normal;
         }
 
         th {
             background-color: var(--bg-color);
-            white-space: nowrap;
+            white-space: normal;
+            overflow-wrap: normal;
+            word-break: keep-all;
+            text-wrap: balance;
         }
 
         #connector-list .card {
