@@ -217,5 +217,6 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Audience Engine PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
 - Action Orchestrator PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
 - Experiment Hub PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+- GCP production deployment runbook: `KairyxAI/docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md`
 - Multi-Tenant GCP Runbooks: `KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md`
 - Development memory and dependency-guard notes: `KairyxAI/docs/DEVELOPMENT_MEMORY.md`
