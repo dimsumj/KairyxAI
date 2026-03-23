@@ -48,12 +48,12 @@ What is still in progress is not the existence of the core APIs, but the remaini
 
 The source of truth for that roadmap lives in:
 
-- [KairyxAI v1 Master PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md)
-- [Data Core v1 PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/DATA_CORE_V1_PRD.md)
-- [Insight Copilot v1 PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/COPILOT_V1_PRD.md)
-- [Audience Engine v1 PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md)
-- [Action Orchestrator v1 PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md)
-- [Experiment Hub v1 PRD](/Users/jeremyz/.codex/worktrees/0ff9/KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md)
+- [KairyxAI v1 Master PRD](docs/KAIRYXAI_V1_MASTER_PRD.md)
+- [Data Core v1 PRD](docs/DATA_CORE_V1_PRD.md)
+- [Insight Copilot v1 PRD](docs/COPILOT_V1_PRD.md)
+- [Audience Engine v1 PRD](docs/AUDIENCE_ENGINE_V1_PRD.md)
+- [Action Orchestrator v1 PRD](docs/ACTION_ORCHESTRATOR_V1_PRD.md)
+- [Experiment Hub v1 PRD](docs/EXPERIMENT_HUB_V1_PRD.md)
 
 ## Core Modules
 
