@@ -25,6 +25,8 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 ## 2) v1 Core Modules (Modular PRD Architecture)
 
 > Note: the master PRD only keeps goals, boundaries, milestones, and launch gates. Each core module maintains its own sub-PRD.
+>
+> Cross-module production readiness for the shared SaaS operating model is tracked in `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`.
 
 ### 2.1 Data Core (Real-Time Event Layer)
 - Capabilities: event collection, cleaning and standardization, ID stitching, quality gates, replayability
@@ -45,6 +47,10 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 ### 2.5 Experiment Hub (Experiment Layer)
 - Capabilities: A/B + Holdout, metric attribution, experiment conclusions and recommendations
 - Sub PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+
+### 2.6 Multi-Tenant Production Readiness (Cross-Module Workstream)
+- Capabilities: OIDC auth, tenant governance, secret handling, runtime isolation, observability, runbooks, and production rollout gates
+- Supporting PRD: `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 
 ---
 
@@ -246,6 +252,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 - Module dependency relationships
 - Cross-module milestones
 - Overall launch gates (Go/No-Go)
+- Shared SaaS production-readiness direction and ownership
 
 ### Owned by the Sub PRDs
 - Detailed module scope (In/Out)
@@ -282,6 +289,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 ## 11) Document List
 - Master PRD (this document): `KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
+- Multi-tenant production-readiness PRD: `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 - Data Core sub-PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
 - Copilot sub-PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
 - Audience Engine sub-PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
@@ -317,16 +325,18 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 #### Gap-M2 Production Readiness
 - Current state:
-  - The product currently has only a minimal API-key guard and header-based mock governance
-  - There is still no real authentication, authorization, secret manager, multi-tenant boundary, environment isolation, or runbook
+  - The repository now includes the first production-shaped baseline for OIDC bearer auth, tenant membership governance, secret references, Cloud Run worker topology artifacts, and multi-tenant runbooks
+  - The remaining work is production cutover hardening: infrastructure rollout, alerting, staged validation, provider drills, and final enforcement of production-only startup rules
+  - Detailed sequencing and launch gates are owned by `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 - Ownership split:
-  - Master: authN / authZ / tenant model / deployment topology / monitoring / runbook
+  - Master: authN / authZ / tenant model / deployment topology / monitoring / runbook / rollout gates
   - Data Core: data and connector secrets / warehouse access boundary
   - Audience / Action / Experiment / Copilot: module-level RBAC, audit, and high-risk action boundaries
 - Exit criteria:
   - explicit tenant and operator boundaries
   - formal secret handling
   - isolated environments and operations runbooks
+  - production launch gates in `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md` pass in staging and pilot rollout
 
 #### Gap-M3 Fully Automated Closed-Loop Optimization
 - Current state:
@@ -342,6 +352,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
   - every recommendation is backed by real measurement evidence
 
 #### Gap-M4 Gap-Document Ownership Rules
+- Cross-module production readiness / rollout gates / auth / tenancy / secrets / runtime topology / runbooks: write into `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 - Data platform / ingestion / identity / SQL / schema / replay: write into `DATA_CORE_V1_PRD.md`
 - NL2Metric / explain / recommend / report / evidence: write into `COPILOT_V1_PRD.md`
 - Cohort lifecycle / refresh / activation / feedback: write into `AUDIENCE_ENGINE_V1_PRD.md`
@@ -357,8 +368,8 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
    - Complete critical operator flows for Data Core, Audience, Action, Experiment, and Copilot
    - Add module-level Playwright / E2E regression coverage
 2. `Production Readiness Baseline`
-   - Define authN / authZ, tenant boundaries, secret handling, environment isolation, and operations runbooks
-   - Ensure module-level audit, alerting, and access boundaries move beyond a mock/header contract
+   - Complete the remaining launch gates in `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
+   - Finish production alerting, staged rollout validation, and enforcement of non-demo runtime settings
 3. `Real Activation and Measurement Stabilization`
    - Establish stable provider contracts for delivery, callback, outcome, return, and conversion
    - Move the Audience, Experiment, and Copilot evidence loop onto real feedback instead of mixed simulation and partial manual handling
@@ -374,5 +385,5 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
    - Evolve the single-page console into a more stable module-oriented operator console with dedicated backend view models
    - Reduce frontend-side assembly of generic resources
 3. `Production-Grade Deployment Model`
-   - Complete stronger deployment topology, monitoring, alerting, tenant isolation, credential rotation, and runbooks
-   - Move the current single-tenant demo/control-plane shape toward a more operable production model
+   - Complete stronger monitoring, alerting, tenant isolation validation, credential rotation drills, and runbooks on the shared SaaS topology
+   - Remove any remaining production dependence on demo-only auth paths or API-process scheduling
