@@ -66,8 +66,21 @@ def test_root_serves_frontend_shell(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "window.location.origin" in resp.text
-    assert "/api/v1" in resp.text
+    assert "/static/operator-console.css" in resp.text
+    assert "/static/operator-console.js" in resp.text
+
+
+def test_root_serves_frontend_static_assets(client):
+    css_resp = client.get("/static/operator-console.css")
+    assert css_resp.status_code == 200
+    assert "text/css" in css_resp.headers["content-type"]
+    assert "--bg-color" in css_resp.text
+
+    js_resp = client.get("/static/operator-console.js")
+    assert js_resp.status_code == 200
+    assert "javascript" in js_resp.headers["content-type"]
+    assert "document.addEventListener('DOMContentLoaded'" in js_resp.text
+    assert "/api/v1" in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")

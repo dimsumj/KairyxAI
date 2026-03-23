@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse, JSONResponse
+from starlette.staticfiles import StaticFiles
 
 from app.api.routers import activation, audit, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, templates, workflows
 from app.application.imports import ImportService
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
     frontend_index = frontend_dir / "index.html"
+    frontend_static_dir = frontend_dir / "assets"
     configure_access_log_filters()
     app = FastAPI(title=settings.app_name)
     app.add_middleware(
@@ -137,6 +139,9 @@ def create_app() -> FastAPI:
     @app.get("/health/live")
     def root_health_live():
         return health.health_live()
+
+    if frontend_static_dir.exists():
+        app.mount("/static", StaticFiles(directory=frontend_static_dir), name="frontend-static")
 
     app.include_router(health.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
