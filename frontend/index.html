@@ -138,30 +138,32 @@
                 </div>
             </div>
             <div class="card">
-                <table>
-                    <div id="operator-hub-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
-                            <select id="items-per-page" style="padding: 0.5rem; border-radius: 4px;">
-                                <option value="25" selected>25</option>
-                                <option value="50">50</option>
-                                <option value="100">100</option>
-                            </select>
-                        </div>
+                <div id="operator-hub-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
+                        <select id="items-per-page" style="padding: 0.5rem; border-radius: 4px;">
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
                     </div>
-                    <thead>
-                        <tr>
-                            <th>User ID</th>
-                            <th>LTV</th>
-                            <th>Session Count</th>
-                            <th>Event Count</th>
-                            <th>Predicted Churn Risk</th>
-                            <th>Churn Reason</th>
-                            <th>Suggested Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="operator-hub-results"></tbody>
-                </table>
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User ID</th>
+                                <th>LTV</th>
+                                <th>Session Count</th>
+                                <th>Event Count</th>
+                                <th>Predicted Churn Risk</th>
+                                <th>Churn Reason</th>
+                                <th>Suggested Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="operator-hub-results"></tbody>
+                    </table>
+                </div>
                 <div id="pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
                     <!-- Pagination buttons will be injected here -->
                 </div>
@@ -276,17 +278,19 @@
                     <button id="action-history-refresh-btn">Refresh Audit Log</button>
                     <span id="action-history-status" class="subtle"></span>
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Action</th>
-                            <th>Status</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody id="action-history-results"></tbody>
-                </table>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Action</th>
+                                <th>Status</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="action-history-results"></tbody>
+                    </table>
+                </div>
                 <div id="action-history-pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
                     <!-- Pagination buttons will be injected here -->
                 </div>

@@ -15,7 +15,6 @@
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
             let activeModuleId = 'data-core';
             let activePageId = 'operator-hub';
-
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -1973,18 +1972,20 @@
                     let table = importListContainer.querySelector('table');
                     if (!table) {
                         importListContainer.innerHTML = `
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Import Name</th>
-                                        <th>Timestamp</th>
-                                        <th>Status</th>
-                                        <th>Expires In</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
+                            <div class="table-shell">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Import Name</th>
+                                            <th>Timestamp</th>
+                                            <th>Status</th>
+                                            <th>Expires In</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
                         `;
                         table = importListContainer.querySelector('table');
                     }
@@ -3825,5 +3826,3 @@
                 setTheme(this.checked);
             });
         });
-
-    

@@ -14,7 +14,6 @@
             --yellow: #ecc94b;
             --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
-
         body.dark-theme {
             --bg-color: #121212;
             --sidebar-bg: #1e1e1e;
@@ -408,12 +407,15 @@
             width: 100%;
             max-width: 100%;
             overflow-x: auto;
+            overflow-y: hidden;
         }
 
         table {
-            width: 100%;
+            width: max-content;
+            min-width: 100%;
             border-collapse: collapse;
             margin-top: 1rem;
+            table-layout: auto;
         }
 
         #service-status-list .service-item {
@@ -463,12 +465,15 @@
             padding: 0.75rem;
             border-bottom: 1px solid var(--border-color);
             vertical-align: top;
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            white-space: normal;
+            overflow-wrap: normal;
+            word-break: normal;
+            line-height: 1.45;
         }
 
         th {
             background-color: var(--bg-color);
+            white-space: nowrap;
         }
 
         #connector-list .card {
@@ -554,4 +559,3 @@
                 justify-content: flex-start;
             }
         }
-    
