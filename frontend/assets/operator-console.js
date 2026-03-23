@@ -464,7 +464,10 @@
                         clearBearerSession();
                         setAuthStatus('OIDC session expired.');
                     }
-                    throw new Error(payload.detail || payload.message || `Request failed (${response.status})`);
+                    const error = new Error(payload.detail || payload.message || `Request failed (${response.status})`);
+                    error.status = response.status;
+                    error.payload = payload;
+                    throw error;
                 }
                 return payload;
             }
@@ -629,6 +632,40 @@
                 ).trim();
             }
 
+            function getImportFailureStage(job) {
+                return String(
+                    (((job.progress || {}).details || {}).failure_stage)
+                    || (((job.progress || {}).details || {}).phase)
+                    || ''
+                ).trim();
+            }
+
+            function getImportFailureTooltip(job) {
+                const reason = getImportFailureReason(job);
+                if (!reason) {
+                    return '';
+                }
+                const details = ((job.progress || {}).details || {});
+                const checkpointState = details.checkpoint_state || {};
+                const lines = [`<strong>Reason:</strong> ${escapeHtml(reason)}`];
+                const stage = getImportFailureStage(job);
+                if (stage) {
+                    lines.push(`<strong>Phase:</strong> ${escapeHtml(stage.replace(/_/g, ' '))}`);
+                }
+                const processed = Number(checkpointState.processed || 0);
+                const failed = Number(checkpointState.failed || 0);
+                const pending = Number(checkpointState.pending || 0);
+                if (processed || failed || pending) {
+                    lines.push(`<strong>Checkpoints:</strong> processed ${processed}, failed ${failed}, pending ${pending}`);
+                }
+                const processedManifests = Number(details.processed_manifests || 0);
+                const totalManifests = Number(details.total_manifests || 0);
+                if (totalManifests > 0) {
+                    lines.push(`<strong>Processed manifests:</strong> ${processedManifests} / ${totalManifests}`);
+                }
+                return lines.join('<br>');
+            }
+
             function getImportStatusClass(job) {
                 if (job.status === 'Ready to Use') return 'status-ok';
                 if (job.status === 'Stopped') return 'status-neutral';
@@ -638,13 +675,13 @@
 
             function renderImportStatus(job, statusClass) {
                 const status = escapeHtml(job.status || 'Processing');
-                const reason = getImportFailureReason(job);
+                const tooltip = getImportFailureTooltip(job);
                 const progressText = getImportProgressText(job);
                 const statusLabel = progressText
                     ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
-                const statusText = reason
-                    ? `<span class="status-label" title="${escapeHtml(reason)}">${statusLabel}<span class="status-help" title="${escapeHtml(reason)}" aria-label="Failure reason">?</span></span>`
+                const statusText = tooltip
+                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="Show import failure reason">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
                     : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
@@ -794,6 +831,7 @@
                     },
                 });
                 if (backendMode === 'mock') {
+                    setInlineStatus(importListStatus, `Created import ${created.id}. Running locally...`);
                     queueMockImportRun(created.id);
                 }
                 refreshImportsState().catch((error) => {
@@ -804,8 +842,12 @@
 
             async function queueMockImportRun(jobId) {
                 try {
-                    await apiRequest(`/imports/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
+                    const job = await apiRequest(`/imports/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
+                    setInlineStatus(importListStatus, `Import ${job.name || jobId} completed.`);
                 } catch (error) {
+                    const failedJob = error && error.payload && error.payload.job ? normalizeImportJob(error.payload.job) : null;
+                    const failureReason = (failedJob && getImportFailureReason(failedJob)) || error.message || 'Import failed.';
+                    setInlineStatus(importListStatus, `Import ${jobId} failed: ${failureReason}`, true);
                     console.error(`Import job ${jobId} failed:`, error);
                 } finally {
                     try {
@@ -2018,6 +2060,7 @@
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
             const importListContainer = document.getElementById('import-list-container');
+            const importListStatus = document.getElementById('import-list-status');
             const importDetailSelect = document.getElementById('import-detail-select');
             const importDetailStatus = document.getElementById('import-detail-status');
             const importDetailOutput = document.getElementById('import-detail-output');
