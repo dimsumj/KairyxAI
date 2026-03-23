@@ -1723,8 +1723,17 @@
                         return '';
                     };
 
+                    const getRiskLabel = (player) => {
+                        const churnState = String(player.churn_state || '').toLowerCase();
+                        if (churnState === 'churned') {
+                            return 'Churned';
+                        }
+                        return String(player.predicted_churn_risk || '');
+                    };
+
                     paginatedItems.forEach(p => {
-                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${p.predicted_churn_risk}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
+                        const riskLabel = getRiskLabel(p);
+                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${riskLabel}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
                     });
                 } else {
                      operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center;">${emptyMessage}</td></tr>`;
