@@ -8,13 +8,20 @@
             const actorRoleSelect = document.getElementById('actor-role-select');
             const actorIdInput = document.getElementById('actor-id-input');
             const tenantIdInput = document.getElementById('tenant-id-input');
+            const authStatusText = document.getElementById('auth-status-text');
+            const oidcLoginBtn = document.getElementById('oidc-login-btn');
+            const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
             const apiKeyInput = document.getElementById('api-key-input');
             const ACTOR_ROLE_STORAGE_KEY = 'kairyx.actorRole';
             const ACTOR_ID_STORAGE_KEY = 'kairyx.actorId';
             const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
+            const ACCESS_TOKEN_STORAGE_KEY = 'kairyx.accessToken';
+            const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
             let activeModuleId = 'data-core';
             let activePageId = 'operator-hub';
+            let oidcConfig = null;
+            let accessToken = '';
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -86,6 +93,14 @@
             actorIdInput.value = storedActorContext.actorId;
             tenantIdInput.value = storedActorContext.tenantId;
             apiKeyInput.value = storedActorContext.apiKey;
+            try {
+                accessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || '';
+            } catch (error) {
+                accessToken = '';
+            }
+            if (authStatusText) {
+                authStatusText.textContent = accessToken ? 'Validating OIDC session…' : 'Legacy local session';
+            }
 
             actorRoleSelect.addEventListener('change', () => {
                 if (!actorIdInput.value.trim() || actorIdInput.value.trim() === readStoredActorContext().role) {
@@ -104,6 +119,9 @@
             });
             tenantIdInput.addEventListener('change', () => {
                 persistActorContext();
+                if (accessToken) {
+                    hydrateAuthSession().catch((error) => setAuthStatus(error.message || 'Tenant switch failed.'));
+                }
                 if (activePageId) {
                     activatePage(activePageId);
                 }
@@ -244,13 +262,183 @@
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
 
+            function setAuthStatus(message) {
+                if (authStatusText) {
+                    authStatusText.textContent = message;
+                }
+            }
+
+            function persistAccessToken(token) {
+                accessToken = token || '';
+                try {
+                    if (accessToken) {
+                        localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+                    } else {
+                        localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+                    }
+                } catch (error) {
+                    console.warn('Unable to persist access token:', error);
+                }
+            }
+
+            function clearBearerSession() {
+                persistAccessToken('');
+                try {
+                    localStorage.removeItem(OIDC_CODE_VERIFIER_STORAGE_KEY);
+                } catch (error) {
+                    console.warn('Unable to clear PKCE verifier:', error);
+                }
+                setAuthStatus('Legacy local session');
+            }
+
+            function base64UrlEncode(buffer) {
+                const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+                let binary = '';
+                for (let index = 0; index < bytes.byteLength; index += 1) {
+                    binary += String.fromCharCode(bytes[index]);
+                }
+                return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+            }
+
+            async function sha256Digest(value) {
+                const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+                return base64UrlEncode(digest);
+            }
+
+            function randomVerifier() {
+                const bytes = new Uint8Array(32);
+                window.crypto.getRandomValues(bytes);
+                return base64UrlEncode(bytes);
+            }
+
+            function redirectUri() {
+                return `${window.location.origin}${window.location.pathname}`;
+            }
+
+            async function loadOidcConfig() {
+                try {
+                    const response = await fetch(`${apiBaseUrl}/auth/oidc-config`);
+                    oidcConfig = response.ok ? await response.json() : null;
+                } catch (error) {
+                    oidcConfig = null;
+                }
+                return oidcConfig;
+            }
+
+            async function exchangeAuthorizationCode(code, verifier) {
+                if (!oidcConfig || !oidcConfig.token_url) {
+                    throw new Error('OIDC token endpoint is not configured.');
+                }
+                const form = new URLSearchParams({
+                    grant_type: 'authorization_code',
+                    code,
+                    client_id: oidcConfig.client_id || '',
+                    code_verifier: verifier,
+                    redirect_uri: redirectUri(),
+                });
+                if (oidcConfig.audience) {
+                    form.set('audience', oidcConfig.audience);
+                }
+                const response = await fetch(oidcConfig.token_url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: form.toString(),
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok || !payload.access_token) {
+                    throw new Error(payload.error_description || payload.detail || 'OIDC code exchange failed.');
+                }
+                persistAccessToken(payload.access_token);
+            }
+
+            async function handleOidcRedirect() {
+                const params = new URLSearchParams(window.location.search);
+                const code = params.get('code');
+                if (!code) {
+                    return;
+                }
+                let verifier = '';
+                try {
+                    verifier = localStorage.getItem(OIDC_CODE_VERIFIER_STORAGE_KEY) || '';
+                } catch (error) {
+                    verifier = '';
+                }
+                if (!verifier) {
+                    setAuthStatus('OIDC callback is missing the PKCE verifier.');
+                    return;
+                }
+                await exchangeAuthorizationCode(code, verifier);
+                try {
+                    localStorage.removeItem(OIDC_CODE_VERIFIER_STORAGE_KEY);
+                } catch (error) {
+                    console.warn('Unable to clear PKCE verifier:', error);
+                }
+                window.history.replaceState({}, document.title, redirectUri());
+            }
+
+            async function hydrateAuthSession() {
+                if (!accessToken) {
+                    setAuthStatus(oidcConfig && oidcConfig.authorize_url ? 'OIDC available. Login required.' : 'Legacy local session');
+                    return;
+                }
+                const tenantId = (tenantIdInput.value || 'default').trim() || 'default';
+                const response = await fetch(`${apiBaseUrl}/auth/me`, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'X-Kairyx-Tenant': tenantId,
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    clearBearerSession();
+                    throw new Error(payload.detail || 'OIDC session validation failed.');
+                }
+                actorIdInput.value = payload.actor_id || actorIdInput.value;
+                actorRoleSelect.value = payload.actor_role || actorRoleSelect.value;
+                tenantIdInput.value = payload.tenant_id || tenantId;
+                persistActorContext();
+                setAuthStatus(`OIDC ${payload.actor_id || 'user'} @ ${tenantIdInput.value}`);
+            }
+
+            async function startOidcLogin() {
+                await loadOidcConfig();
+                if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
+                    setAuthStatus('OIDC is not configured on the backend.');
+                    return;
+                }
+                const verifier = randomVerifier();
+                const challenge = await sha256Digest(verifier);
+                try {
+                    localStorage.setItem(OIDC_CODE_VERIFIER_STORAGE_KEY, verifier);
+                } catch (error) {
+                    console.warn('Unable to persist PKCE verifier:', error);
+                }
+                const params = new URLSearchParams({
+                    response_type: 'code',
+                    client_id: oidcConfig.client_id,
+                    redirect_uri: redirectUri(),
+                    code_challenge: challenge,
+                    code_challenge_method: 'S256',
+                    scope: 'openid profile email',
+                });
+                if (oidcConfig.audience) {
+                    params.set('audience', oidcConfig.audience);
+                }
+                window.location.assign(`${oidcConfig.authorize_url}?${params.toString()}`);
+            }
+
             function buildApiHeaders(includeJsonContentType = false) {
-                const headers = {
-                    'x-actor-role': actorRoleSelect.value || 'admin',
-                    'x-actor-id': (actorIdInput.value || actorRoleSelect.value || 'admin').trim(),
-                    'x-tenant-id': (tenantIdInput.value || 'default').trim() || 'default',
-                };
-                if ((apiKeyInput.value || '').trim()) {
+                const tenantId = (tenantIdInput.value || 'default').trim() || 'default';
+                const headers = {};
+                if (accessToken) {
+                    headers.Authorization = `Bearer ${accessToken}`;
+                    headers['X-Kairyx-Tenant'] = tenantId;
+                } else {
+                    headers['x-actor-role'] = actorRoleSelect.value || 'admin';
+                    headers['x-actor-id'] = (actorIdInput.value || actorRoleSelect.value || 'admin').trim();
+                    headers['x-tenant-id'] = tenantId;
+                }
+                if (!accessToken && (apiKeyInput.value || '').trim()) {
                     headers['x-api-key'] = apiKeyInput.value.trim();
                 }
                 if (includeJsonContentType) {
@@ -272,10 +460,30 @@
                 }
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
+                    if (response.status === 401 && accessToken) {
+                        clearBearerSession();
+                        setAuthStatus('OIDC session expired.');
+                    }
                     throw new Error(payload.detail || payload.message || `Request failed (${response.status})`);
                 }
                 return payload;
             }
+
+            oidcLoginBtn.addEventListener('click', async () => {
+                try {
+                    await startOidcLogin();
+                } catch (error) {
+                    setAuthStatus(error.message || 'OIDC login failed.');
+                }
+            });
+
+            oidcLogoutBtn.addEventListener('click', () => {
+                const logoutUrl = oidcConfig && oidcConfig.logout_url;
+                clearBearerSession();
+                if (logoutUrl) {
+                    window.location.assign(logoutUrl);
+                }
+            });
 
             async function fetchHealthLiveState() {
                 const controller = new AbortController();
@@ -3842,10 +4050,22 @@
                 }
             }
 
+            async function initializeAuthSession() {
+                await loadOidcConfig();
+                try {
+                    await handleOidcRedirect();
+                    await hydrateAuthSession();
+                } catch (error) {
+                    setAuthStatus(error.message || 'OIDC session initialization failed.');
+                }
+            }
+
             // Check status on page load and then every 30 seconds.
-            checkBackendStatus();
-            setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
-            activateModule('data-core');
+            initializeAuthSession().finally(() => {
+                checkBackendStatus();
+                setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
+                activateModule('data-core');
+            });
 
             // Theme Toggle Logic
             const themeToggle = document.getElementById('theme-switch-checkbox');

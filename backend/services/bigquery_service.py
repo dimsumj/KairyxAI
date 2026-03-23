@@ -12,6 +12,8 @@ from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+from app.core.request_context import get_request_context
+
 INT64_MAX = 2**63 - 1
 INT64_MIN = -(2**63)
 
@@ -47,9 +49,11 @@ def _sanitize_for_storage(data: Any) -> Any:
 
 def _shared_service_cache_key() -> tuple[Any, ...]:
     mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+    tenant_scope = _tenant_scope_key()
     if mode == "gcp":
         return (
             mode,
+            tenant_scope,
             os.getenv("BIGQUERY_PROJECT_ID", ""),
             os.getenv("BIGQUERY_DATASET_ID", "kairyx"),
             os.getenv("BIGQUERY_TABLE_NAME", "processed_events"),
@@ -61,8 +65,16 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
         )
     return (
         mode,
+        tenant_scope,
         os.getcwd(),
     )
+
+
+def _tenant_scope_key() -> str:
+    context = get_request_context()
+    raw_value = context.tenant_id if context is not None else os.getenv("BOOTSTRAP_TENANT_ID", "default")
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_value or "default").strip()).strip("_").lower()
+    return normalized or "default"
 
 
 @lru_cache(maxsize=8)
@@ -112,7 +124,9 @@ class BigQueryService:
         if not project_id:
             raise ValueError("BIGQUERY_PROJECT_ID must be set for DATA_BACKEND_MODE=gcp.")
 
-        dataset_id = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        tenant_scope = _tenant_scope_key()
+        dataset_base = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}")
         table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
         self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
         self._curated_table_id = os.getenv(
@@ -136,11 +150,12 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
-        self._cache_path = ".cache/bigquery_table.parquet"
-        self._curated_cache_path = ".cache/events_curated.parquet"
-        self._player_latest_state_cache_path = ".cache/player_latest_state.parquet"
-        self._dead_letter_cache_path = ".cache/pipeline_dead_letters.parquet"
-        self._prediction_results_cache_path = ".cache/prediction_results.parquet"
+        cache_root = Path(".cache") / _tenant_scope_key()
+        self._cache_path = str(cache_root / "bigquery_table.parquet")
+        self._curated_cache_path = str(cache_root / "events_curated.parquet")
+        self._player_latest_state_cache_path = str(cache_root / "player_latest_state.parquet")
+        self._dead_letter_cache_path = str(cache_root / "pipeline_dead_letters.parquet")
+        self._prediction_results_cache_path = str(cache_root / "prediction_results.parquet")
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)

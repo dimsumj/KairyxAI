@@ -20,7 +20,7 @@ class ControlLoopService:
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
         self.health = HealthMonitorService(repository, self.bigquery_service)
         self.workflows = WorkflowService(repository)
-        self.copilot = CopilotService(repository, self.bigquery_service)
+        self.copilot = CopilotService(repository, settings, self.bigquery_service)
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
         self.experiments = ExperimentConfigService(repository)
 

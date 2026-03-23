@@ -533,6 +533,10 @@ class CohortService:
         )
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
+        payload.setdefault("tenant_id", record.get("tenant_id"))
+        payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
+        payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
+        payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
         return payload
 
     @staticmethod

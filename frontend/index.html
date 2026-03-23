@@ -41,6 +41,14 @@
                 <input type="text" id="tenant-id-input" value="default">
             </div>
             <div class="form-group">
+                <label for="auth-status-text">Auth Session</label>
+                <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Legacy local session</div>
+            </div>
+            <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button type="button" id="oidc-login-btn">OIDC Login</button>
+                <button type="button" id="oidc-logout-btn">Logout</button>
+            </div>
+            <div class="form-group">
                 <label for="api-key-input">API Key</label>
                 <input type="password" id="api-key-input" placeholder="Optional">
             </div>

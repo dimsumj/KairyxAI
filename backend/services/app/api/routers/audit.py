@@ -32,6 +32,7 @@ def list_audit_actions(
         actor_role=actor_role,
         tenant_id=tenant_id,
         high_risk_only=high_risk_only,
+        include_all_tenants=context.platform_admin,
     )
     return build_audited_response(
         service.repository,

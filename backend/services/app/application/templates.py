@@ -8,6 +8,7 @@ from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
 from app.application.workflows import WorkflowService
+from app.core.settings import get_settings
 
 
 class ScenarioTemplateService:
@@ -16,7 +17,7 @@ class ScenarioTemplateService:
         self.cohorts = CohortService(repository)
         self.experiments = ExperimentConfigService(repository)
         self.workflows = WorkflowService(repository)
-        self.copilot = CopilotService(repository)
+        self.copilot = CopilotService(repository, get_settings())
 
     def list_templates(self) -> Dict[str, Any]:
         return {"items": [self._template_summary(item) for item in self._templates()]}

@@ -1,0 +1,19 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: import-worker
+spec:
+  template:
+    spec:
+      serviceAccountName: import-worker
+      containers:
+        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/import-worker:latest
+          command: ["uvicorn"]
+          args: ["workers.import_worker_app:app", "--host", "0.0.0.0", "--port", "8080"]
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: SERVICE_ROLE
+              value: import-worker
+          ports:
+            - containerPort: 8080

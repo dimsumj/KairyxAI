@@ -88,6 +88,8 @@ class SendGridEmailAdapter(ChannelAdapter):
         to_email = str(player_id)
         subject = action.get("subject", "A message from your game")
         body = action.get("content", "")
+        api_key = str(action.get("api_key") or self.api_key or "").strip()
+        from_email = str(action.get("from_email") or self.from_email or "noreply@example.com").strip() or "noreply@example.com"
 
         if "@" not in to_email:
             return self._wrap_result(
@@ -101,7 +103,7 @@ class SendGridEmailAdapter(ChannelAdapter):
                 provider="sendgrid",
                 provider_mode="live",
             )
-        if not self.api_key:
+        if not api_key:
             fallback = EmailSimulatorAdapter().send(player_id, action, action_id)
             return self._wrap_result(
                 fallback,
@@ -114,14 +116,14 @@ class SendGridEmailAdapter(ChannelAdapter):
 
         payload = {
             "personalizations": [{"to": [{"email": to_email}]}],
-            "from": {"email": self.from_email},
+            "from": {"email": from_email},
             "subject": subject,
             "content": [{"type": "text/plain", "value": body}],
         }
         try:
             resp = requests.post(
                 "https://api.sendgrid.com/v3/mail/send",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
                 timeout=15,
             )
@@ -172,7 +174,9 @@ class BrazeAdapter(ChannelAdapter):
 
     def send(self, player_id: Any, action: Dict[str, Any], action_id: str) -> Dict[str, Any]:
         msg = action.get("content", "")
-        if not self.api_key or not self.rest_endpoint:
+        api_key = str(action.get("api_key") or self.api_key or "").strip()
+        rest_endpoint = str(action.get("rest_endpoint") or self.rest_endpoint or "").rstrip("/")
+        if not api_key or not rest_endpoint:
             fallback = PushSimulatorAdapter().send(player_id, {"content": msg}, action_id)
             return self._wrap_result(
                 fallback,
@@ -183,7 +187,7 @@ class BrazeAdapter(ChannelAdapter):
                 simulated=True,
             )
 
-        url = f"{self.rest_endpoint}/users/track"
+        url = f"{rest_endpoint}/users/track"
         payload = {
             "attributes": [],
             "events": [
@@ -198,7 +202,7 @@ class BrazeAdapter(ChannelAdapter):
         try:
             resp = requests.post(
                 url,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
                 timeout=15,
             )
@@ -245,6 +249,7 @@ class WebhookAdapter(ChannelAdapter):
 
     def send(self, player_id: Any, action: Dict[str, Any], action_id: str) -> Dict[str, Any]:
         webhook_url = str(action.get("webhook_url") or os.getenv("ENGAGEMENT_WEBHOOK_URL") or "").strip()
+        webhook_token = str(action.get("webhook_token") or "").strip()
         if not webhook_url:
             return self._wrap_result(
                 {
@@ -265,9 +270,12 @@ class WebhookAdapter(ChannelAdapter):
             "metadata": dict(action.get("metadata") or {}),
         }
         try:
+            headers = {"Content-Type": "application/json"}
+            if webhook_token:
+                headers["Authorization"] = f"Bearer {webhook_token}"
             resp = requests.post(
                 webhook_url,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 json=body,
                 timeout=15,
             )

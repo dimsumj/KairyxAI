@@ -1,0 +1,21 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: operator-api
+spec:
+  template:
+    spec:
+      serviceAccountName: operator-api
+      containers:
+        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/operator-api:latest
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: SERVICE_ROLE
+              value: operator-api
+            - name: LEGACY_HEADER_AUTH_ENABLED
+              value: "false"
+            - name: SCHEDULER_ENABLED
+              value: "false"
+          ports:
+            - containerPort: 8080

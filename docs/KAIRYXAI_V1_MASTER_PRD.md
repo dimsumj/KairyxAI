@@ -13,9 +13,9 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 - Founders or early-stage operations owners
 
 ## 1.2) Current-Version Non-Goals (Inherited from Current-State Scope)
-- No multi-tenant production SaaS delivery
-- No full authentication stack replacing enterprise IAM
-- No general-purpose secret-management platform beyond what is required for productization
+- No on-prem control-plane rewrite; shared SaaS multi-tenancy on GCP is the primary operating model for this phase
+- No custom enterprise IAM product beyond OIDC federation and tenant-membership governance in the control plane
+- No general-purpose secret-management platform beyond product-integrated secret references and Google Secret Manager resolution
 - No real-time streaming decision engine
 - No fully automated high-risk closed-loop optimization
 - No frontend stack rewrite as a goal for the current phase
@@ -221,8 +221,10 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
   - `prediction-worker`: aggregate-table prediction execution and result persistence
   - `export-worker`: provider export execution with retry-aware job state
   - `dataflow`: manifest-driven normalization into standardized / unified / curated tables
-- The target operating model is fixed as `single-tenant + GCP-native + batch/nearline`
+- The target operating model is fixed as `shared multi-tenant SaaS + GCP-native + batch/nearline`
 - The system of record for control-plane metadata is `SQLAlchemy + Alembic`; the production default target is `Postgres`, and local development falls back to `SQLite`
+- Operator traffic uses `Authorization: Bearer <OIDC JWT>` plus `X-Kairyx-Tenant`; legacy header auth remains local/demo-only and is disabled in production
+- Provider credentials, webhook signing secrets, and connector secrets are persisted as secret references and resolved through the platform secret layer
 - Long-running resources must follow the standard job contract: `id / type / status / created_at / updated_at / progress / error / links`
 - Large result sets are paginated by default and cannot rely on unbounded list responses
 - Persisted control-plane entities must include at least:

@@ -4,6 +4,8 @@ import os
 import json
 from typing import List, Dict, Any
 
+from app.core.request_context import get_request_context
+
 
 class GcsService:
     """
@@ -38,9 +40,22 @@ class GcsService:
         self._bucket = self._client.bucket(self.bucket_name)
 
     def _init_mock_backend(self):
-        self._bucket_path = os.path.join(".cache", "raw", self.bucket_name)
+        self._bucket_path = os.path.join(".cache", "raw", self._tenant_scope_key(), self.bucket_name)
         self._legacy_bucket_path = os.path.join(".gcs_bucket", self.bucket_name)
         os.makedirs(self._bucket_path, exist_ok=True)
+
+    def _tenant_scope_key(self) -> str:
+        context = get_request_context()
+        raw_value = context.tenant_id if context is not None else os.getenv("BOOTSTRAP_TENANT_ID", "default")
+        normalized = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in str(raw_value or "default").strip())
+        return normalized or "default"
+
+    def _tenant_blob_name(self, blob_name: str) -> str:
+        prefix = f"tenants/{self._tenant_scope_key()}"
+        normalized = str(blob_name).lstrip("/")
+        if normalized.startswith(prefix):
+            return normalized
+        return f"{prefix}/{normalized}"
 
     def _encode_raw_events(self, events: List[Dict[str, Any]]) -> str:
         return "\n".join(json.dumps(event) for event in events)
@@ -77,6 +92,7 @@ class GcsService:
             return ""
 
         payload = self._encode_raw_events(events)
+        destination_blob_name = self._tenant_blob_name(destination_blob_name)
         if self.mode == "gcp":
             blob = self._bucket.blob(destination_blob_name)
             blob.upload_from_string(payload, content_type="application/x-ndjson")
@@ -94,6 +110,7 @@ class GcsService:
         return gcs_path
 
     def download_raw_events(self, blob_name: str) -> List[Dict[str, Any]]:
+        blob_name = self._tenant_blob_name(blob_name)
         if self.mode == "gcp":
             blob = self._bucket.blob(blob_name)
             if not blob.exists():
@@ -109,8 +126,9 @@ class GcsService:
         Deletes all blobs associated with a specific job identifier.
         """
         job_fragment = f"/{job_identifier}/"
+        tenant_prefix = self._tenant_blob_name("raw_events/")
         if self.mode == "gcp":
-            for blob in self._client.list_blobs(self.bucket_name, prefix="raw_events/"):
+            for blob in self._client.list_blobs(self.bucket_name, prefix=tenant_prefix):
                 if job_fragment not in f"/{blob.name}":
                     continue
                 blob.delete()

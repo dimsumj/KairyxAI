@@ -5,6 +5,8 @@ from typing import Any, Dict, Iterable, Tuple
 
 from fastapi import HTTPException, Request
 
+from app.core.request_context import RequestContext, get_request_context
+
 
 VALID_ROLES = {"admin", "analyst", "operator"}
 PII_FIELDS = {"email", "user_email", "phone", "phone_hash", "email_hash", "webhook_token"}
@@ -52,6 +54,8 @@ ROLE_PERMISSIONS = {
         "predictions.models.read",
     },
     "operator": {
+        "provider_connections.read",
+        "provider_connections.write",
         "exports.create",
         "exports.run",
         "exports.retry",
@@ -61,6 +65,7 @@ ROLE_PERMISSIONS = {
         "mappings.rollback",
         "imports.resume",
         "imports.replay",
+        "imports.delete",
         "imports.quality.read",
         "imports.identity_links.read",
         "imports.conflicts.read",
@@ -75,6 +80,7 @@ ROLE_PERMISSIONS = {
         "cohorts.pause",
         "cohorts.archive",
         "cohorts.restore",
+        "cohorts.permanent_delete",
         "cohorts.update",
         "cohorts.overview.read",
         "cohorts.metrics.read",
@@ -125,23 +131,56 @@ ROLE_PERMISSIONS = {
 class GovernanceContext:
     actor_role: str
     actor_id: str
-    tenant_id: str
+    tenant_id: str | None
+    correlation_id: str = ""
+    platform_admin: bool = False
+    auth_mode: str = "system"
 
 
 def get_governance_context(request: Request) -> GovernanceContext:
+    current = getattr(request.state, "governance_context", None)
+    if isinstance(current, GovernanceContext):
+        return current
+
+    request_context = get_request_context()
+    if request_context is not None:
+        actor_role = str(request_context.actor_role or "admin").strip().lower()
+        if actor_role not in VALID_ROLES:
+            raise HTTPException(status_code=400, detail=f"Unsupported actor_role '{actor_role}'.")
+        context = GovernanceContext(
+            actor_role=actor_role,
+            actor_id=request_context.actor_id,
+            tenant_id=request_context.tenant_id,
+            correlation_id=request_context.correlation_id,
+            platform_admin=bool(request_context.platform_admin),
+            auth_mode=request_context.auth_mode,
+        )
+        request.state.governance_context = context
+        return context
+
     actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower()
     actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
     tenant_id = str(request.headers.get("x-tenant-id") or "default").strip() or "default"
     if actor_role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Unsupported actor_role '{actor_role}'.")
-    return GovernanceContext(actor_role=actor_role, actor_id=actor_id, tenant_id=tenant_id)
+    context = GovernanceContext(actor_role=actor_role, actor_id=actor_id, tenant_id=tenant_id, auth_mode="legacy_headers")
+    request.state.governance_context = context
+    return context
 
 
 def ensure_permission(context: GovernanceContext, permission: str) -> None:
+    if context.platform_admin:
+        return
     allowed = ROLE_PERMISSIONS.get(context.actor_role, set())
     if "*" in allowed or permission in allowed:
         return
     raise HTTPException(status_code=403, detail=f"actor_role '{context.actor_role}' is not allowed to perform '{permission}'.")
+
+
+def ensure_platform_admin(context: GovernanceContext) -> None:
+    if context.platform_admin:
+        return
+    raise HTTPException(status_code=403, detail="Platform admin access is required.")
 
 
 def record_audit(
@@ -161,6 +200,9 @@ def record_audit(
             "actor_role": context.actor_role,
             "actor_id": context.actor_id,
             "tenant_id": context.tenant_id,
+            "correlation_id": context.correlation_id,
+            "platform_admin": context.platform_admin,
+            "auth_mode": context.auth_mode,
             "payload": payload,
         },
     )
@@ -230,12 +272,14 @@ def build_audited_response(
             **masked_payload,
             "audit_id": audit_id,
             "tenant_id": context.tenant_id,
+            "correlation_id": context.correlation_id,
             "masked_fields": masked_fields,
         }
     return {
         "data": masked_payload,
         "audit_id": audit_id,
         "tenant_id": context.tenant_id,
+        "correlation_id": context.correlation_id,
         "masked_fields": masked_fields,
     }
 

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from app.application.imports import ImportService
 from app.core.db import init_db, session_scope
+from app.core.request_context import RequestContext, request_context
 from app.core.settings import get_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 
@@ -17,9 +19,23 @@ def main(argv: list[str] | None = None) -> int:
     init_db()
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
-        service = ImportService(repository, get_settings())
-        result = service.run_job(args.job_id)
-        print(json.dumps(result, indent=2))
+        job = repository.get_import_job(args.job_id, include_all_tenants=True)
+    tenant_id = str((job or {}).get("tenant_id") or os.getenv("BOOTSTRAP_TENANT_ID", "default"))
+    with request_context(
+        RequestContext(
+            actor_id="worker:import",
+            actor_role="admin",
+            tenant_id=tenant_id,
+            correlation_id=f"worker-import-{args.job_id}",
+            platform_admin=True,
+            auth_mode="worker",
+        )
+    ):
+        with session_scope() as session:
+            repository = SqlAlchemyControlPlaneRepository(session)
+            service = ImportService(repository, get_settings())
+            result = service.run_job(args.job_id)
+            print(json.dumps(result, indent=2))
     return 0
 
 

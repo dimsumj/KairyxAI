@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.application.mappings import MappingService
+from app.application.secret_refs import materialize_secret_refs
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.runtime import is_shutdown_requested
 from app.domain.jobs import CheckpointStatus, JobStatus
@@ -567,17 +568,27 @@ class ImportService:
         return removed_count
 
     def create_job(self, source_name: str, start_date: str, end_date: str, page_size: int | None = None) -> Dict[str, Any]:
+        active_jobs = [
+            job
+            for job in self.repository.list_import_jobs()
+            if str(job.get("status") or "").lower() not in {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.STOPPED.value, JobStatus.CANCELLED.value}
+        ]
+        if len(active_jobs) >= int(self.settings.max_import_jobs_per_tenant):
+            raise ValueError(f"Import job limit reached for tenant; max active jobs is {self.settings.max_import_jobs_per_tenant}.")
         connector = self.repository.get_connector(source_name)
         if connector is None:
             raise KeyError(source_name)
+        connector_name = str(connector.get("name") or source_name)
+        connector_id = str(connector.get("connector_id") or source_name)
         job = self.repository.create_import_job(
             {
                 "id": f"imp_{uuid.uuid4().hex[:20]}",
-                "source_name": source_name,
+                "source_name": connector_name,
                 "status": JobStatus.QUEUED.value,
                 "spec": {
-                    "source_name": source_name,
-                    "display_name": f"{source_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    "source_name": connector_name,
+                    "connector_id": connector_id,
+                    "display_name": f"{connector_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     "connector_type": connector["type"],
                     "start_date": start_date,
                     "end_date": end_date,
@@ -589,7 +600,7 @@ class ImportService:
                     "pct": 0.0,
                     "details": {
                         "canonical_aliases": self._canonical_aliases(),
-                        "mapping_coverage": self._mapping_coverage(source_name),
+                        "mapping_coverage": self._mapping_coverage(connector_name),
                         "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
                     },
                 },
@@ -1034,9 +1045,9 @@ class ImportService:
         if status not in {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}:
             raise ValueError("Only awaiting_mapping, stopped, or failed jobs can be resumed.")
 
-        connector_record = self.repository.get_connector(job["spec"]["source_name"])
+        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
         if connector_record is None:
-            raise KeyError(job["spec"]["source_name"])
+            raise KeyError(job["spec"].get("connector_id") or job["spec"]["source_name"])
 
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
         if mapping_coverage < 95.0:
@@ -1155,12 +1166,12 @@ class ImportService:
         if current_status == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id)
 
-        connector_record = self.repository.get_connector(job["spec"]["source_name"])
+        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
         if connector_record is None:
             raise MissingDependencyError(
                 "connector",
-                str(job["spec"]["source_name"]),
-                detail=f"Connector '{job['spec']['source_name']}' required by import job '{job_id}' is missing.",
+                str(job["spec"].get("connector_id") or job["spec"]["source_name"]),
+                detail=f"Connector '{job['spec'].get('connector_id') or job['spec']['source_name']}' required by import job '{job_id}' is missing.",
             )
 
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
@@ -1202,7 +1213,7 @@ class ImportService:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
-            connector_config = dict(connector_record["config"] or {})
+            connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
             connector_config["field_mapping"] = MappingService(self.repository).get_effective_mapping(
                 connector_record["name"],
                 job_id=job_id,
@@ -1211,7 +1222,7 @@ class ImportService:
                 gcs_service=gcs_service,
                 connector_config=connector_config,
                 connector_type=connector_record["type"],
-                source_config_id=connector_record["name"],
+                source_config_id=connector_record.get("connector_id") or connector_record["name"],
                 pubsub_service=raw_pubsub,
             )
             ingestion_service.local_shard_event_count = page_size

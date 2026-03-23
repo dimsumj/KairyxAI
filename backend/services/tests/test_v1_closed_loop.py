@@ -1258,7 +1258,7 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     assert archived.status_code == 423
 
     denied_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "operator"})
-    assert denied_delete.status_code == 403
+    assert denied_delete.status_code == 423
 
     locked_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
     assert locked_delete.status_code == 423

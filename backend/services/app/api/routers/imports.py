@@ -12,7 +12,8 @@ from app.core.deps import get_import_service
 
 
 class ImportJobCreateRequest(BaseModel):
-    source_name: str
+    source_name: str | None = None
+    connector_id: str | None = None
     start_date: str
     end_date: str
     page_size: int | None = None
@@ -44,10 +45,15 @@ def list_imports(service: ImportService = Depends(get_import_service)):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_import(request: ImportJobCreateRequest, service: ImportService = Depends(get_import_service)):
+    source_ref = request.connector_id or request.source_name
+    if not source_ref:
+        raise HTTPException(status_code=409, detail="source_name or connector_id is required.")
     try:
-        job = service.create_job(request.source_name, request.start_date, request.end_date, request.page_size)
+        job = service.create_job(source_ref, request.start_date, request.end_date, request.page_size)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Connector '{request.source_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"Connector '{source_ref}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
 
 

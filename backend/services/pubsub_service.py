@@ -4,6 +4,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from app.core.request_context import get_request_context
+
 
 class PubSubService:
     """
@@ -48,6 +50,10 @@ class PubSubService:
 
     def publish(self, payload: Dict[str, Any], attributes: Optional[Dict[str, Any]] = None) -> str:
         safe_attributes = {k: str(v) for k, v in (attributes or {}).items() if v is not None}
+        context = get_request_context()
+        if context is not None:
+            safe_attributes.setdefault("tenant_id", str(context.tenant_id or ""))
+            safe_attributes.setdefault("correlation_id", context.correlation_id)
         if self.mode == "gcp":
             data = json.dumps(payload).encode("utf-8")
             future = self._publisher.publish(self._topic_path, data, **safe_attributes)

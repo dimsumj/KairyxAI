@@ -43,7 +43,7 @@ What is still in progress is not the existence of the core APIs, but the remaini
 - production readiness
 - stronger provider-backed activation and measurement
 - deeper frontend productization
-- stronger auth, tenant isolation, and secret handling
+- broader tenant UX polish beyond the new OIDC + tenant-switching baseline
 - more automated optimization under manual confirmation
 
 The source of truth for that roadmap lives in:
@@ -145,6 +145,8 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: static HTML/CSS/JS operator console served by the backend
+- Operator auth: OIDC bearer token + `X-Kairyx-Tenant`, with legacy header auth available only for local/demo compatibility
+- Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
 ### Runtime modes
@@ -156,10 +158,11 @@ KairyxAI currently supports two practical shapes:
    - fastest way to explore the operator flows
    - best for development, UI checks, and API iteration
 
-2. `Production-shaped mode`
-   - intended path toward GCS + Pub/Sub + Dataflow + BigQuery
-   - warehouse-backed and batch/stream-friendly contracts
-   - still evolving according to the Data Core PRD
+2. `Production-shaped SaaS mode`
+   - shared multi-tenant control plane on Postgres
+   - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
+   - tenant-scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
+   - OIDC PKCE login in the frontend and bearer-token operator traffic on `/api/v1`
 
 ## Repository Layout
 
@@ -172,6 +175,7 @@ KairyxAI/
 │   │   ├── core/           # settings, db, governance, errors, runtime
 │   │   └── infrastructure/ # SQLAlchemy repositories and db models
 │   ├── tests/              # backend test coverage
+│   ├── cloudrun/           # Cloud Run service manifests
 │   ├── main_service.py     # backend entrypoint shim for local demo
 │   └── requirements.txt
 ├── frontend/
@@ -210,6 +214,7 @@ Default local behavior:
 - `DATA_BACKEND_MODE=mock`
 - control-plane DB stored under `backend/services/.kairyx_control_plane.db`
 - local runtime DB stored under `backend/services/.kairyx_local.db`
+- `LEGACY_HEADER_AUTH_ENABLED=true` so the local console can operate without a live IdP
 
 ### Manual start
 
@@ -233,11 +238,39 @@ Then open:
 | `DATA_BACKEND_MODE` | Data runtime mode | `mock` |
 | `CONTROL_PLANE_DATABASE_URL` | Control-plane database URL | local SQLite path |
 | `KAIRYX_LOCAL_DB_PATH` | Local runtime/checkpoint DB | local SQLite path |
-| `API_ACCESS_KEY` | Optional API key for `/api/v1` | empty |
+| `APP_ENV` | Runtime environment (`local`, `prod`) | `local` |
+| `API_ACCESS_KEY` | Optional API key for legacy local header auth | empty |
+| `LEGACY_HEADER_AUTH_ENABLED` | Enables `x-actor-*` local/demo auth headers | `true` |
+| `OIDC_ISSUER` | Expected JWT issuer for operator traffic | empty |
+| `OIDC_AUDIENCE` | Expected JWT audience for operator traffic | empty |
+| `OIDC_JWKS_URL` | JWKS endpoint for bearer-token validation | empty |
+| `OIDC_JWT_SIGNING_SECRET` | HS256 signing secret for local/test bearer-token validation | empty |
+| `CORS_ALLOWED_ORIGINS` | Explicit browser origins allowed in production | `*` |
+| `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |
+| `SERVICE_ROLE` | Runtime role (`operator-api`, `scheduler-worker`, etc.) | `operator-api` |
 | `SCHEDULER_ENABLED` | Enables background control loop | `true` |
 | `SQLITE_BUSY_TIMEOUT_SECONDS` | SQLite busy timeout | `15` |
 | `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import network timeout | `60` |
 | `PREDICTION_NETWORK_TIMEOUT_SECONDS` | Prediction network timeout | `20` |
+| `MAX_SQL_PREVIEW_ROWS_PER_TENANT` | Tenant limit for SQL preview rows | `1000` |
+| `MAX_IMPORT_JOBS_PER_TENANT` | Tenant limit for active imports | `10` |
+| `MAX_EXPORT_JOBS_PER_TENANT` | Tenant limit for active exports | `20` |
+| `MAX_COPILOT_REPORTS_PER_TENANT` | Tenant limit for stored reports | `50` |
+
+## Production Deployment
+
+The production entrypoint is `app.main:app`. `backend/services/main_service.py` and `backend/services/app.yaml` remain only for local/demo compatibility and are not the production deployment path.
+
+Production deployment assets in this repository now include:
+
+- [backend/services/Dockerfile](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/Dockerfile)
+- [backend/services/.env.example](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/.env.example)
+- [backend/services/cloudrun/operator-api.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/operator-api.yaml)
+- [backend/services/cloudrun/import-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/import-worker.yaml)
+- [backend/services/cloudrun/prediction-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/prediction-worker.yaml)
+- [backend/services/cloudrun/export-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/export-worker.yaml)
+- [backend/services/cloudrun/scheduler-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/scheduler-worker.yaml)
+- [docs/RUNBOOKS_MULTITENANT_GCP.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md)
 
 For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, and ADC credentials.
 

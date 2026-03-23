@@ -24,6 +24,25 @@ open_and_wait() {
   run_pw run-code "await page.waitForLoadState('networkidle')" >>"$LOG_FILE"
 }
 
+assert_auth_shell() {
+  log_step "Checking auth shell and tenant switcher"
+  run_pw run-code "(() => {
+    const login = document.getElementById('oidc-login-btn');
+    const logout = document.getElementById('oidc-logout-btn');
+    const tenant = document.getElementById('tenant-id-input');
+    const status = document.getElementById('auth-status-text');
+    if (!login || !logout || !tenant || !status) throw new Error('Missing auth controls');
+    tenant.value = 'smoke-tenant';
+    tenant.dispatchEvent(new Event('change', { bubbles: true }));
+    return {
+      loginLabel: login.textContent || '',
+      logoutLabel: logout.textContent || '',
+      tenant: tenant.value || '',
+      status: status.textContent || '',
+    };
+  })()" >>"$LOG_FILE"
+}
+
 assert_module() {
   local module="$1"
   local selector="$2"
@@ -55,6 +74,7 @@ trap cleanup EXIT
 
 log_step "Opening $BASE_URL"
 open_and_wait
+assert_auth_shell
 assert_module "data-core" "#import-detail-output"
 assert_module "audience-engine" "#audience-cohort-list"
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"

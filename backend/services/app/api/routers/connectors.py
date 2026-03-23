@@ -20,7 +20,10 @@ def list_connectors(service: ConnectorService = Depends(get_connector_service)):
 @router.post("", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
 def create_connector(request: ConnectorCreateRequest, http_request: Request, service: ConnectorService = Depends(get_connector_service)):
     ensure_permission(get_governance_context(http_request), "connectors.write")
-    return service.create_connector(request.name, request.type, request.config)
+    try:
+        return service.create_connector(request.name, request.type, request.config, connector_id=request.connector_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/{connector_name}/health", response_model=ConnectorHealthResponse)

@@ -2,10 +2,12 @@ fastapi
 uvicorn
 gunicorn
 requests
+PyJWT[crypto]>=2.10
 google-generativeai
 pandas
 pyarrow
 google-cloud-bigquery
+google-cloud-secret-manager
 google-cloud-storage
 google-cloud-pubsub
 pytest

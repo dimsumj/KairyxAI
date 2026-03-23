@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
@@ -9,12 +10,16 @@ from engagement_executor import EngagementExecutor
 
 from app.application.cohorts import CohortService
 from app.application.experiments import ExperimentConfigService
+from app.application.secret_refs import contains_inline_secret, materialize_secret_refs, redact_secret_values
 from app.core.errors import MissingDependencyError, ResourceLockedError
+from app.core.request_context import get_request_context
+from app.core.settings import get_settings
 
 
 class WorkflowService:
     def __init__(self, repository):
         self.repository = repository
+        self.settings = get_settings()
         self.cohorts = CohortService(repository)
         self.experiments = ExperimentConfigService(repository)
         self.executor = EngagementExecutor()
@@ -149,6 +154,7 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
         if experiment_id:
@@ -173,6 +179,7 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
         if experiment_id:
@@ -283,7 +290,15 @@ class WorkflowService:
             "budget_state": budget_items,
         }
 
-    def ingest_delivery_callback(self, provider: str, callbacks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def ingest_delivery_callback(
+        self,
+        provider: str,
+        callbacks: List[Dict[str, Any]],
+        *,
+        signature: str | None = None,
+        raw_body: bytes | None = None,
+    ) -> Dict[str, Any]:
+        self._verify_callback_signature(provider, callbacks, signature=signature, raw_body=raw_body)
         ingested = 0
         duplicates = 0
         outcomes_ingested = 0
@@ -309,6 +324,7 @@ class WorkflowService:
                 "provider": provider,
                 "event_type": event_type,
                 "occurred_at": occurred_at,
+                "tenant_id": (delivery or {}).get("tenant_id") or callback.get("tenant_id") or (get_request_context().tenant_id if get_request_context() else None),
             }
             self.repository.upsert_resource(
                 "provider_callback",
@@ -562,7 +578,11 @@ class WorkflowService:
         payload.setdefault("channel_config", definition.get("channel_config") or definition.get("action") or {})
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
-        return payload
+        payload.setdefault("tenant_id", record.get("tenant_id"))
+        payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
+        payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
+        payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
+        return redact_secret_values(payload)
 
     def _normalize_trigger(self, trigger: Dict[str, Any]) -> Dict[str, Any]:
         raw_type = str((trigger or {}).get("type") or "daily").lower()
@@ -758,6 +778,31 @@ class WorkflowService:
                 reasons.append("workflow_steps_missing_action")
         return {"eligible": not reasons, "reasons": reasons}
 
+    def _iter_action_configs(self, workflow: Dict[str, Any]) -> List[Dict[str, Any]]:
+        definition = dict(workflow.get("definition") or {})
+        items: List[Dict[str, Any]] = []
+        base_action = workflow.get("channel_config") or definition.get("channel_config") or definition.get("action") or {}
+        if isinstance(base_action, dict):
+            items.append(dict(base_action))
+        for step in list(definition.get("steps") or []):
+            if str(step.get("type") or "").lower() == "action" and isinstance(step.get("action"), dict):
+                items.append(dict(step["action"]))
+            if str(step.get("type") or "").lower() != "if_else":
+                continue
+            for branch_name in ("then", "else"):
+                branch_payload = dict(step.get(branch_name) or {})
+                if isinstance(branch_payload.get("action"), dict):
+                    items.append(dict(branch_payload["action"]))
+        return items
+
+    def _assert_publishable_provider_config(self, workflow: Dict[str, Any]) -> None:
+        for action in self._iter_action_configs(workflow):
+            provider_connection_id = str(action.get("provider_connection_id") or "").strip()
+            if provider_connection_id and self.repository.get_resource("provider_connection", provider_connection_id) is None:
+                raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
+            if self.settings.app_env == "prod" and contains_inline_secret(action):
+                raise ValueError("Inline provider secrets are not allowed in production workflows; use provider_connection_id or *_ref fields.")
+
     def _parse_reference_time(self, reference_time: str | None) -> datetime:
         if not reference_time:
             return datetime.utcnow()
@@ -929,6 +974,7 @@ class WorkflowService:
         sandbox: bool,
         recorded_at: str,
     ) -> Dict[str, Any]:
+        request_context = get_request_context()
         delivery_id = str(provider_result.get("action_id") or execution_payload.get("action_execution_id") or f"delivery_{uuid.uuid4().hex[:16]}")
         payload = {
             "delivery_id": delivery_id,
@@ -945,9 +991,11 @@ class WorkflowService:
             "template_id": execution_payload.get("template_id"),
             "policy_snapshot_id": execution_payload.get("policy_snapshot_id"),
             "channel": execution_payload.get("channel"),
+            "tenant_id": execution_payload.get("tenant_id") or (request_context.tenant_id if request_context else None),
             "provider": provider_result.get("provider") or channel_config.get("provider") or execution_payload.get("channel"),
             "provider_mode": provider_result.get("provider_mode") or "live",
             "provider_backend": provider_result.get("provider_backend") or provider_result.get("provider") or execution_payload.get("channel"),
+            "provider_connection_id": channel_config.get("provider_connection_id"),
             "fallback_reason": provider_result.get("fallback_reason"),
             "simulated": bool(provider_result.get("simulated")),
             "delivery_status": "delivered" if provider_result.get("ok") else "failed",
@@ -957,6 +1005,7 @@ class WorkflowService:
                 "subject": channel_config.get("subject"),
                 "content": channel_config.get("content"),
                 "template_id": channel_config.get("template_id"),
+                "provider_connection_id": channel_config.get("provider_connection_id"),
                 "provider_mode": provider_result.get("provider_mode") or "live",
             },
             "provider_response": {
@@ -987,9 +1036,11 @@ class WorkflowService:
         return payload
 
     def _callback_id(self, provider: str, callback: Dict[str, Any], event_type: str) -> str:
+        request_context = get_request_context()
         parts = [
+            str(callback.get("tenant_id") or (request_context.tenant_id if request_context else "") or "default"),
             str(provider),
-            str(callback.get("event_id") or callback.get("message_id") or callback.get("delivery_id") or callback.get("action_execution_id") or callback.get("user_id") or "unknown"),
+            str(callback.get("delivery_id") or callback.get("action_execution_id") or callback.get("event_id") or callback.get("message_id") or callback.get("user_id") or "unknown"),
             str(event_type),
             str(callback.get("occurred_at") or ""),
         ]
@@ -997,15 +1048,21 @@ class WorkflowService:
         return f"cb_{digest[:24]}"
 
     def _find_delivery_for_callback(self, callback: Dict[str, Any]) -> Dict[str, Any] | None:
+        callback_provider = str(callback.get("provider") or "").strip().lower()
         delivery_id = str(callback.get("delivery_id") or callback.get("action_execution_id") or "").strip()
         if delivery_id:
             record = self.repository.get_resource("workflow_delivery", delivery_id)
             if record is not None:
+                payload = record.get("payload") or {}
+                if callback_provider and str(payload.get("provider") or "").strip().lower() not in {"", callback_provider}:
+                    return None
                 return record
         workflow_id = str(callback.get("workflow_id") or "").strip()
         user_id = str(callback.get("user_id") or "").strip()
         for record in self.repository.list_resources("workflow_delivery"):
             payload = record.get("payload") or {}
+            if callback_provider and str(payload.get("provider") or "").strip().lower() not in {"", callback_provider}:
+                continue
             if workflow_id and str(payload.get("workflow_id") or "") != workflow_id:
                 continue
             if user_id and str(payload.get("user_id") or "") != user_id:
@@ -1013,6 +1070,63 @@ class WorkflowService:
             if workflow_id or user_id:
                 return record
         return None
+
+    def _resolve_provider_connection_config(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        resolved_action = materialize_secret_refs(dict(action or {}))
+        provider_connection_id = str(resolved_action.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            return resolved_action
+        record = self.repository.get_resource("provider_connection", provider_connection_id)
+        if record is None:
+            raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
+        provider_payload = dict((record.get("payload") or {}).get("config") or {})
+        provider_payload = materialize_secret_refs(provider_payload)
+        provider_payload["provider_connection_id"] = provider_connection_id
+        return {**provider_payload, **resolved_action}
+
+    def _resolve_callback_secret(self, provider: str, callback: Dict[str, Any]) -> str | None:
+        provider_connection_id = str(callback.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            delivery = self._find_delivery_for_callback({**callback, "provider": provider})
+            delivery_payload = dict((delivery or {}).get("payload") or {})
+            provider_connection_id = str(delivery_payload.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            return None
+        record = self.repository.get_resource("provider_connection", provider_connection_id)
+        if record is None:
+            raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
+        config = materialize_secret_refs(dict((record.get("payload") or {}).get("config") or {}))
+        return str(
+            config.get("callback_signing_secret")
+            or config.get("signing_secret")
+            or ""
+        ).strip() or None
+
+    def _verify_callback_signature(
+        self,
+        provider: str,
+        callbacks: List[Dict[str, Any]],
+        *,
+        signature: str | None,
+        raw_body: bytes | None,
+    ) -> None:
+        secrets = {
+            secret
+            for secret in (self._resolve_callback_secret(provider, callback) for callback in callbacks)
+            if secret
+        }
+        if not secrets:
+            return
+        if len(secrets) > 1:
+            raise ValueError("Callback batch spans multiple signing secrets; send callbacks per provider connection.")
+        if not signature or raw_body is None:
+            raise ValueError("Signed provider callbacks require X-Kairyx-Signature.")
+        provided_signature = str(signature).strip()
+        if provided_signature.startswith("sha256="):
+            provided_signature = provided_signature.split("=", 1)[1]
+        expected_signature = hmac.new(next(iter(secrets)).encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(provided_signature, expected_signature):
+            raise ValueError("Invalid provider callback signature.")
 
     def _callback_outcome_name(self, event_type: str, callback: Dict[str, Any]) -> str | None:
         if callback.get("outcome_name"):
@@ -1356,7 +1470,9 @@ class WorkflowService:
                 continue
 
             action = dict(resolved_channel_config)
+            action = self._resolve_provider_connection_config(action)
             execution_payload["channel"] = action.get("channel", execution_payload["channel"])
+            execution_payload["tenant_id"] = workflow.get("tenant_id")
             recipient = member.get("email") if str(action.get("channel") or "") == "email" else member.get("canonical_user_id")
             action_payload = {
                 "decision": "ACT",
@@ -1364,7 +1480,12 @@ class WorkflowService:
                 "content": action.get("content", ""),
                 "subject": action.get("subject", "KairyxAI"),
                 "player_id": recipient or member.get("canonical_user_id"),
+                "api_key": action.get("api_key"),
+                "from_email": action.get("from_email"),
+                "rest_endpoint": action.get("rest_endpoint"),
                 "webhook_url": action.get("webhook_url"),
+                "webhook_token": action.get("webhook_token"),
+                "provider_connection_id": action.get("provider_connection_id"),
                 "metadata": dict(action.get("metadata") or {}),
             }
             provider_result = self._execute_action_with_retry(action_payload, action)
