@@ -65,7 +65,6 @@ ROLE_PERMISSIONS = {
         "mappings.rollback",
         "imports.resume",
         "imports.replay",
-        "imports.delete",
         "imports.quality.read",
         "imports.identity_links.read",
         "imports.conflicts.read",

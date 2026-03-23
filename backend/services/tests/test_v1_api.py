@@ -7,6 +7,8 @@ import sqlite3
 import threading
 import time
 
+from alembic import command
+from alembic.config import Config
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,6 +22,14 @@ from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyC
 from app.main import create_app
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
+
+
+def _alembic_config(tmp_path: Path) -> Config:
+    services_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(services_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(services_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    return config
 
 
 @pytest.fixture
@@ -159,6 +169,44 @@ def test_sqlite_control_plane_uses_wal_and_busy_timeout(monkeypatch, tmp_path):
         finally:
             cursor.close()
             connection.close()
+
+
+def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    legacy_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        legacy_connection.execute("DROP TABLE alembic_version")
+        legacy_connection.commit()
+    finally:
+        legacy_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert "tenant_id" in connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+    finally:
+        upgraded_connection.close()
 
 
 def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
