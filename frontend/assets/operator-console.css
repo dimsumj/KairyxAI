@@ -418,6 +418,16 @@
             table-layout: fixed;
         }
 
+        .operator-hub-table th:nth-child(6),
+        .operator-hub-table td:nth-child(6) {
+            width: 32%;
+        }
+
+        .operator-hub-table th:nth-child(7),
+        .operator-hub-table td:nth-child(7) {
+            width: 16%;
+        }
+
         #service-status-list .service-item {
             display: flex;
             align-items: center;
@@ -481,6 +491,43 @@
             overflow-wrap: normal;
             word-break: keep-all;
             text-wrap: balance;
+        }
+
+        .expandable-text {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: flex-start;
+        }
+
+        .expandable-text__content {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .expandable-text.expanded .expandable-text__content {
+            display: block;
+            -webkit-line-clamp: unset;
+            overflow: visible;
+        }
+
+        .expandable-text__toggle {
+            padding: 0;
+            border: none;
+            background: transparent;
+            color: var(--primary-color);
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .expandable-text__toggle:hover {
+            color: var(--primary-hover);
+            background: transparent;
         }
 
         #connector-list .card {

@@ -1733,7 +1733,7 @@
 
                     paginatedItems.forEach(p => {
                         const riskLabel = getRiskLabel(p);
-                        operatorHubResults.innerHTML += `<tr><td>${p.user_id}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${riskLabel}</td><td>${p.churn_reason}</td><td class="action-suggested">${p.suggested_action}</td></tr>`;
+                        operatorHubResults.innerHTML += `<tr><td>${escapeHtml(String(p.user_id || '-'))}</td><td>${Number(p.ltv || 0).toFixed(2)}</td><td>${Number(p.session_count || 0)}</td><td>${Number(p.event_count || 0)}</td><td class="${getRiskClass(String(p.predicted_churn_risk || ''))}">${escapeHtml(riskLabel)}</td><td>${renderExpandableText(p.churn_reason, 150)}</td><td class="action-suggested">${renderExpandableText(p.suggested_action, 90)}</td></tr>`;
                     });
                 } else {
                      operatorHubResults.innerHTML = `<tr><td colspan="7" style="text-align: center;">${emptyMessage}</td></tr>`;
@@ -2093,6 +2093,23 @@
                     .replace(/'/g, '&#39;');
             }
 
+            function renderExpandableText(value, maxLength = 140) {
+                const raw = String(value ?? '').trim();
+                if (!raw) {
+                    return '<span class="subtle">-</span>';
+                }
+                const escaped = escapeHtml(raw);
+                if (raw.length <= maxLength) {
+                    return escaped;
+                }
+                return `
+                    <div class="expandable-text">
+                        <div class="expandable-text__content">${escaped}</div>
+                        <button type="button" class="expandable-text__toggle">Show Full Text</button>
+                    </div>
+                `;
+            }
+
             function renderActionHistoryPaginationControls() {
                 if (!actionHistoryPaginationControls) return;
                 actionHistoryPaginationControls.innerHTML = '';
@@ -2209,6 +2226,15 @@
                 actionHistoryItemsPerPage = Number(event.target.value) || 25;
                 actionHistoryCurrentPage = 1;
                 renderActionHistoryTable();
+            });
+
+            operatorHubResults.addEventListener('click', (event) => {
+                const toggle = event.target.closest('.expandable-text__toggle');
+                if (!toggle) return;
+                const wrapper = toggle.closest('.expandable-text');
+                if (!wrapper) return;
+                const expanded = wrapper.classList.toggle('expanded');
+                toggle.textContent = expanded ? 'Show Less' : 'Show Full Text';
             });
 
             function getActionButtonsHTML(job) {
