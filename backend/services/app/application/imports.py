@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
+import queue
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.application.mappings import MappingService
 from app.core.errors import MissingDependencyError, ResourceLockedError
+from app.core.runtime import is_shutdown_requested
 from app.domain.jobs import CheckpointStatus, JobStatus
 from dataflow.pipeline import DataflowNormalizationRunner
 from gcs_service import GcsService
@@ -16,6 +20,14 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
 logger = logging.getLogger(__name__)
+
+
+class ImportInterruptedError(RuntimeError):
+    """Raised when an import run is stopped while work is in flight."""
+
+
+class ImportTimeoutError(RuntimeError):
+    """Raised when an import run exceeds the configured external-call budget."""
 
 
 class ImportService:
@@ -194,6 +206,60 @@ class ImportService:
         if job is None:
             return False
         return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
+
+    def _should_stop(self, job_id: str) -> bool:
+        return self._is_stop_requested(job_id) or is_shutdown_requested()
+
+    def _stop_reason(self, default_reason: str = "Stopped by user.") -> str:
+        if is_shutdown_requested():
+            return "Stopped during server shutdown."
+        return default_reason
+
+    def _interruptible_call(
+        self,
+        job_id: str,
+        *,
+        operation: str,
+        callback,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_queue.put(("result", callback()))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        worker = threading.Thread(
+            target=_runner,
+            name=f"import-{job_id}-{operation}",
+            daemon=True,
+        )
+        worker.start()
+
+        resolved_timeout = max(
+            0.1,
+            float(timeout_seconds if timeout_seconds is not None else self.settings.import_network_timeout_seconds),
+        )
+        deadline = time.monotonic() + resolved_timeout
+        poll_interval = max(0.05, float(self.settings.import_stop_poll_interval_seconds))
+
+        while True:
+            if self._should_stop(job_id):
+                raise ImportInterruptedError(self._stop_reason())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ImportTimeoutError(
+                    f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s."
+                )
+            try:
+                state, payload = result_queue.get(timeout=min(poll_interval, remaining))
+            except queue.Empty:
+                continue
+            if state == "error":
+                raise payload
+            return payload
 
     def _mark_stopped(self, job_id: str, reason: str = "Stopped by user.") -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
@@ -930,24 +996,16 @@ class ImportService:
         if status in {JobStatus.QUEUED.value, JobStatus.READY.value, JobStatus.AWAITING_MAPPING.value}:
             return self._mark_stopped(job_id)
         if status == JobStatus.RUNNING.value:
-            stopping = self.repository.update_import_job(
+            self.repository.record_action(
+                "import_job_stop_requested",
+                "import_job",
                 job_id,
-                {
-                    "status": JobStatus.STOPPING.value,
-                    "progress": self._merge_progress(job, details_patch={"stop_requested": True}),
-                },
+                {"job_id": job_id, "status": status, "requested_at": datetime.utcnow().isoformat()},
             )
-            self._record_status_transition(
-                job_id,
-                from_status=status,
-                to_status=JobStatus.STOPPING.value,
-                reason="Stop requested for running import job.",
-            )
-            self.repository.record_action("import_job_stop_requested", "import_job", job_id, stopping)
             self._commit_session()
-            return stopping
+            return self._mark_stopped(job_id, self._stop_reason())
         if status == JobStatus.STOPPING.value:
-            return job
+            return self._mark_stopped(job_id, self._stop_reason())
         raise ValueError("Only queued, ready, awaiting_mapping, or running import jobs can be stopped.")
 
     def delete_job(self, job_id: str) -> None:
@@ -1157,22 +1215,26 @@ class ImportService:
                 pubsub_service=raw_pubsub,
             )
             ingestion_service.local_shard_event_count = page_size
-            staged = ingestion_service.fetch_and_stage_events(
-                job["spec"]["start_date"],
-                job["spec"]["end_date"],
-                job_id=job_id,
-                page_size=page_size,
-                should_stop=lambda: self._is_stop_requested(job_id),
-                progress_callback=lambda current_events, shards_created, _: self._update_stage_progress(
-                    job_id,
-                    connector_record,
-                    current_events,
-                    shards_created,
-                    page_size,
+            staged = self._interruptible_call(
+                job_id,
+                operation="fetch_and_stage_events",
+                callback=lambda: ingestion_service.fetch_and_stage_events(
+                    job["spec"]["start_date"],
+                    job["spec"]["end_date"],
+                    job_id=job_id,
+                    page_size=page_size,
+                    should_stop=lambda: self._should_stop(job_id),
+                    progress_callback=lambda current_events, shards_created, _: self._update_stage_progress(
+                        job_id,
+                        connector_record,
+                        current_events,
+                        shards_created,
+                        page_size,
+                    ),
                 ),
             )
             if staged.get("stopped"):
-                return self._mark_stopped(job_id, staged.get("stop_reason") or "Stopped by user.")
+                return self._mark_stopped(job_id, staged.get("stop_reason") or self._stop_reason())
 
             notifications: List[Dict[str, Any]] = []
             for manifest in staged["shard_manifests"]:
@@ -1246,8 +1308,8 @@ class ImportService:
         except Exception as exc:
             self.rollback_session()
             try:
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
             except Exception:
                 self.rollback_session()
             failed_job = self._safe_get_import_job(job_id) or job

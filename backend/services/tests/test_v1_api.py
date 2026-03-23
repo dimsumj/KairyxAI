@@ -1375,7 +1375,7 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     with TestClient(client.app) as control_client:
         stop_import = control_client.post(import_job["links"]["self"] + "/stop")
     assert stop_import.status_code == 200
-    assert stop_import.json()["status"] == "stopping"
+    assert stop_import.json()["status"] == "stopped"
 
     thread.join(timeout=5)
     assert not thread.is_alive()
@@ -1387,6 +1387,71 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     payload = import_state.json()
     assert payload["status"] == "stopped"
     assert payload["progress"]["details"]["stop_reason"] == "Stopped by user."
+
+
+def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    started = threading.Event()
+    release_worker = threading.Event()
+    run_result = {}
+
+    def stuck_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        started.set()
+        release_worker.wait(timeout=5)
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 0,
+            "events_staged": 0,
+            "last_checkpoint": None,
+            "shard_manifests": [],
+            "stopped": False,
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        stuck_fetch_and_stage_events,
+    )
+
+    def run_import_request():
+        with TestClient(client.app) as runner_client:
+            run_result["response"] = runner_client.post(import_job["links"]["self"] + "/run")
+
+    thread = threading.Thread(target=run_import_request)
+    thread.start()
+    assert started.wait(timeout=2)
+
+    with TestClient(client.app) as control_client:
+        stop_import = control_client.post(import_job["links"]["self"] + "/stop")
+    assert stop_import.status_code == 200
+    assert stop_import.json()["status"] == "stopped"
+
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert run_result["response"].status_code == 200
+    assert run_result["response"].json()["status"] == "stopped"
+
+    release_worker.set()
 
 
 def test_restart_discards_stopping_import_job(client):
