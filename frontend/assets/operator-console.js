@@ -2176,7 +2176,7 @@
                         <td>${escapeHtml(timestamp)}</td>
                         <td>${escapeHtml(summary)}</td>
                         <td><span style="display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; color: ${statusColor}; border: 1px solid ${statusColor}; text-transform: capitalize;">${escapeHtml(status)}</span></td>
-                        <td style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(details)}</td>
+                        <td style="font-size: 0.85rem; color: var(--text-secondary);">${renderExpandableText(details, 220)}</td>
                     `;
                     actionHistoryResults.appendChild(row);
                 });
@@ -2229,6 +2229,15 @@
             });
 
             operatorHubResults.addEventListener('click', (event) => {
+                const toggle = event.target.closest('.expandable-text__toggle');
+                if (!toggle) return;
+                const wrapper = toggle.closest('.expandable-text');
+                if (!wrapper) return;
+                const expanded = wrapper.classList.toggle('expanded');
+                toggle.textContent = expanded ? 'Show Less' : 'Show Full Text';
+            });
+
+            actionHistoryResults.addEventListener('click', (event) => {
                 const toggle = event.target.closest('.expandable-text__toggle');
                 if (!toggle) return;
                 const wrapper = toggle.closest('.expandable-text');
