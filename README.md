@@ -130,7 +130,7 @@ The repository keeps its current local-first demo flow and is evolving toward a 
 
 - Local play-around mode remains centered on `DATA_BACKEND_MODE=mock`
 - Production scale target is GCS + Pub/Sub + Dataflow + BigQuery
-- The ingestion architecture contract now lives in [docs/DATA_CORE_V1_PRD.md](/Users/jeremyz/Projects/KairyxAI/docs/DATA_CORE_V1_PRD.md)
+- The ingestion architecture contract now lives in [docs/DATA_CORE_V1_PRD.md](docs/DATA_CORE_V1_PRD.md)
 
 **Disclaimer**
 
@@ -165,12 +165,45 @@ The local demo now requires Python `3.14` and will create/use `.venv` automatica
    - `export BIGQUERY_PROJECT_ID=<your_project_id>`
    - `export GCS_BUCKET_NAME=<your_bucket_name>`
    - configure ADC (Application Default Credentials)
-<<<<<<< HEAD
-6. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
+7. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
 
 The frontend is served directly by the backend at `/`.
 
 Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
+
+## Local model readiness
+
+The `Local Model` prediction mode always remains available. It does not require Gemini and it does not fail closed when no trained local churn model is active.
+
+- `heuristic_v1` is the always-available local baseline
+- a supervised local churn model is retrained in batch from holdout / untreated rows and observed outcomes
+- the learned model is promoted only when it beats the heuristic baseline on validation
+- until then, `prediction_mode=local` continues to run using `heuristic_v1`
+
+Readiness is exposed through:
+
+- `GET /api/v1/predictions/models/runs`
+  - includes top-level `readiness`
+  - `state`: `untrained | learning | fallback | ready`
+  - `using_model_version`
+  - `reason`
+  - `last_trained_at`
+  - `baseline_rows`
+  - `min_rows_required`
+  - `class_balance`
+  - `validation_accuracy`
+  - `heuristic_accuracy`
+- `GET /api/v1/predictions/models/latest`
+  - returns the latest trained local model version when one exists
+- `POST /api/v1/predictions/models/train`
+  - triggers a local batch retrain
+
+Prediction job metadata now also records:
+
+- `effective_local_model_version`
+- `effective_local_model_state`
+
+The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` badge beside the prediction engine selector and warns when `Local Model` is currently using `heuristic_v1`.
 
 Local reliability/security defaults added:
 - Ingestion retry + backoff for external source pulls
