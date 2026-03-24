@@ -18,6 +18,7 @@ depends_on = None
 BOOTSTRAP_TENANT_ID = "default"
 BOOTSTRAP_TENANT_NAME = "Default Tenant"
 SYSTEM_ACTOR = "system"
+SQLITE_BATCH_NAMING = {"pk": "pk_%(table_name)s"}
 
 
 def upgrade() -> None:
@@ -85,13 +86,13 @@ def upgrade() -> None:
         batch.create_unique_constraint("uq_connector_configs_tenant_name", ["tenant_id", "name"])
     op.execute(sa.text("UPDATE connector_configs SET connector_id = name WHERE connector_id IS NULL OR connector_id = ''"))
 
-    with op.batch_alter_table("field_mappings_v2", recreate="always") as batch:
+    with op.batch_alter_table("field_mappings_v2", recreate="always", naming_convention=SQLITE_BATCH_NAMING) as batch:
         batch.add_column(sa.Column("id", sa.Integer(), autoincrement=True, nullable=False))
         batch.add_column(sa.Column("tenant_id", sa.String(length=64), nullable=False, server_default=BOOTSTRAP_TENANT_ID))
         batch.add_column(sa.Column("created_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
         batch.add_column(sa.Column("updated_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
         batch.add_column(sa.Column("correlation_id", sa.String(length=128), nullable=False, server_default=""))
-        batch.drop_constraint(None, type_="primary")
+        batch.drop_constraint("pk_field_mappings_v2", type_="primary")
         batch.create_primary_key("pk_field_mappings_v2", ["id"])
         batch.create_index("ix_field_mappings_v2_tenant_id", ["tenant_id"], unique=False)
         batch.create_index("ix_field_mappings_v2_connector_name", ["connector_name"], unique=False)
@@ -111,13 +112,13 @@ def upgrade() -> None:
             batch.create_index(f"ix_{table_name}_updated_by", ["updated_by"], unique=False)
             batch.create_index(f"ix_{table_name}_correlation_id", ["correlation_id"], unique=False)
 
-    with op.batch_alter_table("experiment_configs", recreate="always") as batch:
+    with op.batch_alter_table("experiment_configs", recreate="always", naming_convention=SQLITE_BATCH_NAMING) as batch:
         batch.add_column(sa.Column("id", sa.Integer(), autoincrement=True, nullable=False))
         batch.add_column(sa.Column("tenant_id", sa.String(length=64), nullable=False, server_default=BOOTSTRAP_TENANT_ID))
         batch.add_column(sa.Column("created_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
         batch.add_column(sa.Column("updated_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
         batch.add_column(sa.Column("correlation_id", sa.String(length=128), nullable=False, server_default=""))
-        batch.drop_constraint(None, type_="primary")
+        batch.drop_constraint("pk_experiment_configs", type_="primary")
         batch.create_primary_key("pk_experiment_configs", ["id"])
         batch.create_index("ix_experiment_configs_tenant_id", ["tenant_id"], unique=False)
         batch.create_index("ix_experiment_configs_config_key", ["config_key"], unique=False)

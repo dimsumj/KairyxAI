@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import lru_cache
+from pathlib import Path
 from typing import Generator
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .settings import get_settings
@@ -12,6 +17,10 @@ from runtime_paths import normalize_sqlite_database_url
 
 
 Base = declarative_base()
+
+CONTROL_PLANE_REVISION = "20260307_0001"
+RESOURCE_REVISION = "20260310_0002"
+MULTITENANT_REVISION = "20260322_0003"
 
 
 @lru_cache(maxsize=1)
@@ -46,9 +55,68 @@ def get_session_factory():
     return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False, future=True, expire_on_commit=False)
 
 
+def _services_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _build_alembic_config(database_url: str) -> Config:
+    services_dir = _services_dir()
+    config = Config(str(services_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(services_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    return config
+
+
+def _table_has_column(engine: Engine, table_name: str, column_name: str) -> bool:
+    inspector = sa_inspect(engine)
+    try:
+        columns = inspector.get_columns(table_name)
+    except Exception:
+        return False
+    return any(str(column.get("name")) == column_name for column in columns)
+
+
+def _infer_legacy_revision(engine: Engine) -> str | None:
+    inspector = sa_inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if not table_names or table_names == {"alembic_version"}:
+        return None
+    if "alembic_version" in table_names:
+        return None
+    if "connector_configs" in table_names and _table_has_column(engine, "connector_configs", "tenant_id"):
+        return MULTITENANT_REVISION
+    if "control_plane_resources_v1" in table_names:
+        return RESOURCE_REVISION
+    legacy_control_plane_tables = {
+        "connector_configs",
+        "field_mappings_v2",
+        "import_jobs_v2",
+        "prediction_jobs_v2",
+        "export_jobs_v2",
+        "experiment_configs",
+        "action_history_v2",
+        "ingestion_checkpoints_v2",
+    }
+    if table_names & legacy_control_plane_tables:
+        return CONTROL_PLANE_REVISION
+    return None
+
+
+def _run_control_plane_migrations() -> None:
+    settings = get_settings()
+    database_url = normalize_sqlite_database_url(settings.control_plane_database_url)
+    engine = get_engine()
+    legacy_revision = _infer_legacy_revision(engine)
+    alembic_config = _build_alembic_config(database_url)
+    if legacy_revision:
+        command.stamp(alembic_config, legacy_revision)
+    command.upgrade(alembic_config, "head")
+
+
 def init_db() -> None:
     from app.infrastructure import db_models  # noqa: F401
 
+    _run_control_plane_migrations()
     Base.metadata.create_all(bind=get_engine())
 
 

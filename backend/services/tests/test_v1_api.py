@@ -7,6 +7,8 @@ import sqlite3
 import threading
 import time
 
+from alembic import command
+from alembic.config import Config
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,6 +22,14 @@ from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyC
 from app.main import create_app
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
+
+
+def _alembic_config(tmp_path: Path) -> Config:
+    services_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(services_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(services_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    return config
 
 
 @pytest.fixture
@@ -159,6 +169,44 @@ def test_sqlite_control_plane_uses_wal_and_busy_timeout(monkeypatch, tmp_path):
         finally:
             cursor.close()
             connection.close()
+
+
+def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    legacy_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        legacy_connection.execute("DROP TABLE alembic_version")
+        legacy_connection.commit()
+    finally:
+        legacy_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert "tenant_id" in connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+    finally:
+        upgraded_connection.close()
 
 
 def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
@@ -1132,6 +1180,104 @@ def test_import_processing_progress_reports_event_counts(client, monkeypatch):
     assert not thread.is_alive()
     assert run_result["response"].status_code == 200
     assert run_result["response"].json()["status"] == "completed"
+
+
+def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                },
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 2,
+                    "source_config_id": "Amplitude 1",
+                },
+            ],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(
+                1,
+                2,
+                {
+                    "manifests_processed": 1,
+                    "raw_normalized_events": 1000,
+                    "events_staging_written": 750,
+                    "pipeline_dead_letters_written": 250,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                },
+            )
+        raise RuntimeError("Normalization failed after staging manifests")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    assert run_import.json()["detail"] == "Normalization failed after staging manifests"
+
+    import_state = client.get(import_job["links"]["self"])
+    assert import_state.status_code == 200
+    payload = import_state.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_reason"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_stage"] == "processing"
+    assert payload["progress"]["details"]["checkpoint_state"]["failed"] == 2
+
+    checkpoints = client.get(import_job["links"]["checkpoints"])
+    assert checkpoints.status_code == 200
+    assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
 
 
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):

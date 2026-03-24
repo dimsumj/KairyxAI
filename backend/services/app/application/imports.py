@@ -461,6 +461,71 @@ class ImportService:
             )
             self.repository.upsert_resource("import_manifest", resource_id, status=status, name=job_id, payload=payload)
 
+    def _mark_pending_checkpoints_failed(self, job_id: str, *, reason: str) -> None:
+        checkpoints = self.repository.list_checkpoints(job_id)
+        failed_at = datetime.utcnow().isoformat()
+        for checkpoint in checkpoints:
+            status = str(checkpoint.get("status") or "").lower()
+            if status == CheckpointStatus.PROCESSED.value:
+                continue
+            shard_index = int(checkpoint.get("shard_index") or 0)
+            source_name = str(checkpoint.get("source_name") or "")
+            payload = dict(checkpoint)
+            payload.update(
+                {
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            self.repository.upsert_checkpoint(
+                {
+                    "job_id": job_id,
+                    "shard_index": shard_index,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "cursor": checkpoint.get("cursor"),
+                    "gcs_uri": checkpoint.get("gcs_uri"),
+                    "message_id": checkpoint.get("message_id"),
+                    "manifest": checkpoint.get("manifest"),
+                    "event_count": int(checkpoint.get("event_count") or 0),
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            resource_id = f"{job_id}:{shard_index}"
+            existing = self.repository.get_resource("import_manifest", resource_id)
+            resource_payload = dict((existing or {}).get("payload") or {})
+            resource_payload.update(payload)
+            resource_payload.update(
+                {
+                    "manifest_id": resource_id,
+                    "job_id": job_id,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "gcs_uri": checkpoint.get("gcs_uri"),
+                    "message_id": checkpoint.get("message_id"),
+                    "shard_index": shard_index,
+                    "event_count": int(checkpoint.get("event_count") or 0),
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            self.repository.upsert_resource(
+                "import_manifest",
+                resource_id,
+                status=CheckpointStatus.FAILED.value,
+                name=job_id,
+                payload=resource_payload,
+            )
+
+    def _failure_stage(self, job: Dict[str, Any] | None) -> str:
+        details = ((job or {}).get("progress") or {}).get("details") or {}
+        phase = str(details.get("phase") or "").strip().lower()
+        if phase:
+            return phase
+        status = str((job or {}).get("status") or "").strip().lower()
+        return status or "unknown"
+
     def _process_notifications(
         self,
         job_id: str,
@@ -1324,6 +1389,15 @@ class ImportService:
             except Exception:
                 self.rollback_session()
             failed_job = self._safe_get_import_job(job_id) or job
+            failure_stage = self._failure_stage(failed_job)
+            logger.exception("Import job %s failed during %s. error=%s", job_id, failure_stage, exc)
+            try:
+                self._mark_pending_checkpoints_failed(job_id, reason=str(exc))
+                self._commit_session()
+            except Exception:
+                self.rollback_session()
+                logger.exception("Unable to mark pending checkpoints failed for import job %s.", job_id)
+            failed_job = self._safe_get_import_job(job_id) or failed_job
             try:
                 failed = self.repository.update_import_job(
                     job_id,
@@ -1334,6 +1408,7 @@ class ImportService:
                             failed_job,
                             details_patch={
                                 "failure_reason": str(exc),
+                                "failure_stage": failure_stage,
                                 "checkpoint_state": self._summarize_checkpoints(job_id),
                             },
                         ),
@@ -1344,7 +1419,7 @@ class ImportService:
                     from_status=str(failed_job.get("status") or ""),
                     to_status=JobStatus.FAILED.value,
                     reason="Import execution failed.",
-                    metadata={"error": str(exc)},
+                    metadata={"error": str(exc), "failure_stage": failure_stage},
                 )
                 self.repository.record_action("import_job_failed", "import_job", job_id, failed)
                 self._commit_session()
