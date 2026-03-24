@@ -79,10 +79,20 @@
         <section id="operator-hub" class="page active">
             <h1>Churn Rescue Workbench</h1>
             <div class="card" id="operator-hub-controls">
-                <p>Select a processed dataset and run churn prediction on its members.</p>
-                <div class="form-group">
-                    <label for="dataset-select">Select Dataset</label>
-                    <select id="dataset-select"></select>
+                <p>Select a source or a completed import and run churn prediction on that audience. Source mode resolves to the latest completed import when the job starts.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
+                    <div class="form-group">
+                        <label for="prediction-audience-scope-select">Prediction Target</label>
+                        <select id="prediction-audience-scope-select">
+                            <option value="source" selected>Source</option>
+                            <option value="import">Import</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label id="dataset-select-label" for="dataset-select">Select Source</label>
+                        <select id="dataset-select"></select>
+                        <div id="dataset-select-help" style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.45rem;"></div>
+                    </div>
                 </div>
                 <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
                     <div class="form-group" style="margin-bottom: 0; min-width: 220px;">

@@ -120,6 +120,45 @@ Keep the `Local Model` prediction path always available and interpretable within
 3. Prediction jobs and result rows expose the actual local model version and state used
 4. The operator UI clearly distinguishes `learning` and `fallback` from a truly `ready` local model
 
+### 4.1.8 Source-First Prediction Audience Selection
+
+#### Goal
+Reduce operator friction in the churn workbench by allowing prediction to run against a source such as `Amplitude 1`, while preserving a concrete resolved import snapshot for reproducibility, exports, and audit.
+
+#### Strategy Boundaries
+- `Source` is the default operator audience mode in v1
+- `Import` remains available as an explicit override for debugging, audit review, and backfill comparison
+- `Source` mode resolves to the latest completed import for that source when the prediction job starts
+- Prediction roster selection still comes from the resolved import, not from unioning every historical import for the source
+- Merged tenant history remains the feature source for churn scoring after the roster is selected
+
+#### Control-plane / API Contract
+- `POST /api/v1/predictions` accepts either:
+  - `import_job_id` with `audience_scope=import`
+  - `source_name` with `audience_scope=source`
+- Prediction jobs must store:
+  - `audience_scope`
+  - `source_name` when source mode is used
+  - the resolved `import_job_id` actually used for scoring
+- Prediction progress metadata must expose:
+  - `audience_scope`
+  - `source_name`
+  - `resolved_import_display_name`
+- Source-mode jobs may update their resolved `import_job_id` at run start if a newer completed import exists for the same source
+
+#### Operator UX Contract (v1)
+- The churn workbench must show a `Prediction Target` selector with `Source` and `Import`
+- In `Source` mode, the selector shows available sources backed by at least one completed import
+- In `Import` mode, the selector shows completed imports directly
+- The UI must explain that source mode resolves to the latest completed import when the job starts
+- Cached completed predictions remain viewable, but stale jobs must still require explicit rerun confirmation
+
+#### Definition of Done
+1. Operators can run prediction by source without manually choosing among repeated imports from that source
+2. Prediction jobs still record the concrete import snapshot that was scored
+3. Import-mode prediction remains available and behaviorally unchanged for explicit import selection
+4. Source-mode caching, active-job recovery, and export lookup all key off `audience_scope + audience_key`
+
 ---
 
 ## 4.2 Multi-Source Ingestion and Stitching (P0)

@@ -60,7 +60,12 @@ def list_prediction_jobs(service: PredictionService = Depends(get_prediction_ser
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_prediction_job(request: PredictionJobCreateRequest, service: PredictionService = Depends(get_prediction_service)):
     try:
-        job = service.create_job(request.import_job_id, request.prediction_mode)
+        job = service.create_job(
+            import_job_id=request.import_job_id,
+            source_name=request.source_name,
+            audience_scope=request.audience_scope,
+            prediction_mode=request.prediction_mode,
+        )
     except MissingDependencyError as exc:
         raise HTTPException(status_code=404, detail=exc.detail)
     except ResourceLockedError as exc:

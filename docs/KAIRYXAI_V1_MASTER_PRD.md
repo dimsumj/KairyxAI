@@ -82,9 +82,10 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 **Application-layer flow**
 1. Copilot identifies rising churn risk and key drivers
-2. Audience Engine generates a "high-risk users to rescue" dynamic cohort
-3. Action Orchestrator executes rescue actions (push/email/in-app)
-4. Experiment Hub compares holdout and treatment performance
+2. Data Core scores a source-level or import-level prediction audience, with source mode resolving to the latest completed import at run time
+3. Audience Engine generates a "high-risk users to rescue" dynamic cohort
+4. Action Orchestrator executes rescue actions (push/email/in-app)
+5. Experiment Hub compares holdout and treatment performance
 
 **Core metrics**
 - 7-day return rate
@@ -93,6 +94,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 **v1 launch standard (scenario-level)**
 - Rescue cohort refreshes automatically every day
+- Operators can launch churn prediction by source, with import override retained for audit and debugging
 - At least one rescue workflow runs stably
 - Win-back rate improves by at least 15% relative within 4 to 8 weeks
 

@@ -53,10 +53,11 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Select Dataset` | Select | Choose a completed import dataset. | `Amplitude 1-20260322-101500` | The selected dataset becomes the prediction source. |
+| `Prediction Target` | Select | Choose whether to run prediction by `Source` or by explicit `Import`. | `Source` | The audience selector switches between source-level and import-level options. |
+| `Select Source` / `Select Import` | Select | In `Source` mode, choose a source such as `Amplitude 1`. In `Import` mode, choose a specific completed import. | `Amplitude 1` | Source mode resolves to the latest completed import for that source when the job starts; import mode uses the selected import directly. |
 | `Prediction Engine` | Select | Choose the prediction execution mode. | `AI + Cloud` | The request uses the selected prediction mode. |
 | Local model status badge | Badge | Read the current readiness of the `Local Model` path before running prediction. | `Learning` | Shows whether local prediction is `Ready`, `Learning`, or `Fallback`. |
-| `Predict Churn` | Button | Starts prediction for the selected dataset. | None | A prediction job is created and results populate the table when complete. |
+| `Predict Churn` | Button | Starts prediction for the selected source or import. | None | A prediction job is created and results populate the table when complete. |
 | `Provider` | Select | Choose the audience export target. | `Braze` | Export request uses Braze provider settings. |
 | `Channel` | Select | Choose the downstream delivery channel. | `Push Notification` | Export metadata is tagged with the selected channel. |
 | `Risk Filters` | Text box | Comma-separated predicted risk levels to include. | `high,medium` | Only those risk levels are exported. |
@@ -70,7 +71,8 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 #### Sample prediction input
 ```text
-Dataset: Amplitude 1-20260322-101500
+Prediction Target: Source
+Source: Amplitude 1
 Prediction Engine: AI + Cloud
 ```
 
@@ -79,6 +81,7 @@ Prediction Engine: AI + Cloud
 - When the badge shows `Learning` or `Fallback`, the console warns that `heuristic_v1` fallback is being used.
 - When the badge shows `Ready`, local predictions are using the active learned churn model.
 - Completed prediction jobs may also show the effective local model version and state used for that run.
+- In `Source` mode, the workbench resolves to the latest completed import when the prediction job starts, and the resolved import remains recorded on the job for audit.
 
 #### Sample prediction output
 ```json

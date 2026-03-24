@@ -150,8 +150,102 @@ class PredictionService:
         self._commit_session()
         return self._decorate_prediction_job(stopped)
 
-    def create_job(self, import_job_id: str, prediction_mode: str = "local") -> Dict[str, Any]:
-        self._require_completed_import(import_job_id)
+    @staticmethod
+    def _normalize_audience_scope(audience_scope: str | None, *, import_job_id: str | None = None, source_name: str | None = None) -> str:
+        candidate = str(audience_scope or "").strip().lower()
+        if candidate in {"import", "source"}:
+            return candidate
+        return "source" if str(source_name or "").strip() else "import"
+
+    def _get_import_job_source_name(self, import_job: Dict[str, Any] | None) -> str:
+        if not import_job:
+            return ""
+        spec = import_job.get("spec") or {}
+        return str(spec.get("source_name") or import_job.get("source_name") or "").strip()
+
+    def _get_import_job_display_name(self, import_job: Dict[str, Any] | None) -> str:
+        if not import_job:
+            return ""
+        spec = import_job.get("spec") or {}
+        return str(spec.get("display_name") or "").strip()
+
+    def _sort_jobs_by_latest_timestamp(self, jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return sorted(
+            jobs,
+            key=lambda item: (
+                self._parse_timestamp(item.get("updated_at") or item.get("created_at")) or datetime.min,
+                str(item.get("id") or ""),
+            ),
+            reverse=True,
+        )
+
+    def _resolve_latest_completed_import_for_source(self, source_name: str) -> Dict[str, Any]:
+        normalized_source_name = str(source_name or "").strip()
+        if not normalized_source_name:
+            raise MissingDependencyError("import source", source_name or "", detail="Prediction source_name is required.")
+
+        matching_imports = [
+            job
+            for job in self.repository.list_import_jobs()
+            if str(job.get("status") or "").lower() == JobStatus.COMPLETED.value
+            and self._get_import_job_source_name(job) == normalized_source_name
+        ]
+        if not matching_imports:
+            raise MissingDependencyError(
+                "completed import job",
+                normalized_source_name,
+                detail=f"No completed import job is available for source '{normalized_source_name}'.",
+            )
+        return self._sort_jobs_by_latest_timestamp(matching_imports)[0]
+
+    def _resolve_prediction_target(
+        self,
+        *,
+        import_job_id: str | None = None,
+        source_name: str | None = None,
+        audience_scope: str | None = None,
+    ) -> Dict[str, Any]:
+        resolved_scope = self._normalize_audience_scope(audience_scope, import_job_id=import_job_id, source_name=source_name)
+        if resolved_scope == "source":
+            import_job = self._resolve_latest_completed_import_for_source(str(source_name or "").strip())
+        else:
+            import_job = self._require_completed_import(str(import_job_id or "").strip())
+        resolved_source_name = self._get_import_job_source_name(import_job)
+        resolved_import_job_id = str(import_job["id"])
+        resolved_import_display_name = self._get_import_job_display_name(import_job)
+        audience_label = resolved_source_name if resolved_scope == "source" else (resolved_import_display_name or resolved_import_job_id)
+        return {
+            "audience_scope": resolved_scope,
+            "source_name": resolved_source_name,
+            "import_job": import_job,
+            "import_job_id": resolved_import_job_id,
+            "resolved_import_display_name": resolved_import_display_name,
+            "audience_label": audience_label,
+        }
+
+    @staticmethod
+    def _build_prediction_audience_details(resolved_target: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "audience_scope": str(resolved_target.get("audience_scope") or "import"),
+            "source_name": str(resolved_target.get("source_name") or "").strip(),
+            "audience_label": str(resolved_target.get("audience_label") or "").strip(),
+            "resolved_import_display_name": str(resolved_target.get("resolved_import_display_name") or "").strip(),
+        }
+
+    def create_job(
+        self,
+        import_job_id: str | None = None,
+        prediction_mode: str = "local",
+        *,
+        source_name: str | None = None,
+        audience_scope: str | None = None,
+    ) -> Dict[str, Any]:
+        resolved_target = self._resolve_prediction_target(
+            import_job_id=import_job_id,
+            source_name=source_name,
+            audience_scope=audience_scope,
+        )
+        import_job_id = resolved_target["import_job_id"]
         local_model_readiness = self.local_models.get_model_readiness()
         execution_details = self._prediction_execution_details(
             prediction_mode,
@@ -164,6 +258,8 @@ class PredictionService:
                 "status": JobStatus.QUEUED.value,
                 "spec": {
                     "import_job_id": import_job_id,
+                    "audience_scope": resolved_target["audience_scope"],
+                    "source_name": resolved_target["source_name"],
                     "prediction_mode": prediction_mode,
                 },
                 "progress": {
@@ -172,6 +268,7 @@ class PredictionService:
                     "pct": 0.0,
                     "details": {
                         "import_job_id": import_job_id,
+                        **self._build_prediction_audience_details(resolved_target),
                         "prediction_mode": str(prediction_mode or "local").lower(),
                         "history_scope": "tenant_merged",
                         "history_snapshot_at": None,
@@ -344,12 +441,30 @@ class PredictionService:
             return self._decorate_prediction_job(job)
         if str(job.get("status") or "").lower() == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id, self._stop_reason())
-        import_job_id = job["spec"]["import_job_id"]
-        self._require_completed_import(import_job_id)
+        spec = job.get("spec") or {}
+        resolved_target = self._resolve_prediction_target(
+            import_job_id=spec.get("import_job_id"),
+            source_name=spec.get("source_name"),
+            audience_scope=spec.get("audience_scope"),
+        )
+        import_job_id = resolved_target["import_job_id"]
 
         mode = str(job["spec"].get("prediction_mode", "local")).lower()
         history_snapshot_at = datetime.utcnow().isoformat()
-        self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value, "error": None})
+        self.repository.update_prediction_job(
+            job_id,
+            {
+                "status": JobStatus.RUNNING.value,
+                "error": None,
+                "import_job_id": import_job_id,
+                "spec": {
+                    **spec,
+                    "import_job_id": import_job_id,
+                    "audience_scope": resolved_target["audience_scope"],
+                    "source_name": resolved_target["source_name"],
+                },
+            },
+        )
         self._commit_session()
 
         try:
@@ -384,6 +499,7 @@ class PredictionService:
                         "details": {
                             "rows_written": 0,
                             "import_job_id": import_job_id,
+                            **self._build_prediction_audience_details(resolved_target),
                             "prediction_mode": mode,
                             "history_scope": "tenant_merged",
                             "history_snapshot_at": history_snapshot_at,
@@ -413,6 +529,7 @@ class PredictionService:
                                 "details": {
                                     "rows_written": rows_written,
                                     "import_job_id": import_job_id,
+                                    **self._build_prediction_audience_details(resolved_target),
                                     "prediction_mode": mode,
                                     "history_scope": "tenant_merged",
                                     "history_snapshot_at": history_snapshot_at,
@@ -493,6 +610,7 @@ class PredictionService:
                             "details": {
                                 "rows_written": rows_written,
                                 "import_job_id": import_job_id,
+                                **self._build_prediction_audience_details(resolved_target),
                                 "prediction_mode": mode,
                                 "history_scope": "tenant_merged",
                                 "history_snapshot_at": history_snapshot_at,
@@ -520,6 +638,7 @@ class PredictionService:
                         "details": {
                             "rows_written": rows_written,
                             "import_job_id": import_job_id,
+                            **self._build_prediction_audience_details(resolved_target),
                             "prediction_mode": mode,
                             "history_scope": "tenant_merged",
                             "history_snapshot_at": history_snapshot_at,

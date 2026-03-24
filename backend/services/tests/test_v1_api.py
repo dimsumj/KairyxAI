@@ -1333,6 +1333,97 @@ def test_completed_prediction_job_is_marked_stale_after_later_import(client):
     assert listed_item["progress"]["details"]["stale"] is True
 
 
+def test_prediction_source_mode_resolves_latest_import_on_run(client):
+    source_name = "Amplitude 1"
+    current_import_time = datetime(2026, 3, 20, 12, 0, 0)
+    latest_import_time = datetime(2026, 3, 24, 12, 0, 0)
+    current_import = _create_completed_import_job(
+        "imp_source_current",
+        source_name=source_name,
+        start_date="20260320",
+        end_date="20260320",
+        created_at=current_import_time,
+        updated_at=current_import_time,
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": current_import["id"],
+                "job_identifier": current_import["id"],
+                "source": "manual",
+                "player_id": "player-current",
+                "canonical_user_id": "canon-current",
+                "source_event_id": "current-evt-1",
+                "event_fingerprint": "current-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-20T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "current@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "source_name": source_name,
+            "audience_scope": "source",
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+    assert prediction_job["spec"]["audience_scope"] == "source"
+    assert prediction_job["spec"]["source_name"] == source_name
+    assert prediction_job["spec"]["import_job_id"] == current_import["id"]
+
+    latest_import = _create_completed_import_job(
+        "imp_source_latest",
+        source_name=source_name,
+        start_date="20260324",
+        end_date="20260324",
+        created_at=latest_import_time,
+        updated_at=latest_import_time,
+    )
+    service.write_events_staging(
+        [
+            {
+                "job_id": latest_import["id"],
+                "job_identifier": latest_import["id"],
+                "source": "manual",
+                "player_id": "player-latest",
+                "canonical_user_id": "canon-latest",
+                "source_event_id": "latest-evt-1",
+                "event_fingerprint": "latest-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-24T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "latest@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["spec"]["import_job_id"] == latest_import["id"]
+    assert run_prediction.json()["progress"]["details"]["audience_scope"] == "source"
+    assert run_prediction.json()["progress"]["details"]["source_name"] == source_name
+    assert run_prediction.json()["progress"]["details"]["import_job_id"] == latest_import["id"]
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["user_id"] == "player-latest"
+
+
 def test_import_failure_marks_job_failed(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",

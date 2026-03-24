@@ -983,43 +983,36 @@
                 await refreshImportsState();
             }
 
-            function getLatestPredictionJob(importJobId, completedOnly = false) {
-                return getLatestPredictionJobForMode(importJobId, completedOnly);
+            function getLatestPredictionJob(audienceKey, completedOnly = false, audienceScope = getSelectedPredictionAudienceScope()) {
+                return getLatestPredictionJobForMode(audienceKey, completedOnly, '', audienceScope);
             }
 
             function getPredictionJobMode(job = {}) {
                 return String((((job || {}).spec || {}).prediction_mode) || 'local').toLowerCase();
             }
 
-            function getLatestPredictionJobForMode(importJobId, completedOnly = false, predictionMode = '') {
-                const normalizedMode = String(predictionMode || '').toLowerCase();
+            function getLatestPredictionJobForMode(audienceKey, completedOnly = false, predictionMode = '', audienceScope = getSelectedPredictionAudienceScope()) {
                 return cachedPredictionJobs.find((job) => {
-                    const matchesImport = String((job.spec || {}).import_job_id || '') === String(importJobId);
-                    if (!matchesImport) return false;
-                    if (normalizedMode && getPredictionJobMode(job) !== normalizedMode) return false;
+                    if (!predictionJobMatchesSelection(job, audienceKey, audienceScope, predictionMode)) return false;
                     if (!completedOnly) return true;
                     return String(job.status || '').toLowerCase() === 'completed';
                 }) || null;
             }
 
-            function getLatestActivePredictionJob(importJobId, predictionMode = '') {
-                const normalizedMode = String(predictionMode || '').toLowerCase();
+            function getLatestActivePredictionJob(audienceKey, predictionMode = '', audienceScope = getSelectedPredictionAudienceScope()) {
                 return cachedPredictionJobs.find((job) => (
-                    String((job.spec || {}).import_job_id || '') === String(importJobId)
-                    && (!normalizedMode || getPredictionJobMode(job) === normalizedMode)
+                    predictionJobMatchesSelection(job, audienceKey, audienceScope, predictionMode)
                     && isPredictionJobActive(job)
                 )) || null;
             }
 
-            function getLatestCompletedPredictionJob(importJobId, excludeJobId = null, predictionMode = '') {
-                const normalizedMode = String(predictionMode || '').toLowerCase();
+            function getLatestCompletedPredictionJob(audienceKey, excludeJobId = null, predictionMode = '', audienceScope = getSelectedPredictionAudienceScope()) {
                 return cachedPredictionJobs.find((job) => {
                     if (excludeJobId && String(job.id || '') === String(excludeJobId)) {
                         return false;
                     }
                     return (
-                        String((job.spec || {}).import_job_id || '') === String(importJobId)
-                        && (!normalizedMode || getPredictionJobMode(job) === normalizedMode)
+                        predictionJobMatchesSelection(job, audienceKey, audienceScope, predictionMode)
                         && String(job.status || '').toLowerCase() === 'completed'
                     );
                 }) || null;
@@ -1033,7 +1026,8 @@
             function clearBaselinePredictionRows() {
                 baselinePredictionPlayers = [];
                 baselinePredictionJobId = null;
-                baselinePredictionImportJobId = null;
+                baselinePredictionAudienceKey = null;
+                baselinePredictionAudienceScope = null;
             }
 
             function mergePredictionRows(priorityRows = [], existingRows = []) {
@@ -1076,44 +1070,50 @@
                 return rows;
             }
 
-            async function loadBaselinePredictionRows(importJobId, excludeJobId = null, predictionMode = '') {
-                const normalizedImportJobId = String(importJobId || '');
-                if (!normalizedImportJobId) {
+            async function loadBaselinePredictionRows(audienceKey, excludeJobId = null, predictionMode = '', audienceScope = getSelectedPredictionAudienceScope()) {
+                const normalizedAudienceKey = String(audienceKey || '').trim();
+                const normalizedAudienceScope = String(audienceScope || '').trim().toLowerCase() || 'source';
+                if (!normalizedAudienceKey) {
                     clearBaselinePredictionRows();
                     return [];
                 }
 
                 const latestCompletedJob = getLatestCompletedPredictionJob(
-                    normalizedImportJobId,
+                    normalizedAudienceKey,
                     excludeJobId,
                     predictionMode,
+                    normalizedAudienceScope,
                 );
                 if (!latestCompletedJob) {
                     clearBaselinePredictionRows();
-                    baselinePredictionImportJobId = normalizedImportJobId;
+                    baselinePredictionAudienceKey = normalizedAudienceKey;
+                    baselinePredictionAudienceScope = normalizedAudienceScope;
                     return [];
                 }
 
                 if (
-                    baselinePredictionImportJobId === normalizedImportJobId
+                    baselinePredictionAudienceScope === normalizedAudienceScope
+                    && baselinePredictionAudienceKey === normalizedAudienceKey
                     && baselinePredictionJobId === String(latestCompletedJob.id || '')
                 ) {
                     return baselinePredictionPlayers;
                 }
 
                 baselinePredictionPlayers = await fetchPredictionRows(latestCompletedJob.id);
-                baselinePredictionImportJobId = normalizedImportJobId;
+                baselinePredictionAudienceKey = normalizedAudienceKey;
+                baselinePredictionAudienceScope = normalizedAudienceScope;
                 baselinePredictionJobId = String(latestCompletedJob.id || '');
                 return baselinePredictionPlayers;
             }
 
-            async function renderCompletedPredictionJob(completedJob, importJobId) {
+            async function renderCompletedPredictionJob(completedJob, audienceKey, audienceScope = getSelectedPredictionAudienceScope()) {
                 const completedRows = await fetchPredictionRows(completedJob.id);
                 activePredictionJobId = null;
                 clearPersistedActivePredictionJob();
                 predictionStopRequested = false;
                 baselinePredictionPlayers = [...completedRows];
-                baselinePredictionImportJobId = String(importJobId || '');
+                baselinePredictionAudienceKey = String(audienceKey || '');
+                baselinePredictionAudienceScope = String(audienceScope || '').toLowerCase() || 'source';
                 baselinePredictionJobId = String(completedJob.id || '');
                 allChurnPredictionPlayers = [...completedRows];
                 renderChurnTable(completedRows.length > 0 ? undefined : 'No prediction results available.');
@@ -1125,14 +1125,20 @@
                 pushAudienceBtn.disabled = completedRows.length === 0;
             }
 
-            async function createPredictionRecord(importJobId, predictionMode = 'local') {
+            async function createPredictionRecord(audienceKey, predictionMode = 'local', audienceScope = getSelectedPredictionAudienceScope()) {
                 await ensureHealthState().catch(() => null);
+                const requestBody = {
+                    prediction_mode: predictionMode,
+                    audience_scope: audienceScope,
+                };
+                if (audienceScope === 'source') {
+                    requestBody.source_name = audienceKey;
+                } else {
+                    requestBody.import_job_id = audienceKey;
+                }
                 const created = await apiRequest('/predictions', {
                     method: 'POST',
-                    body: {
-                        import_job_id: importJobId,
-                        prediction_mode: predictionMode,
-                    },
+                    body: requestBody,
                 });
                 if (backendMode === 'mock') {
                     queueMockPredictionRun(created.id);
@@ -1540,6 +1546,9 @@
 
             // Operator Hub Logic
             const datasetSelect = document.getElementById('dataset-select');
+            const datasetSelectLabel = document.getElementById('dataset-select-label');
+            const datasetSelectHelp = document.getElementById('dataset-select-help');
+            const predictionAudienceScopeSelect = document.getElementById('prediction-audience-scope-select');
             const predictionModeSelect = document.getElementById('prediction-mode-select');
             const predictionModelReadinessBadge = document.getElementById('prediction-model-readiness-badge');
             const predictionModelReadinessDetails = document.getElementById('prediction-model-readiness-details');
@@ -1561,7 +1570,8 @@
             let allChurnPredictionPlayers = [];
             let baselinePredictionPlayers = [];
             let baselinePredictionJobId = null;
-            let baselinePredictionImportJobId = null;
+            let baselinePredictionAudienceKey = null;
+            let baselinePredictionAudienceScope = null;
             let currentPage = 1;
             let itemsPerPage = 25;
             let activePredictionJobId = null;
@@ -1572,26 +1582,115 @@
                 return String(((job || {}).spec || {}).import_job_id || '');
             }
 
+            function getPredictionAudienceScope(job = {}) {
+                const spec = (job || {}).spec || {};
+                const explicitScope = String(spec.audience_scope || '').trim().toLowerCase();
+                if (explicitScope) {
+                    return explicitScope;
+                }
+                return String(spec.source_name || '').trim() ? 'source' : 'import';
+            }
+
+            function getPredictionJobSourceName(job = {}) {
+                const spec = (job || {}).spec || {};
+                const details = (((job || {}).progress || {}).details || {});
+                return String(spec.source_name || details.source_name || '').trim();
+            }
+
+            function getPredictionAudienceKey(job = {}) {
+                return getPredictionAudienceScope(job) === 'source'
+                    ? getPredictionJobSourceName(job)
+                    : getPredictionImportJobId(job);
+            }
+
+            function getSelectedPredictionAudienceScope() {
+                return String((predictionAudienceScopeSelect && predictionAudienceScopeSelect.value) || 'source').toLowerCase();
+            }
+
+            function getSelectedPredictionAudienceKey() {
+                return String((datasetSelect && datasetSelect.value) || '').trim();
+            }
+
+            function getPredictionAudienceOptions(audienceScope = getSelectedPredictionAudienceScope()) {
+                const readyJobs = cachedImports.filter((job) => job.status === 'Ready to Use');
+                if (audienceScope === 'source') {
+                    const latestImportBySource = new Map();
+                    latestByCreatedAt(readyJobs).forEach((job) => {
+                        const sourceName = String(((job.spec || {}).source_name) || '').trim();
+                        if (!sourceName || latestImportBySource.has(sourceName)) {
+                            return;
+                        }
+                        latestImportBySource.set(sourceName, job);
+                    });
+                    return Array.from(latestImportBySource.entries())
+                        .sort((a, b) => a[0].localeCompare(b[0]))
+                        .map(([sourceName, latestJob]) => ({
+                            value: sourceName,
+                            label: `${sourceName} (latest: ${latestJob.name})`,
+                        }));
+                }
+                return readyJobs.map((job) => ({
+                    value: String(job.id || ''),
+                    label: job.name,
+                }));
+            }
+
+            function renderPredictionAudienceSelectorMeta() {
+                const audienceScope = getSelectedPredictionAudienceScope();
+                if (datasetSelectLabel) {
+                    datasetSelectLabel.textContent = audienceScope === 'source' ? 'Select Source' : 'Select Import';
+                }
+                if (datasetSelectHelp) {
+                    datasetSelectHelp.textContent = audienceScope === 'source'
+                        ? 'Source mode resolves to the latest completed import when prediction starts.'
+                        : 'Import mode scores only the players contained in the selected completed import.';
+                }
+            }
+
+            function predictionJobMatchesSelection(job, audienceKey, audienceScope = getSelectedPredictionAudienceScope(), predictionMode = '') {
+                const normalizedAudienceKey = String(audienceKey || '').trim();
+                const normalizedAudienceScope = String(audienceScope || '').trim().toLowerCase() || 'source';
+                const normalizedMode = String(predictionMode || '').toLowerCase();
+                if (!normalizedAudienceKey) {
+                    return false;
+                }
+                if (getPredictionAudienceScope(job) !== normalizedAudienceScope) {
+                    return false;
+                }
+                if (getPredictionAudienceKey(job) !== normalizedAudienceKey) {
+                    return false;
+                }
+                if (normalizedMode && getPredictionJobMode(job) !== normalizedMode) {
+                    return false;
+                }
+                return true;
+            }
+
             function readPersistedActivePredictionJob() {
                 try {
                     const raw = window.sessionStorage.getItem(ACTIVE_PREDICTION_STORAGE_KEY);
                     if (!raw) return null;
                     const parsed = JSON.parse(raw);
                     if (!parsed || !parsed.job_id) return null;
+                    if (!parsed.audience_scope && parsed.import_job_id) {
+                        parsed.audience_scope = 'import';
+                        parsed.audience_key = String(parsed.import_job_id);
+                    }
                     return parsed;
                 } catch (error) {
                     return null;
                 }
             }
 
-            function persistActivePredictionJob(jobId, importJobId) {
-                if (!jobId || !importJobId) return;
+            function persistActivePredictionJob(jobId, audienceKey, audienceScope) {
+                if (!jobId || !audienceKey) return;
                 try {
                     window.sessionStorage.setItem(
                         ACTIVE_PREDICTION_STORAGE_KEY,
                         JSON.stringify({
                             job_id: String(jobId),
-                            import_job_id: String(importJobId),
+                            audience_scope: String(audienceScope || 'source'),
+                            audience_key: String(audienceKey),
                         }),
                     );
                 } catch (error) {
@@ -1636,6 +1735,7 @@
                     predictChurnBtn.style.background = 'var(--primary-color)';
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
                     return;
                 }
@@ -1645,6 +1745,7 @@
                     predictChurnBtn.style.background = 'var(--red)';
                     predictChurnBtn.disabled = false;
                     datasetSelect.disabled = true;
+                    predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
                     return;
                 }
@@ -1654,6 +1755,7 @@
                     predictChurnBtn.style.background = 'var(--subtle-text)';
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
                     return;
                 }
@@ -1662,6 +1764,7 @@
                 predictChurnBtn.style.background = '';
                 predictChurnBtn.disabled = false;
                 datasetSelect.disabled = false;
+                predictionAudienceScopeSelect.disabled = false;
                 predictionModeSelect.disabled = false;
             }
 
@@ -1702,6 +1805,15 @@
                 return String(((((job || {}).progress || {}).details || {}).stale_reason) || '').trim();
             }
 
+            function getPredictionAudienceProgressLabel(details = {}) {
+                const audienceScope = String(details.audience_scope || '').trim().toLowerCase();
+                const sourceName = String(details.source_name || '').trim();
+                if (audienceScope === 'source' && sourceName) {
+                    return ` · Source ${sourceName}`;
+                }
+                return '';
+            }
+
             function getPredictionReusePromptMessage(completedJob, selectedPredictionMode) {
                 const cachedMode = getPredictionJobMode(completedJob);
                 const cachedLabel = getPredictionModeLabel(cachedMode);
@@ -1709,12 +1821,12 @@
                 if (isPredictionJobStale(completedJob)) {
                     const staleReason = getPredictionJobStaleReason(completedJob);
                     const staleSuffix = staleReason ? ` ${staleReason}` : ' Newer imports changed the merged player history.';
-                    return `${cachedLabel} results for this dataset are finished but stale.${staleSuffix} Select OK to rerun with ${selectedLabel}, or Cancel to load the cached stale results.`;
+                    return `${cachedLabel} results for this selection are finished but stale.${staleSuffix} Select OK to rerun with ${selectedLabel}, or Cancel to load the cached stale results.`;
                 }
                 if (cachedMode === String(selectedPredictionMode || '').toLowerCase()) {
-                    return `${cachedLabel} results for this dataset are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached results.`;
+                    return `${cachedLabel} results for this selection are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached results.`;
                 }
-                return `${cachedLabel} results for this dataset are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached ${cachedLabel} results.`;
+                return `${cachedLabel} results for this selection are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached ${cachedLabel} results.`;
             }
 
             function formatPredictionProgressText(job = {}) {
@@ -1735,8 +1847,9 @@
                     .replace(/\b\w/g, (c) => c.toUpperCase());
                 const localModelLabel = getPredictionEffectiveLocalModelLabel(details, normalizedStatus);
                 const modelSuffix = localModelLabel ? ` · Model ${localModelLabel}` : '';
+                const audienceSuffix = getPredictionAudienceProgressLabel(details);
                 const staleSuffix = isPredictionJobStale(job) ? ' · Stale' : '';
-                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}${staleSuffix}`;
+                return `Prediction job: ${rawStatus} · ${executionLabel}${audienceSuffix} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}${staleSuffix}`;
             }
 
             function formatCount(value) {
@@ -1814,37 +1927,51 @@
                         refreshPredictionJobsState(),
                         refreshPredictionModelReadinessState(),
                     ]);
-                    const jobs = cachedImports;
-                    const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
                     const previousSelection = datasetSelect.value;
+                    const previousAudienceScope = getSelectedPredictionAudienceScope();
                     const persistedActiveJob = await getPersistedActivePredictionJob();
-                    const persistedImportJobId = getPredictionImportJobId(persistedActiveJob) || String((readPersistedActivePredictionJob() || {}).import_job_id || '');
+                    const persistedSelection = readPersistedActivePredictionJob() || {};
                     datasetSelect.innerHTML = ''; // Clear loading message
+                    const activePredictionJob = persistedActiveJob || cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
+                    const selectedAudienceScope = String(
+                        (activePredictionJob && getPredictionAudienceScope(activePredictionJob))
+                        || persistedSelection.audience_scope
+                        || previousAudienceScope
+                        || 'source'
+                    ).toLowerCase();
+                    if (predictionAudienceScopeSelect) {
+                        predictionAudienceScopeSelect.value = selectedAudienceScope;
+                    }
+                    renderPredictionAudienceSelectorMeta();
+                    const audienceOptions = getPredictionAudienceOptions(selectedAudienceScope);
 
-                    if (readyJobs.length > 0) {
+                    if (audienceOptions.length > 0) {
                         syncPredictionModeSelection();
-                        readyJobs.forEach(job => {
+                        audienceOptions.forEach((optionItem) => {
                             const option = document.createElement('option');
-                            option.value = job.id;
-                            option.textContent = job.name;
+                            option.value = optionItem.value;
+                            option.textContent = optionItem.label;
                             datasetSelect.appendChild(option);
                         });
-                        const activePredictionJob = persistedActiveJob || cachedPredictionJobs.find((job) => isPredictionJobActive(job)) || null;
-                        const activeImportJobId = getPredictionImportJobId(activePredictionJob) || persistedImportJobId;
-                        const selectedDataset = readyJobs.some(job => job.id === activeImportJobId)
-                            ? activeImportJobId
-                            : (readyJobs.some(job => job.id === previousSelection) ? previousSelection : readyJobs[0].id);
-                        datasetSelect.value = selectedDataset;
-                        const selectedActiveJob = [persistedActiveJob, activePredictionJob, getLatestPredictionJob(selectedDataset, false)]
-                            .find((job) => job && isPredictionJobActive(job) && String((job.spec || {}).import_job_id || '') === String(selectedDataset))
+                        const activeAudienceKey = activePredictionJob ? getPredictionAudienceKey(activePredictionJob) : String(persistedSelection.audience_key || '');
+                        const selectedAudienceKey = audienceOptions.some((optionItem) => optionItem.value === activeAudienceKey)
+                            ? activeAudienceKey
+                            : (audienceOptions.some((optionItem) => optionItem.value === previousSelection) ? previousSelection : audienceOptions[0].value);
+                        datasetSelect.value = selectedAudienceKey;
+                        const selectedActiveJob = [
+                            persistedActiveJob,
+                            activePredictionJob,
+                            getLatestPredictionJob(selectedAudienceKey, false, selectedAudienceScope),
+                        ]
+                            .find((job) => job && isPredictionJobActive(job) && predictionJobMatchesSelection(job, selectedAudienceKey, selectedAudienceScope))
                             || null;
 
                         if (selectedActiveJob) {
                             activePredictionJobId = selectedActiveJob.id;
                             syncPredictionModeSelection(selectedActiveJob);
-                            persistActivePredictionJob(activePredictionJobId, selectedDataset);
+                            persistActivePredictionJob(activePredictionJobId, selectedAudienceKey, selectedAudienceScope);
                             predictionStopRequested = String(selectedActiveJob.status || '').toLowerCase() === 'stopping';
-                            await syncPredictionRows(activePredictionJobId, selectedDataset);
+                            await syncPredictionRows(activePredictionJobId, selectedAudienceKey, selectedAudienceScope);
                             renderPredictionProgress({
                                 status: mapPredictionStatus(selectedActiveJob.status),
                                 progress: selectedActiveJob.progress,
@@ -1873,7 +2000,7 @@
                         predictionProgressInfo.textContent = '';
                         setCampaignExportStatus('');
                     } else {
-                        datasetSelect.innerHTML = '<option>No processed datasets available</option>';
+                        datasetSelect.innerHTML = `<option>No ready ${selectedAudienceScope === 'source' ? 'sources' : 'imports'} available</option>`;
                         activePredictionJobId = null;
                         clearPersistedActivePredictionJob();
                         clearBaselinePredictionRows();
@@ -1881,31 +2008,34 @@
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
+                        predictionAudienceScopeSelect.disabled = false;
                         predictionModeSelect.disabled = true;
                         pushAudienceBtn.disabled = true;
                         setCampaignExportStatus('');
                     }
                 } catch (error) {
                     clearBaselinePredictionRows();
-                    datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
+                    datasetSelect.innerHTML = `<option>Error loading prediction audiences</option>`;
                     renderPredictionModelReadiness();
                     setPredictionActionState('idle');
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
+                    predictionAudienceScopeSelect.disabled = false;
                     predictionModeSelect.disabled = true;
                     pushAudienceBtn.disabled = true;
-                    console.error('Error loading datasets for Operator Hub:', error);
+                    console.error('Error loading prediction audiences for Operator Hub:', error);
                 }
             }
 
-            async function syncPredictionRows(jobId, importJobId = '') {
+            async function syncPredictionRows(jobId, audienceKey = '', audienceScope = getSelectedPredictionAudienceScope()) {
                 if (!jobId) {
                     return;
                 }
-                const normalizedImportJobId = String(importJobId || datasetSelect.value || '');
+                const normalizedAudienceKey = String(audienceKey || getSelectedPredictionAudienceKey() || '').trim();
+                const normalizedAudienceScope = String(audienceScope || '').toLowerCase() || 'source';
                 const [activeRows, existingRows] = await Promise.all([
                     fetchPredictionRows(jobId),
-                    loadBaselinePredictionRows(normalizedImportJobId, jobId, getSelectedPredictionMode()),
+                    loadBaselinePredictionRows(normalizedAudienceKey, jobId, getSelectedPredictionMode(), normalizedAudienceScope),
                 ]);
                 allChurnPredictionPlayers = mergePredictionRows(activeRows, existingRows);
                 if (activePredictionJobId === jobId) {
@@ -1933,8 +2063,8 @@
                 }
             }
 
-            async function fetchAndRenderPredictions(importJobId, forceRecalculate = false) {
-                if (!importJobId) {
+            async function fetchAndRenderPredictions(audienceKey, forceRecalculate = false, audienceScope = getSelectedPredictionAudienceScope()) {
+                if (!audienceKey) {
                     clearBaselinePredictionRows();
                     allChurnPredictionPlayers = [];
                     renderChurnTable();
@@ -1943,6 +2073,7 @@
 
                 predictionStopRequested = false;
                 const selectedPredictionMode = getSelectedPredictionMode();
+                const normalizedAudienceScope = String(audienceScope || '').toLowerCase() || 'source';
                 currentPage = 1;
                 let shouldForceRecalculate = Boolean(forceRecalculate);
 
@@ -1951,18 +2082,18 @@
                     await ensureHealthState();
                     await Promise.all([refreshConnectorsState(), refreshPredictionJobsState(), refreshPredictionModelReadinessState()]);
                     renderPredictionModelReadiness();
-                    predictionJob = !shouldForceRecalculate ? getLatestActivePredictionJob(importJobId, selectedPredictionMode) : null;
+                    predictionJob = !shouldForceRecalculate ? getLatestActivePredictionJob(audienceKey, selectedPredictionMode, normalizedAudienceScope) : null;
                     if (!predictionJob && !shouldForceRecalculate) {
                         const completedJob = (
-                            getLatestCompletedPredictionJob(importJobId, null, selectedPredictionMode)
-                            || getLatestCompletedPredictionJob(importJobId)
+                            getLatestCompletedPredictionJob(audienceKey, null, selectedPredictionMode, normalizedAudienceScope)
+                            || getLatestCompletedPredictionJob(audienceKey, null, '', normalizedAudienceScope)
                         );
                         if (completedJob) {
                             const shouldRerun = window.confirm(
                                 getPredictionReusePromptMessage(completedJob, selectedPredictionMode),
                             );
                             if (!shouldRerun) {
-                                await renderCompletedPredictionJob(completedJob, importJobId);
+                                await renderCompletedPredictionJob(completedJob, audienceKey, normalizedAudienceScope);
                                 return;
                             }
                             shouldForceRecalculate = true;
@@ -1975,19 +2106,20 @@
                     const existingRows = shouldForceRecalculate
                         ? []
                         : await loadBaselinePredictionRows(
-                            importJobId,
+                            audienceKey,
                             predictionJob ? predictionJob.id : null,
                             selectedPredictionMode,
+                            normalizedAudienceScope,
                         );
                     allChurnPredictionPlayers = [...existingRows];
                     renderChurnTable(existingRows.length > 0 ? undefined : 'Waiting for prediction results...');
 
                     if (!predictionJob) {
-                        predictionJob = await createPredictionRecord(importJobId, selectedPredictionMode);
+                        predictionJob = await createPredictionRecord(audienceKey, selectedPredictionMode, normalizedAudienceScope);
                     }
                     activePredictionJobId = predictionJob.id;
                     syncPredictionModeSelection(predictionJob);
-                    persistActivePredictionJob(activePredictionJobId, importJobId);
+                    persistActivePredictionJob(activePredictionJobId, audienceKey, normalizedAudienceScope);
                     predictionStopRequested = String(predictionJob.status || '').toLowerCase() === 'stopping';
                     renderPredictionProgress({
                         status: mapPredictionStatus(predictionJob.status),
@@ -2002,9 +2134,9 @@
                     while (activePredictionJobId === predictionJob.id) {
                         predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
                         if (isPredictionJobActive(predictionJob)) {
-                            persistActivePredictionJob(predictionJob.id, importJobId);
+                            persistActivePredictionJob(predictionJob.id, audienceKey, normalizedAudienceScope);
                         }
-                        await syncPredictionRows(activePredictionJobId, importJobId);
+                        await syncPredictionRows(activePredictionJobId, audienceKey, normalizedAudienceScope);
                         renderPredictionProgress({
                             status: mapPredictionStatus(predictionJob.status),
                             progress: predictionJob.progress,
@@ -2022,7 +2154,7 @@
                     }
 
                     predictionJob = await apiRequest(`/predictions/${encodeURIComponent(activePredictionJobId)}`);
-                    await syncPredictionRows(activePredictionJobId, importJobId);
+                    await syncPredictionRows(activePredictionJobId, audienceKey, normalizedAudienceScope);
                     if (predictionJob.status === 'failed') {
                         throw new Error(predictionJob.error || 'Prediction failed.');
                     }
@@ -2041,7 +2173,8 @@
                     }
 
                     baselinePredictionPlayers = [...allChurnPredictionPlayers];
-                    baselinePredictionImportJobId = String(importJobId);
+                    baselinePredictionAudienceKey = String(audienceKey);
+                    baselinePredictionAudienceScope = normalizedAudienceScope;
                     baselinePredictionJobId = String(predictionJob.id || '');
                     if (allChurnPredictionPlayers.length === 0) {
                         renderChurnTable();
@@ -2064,9 +2197,10 @@
             }
 
             async function pushAudienceToCampaignProvider() {
-                const jobName = datasetSelect.value;
-                if (!jobName) {
-                    setCampaignExportStatus('Select a ready dataset first.', true);
+                const audienceKey = getSelectedPredictionAudienceKey();
+                const audienceScope = getSelectedPredictionAudienceScope();
+                if (!audienceKey) {
+                    setCampaignExportStatus(`Select a ready ${audienceScope === 'source' ? 'source' : 'import'} first.`, true);
                     return;
                 }
 
@@ -2082,12 +2216,14 @@
                 try {
                     await refreshPredictionJobsState();
                     const predictionJob = (
-                        baselinePredictionImportJobId === String(jobName)
+                        baselinePredictionAudienceScope === audienceScope
+                        && baselinePredictionAudienceKey === String(audienceKey)
                         && baselinePredictionJobId
                         && cachedPredictionJobs.find((job) => String(job.id || '') === String(baselinePredictionJobId))
-                    ) || getLatestPredictionJobForMode(jobName, true, getSelectedPredictionMode()) || getLatestPredictionJob(jobName, true);
+                    ) || getLatestPredictionJobForMode(audienceKey, true, getSelectedPredictionMode(), audienceScope)
+                        || getLatestPredictionJob(audienceKey, true, audienceScope);
                     if (!predictionJob) {
-                        throw new Error('Run churn prediction for this dataset before exporting an audience.');
+                        throw new Error('Run churn prediction for this selection before exporting an audience.');
                     }
                     const payload = {
                         include_churned: campaignIncludeChurnedCheckbox.checked,
@@ -2112,7 +2248,7 @@
                 }
             }
 
-            function renderChurnTable(emptyMessage = 'No players found in this dataset.') {
+            function renderChurnTable(emptyMessage = 'No players found in this selection.') {
                 operatorHubResults.innerHTML = '';
                 const startIndex = (currentPage - 1) * itemsPerPage;
                 const endIndex = startIndex + itemsPerPage;
@@ -2193,6 +2329,19 @@
                 setCampaignExportStatus('');
             });
 
+            predictionAudienceScopeSelect.addEventListener('change', async () => {
+                clearBaselinePredictionRows();
+                allChurnPredictionPlayers = [];
+                renderPredictionAudienceSelectorMeta();
+                renderChurnTable();
+                predictionStopRequested = false;
+                predictionProgressInfo.textContent = '';
+                renderPredictionModelReadiness();
+                setPredictionActionState('idle');
+                setCampaignExportStatus('');
+                await loadReadyImportsForOperatorHub();
+            });
+
             predictionModeSelect.addEventListener('change', () => {
                 renderPredictionModelReadiness();
             });
@@ -2202,8 +2351,7 @@
                     requestPredictionStop();
                     return;
                 }
-                const jobName = datasetSelect.value;
-                fetchAndRenderPredictions(jobName, false);
+                fetchAndRenderPredictions(getSelectedPredictionAudienceKey(), false, getSelectedPredictionAudienceScope());
             });
 
             campaignProviderSelect.addEventListener('change', updateCampaignProviderFields);

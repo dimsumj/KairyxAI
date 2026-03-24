@@ -267,6 +267,22 @@ Prediction job metadata also records:
 
 The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` badge beside the prediction engine selector and warns when `Local Model` is currently using `heuristic_v1`.
 
+## Prediction Audience Selection
+
+The churn workbench now supports two prediction audience modes:
+
+- `Source` is the default operator path
+  - choose a source such as `Amplitude 1`
+  - the prediction job resolves to the latest completed import for that source when the run starts
+- `Import` remains available for audit, debugging, and replay against a specific completed import
+
+In both modes:
+
+- the selected audience defines the roster that gets scored
+- churn features come from merged tenant history across completed imports
+- the prediction job records the resolved `import_job_id` that was actually used
+- completed cached jobs can be viewed, but stale jobs require explicit rerun confirmation in the UI
+
 ## Key Environment Variables
 
 | Variable | Purpose | Default |
