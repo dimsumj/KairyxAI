@@ -71,20 +71,20 @@
   - `prediction job`
   - `ingestion checkpoint`
 
-### 4.1.7 Local Model Readiness + Baseline Strategy（新增）
+### 4.1.7 Local Model Readiness + Baseline Strategy
 
-#### 目标
-在不突破 v1 的 batch / nearline 和 human-in-the-loop 边界的前提下，让 `Local Model` 预测路径始终可用、可解释，并明确告知运营当前使用的是已学习本地模型还是 `heuristic_v1` 基线。
+#### Goal
+Keep the `Local Model` prediction path always available and interpretable within the v1 batch / nearline and human-in-the-loop boundaries, while making it explicit whether the operator is using a learned local model or the `heuristic_v1` baseline.
 
-#### 策略边界
-- `heuristic_v1` 是 v1 默认且始终可用的通用本地基线模型
-- 本地监督式 churn model 基于累计的 holdout / untreated 样本与真实 return / purchase outcome 做 batch retrain
-- 新模型只有在 `validation_accuracy >= heuristic_accuracy` 时才允许 promotion 为 active
-- 不引入在线增量学习，不允许每次预测后即时自我更新
-- `prediction_mode=local` 在模型未 ready 时仍可运行，但必须明确标记为 `heuristic_v1` fallback
+#### Strategy Boundaries
+- `heuristic_v1` is the default and always-available general local baseline model in v1
+- The local supervised churn model retrains in batch from accumulated holdout / untreated rows and observed return / purchase outcomes
+- A newly trained model can only be promoted to active when `validation_accuracy >= heuristic_accuracy`
+- No online incremental learning is introduced in v1
+- `prediction_mode=local` remains runnable when the model is not ready, but it must be explicitly marked as `heuristic_v1` fallback
 
 #### Control-plane / API Contract
-- `GET /api/v1/predictions/models/runs` 必须返回归一化 `readiness`：
+- `GET /api/v1/predictions/models/runs` must return a normalized `readiness` object:
   - `state`: `untrained | learning | fallback | ready`
   - `using_model_version`
   - `reason`
@@ -94,31 +94,31 @@
   - `class_balance`
   - `validation_accuracy`
   - `heuristic_accuracy`
-- `prediction job` progress details 与 completed metadata 必须显式持有：
+- `prediction job` progress details and completed metadata must explicitly include:
   - `effective_local_model_version`
   - `effective_local_model_state`
-- prediction result storage 必须保留上述 effective model metadata，供 UI、导出与审计回查
+- Prediction result storage must retain the effective local model metadata for UI rendering, exports, and audit lookup
 
-#### 模块职责边界
-- Data Core 持有：
-  - 本地 churn model artifact / version / training status 的 control-plane persistence
-  - readiness API contract
-  - prediction job/result metadata contract
-- Experiment Hub 提供：
-  - holdout / treatment exposure
-  - outcome logging 与 attributed return / purchase signal
-- Audience / Action 只消费 prediction result，不持有 readiness 判定逻辑
+#### Module Ownership Boundaries
+- Data Core owns:
+  - control-plane persistence for local churn model artifacts, versions, and training status
+  - the readiness API contract
+  - the prediction job / result metadata contract
+- Experiment Hub provides:
+  - holdout / treatment exposure history
+  - outcome logging and attributed return / purchase signals
+- Audience / Action consume prediction results and do not own readiness inference logic
 
-#### Operator UX Contract（v1）
-- Operator Console 在 prediction engine selector 旁展示本地模型状态 badge：`Ready / Learning / Fallback`
-- 当 `Local Model` 未 ready 时，UI 必须提示：当前使用 `heuristic_v1` fallback
-- 已完成 prediction job 必须显示实际使用的 local model version / state，避免 cached result 不可解释
+#### Operator UX Contract (v1)
+- The Operator Console must show a local-model status badge beside the prediction engine selector: `Ready / Learning / Fallback`
+- When `Local Model` is not ready, the UI must clearly warn that `heuristic_v1` fallback is being used
+- Completed prediction jobs must show the actual local model version and state used so cached results remain interpretable
 
 #### Definition of Done
-1. `Local Model` 在无 active learned model 时仍可稳定执行，并退回 `heuristic_v1`
-2. readiness 状态可通过统一 API 查询，前端不需要自行推断
-3. prediction job 与 result rows 可回查实际使用的本地模型版本与状态
-4. operator UI 在 `learning / fallback` 状态下明确提示，而不是让用户误以为已启用训练模型
+1. `Local Model` remains runnable without an active learned model and falls back to `heuristic_v1`
+2. Readiness state is available through a single API contract, without frontend inference
+3. Prediction jobs and result rows expose the actual local model version and state used
+4. The operator UI clearly distinguishes `learning` and `fallback` from a truly `ready` local model
 
 ---
 
@@ -861,7 +861,7 @@ Audience Engine 的详细 scope、模块设计与上线门槛已拆分到独立�
 - `operator-api + import-worker + prediction-worker + dataflow` 的基础运行形态已存在
 - SQLAlchemy + Alembic control-plane persistence 已存在；本地 SQLite fallback 与生产 Postgres 目标已在代码结构中体现
 - paged connector ingestion、ingestion checkpoints、BigQuery-backed prediction result storage 与分页读取已存在
-- `Local Model` readiness contract、`heuristic_v1` fallback 语义、effective model metadata 与 operator badge/warning 已存在
+- `Local Model` readiness contract, `heuristic_v1` fallback semantics, effective model metadata, and operator badge/warning are implemented
 
 ### 6.2 仍未完成的 Gap
 
