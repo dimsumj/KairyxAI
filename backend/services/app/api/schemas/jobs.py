@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from app.application.secret_refs import redact_secret_values
+
 from .common import JobProgress, JobResponse
 
 
@@ -10,11 +12,15 @@ def build_job_response(job: Dict[str, Any], *, base_path: str, extra_links: Dict
     if extra_links:
         links.update(extra_links)
     progress = job.get("progress") or {}
-    details = progress.get("details") or {}
+    details = redact_secret_values(progress.get("details") or {})
     return JobResponse(
         id=job["id"],
         type=job["type"],
         status=job["status"],
+        tenant_id=job.get("tenant_id"),
+        created_by=str(job.get("created_by") or "system"),
+        updated_by=str(job.get("updated_by") or "system"),
+        correlation_id=str(job.get("correlation_id") or ""),
         created_at=job["created_at"],
         updated_at=job["updated_at"],
         progress=JobProgress(
@@ -25,7 +31,7 @@ def build_job_response(job: Dict[str, Any], *, base_path: str, extra_links: Dict
         ),
         error=job.get("error"),
         links=links,
-        spec=job.get("spec") or {},
+        spec=redact_secret_values(job.get("spec") or {}),
         quality_report=details.get("quality_report") or {},
         checkpoint_state=details.get("checkpoint_state") or {},
         mapping_coverage=float(details.get("mapping_coverage") or 0.0),

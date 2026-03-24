@@ -92,13 +92,17 @@ def copilot_recommend(request: CopilotRecommendRequest, http_request: Request, s
 def copilot_report(request: CopilotReportRequest, http_request: Request, service: CopilotService = Depends(get_copilot_service)):
     context = get_governance_context(http_request)
     ensure_permission(context, "copilot.report")
+    try:
+        payload = service.report(request.report_type, time_window=request.time_window)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return build_audited_response(
         service.repository,
         context,
         action_type="copilot_report",
         resource_type="copilot_report",
         resource_id=None,
-        payload=service.report(request.report_type, time_window=request.time_window),
+        payload=payload,
     )
 
 
@@ -207,6 +211,8 @@ def retry_copilot_report(report_id: str, http_request: Request, service: Copilot
         payload = service.retry_report(report_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Copilot report '{report_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return build_audited_response(
         service.repository,
         context,

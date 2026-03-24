@@ -1,0 +1,21 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: scheduler-worker
+spec:
+  template:
+    spec:
+      serviceAccountName: scheduler-worker
+      containers:
+        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/scheduler-worker:latest
+          command: ["uvicorn"]
+          args: ["workers.scheduler_worker_app:app", "--host", "0.0.0.0", "--port", "8080"]
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: SERVICE_ROLE
+              value: scheduler-worker
+            - name: SCHEDULER_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 8080

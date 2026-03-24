@@ -1,137 +1,137 @@
 # KairyxAI Action Orchestrator v1 PRD
 
-## 1. 模块目标
-将 Audience/Copilot 输出的人群与策略，转化为可控、可审计、可回滚的执行流程（Push / Email / In-App / Webhook）。
+## 1. Module Goal
+Turn audiences and strategy outputs from Audience and Copilot into controllable, auditable, and reversible execution flows across Push / Email / In-App / Webhook.
 
 ---
 
-## 2. 模块范围（v1）
+## 2. Module Scope (v1)
 
-### 2.1 In-scope
-- Trigger 定义：时间触发、事件触发、阈值触发
-- Action 定义：push / email / in-app / webhook（基础）
-- Workflow 编排：条件分支、限频、冷却窗口
-- 执行控制：草稿、发布、暂停、停止
-- 执行日志：发送、失败、重试、跳过原因
-- Audience export jobs：面向 Braze / SendGrid / Webhook 的导出、状态、重试、诊断
-- 安全机制：人工确认、Kill Switch、预算与频控门槛
+### 2.1 In Scope
+- Trigger definitions: time-based, event-based, and threshold-based triggers
+- Action definitions: push / email / in-app / webhook (foundational support)
+- Workflow orchestration: branching, frequency caps, cooldown windows
+- Execution controls: draft, publish, pause, stop
+- Execution logs: send, fail, retry, skip reasons
+- Audience export jobs for Braze / SendGrid / Webhook, including export status, retry, and diagnostics
+- Safety mechanisms: manual confirmation, Kill Switch, budget thresholds, and frequency guardrails
 
-### 2.2 Out-of-scope
-- 跨渠道复杂旅程编排（多阶段营销编排）
-- 自优化自动投放预算分配
-- 高复杂模板渲染系统
+### 2.2 Out of Scope
+- Complex cross-channel journey orchestration with many stages
+- Self-optimizing budget allocation
+- Highly complex template-rendering systems
 
 ---
 
-## 3. 子模块详细设计
+## 3. Detailed Submodule Design
 
-## 3.1 Workflow Builder（流程编排）
+## 3.1 Workflow Builder
 
-### 功能
-- 可视化节点：Trigger -> Filter -> Action -> Wait -> End
-- 条件分支：IF/ELSE（基于属性/事件/标签）
-- 工作流版本化（draft/published）
+### Functionality
+- Visual nodes: Trigger -> Filter -> Action -> Wait -> End
+- Conditional branches: IF / ELSE based on attributes, events, or tags
+- Workflow versioning for draft and published states
 
 ### DoD
-1. 可创建并保存基础工作流
-2. 支持发布新版本并保留旧版本
-3. 支持暂停与恢复
+1. Base workflows can be created and saved
+2. New workflow versions can be published while keeping older versions
+3. Pause and resume are supported
 
 ---
 
-## 3.2 Trigger Engine（触发引擎）
+## 3.2 Trigger Engine
 
-### 功能
-- 时间触发：cron/daily/hourly
-- 事件触发：指定 event_type 到达
-- 阈值触发：指标超过/低于阈值
+### Functionality
+- Time triggers: cron / daily / hourly
+- Event triggers: react to a specific `event_type`
+- Threshold triggers: fire when a metric rises above or falls below a threshold
 
-### 执行要求
-- 触发去重（同用户同规则短时间不重复触发）
-- 触发幂等（重复事件不重复执行）
-- 幂等键规范（P0 强制）：
+### Execution Requirements
+- Trigger deduplication so the same user and rule do not fire repeatedly within a short window
+- Trigger idempotency so repeated events do not execute twice
+- Idempotency-key contract (P0 mandatory):
   - `idempotency_key = workflow_id + workflow_version + user_id + action_type + window_bucket`
-  - 同一幂等键在有效窗口内只能成功执行一次
+  - The same idempotency key can execute successfully only once within the validity window
 
 ### DoD
-1. 支持三类触发器
-2. 触发事件具备幂等保障
-3. 触发记录可审计
+1. Supports all three trigger types
+2. Trigger events have idempotency guarantees
+3. Trigger records are auditable
 
 ---
 
-## 3.3 Delivery Engine（发送执行）
+## 3.3 Delivery Engine
 
-### 功能
-- 渠道适配：push/email/in-app/webhook
-- 发送前校验：用户可触达、频控、退订状态
-- 重试策略：失败重试（指数退避）
-- 降级策略：渠道失败时 fallback（可选）
-- Audience export：
-  - 支持 Braze / SendGrid / Webhook 导出 job
-  - 返回 provider response、delivery/export diagnostics 与 retry 状态
-  - 导出 payload 以 `user_id / email / predicted_churn_risk / suggested_action / metadata` 为主
+### Functionality
+- Channel adapters: push / email / in-app / webhook
+- Pre-send validation: user reachability, frequency cap, unsubscribe state
+- Retry strategy: failure retries with exponential backoff
+- Fallback strategy: optional fallback path when a channel fails
+- Audience export:
+  - Supports Braze / SendGrid / Webhook export jobs
+  - Returns provider responses, delivery/export diagnostics, and retry state
+  - Export payload centers on `user_id / email / predicted_churn_risk / suggested_action / metadata`
 
-### 运行时归属（补充）
-- `/api/v1/exports` 资源属于 Action Orchestrator 的执行控制面
-- `export-worker` 负责 provider export execution、重试、诊断回写与 retry-aware job state
-- export 任务资源默认遵循标准 job contract：`id / type / status / created_at / updated_at / progress / error / links`
+### Runtime Ownership (Additional Clarification)
+- The `/api/v1/exports` resource belongs to Action Orchestrator's execution control plane
+- `export-worker` is responsible for provider export execution, retries, diagnostics write-back, and retry-aware job state
+- Export-task resources follow the standard job contract: `id / type / status / created_at / updated_at / progress / error / links`
 
 ### DoD
-1. 至少 2 个渠道稳定可用（建议 push+email）
-2. 失败重试可配置并可追踪
-3. 每次发送有 delivery_id 与状态
-4. audience export job 具备 status / retry / diagnostics
+1. At least two channels are stable, preferably push plus email
+2. Failure retries are configurable and traceable
+3. Every send has a `delivery_id` and delivery status
+4. Audience export jobs support `status / retry / diagnostics`
 
 ---
 
-## 3.4 Policy & Safety Guardrails（策略与安全护栏）
+## 3.4 Policy and Safety Guardrails
 
-### 功能
-- 频控：每日/每周触达上限
-- 冷却窗口：同类动作最小间隔
-- 黑名单/敏感人群排除
-- Kill Switch：一键全局停发
-- 高风险动作人工确认
-- 频控三级策略（P0 强制）：
-  1) 全局频控（每用户每日总触达上限）
-  2) 渠道频控（push/email 各自上限）
-  3) 场景频控（同 campaign/workflow 冷却窗口）
-- 静默时段（可配置，默认启用夜间不打扰）
+### Functionality
+- Frequency cap: daily and weekly reach limits
+- Cooldown window: minimum interval between similar actions
+- Blacklist / sensitive-audience exclusion
+- Kill Switch: one-click global stop for new sends
+- Manual confirmation for high-risk actions
+- Three-layer frequency policy (P0 mandatory):
+  1. global cap per user per day
+  2. per-channel cap for push/email
+  3. per-scenario cap through campaign/workflow cooldown windows
+- Quiet hours are configurable and enabled by default
 
-### 默认值（v1）
-- 每用户每日触达上限：3
-- 同类动作冷却时间：24h
-- 全局 Kill Switch：开启即停止新执行
+### Defaults (v1)
+- Max daily contacts per user: 3
+- Cooldown for same-category action: 24h
+- Global Kill Switch stops all new executions immediately when enabled
 
 ### DoD
-1. 频控与冷却规则默认生效
-2. Kill Switch 可在 1 分钟内生效
-3. 高风险动作必须有确认记录
+1. Frequency and cooldown rules are enforced by default
+2. Kill Switch takes effect within 1 minute
+3. High-risk actions always produce confirmation records
 
 ---
 
-## 3.5 Execution Observability（执行观测）
+## 3.5 Execution Observability
 
-### 功能
-- 工作流级指标：触发数、执行数、成功率、失败率
-- 渠道级指标：送达率、点击率、转化率（基础）
-- 失败归因标准化（P0 强制）：
+### Functionality
+- Workflow-level metrics: trigger count, execution count, success rate, failure rate
+- Channel-level metrics: delivery rate, click rate, conversion rate (foundational)
+- Standardized failure attribution (P0 mandatory):
   - `policy_blocked`
   - `channel_error`
   - `template_error`
   - `data_missing`
   - `timeout`
-- 失败原因 TopN 可视化与趋势跟踪
+- Top-N failure reasons with trend tracking
 
 ### DoD
-1. 支持 workflow/channel 两层观测
-2. Top 失败原因可视化
-3. 关键执行日志可按 user_id/workflow_id 回查
+1. Supports workflow-level and channel-level observability
+2. Top failure reasons are visible
+3. Critical execution logs can be queried by `user_id` and `workflow_id`
 
 ---
 
-## 4. 数据对象（v1）
+## 4. Data Objects (v1)
 - `workflow`
 - `workflow_version`
 - `workflow_trigger_event`
@@ -142,105 +142,105 @@
 
 ---
 
-## 5. API 草案（v1）
+## 5. API Draft (v1)
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `POST /workflows/{id}/publish`
 - `POST /workflows/{id}/pause`
 - `POST /workflows/{id}/resume`
-- `POST /workflows/{id}/test-run`（沙箱隔离，禁止触达真实用户）
+- `POST /workflows/{id}/test-run` (sandbox only, must never reach real users)
 - `GET /workflows/{id}/executions`
 - `POST /orchestrator/kill-switch/on`
 - `POST /orchestrator/kill-switch/off`
 
 ---
 
-## 6. 上线门槛（Go/No-Go）
-1. 基础工作流（Trigger->Action）可稳定发布与执行
-2. 发送链路成功率达到目标阈值（项目自定义）
-3. 频控、冷却、Kill Switch 全部可用
-4. 执行全链路可审计（触发->执行->送达）
-5. 可与 Audience/Copilot/Experiment 完成最小闭环联动
+## 6. Launch Gates (Go/No-Go)
+1. Foundational workflows (`Trigger -> Action`) can be published and executed stably
+2. Delivery-chain success rate meets the project-defined target threshold
+3. Frequency cap, cooldown, and Kill Switch are all functional
+4. Full execution chain is auditable from trigger to execution to delivery
+5. The minimal closed loop with Audience, Copilot, and Experiment is integrated
 
 ---
 
-## 7. P0 实施优先级
-1. Workflow + Trigger 最小链路
-2. Push/Email 两渠道执行与重试
-3. 频控/冷却/Kill Switch
-4. 执行观测与审计
-5. 与 Audience + Experiment 联调
+## 7. P0 Delivery Priority
+1. Minimal Workflow + Trigger path
+2. Two-channel execution and retry for Push / Email
+3. Frequency cap / cooldown / Kill Switch
+4. Execution observability and audit
+5. Audience + Experiment integration
 
 ---
 
-## 8. 当前 Gap Register（对照 2026-03 仓库状态评审）
+## 8. Current Gap Register (Based on the 2026-03 Repository State Review)
 
-### 8.1 当前已落地
-- workflow / trigger / policy / budget / confirmation / kill switch 已存在
-- delivery diagnostics、provider callbacks、policy counters、event/threshold trigger 已存在
-- 与 Audience / Experiment 的最小闭环已打通
-- `audience export job` 已具备独立 `/api/v1/exports` 资源与 `export-worker` entrypoint
+### 8.1 Already Implemented
+- Workflow, trigger, policy, budget, confirmation, and Kill Switch already exist
+- Delivery diagnostics, provider callbacks, policy counters, and event/threshold triggers already exist
+- The minimal closed loop with Audience and Experiment is already connected
+- `audience export job` already exists as an independent `/api/v1/exports` resource with an `export-worker` entrypoint
 
-### 8.2 仍未完成的 Gap
+### 8.2 Remaining Gaps
 
-#### Gap-O1 Delivery Engine 仍偏 demo / simulator 形态
-- 当前：
-  - push/email/braze 适配器与执行日志已存在
-- 未完成项：
-  - push 仍明显依赖 simulator 语义
-  - in-app / webhook 还未形成与 push/email 同等级的稳定产品能力
+#### Gap-O1 Delivery Engine still leans toward a demo / simulator shape
+- Current state:
+  - Push, email, and Braze adapters plus execution logs already exist
+- Remaining work:
+  - Push still relies noticeably on simulator semantics
+  - In-app and webhook have not yet reached the same product maturity as push and email
 
-#### Gap-O2 Real Provider Measurement 仍未完全稳态化
-- 当前：
-  - delivery callbacks 与 diagnostics 已存在
-- 未完成项：
-  - 不同 provider 的回执归一、失败分类、延迟回流、重试/fallback 仍不够完整
-  - “真实 engagement outcome” 还没有在所有渠道上形成一致的数据契约
+#### Gap-O2 Real provider measurement is not yet fully stable
+- Current state:
+  - Delivery callbacks and diagnostics already exist
+- Remaining work:
+  - Provider receipt normalization, failure taxonomy, delayed callback handling, and retry/fallback contracts are still incomplete
+  - Real engagement outcomes have not yet formed a fully consistent data contract across all channels
 
-#### Gap-O3 Operator Console / Execution UX 仍未硬化
-- 当前：
-  - workflow / delivery / policy 相关能力已在单页控制台中可见
-- 未完成项：
-  - 缺少独立 Playwright / E2E 覆盖
-  - 执行失败、重试、预算消耗、policy block 的产品化排查视图仍偏运维态
+#### Gap-O3 Operator console and execution UX are not yet hardened
+- Current state:
+  - Workflow, delivery, and policy capabilities are visible in the single-page console
+- Remaining work:
+  - Dedicated Playwright / E2E coverage is still missing
+  - Investigation views for execution failures, retries, budget consumption, and policy blocks still feel operational rather than productized
 
-#### Gap-O4 Provider Credentials 与运行边界仍未生产化
-- 当前：
-  - 已有最小治理、审计和 header-based role boundary
-- 未完成项：
-  - 缺少正式 secret management
-  - 缺少 provider 级身份认证、环境隔离和租户边界
+#### Gap-O4 Provider credentials and runtime boundaries are not yet productionized
+- Current state:
+  - Minimal governance, audit, and header-based role boundaries already exist
+- Remaining work:
+  - Formal secret management is still missing
+  - Provider-level authentication, environment isolation, and tenant boundaries are still incomplete
 
-#### Gap-O5 自动优化仍未开放
-- 当前：
-  - Action 层已能执行、记录和回流结果
-- 未完成项：
-  - rollout / retry / policy 调优仍需要人工判断
-  - 系统不会基于真实 outcome 自动修改 workflow 策略
+#### Gap-O5 Automated optimization is not yet open
+- Current state:
+  - The Action layer can already execute, record, and feed back outcomes
+- Remaining work:
+  - Rollout, retry, and policy tuning still require manual judgment
+  - The system does not yet modify workflow strategy automatically based on real outcomes
 
-### 8.3 本文档持有的下一阶段 Owner
-- `Phase 1 Frontend Hardening` 中 execution / delivery / policy 页面
-- `Phase 4 Activation And Measurement` 中 provider-grade delivery + callback + outcome 契约
-- `Phase 5 Production Readiness` 中 provider credentials / auth / tenant boundary
+### 8.3 Next-Phase Ownership Held by This Document
+- Execution / delivery / policy pages under `Phase 1 Frontend Hardening`
+- Provider-grade delivery, callback, and outcome contracts under `Phase 4 Activation And Measurement`
+- Provider credentials, authentication, and tenant boundaries under `Phase 5 Production Readiness`
 
 ### 8.4 V1 Backlog
 
-#### P0 收尾
-1. `Provider-grade Delivery Stabilization`
-   - 强化 provider callback 归一、失败分类、延迟回流、retry / fallback 契约
-   - 把真实 engagement outcome 更稳定地回流到执行层与实验层
+#### P0 Finish-Up
+1. `Provider-Grade Delivery Stabilization`
+   - Strengthen callback normalization, failure classification, delayed feedback handling, and retry / fallback contracts
+   - Feed real engagement outcomes back more reliably into execution and experiment layers
 2. `Reduce Simulator Dependence`
-   - 让 push/email 主链路进一步脱离 simulator 语义
-   - 确保生产通道的执行、诊断与回执路径一致可审计
+   - Move the main push/email path farther away from simulator semantics
+   - Ensure production channels have consistent execution, diagnostics, and receipt contracts
 
 #### P1
 1. `Channel Capability Expansion`
-   - 将 in-app / webhook 提升到与 push / email 同等级的产品能力
-   - 补齐更完整的 provider-specific retry / diagnostics
+   - Bring in-app and webhook up to the same product maturity as push and email
+   - Add fuller provider-specific retry and diagnostics behavior
 2. `Execution Console Hardening`
-   - 为 workflow / delivery / policy / budget 页面补独立 E2E
-   - 建立更产品化的执行排查与运维视图
-3. `Credentials / Boundary Productionization`
-   - 完成 provider credentials、正式 auth、环境隔离与租户边界
-4. `Outcome-driven Policy Optimization`
-   - 在人工确认前提下，逐步支持 rollout / retry / policy 调优建议
+   - Add dedicated E2E coverage for workflow, delivery, policy, and budget pages
+   - Build a more productized execution-debugging and operations view
+3. `Credentials and Boundary Productionization`
+   - Complete provider credentials, formal auth, environment isolation, and tenant boundaries
+4. `Outcome-Driven Policy Optimization`
+   - Gradually support rollout, retry, and policy-tuning recommendations with manual confirmation still required

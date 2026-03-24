@@ -1,115 +1,115 @@
 # KairyxAI Experiment Hub v1 PRD
 
-## 1. 模块目标
-为策略与人群提供可复用的实验框架（A/B/Holdout），实现“可验证、可归因、可决策”的增长实验闭环。
+## 1. Module Goal
+Provide a reusable experimentation framework for strategy and audience decisions through A/B/Holdout flows, enabling a growth experiment loop that is verifiable, attributable, and decision-ready.
 
 ---
 
-## 2. 模块范围（v1）
+## 2. Module Scope (v1)
 
-### 2.1 In-scope
-- 实验创建与配置（A/B/Holdout）
-- 流量分配（deterministic assignment）
-- 曝光与结果埋点
-- 指标看板（基础显著性提示）
-- 实验结论输出（winner/neutral/inconclusive）
-- 与 Audience/Action 的联动
+### 2.1 In Scope
+- Experiment creation and configuration (A/B/Holdout)
+- Traffic assignment with deterministic bucketing
+- Exposure and outcome logging
+- Metric views with foundational significance guidance
+- Experiment conclusions (`winner / neutral / inconclusive`)
+- Integration with Audience and Action
 
-### 2.2 Out-of-scope
-- 多变量实验（MVT）
-- 贝叶斯高级推断引擎
-- 自动全量 rollout
+### 2.2 Out of Scope
+- Multivariate testing (MVT)
+- Advanced Bayesian inference engine
+- Automatic full rollout
 
 ---
 
-## 3. 子模块详细设计
+## 3. Detailed Submodule Design
 
-## 3.1 Experiment Config（实验配置）
+## 3.1 Experiment Config
 
-### 功能
-- 实验类型：A/B + Holdout
-- 实验对象：绑定 cohort_id 或规则人群
-- 分流比例：holdout_pct、variant_pct
-- 时间窗口：start/end，最小样本量、最短运行时长（minimum runtime）
-- 指标配置（P0 强制）：
-  - 1 个主指标（Primary Metric）
-  - 至少 2 个护栏指标（Guardrail Metrics）
+### Functionality
+- Experiment types: A/B + Holdout
+- Experiment scope: bind to `cohort_id` or rule-defined audience
+- Split ratio: `holdout_pct`, `variant_pct`
+- Time window: `start/end`, minimum sample size, minimum runtime
+- Metric configuration (P0 mandatory):
+  - 1 primary metric
+  - at least 2 guardrail metrics
 
 ### DoD
-1. 可创建并保存实验配置
-2. 配置具备版本化与审计
-3. 支持启用/停用
+1. Experiment configurations can be created and saved
+2. Configurations are versioned and audited
+3. Experiments can be enabled and disabled
 
 ---
 
-## 3.2 Traffic Assignment（流量分配）
+## 3.2 Traffic Assignment
 
-### 功能
-- 基于 `experiment_id + user_id` 稳定分桶
-- 分组：holdout / treatment_a / treatment_b
-- 支持排除名单（黑名单）
+### Functionality
+- Stable bucketing based on `experiment_id + user_id`
+- Supported groups: `holdout / treatment_a / treatment_b`
+- Supports exclusion lists / blacklists
 
-### 执行要求
-- 幂等：同用户重复请求必须同组
-- 可追溯：每个用户分组结果可查
-- SRM 检测（P0 强制）：
-  - 持续检测样本比例偏差（Sample Ratio Mismatch）
-  - SRM 触发时标记实验风险并告警
+### Execution Requirements
+- Idempotent grouping: the same user must always resolve to the same group
+- Traceable assignments: every user-level assignment result can be queried
+- SRM detection (P0 mandatory):
+  - continuously detect sample-ratio mismatch
+  - when SRM triggers, mark experiment risk and raise an alert
 
 ### DoD
-1. 分桶稳定且可复现
-2. 组间比例与配置偏差在可接受范围
-3. 暴露记录可按用户回查
+1. Bucketing is stable and reproducible
+2. Group ratios remain acceptably close to configuration
+3. Exposure records are queryable per user
 
 ---
 
-## 3.3 Exposure & Outcome Logging（曝光与结果）
+## 3.3 Exposure and Outcome Logging
 
-### 功能
-- 记录曝光事件（exposure）
-- 记录结果事件（outcome）
-- 关联 action_id / cohort_id / workflow_id
+### Functionality
+- Record exposure events
+- Record outcome events
+- Link to `action_id / cohort_id / workflow_id`
 
 ### DoD
-1. exposure/outcome 都可按 experiment_id 查询
-2. 数据可追踪到具体执行链路
-3. 关键字段缺失时拒绝写入并告警
+1. Exposure and outcome can both be queried by `experiment_id`
+2. Data can be traced back to the exact execution chain
+3. Missing critical fields are rejected and alerted
 
 ---
 
-## 3.4 Measurement & Decision（指标与结论）
+## 3.4 Measurement and Decision
 
-### 功能
-- 基础指标：engagement_rate、return_rate、conversion_rate
-- 对照比较：treatment vs holdout
-- 输出结论：winner / neutral / inconclusive / invalid
-- 显著性提示（v1 用基础阈值提示）
-- 结论门禁（P0 强制）：
-  - 未达最小样本量或最短运行时长时，禁止输出 winner
-  - SRM 命中时优先输出 invalid/inconclusive
+### Functionality
+- Foundational metrics: `engagement_rate`, `return_rate`, `conversion_rate`
+- Comparison model: treatment versus holdout
+- Conclusion outputs: `winner / neutral / inconclusive / invalid`
+- Foundational significance guidance for v1
+- Decision gates (P0 mandatory):
+  - do not output `winner` if minimum sample size or minimum runtime is not met
+  - prioritize `invalid` or `inconclusive` when SRM is detected
 
 ### DoD
-1. 每个实验可输出分组对比与 uplift
-2. 支持至少 1 个主指标 + 2 个辅助指标
-3. 结论可追溯到原始曝光与结果日志
+1. Every experiment can output group comparison and uplift
+2. Supports at least 1 primary metric and 2 supporting / guardrail metrics
+3. Conclusions are traceable to raw exposure and outcome logs
 
 ---
 
-## 3.5 Rollout Suggestion（发布建议）
+## 3.5 Rollout Suggestion
 
-### 功能
-- 输出建议：继续实验 / 小流量扩量 / 停止
-- 风险提示：样本不足、结果不稳定、分组偏差
-- 一键同步给 Action Orchestrator（人工确认后）
+### Functionality
+- Output recommendations such as continue experiment / increase rollout gradually / stop
+- Show risk signals such as low sample size, unstable result, and group imbalance
+- One-click sync to Action Orchestrator after manual confirmation
 
 ### DoD
-1. 结论后自动给出下一步建议
-2. 风险条件命中时强制提示
-3. 与 Action 的联动为“建议态”而非自动执行
+1. A next-step recommendation is generated after a conclusion is produced
+2. Risk conditions force an explicit warning
+3. Integration with Action remains recommendation-only and never auto-executes
 
 ---
 
-## 4. 数据对象（v1）
+## 4. Data Objects (v1)
 - `experiment`
 - `experiment_config_version`
 - `experiment_assignment`
@@ -120,7 +120,7 @@
 
 ---
 
-## 5. API 草案（v1）
+## 5. API Draft (v1)
 - `POST /experiments/config`
 - `GET /experiments/config`
 - `POST /experiments/{id}/start`
@@ -132,103 +132,103 @@
 
 ---
 
-## 6. 上线门槛（Go/No-Go）
-1. A/B/Holdout 分流稳定可复现
-2. exposure/outcome 日志完整可追踪
-3. summary 可输出 uplift 与基础结论
-4. 主指标 + 护栏指标配置必填并生效
-5. 最小样本量/最短运行时长门禁生效（未达标不出 winner）
-6. SRM 检测生效并可告警
-7. 结论可回流 Copilot 与 Action
-8. 高风险建议默认人工确认
+## 6. Launch Gates (Go/No-Go)
+1. A/B/Holdout traffic assignment is stable and reproducible
+2. Exposure and outcome logs are complete and traceable
+3. Summary can output uplift and foundational conclusions
+4. Primary metric and guardrail metrics are required and enforced
+5. Minimum sample size and minimum runtime gates are enforced, so no `winner` is produced early
+6. SRM detection is active and alertable
+7. Conclusions can flow back into Copilot and Action
+8. High-risk recommendations require manual confirmation by default
 
 ---
 
-## 7. P0 实施优先级
-1. 实验配置 + 稳定分桶
-2. exposure/outcome 链路打通
-3. summary 指标与基础结论
-4. 与 Audience/Action/Copilot 联调
-5. 决策建议与审计完善
+## 7. P0 Delivery Priority
+1. Experiment configuration plus stable assignment
+2. Exposure / outcome pipeline integration
+3. Summary metrics and foundational conclusions
+4. Integration with Audience / Action / Copilot
+5. Recommendation and audit refinement
 
 ---
 
-## 8. TODO（v1.1+）
-- 多重比较校正（Multiple Comparisons Correction）
-  - 目标：在并行评估多个指标/多个实验时，降低假阳性风险
-  - 候选方法：Bonferroni / Holm-Bonferroni / Benjamini-Hochberg（FDR）
-  - 备注：v1 保持基础显著性提示，v1.1 评估并引入统一校正策略
+## 8. TODO (v1.1+)
+- Multiple comparisons correction
+  - Goal: reduce false positives when evaluating many metrics or many experiments in parallel
+  - Candidate methods: Bonferroni / Holm-Bonferroni / Benjamini-Hochberg (FDR)
+  - Note: v1 keeps foundational significance guidance, and v1.1 evaluates a unified correction strategy
 
 ---
 
-## 9. 当前 Gap Register（对照 2026-03 仓库状态评审）
+## 9. Current Gap Register (Based on the 2026-03 Repository State Review)
 
-### 9.1 当前已落地
-- experiment config / versions / assignments / exposures / outcomes / summary / decision 已存在
-- holdout / treatment_a / treatment_b、SRM、guardrails、rollout suggestion 已存在
-- 与 Audience / Action / Copilot 的基础联动已存在
+### 9.1 Already Implemented
+- Experiment config, versions, assignments, exposures, outcomes, summary, and decision already exist
+- `holdout / treatment_a / treatment_b`, SRM, guardrails, and rollout suggestion already exist
+- Foundational integration with Audience, Action, and Copilot already exists
 
-### 9.2 仍未完成的 Gap
+### 9.2 Remaining Gaps
 
-#### Gap-E1 Outcome Robustness 仍依赖 Action / Provider 成熟度
-- 当前：
-  - outcome ingest、callback -> outcome、summary / decision 已存在
-- 未完成项：
-  - 真实 return / conversion / downstream engagement signal 还没有在所有 provider 上稳定打通
-  - outcome completeness 与延迟处理仍需要更强的数据契约
+#### Gap-E1 Outcome robustness still depends on Action and provider maturity
+- Current state:
+  - Outcome ingest, callback-to-outcome flow, summary, and decision already exist
+- Remaining work:
+  - Real return, conversion, and downstream engagement signals are not yet fully stable across all providers
+  - Outcome completeness and delay handling still need stronger data contracts
 
-#### Gap-E2 Measurement Integrity Tooling 仍偏轻量
-- 当前：
-  - SRM、guardrails、summary、decision 已可输出
-- 未完成项：
-  - outcome lag、数据缺失、measurement drift 的监控与告警还不够成熟
-  - experiment health 的 operator triage 还未形成稳定工作流
+#### Gap-E2 Measurement integrity tooling is still lightweight
+- Current state:
+  - SRM, guardrails, summary, and decision are already available
+- Remaining work:
+  - Monitoring and alerting for outcome lag, missing data, and measurement drift are still not mature enough
+  - Experiment-health triage is not yet a stable operator workflow
 
-#### Gap-E3 Experiment Review Console 仍未硬化
-- 当前：
-  - 前端已能调用 experiment 相关接口
-- 未完成项：
-  - 缺少独立 Playwright / E2E 契约覆盖
-  - summary / assignment / rollout / alert 的 operator 视图仍是单页静态控制台
+#### Gap-E3 Experiment review console is not yet hardened
+- Current state:
+  - The frontend can already call experiment-related APIs
+- Remaining work:
+  - Dedicated Playwright / E2E contract coverage is missing
+  - The operator views for summary, assignment, rollout, and alerts are still part of a single-page static console
 
-#### Gap-E4 Rollout 仍是“建议态”
-- 当前：
-  - 系统可输出 rollout suggestion
-- 未完成项：
-  - 还没有由 Experiment 直接驱动的受控 rollout controller
-  - 仍然需要 Action 层和人工确认来执行扩量/停发
+#### Gap-E4 Rollout is still recommendation-only
+- Current state:
+  - The system can already output rollout suggestions
+- Remaining work:
+  - There is still no controlled rollout controller driven directly by Experiment
+  - Expansion and stop decisions still require Action-layer execution plus manual confirmation
 
-#### Gap-E5 生产级权限与边界尚未完成
-- 当前：
-  - 已有最小 RBAC、审计和高风险确认链路
-- 未完成项：
-  - 缺少正式 authN / tenant boundary / secret isolation
-  - 还不能视为生产级实验平台
+#### Gap-E5 Production-grade permissions and boundaries are not complete
+- Current state:
+  - Minimal RBAC, audit, and high-risk confirmation chains already exist
+- Remaining work:
+  - Formal authN, tenant boundaries, and secret isolation are still missing
+  - The current Experiment Hub cannot yet be treated as a production-grade experiment platform
 
-### 9.3 本文档持有的下一阶段 Owner
-- `Phase 4 Activation And Measurement` 中真实 outcome 与 summary integrity
-- `Phase 1 Frontend Hardening` 中 experiment review / rollout UI
-- `Phase 5 Production Readiness` 中 experiment 权限与隔离边界
+### 9.3 Next-Phase Ownership Held by This Document
+- Real outcome and summary integrity under `Phase 4 Activation And Measurement`
+- Experiment review and rollout UI under `Phase 1 Frontend Hardening`
+- Experiment permissions and isolation boundaries under `Phase 5 Production Readiness`
 
 ### 9.4 V1 Backlog
 
-#### P0 收尾
+#### P0 Finish-Up
 1. `Outcome Robustness`
-   - 提升 return / conversion / downstream engagement signal 的 completeness 与延迟处理
-   - 让 summary / decision 更稳定地建立在真实回流上
+   - Improve completeness and delay handling for return, conversion, and downstream engagement signals
+   - Make summary and decision more consistently grounded in real feedback
 2. `Measurement Integrity Tooling`
-   - 增强 outcome lag、数据缺失、measurement drift 的监控与告警
-   - 建立 experiment health 的 operator triage 工作流
+   - Strengthen monitoring and alerting for outcome lag, missing data, and measurement drift
+   - Build an operator triage workflow for experiment health
 
 #### P1
 1. `Experiment Review Console Hardening`
-   - 为 summary / assignment / rollout / alert 页面补独立 Playwright / E2E
-   - 形成更稳定的 experiment operator review UX
+   - Add dedicated Playwright / E2E coverage for summary, assignment, rollout, and alert pages
+   - Create a more stable operator review UX for experiments
 2. `Controlled Rollout Controller`
-   - 将 rollout 从“建议态”推进到受控执行器
-   - 保持与 Action 层、人审链路的联动
+   - Move rollout from recommendation-only toward a controlled executor
+   - Keep integration with Action and manual review in place
 3. `Production Boundary`
-   - 完成正式 authN / tenant boundary / secret isolation
-   - 让 Experiment Hub 达到更接近生产级的权限与隔离要求
+   - Complete formal authN, tenant boundaries, and secret isolation
+   - Bring Experiment Hub closer to production-grade permissions and isolation
 4. `Advanced Experimentation`
-   - 在 v1.1+ 引入多重比较校正等更强的统计保护
+   - Introduce stronger statistical protections such as multiple-comparisons correction in v1.1+

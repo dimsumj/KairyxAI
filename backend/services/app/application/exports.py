@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 import requests
 
+from app.application.secret_refs import materialize_secret_refs
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.domain.jobs import JobStatus
 from bigquery_service import BigQueryService, get_shared_bigquery_service
@@ -20,6 +21,15 @@ class ExportService:
 
     def create_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._require_completed_prediction(str(payload["prediction_job_id"]))
+        active_jobs = [
+            job
+            for job in self.repository.list_export_jobs()
+            if str(job.get("status") or "").lower() not in {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.STOPPED.value, JobStatus.CANCELLED.value}
+        ]
+        if len(active_jobs) >= int(self.settings.max_export_jobs_per_tenant):
+            raise ValueError(f"Export job limit reached for tenant; max active jobs is {self.settings.max_export_jobs_per_tenant}.")
+        if self.settings.app_env == "prod" and payload.get("webhook_token"):
+            raise ValueError("Inline webhook_token is not allowed in production; use provider_connection_id with secret refs.")
         job = self.repository.create_export_job(
             {
                 "id": f"exp_{uuid.uuid4().hex[:20]}",
@@ -213,28 +223,28 @@ class ExportService:
             "rows": rows,
         }
         if provider == "webhook":
-            webhook_url = spec.get("webhook_url")
+            provider_connection = self._resolve_provider_connection(spec)
+            webhook_url = spec.get("webhook_url") or provider_connection.get("webhook_url")
             if not webhook_url:
                 raise ValueError("webhook_url is required for webhook exports")
             headers = {"Content-Type": "application/json"}
-            if spec.get("webhook_token"):
-                headers["Authorization"] = f"Bearer {spec['webhook_token']}"
+            webhook_token = spec.get("webhook_token") or provider_connection.get("webhook_token")
+            if webhook_token:
+                headers["Authorization"] = f"Bearer {webhook_token}"
             response = requests.post(webhook_url, json=payload, headers=headers, timeout=30)
             response.raise_for_status()
             return {"provider": provider, "status_code": response.status_code, "count": len(rows)}
 
+        provider_connection = self._resolve_provider_connection(spec)
         connector_name = "SendGrid" if provider == "sendgrid" else "Braze"
         connector = self.repository.get_connector(connector_name)
         if connector is None:
-            connector = next(
-                (item for item in self.repository.list_connectors() if item.get("type") == provider),
-                None,
-            )
-        if connector is None:
-            raise ValueError(f"{connector_name} connector is not configured")
+            connector = next((item for item in self.repository.list_connectors() if item.get("type") == provider), None)
+        connection_config = materialize_secret_refs(dict(connector["config"] or {})) if connector is not None else {}
+        connection_config.update(provider_connection)
 
         if provider == "sendgrid":
-            api_key = connector["config"].get("api_key")
+            api_key = connection_config.get("api_key")
             contacts = [{"email": row.get("email"), "external_id": row.get("user_id")} for row in rows if row.get("email")]
             response = requests.put(
                 "https://api.sendgrid.com/v3/marketing/contacts",
@@ -245,8 +255,8 @@ class ExportService:
             response.raise_for_status()
             return {"provider": provider, "status_code": response.status_code, "count": len(contacts)}
 
-        rest_endpoint = str(connector["config"].get("rest_endpoint", "")).rstrip("/")
-        api_key = connector["config"].get("api_key")
+        rest_endpoint = str(connection_config.get("rest_endpoint", "")).rstrip("/")
+        api_key = connection_config.get("api_key")
         attributes = [
             {
                 "external_id": row.get("user_id"),
@@ -280,3 +290,14 @@ class ExportService:
                 f"Prediction job '{prediction_job_id}' is {prediction_status or 'unknown'} and cannot be used for export until completed."
             )
         return prediction_job
+
+    def _resolve_provider_connection(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection_id = str(spec.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            return materialize_secret_refs(spec)
+        record = self.repository.get_resource("provider_connection", provider_connection_id)
+        if record is None:
+            raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
+        payload = dict((record.get("payload") or {}).get("config") or {})
+        payload["provider_connection_id"] = provider_connection_id
+        return materialize_secret_refs(payload)

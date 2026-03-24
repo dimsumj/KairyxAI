@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import queue
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.application.mappings import MappingService
+from app.application.secret_refs import materialize_secret_refs
 from app.core.errors import MissingDependencyError, ResourceLockedError
+from app.core.runtime import is_shutdown_requested
 from app.domain.jobs import CheckpointStatus, JobStatus
 from dataflow.pipeline import DataflowNormalizationRunner
 from gcs_service import GcsService
@@ -16,6 +21,14 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
 logger = logging.getLogger(__name__)
+
+
+class ImportInterruptedError(RuntimeError):
+    """Raised when an import run is stopped while work is in flight."""
+
+
+class ImportTimeoutError(RuntimeError):
+    """Raised when an import run exceeds the configured external-call budget."""
 
 
 class ImportService:
@@ -194,6 +207,60 @@ class ImportService:
         if job is None:
             return False
         return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
+
+    def _should_stop(self, job_id: str) -> bool:
+        return self._is_stop_requested(job_id) or is_shutdown_requested()
+
+    def _stop_reason(self, default_reason: str = "Stopped by user.") -> str:
+        if is_shutdown_requested():
+            return "Stopped during server shutdown."
+        return default_reason
+
+    def _interruptible_call(
+        self,
+        job_id: str,
+        *,
+        operation: str,
+        callback,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_queue.put(("result", callback()))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        worker = threading.Thread(
+            target=_runner,
+            name=f"import-{job_id}-{operation}",
+            daemon=True,
+        )
+        worker.start()
+
+        resolved_timeout = max(
+            0.1,
+            float(timeout_seconds if timeout_seconds is not None else self.settings.import_network_timeout_seconds),
+        )
+        deadline = time.monotonic() + resolved_timeout
+        poll_interval = max(0.05, float(self.settings.import_stop_poll_interval_seconds))
+
+        while True:
+            if self._should_stop(job_id):
+                raise ImportInterruptedError(self._stop_reason())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ImportTimeoutError(
+                    f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s."
+                )
+            try:
+                state, payload = result_queue.get(timeout=min(poll_interval, remaining))
+            except queue.Empty:
+                continue
+            if state == "error":
+                raise payload
+            return payload
 
     def _mark_stopped(self, job_id: str, reason: str = "Stopped by user.") -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
@@ -375,6 +442,89 @@ class ImportService:
                     "event_count": int(notification.get("event_count") or 0),
                 }
             )
+            resource_id = f"{job_id}:{int(notification.get('shard_index') or 0)}"
+            existing = self.repository.get_resource("import_manifest", resource_id)
+            payload = dict((existing or {}).get("payload") or {})
+            payload.update(
+                {
+                    "manifest_id": resource_id,
+                    "job_id": job_id,
+                    "source_name": source_name,
+                    "status": status,
+                    "gcs_uri": notification.get("gcs_path"),
+                    "message_id": notification.get("message_id"),
+                    "event_count": int(notification.get("event_count") or 0),
+                    "manifest": notification,
+                    "schema_version": notification.get("schema_version"),
+                    "shard_index": int(notification.get("shard_index") or 0),
+                }
+            )
+            self.repository.upsert_resource("import_manifest", resource_id, status=status, name=job_id, payload=payload)
+
+    def _mark_pending_checkpoints_failed(self, job_id: str, *, reason: str) -> None:
+        checkpoints = self.repository.list_checkpoints(job_id)
+        failed_at = datetime.utcnow().isoformat()
+        for checkpoint in checkpoints:
+            status = str(checkpoint.get("status") or "").lower()
+            if status == CheckpointStatus.PROCESSED.value:
+                continue
+            shard_index = int(checkpoint.get("shard_index") or 0)
+            source_name = str(checkpoint.get("source_name") or "")
+            payload = dict(checkpoint)
+            payload.update(
+                {
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            self.repository.upsert_checkpoint(
+                {
+                    "job_id": job_id,
+                    "shard_index": shard_index,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "cursor": checkpoint.get("cursor"),
+                    "gcs_uri": checkpoint.get("gcs_uri"),
+                    "message_id": checkpoint.get("message_id"),
+                    "manifest": checkpoint.get("manifest"),
+                    "event_count": int(checkpoint.get("event_count") or 0),
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            resource_id = f"{job_id}:{shard_index}"
+            existing = self.repository.get_resource("import_manifest", resource_id)
+            resource_payload = dict((existing or {}).get("payload") or {})
+            resource_payload.update(payload)
+            resource_payload.update(
+                {
+                    "manifest_id": resource_id,
+                    "job_id": job_id,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "gcs_uri": checkpoint.get("gcs_uri"),
+                    "message_id": checkpoint.get("message_id"),
+                    "shard_index": shard_index,
+                    "event_count": int(checkpoint.get("event_count") or 0),
+                    "failure_reason": reason,
+                    "failed_at": failed_at,
+                }
+            )
+            self.repository.upsert_resource(
+                "import_manifest",
+                resource_id,
+                status=CheckpointStatus.FAILED.value,
+                name=job_id,
+                payload=resource_payload,
+            )
+
+    def _failure_stage(self, job: Dict[str, Any] | None) -> str:
+        details = ((job or {}).get("progress") or {}).get("details") or {}
+        phase = str(details.get("phase") or "").strip().lower()
+        if phase:
+            return phase
+        status = str((job or {}).get("status") or "").strip().lower()
+        return status or "unknown"
 
     def _process_notifications(
         self,
@@ -483,17 +633,27 @@ class ImportService:
         return removed_count
 
     def create_job(self, source_name: str, start_date: str, end_date: str, page_size: int | None = None) -> Dict[str, Any]:
+        active_jobs = [
+            job
+            for job in self.repository.list_import_jobs()
+            if str(job.get("status") or "").lower() not in {JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.STOPPED.value, JobStatus.CANCELLED.value}
+        ]
+        if len(active_jobs) >= int(self.settings.max_import_jobs_per_tenant):
+            raise ValueError(f"Import job limit reached for tenant; max active jobs is {self.settings.max_import_jobs_per_tenant}.")
         connector = self.repository.get_connector(source_name)
         if connector is None:
             raise KeyError(source_name)
+        connector_name = str(connector.get("name") or source_name)
+        connector_id = str(connector.get("connector_id") or source_name)
         job = self.repository.create_import_job(
             {
                 "id": f"imp_{uuid.uuid4().hex[:20]}",
-                "source_name": source_name,
+                "source_name": connector_name,
                 "status": JobStatus.QUEUED.value,
                 "spec": {
-                    "source_name": source_name,
-                    "display_name": f"{source_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    "source_name": connector_name,
+                    "connector_id": connector_id,
+                    "display_name": f"{connector_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     "connector_type": connector["type"],
                     "start_date": start_date,
                     "end_date": end_date,
@@ -505,7 +665,7 @@ class ImportService:
                     "pct": 0.0,
                     "details": {
                         "canonical_aliases": self._canonical_aliases(),
-                        "mapping_coverage": self._mapping_coverage(source_name),
+                        "mapping_coverage": self._mapping_coverage(connector_name),
                         "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
                     },
                 },
@@ -575,6 +735,10 @@ class ImportService:
         checkpoint_state = details.get("checkpoint_state") or self._summarize_checkpoints(job_id)
         conflicts = self.bigquery_service.get_field_conflicts(job_id=job_id, limit=200)
         rejected = self.bigquery_service.get_rejected_event_explanations(job_id=job_id, limit=200)
+        schema_contracts = [
+            self.bigquery_service.get_schema_contract("standardized", job_id=job_id),
+            self.bigquery_service.get_schema_contract("fact_events_unified", job_id=job_id),
+        ]
         return {
             "job_id": job_id,
             "status": job["status"],
@@ -586,7 +750,54 @@ class ImportService:
             "source_of_truth": identity_summary.get("source_of_truth_decisions") or [],
             "conflict_summary": {"count": len(conflicts), "items": conflicts[:25]},
             "rejected_summary": {"count": len(rejected), "items": rejected[:25]},
+            "schema_contracts": schema_contracts,
         }
+
+    def list_manifests(self, job_id: str) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        items = []
+        for record in self.repository.list_resources("import_manifest"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("job_id") or "") != job_id:
+                continue
+            items.append(
+                {
+                    "manifest_id": record.get("resource_id"),
+                    "status": record.get("status"),
+                    "created_at": record.get("created_at"),
+                    "updated_at": record.get("updated_at"),
+                    **payload,
+                }
+            )
+        if not items:
+            for checkpoint in self.repository.list_checkpoints(job_id):
+                manifest = dict(checkpoint.get("manifest") or {})
+                items.append(
+                    {
+                        "manifest_id": f"{job_id}:{checkpoint.get('shard_index')}",
+                        "status": checkpoint.get("status"),
+                        "created_at": checkpoint.get("updated_at"),
+                        "updated_at": checkpoint.get("updated_at"),
+                        "job_id": job_id,
+                        "source_name": checkpoint.get("source_name"),
+                        "event_count": checkpoint.get("event_count"),
+                        "schema_version": manifest.get("schema_version"),
+                        "shard_index": checkpoint.get("shard_index"),
+                        "gcs_uri": checkpoint.get("gcs_uri"),
+                        "message_id": checkpoint.get("message_id"),
+                        "manifest": manifest,
+                    }
+                )
+        items.sort(key=lambda item: int(item.get("shard_index") or 0))
+        return {"job_id": job_id, "items": items}
+
+    def list_schema_contracts(self) -> Dict[str, Any]:
+        return {"items": self.bigquery_service.list_schema_contracts()}
+
+    def get_schema_contract(self, alias: str, *, job_id: str | None = None) -> Dict[str, Any]:
+        return self.bigquery_service.get_schema_contract(alias, job_id=job_id)
 
     def get_identity_links(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
@@ -715,6 +926,8 @@ class ImportService:
             },
             "checkpoint_state": details.get("checkpoint_state") or self._summarize_checkpoints(job_id),
             "quality_report": quality.get("quality_report") or {},
+            "manifest_summary": self.list_manifests(job_id),
+            "schema_contracts": quality.get("schema_contracts") or [],
             "lag_summary": lag_summary,
             "dead_letters": {
                 **dead_letter_summary,
@@ -859,24 +1072,16 @@ class ImportService:
         if status in {JobStatus.QUEUED.value, JobStatus.READY.value, JobStatus.AWAITING_MAPPING.value}:
             return self._mark_stopped(job_id)
         if status == JobStatus.RUNNING.value:
-            stopping = self.repository.update_import_job(
+            self.repository.record_action(
+                "import_job_stop_requested",
+                "import_job",
                 job_id,
-                {
-                    "status": JobStatus.STOPPING.value,
-                    "progress": self._merge_progress(job, details_patch={"stop_requested": True}),
-                },
+                {"job_id": job_id, "status": status, "requested_at": datetime.utcnow().isoformat()},
             )
-            self._record_status_transition(
-                job_id,
-                from_status=status,
-                to_status=JobStatus.STOPPING.value,
-                reason="Stop requested for running import job.",
-            )
-            self.repository.record_action("import_job_stop_requested", "import_job", job_id, stopping)
             self._commit_session()
-            return stopping
+            return self._mark_stopped(job_id, self._stop_reason())
         if status == JobStatus.STOPPING.value:
-            return job
+            return self._mark_stopped(job_id, self._stop_reason())
         raise ValueError("Only queued, ready, awaiting_mapping, or running import jobs can be stopped.")
 
     def delete_job(self, job_id: str) -> None:
@@ -905,9 +1110,9 @@ class ImportService:
         if status not in {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}:
             raise ValueError("Only awaiting_mapping, stopped, or failed jobs can be resumed.")
 
-        connector_record = self.repository.get_connector(job["spec"]["source_name"])
+        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
         if connector_record is None:
-            raise KeyError(job["spec"]["source_name"])
+            raise KeyError(job["spec"].get("connector_id") or job["spec"]["source_name"])
 
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
         if mapping_coverage < 95.0:
@@ -1026,12 +1231,12 @@ class ImportService:
         if current_status == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id)
 
-        connector_record = self.repository.get_connector(job["spec"]["source_name"])
+        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
         if connector_record is None:
             raise MissingDependencyError(
                 "connector",
-                str(job["spec"]["source_name"]),
-                detail=f"Connector '{job['spec']['source_name']}' required by import job '{job_id}' is missing.",
+                str(job["spec"].get("connector_id") or job["spec"]["source_name"]),
+                detail=f"Connector '{job['spec'].get('connector_id') or job['spec']['source_name']}' required by import job '{job_id}' is missing.",
             )
 
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
@@ -1073,7 +1278,7 @@ class ImportService:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
-            connector_config = dict(connector_record["config"] or {})
+            connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
             connector_config["field_mapping"] = MappingService(self.repository).get_effective_mapping(
                 connector_record["name"],
                 job_id=job_id,
@@ -1082,26 +1287,30 @@ class ImportService:
                 gcs_service=gcs_service,
                 connector_config=connector_config,
                 connector_type=connector_record["type"],
-                source_config_id=connector_record["name"],
+                source_config_id=connector_record.get("connector_id") or connector_record["name"],
                 pubsub_service=raw_pubsub,
             )
             ingestion_service.local_shard_event_count = page_size
-            staged = ingestion_service.fetch_and_stage_events(
-                job["spec"]["start_date"],
-                job["spec"]["end_date"],
-                job_id=job_id,
-                page_size=page_size,
-                should_stop=lambda: self._is_stop_requested(job_id),
-                progress_callback=lambda current_events, shards_created, _: self._update_stage_progress(
-                    job_id,
-                    connector_record,
-                    current_events,
-                    shards_created,
-                    page_size,
+            staged = self._interruptible_call(
+                job_id,
+                operation="fetch_and_stage_events",
+                callback=lambda: ingestion_service.fetch_and_stage_events(
+                    job["spec"]["start_date"],
+                    job["spec"]["end_date"],
+                    job_id=job_id,
+                    page_size=page_size,
+                    should_stop=lambda: self._should_stop(job_id),
+                    progress_callback=lambda current_events, shards_created, _: self._update_stage_progress(
+                        job_id,
+                        connector_record,
+                        current_events,
+                        shards_created,
+                        page_size,
+                    ),
                 ),
             )
             if staged.get("stopped"):
-                return self._mark_stopped(job_id, staged.get("stop_reason") or "Stopped by user.")
+                return self._mark_stopped(job_id, staged.get("stop_reason") or self._stop_reason())
 
             notifications: List[Dict[str, Any]] = []
             for manifest in staged["shard_manifests"]:
@@ -1128,6 +1337,24 @@ class ImportService:
                     },
                 )
                 notification["message_id"] = message_id
+                resource_id = f"{job_id}:{int(manifest['shard_index'])}"
+                self.repository.upsert_resource(
+                    "import_manifest",
+                    resource_id,
+                    status=CheckpointStatus.PUBLISHED.value,
+                    name=job_id,
+                    payload={
+                        "manifest_id": resource_id,
+                        "job_id": job_id,
+                        "source_name": connector_record["name"],
+                        "event_count": int(manifest["event_count"] or 0),
+                        "schema_version": manifest["schema_version"],
+                        "shard_index": int(manifest["shard_index"]),
+                        "gcs_uri": manifest["gcs_uri"],
+                        "message_id": message_id,
+                        "manifest": manifest,
+                    },
+                )
                 self.repository.upsert_checkpoint(
                     {
                         "job_id": job_id,
@@ -1157,11 +1384,20 @@ class ImportService:
         except Exception as exc:
             self.rollback_session()
             try:
-                if self._is_stop_requested(job_id):
-                    return self._mark_stopped(job_id)
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
             except Exception:
                 self.rollback_session()
             failed_job = self._safe_get_import_job(job_id) or job
+            failure_stage = self._failure_stage(failed_job)
+            logger.exception("Import job %s failed during %s. error=%s", job_id, failure_stage, exc)
+            try:
+                self._mark_pending_checkpoints_failed(job_id, reason=str(exc))
+                self._commit_session()
+            except Exception:
+                self.rollback_session()
+                logger.exception("Unable to mark pending checkpoints failed for import job %s.", job_id)
+            failed_job = self._safe_get_import_job(job_id) or failed_job
             try:
                 failed = self.repository.update_import_job(
                     job_id,
@@ -1172,6 +1408,7 @@ class ImportService:
                             failed_job,
                             details_patch={
                                 "failure_reason": str(exc),
+                                "failure_stage": failure_stage,
                                 "checkpoint_state": self._summarize_checkpoints(job_id),
                             },
                         ),
@@ -1182,7 +1419,7 @@ class ImportService:
                     from_status=str(failed_job.get("status") or ""),
                     to_status=JobStatus.FAILED.value,
                     reason="Import execution failed.",
-                    metadata={"error": str(exc)},
+                    metadata={"error": str(exc), "failure_stage": failure_stage},
                 )
                 self.repository.record_action("import_job_failed", "import_job", job_id, failed)
                 self._commit_session()

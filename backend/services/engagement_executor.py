@@ -8,6 +8,7 @@ from engagement_channels import (
     PushSimulatorAdapter,
     SendGridEmailAdapter,
     BrazeAdapter,
+    WebhookAdapter,
 )
 
 logging.basicConfig(
@@ -26,8 +27,9 @@ class EngagementExecutor:
     def __init__(self):
         self.adapters = {
             "push_notification": PushSimulatorAdapter(),
-            "email": SendGridEmailAdapter(),  # auto-fallback to simulator
-            "braze": BrazeAdapter(),          # auto-fallback to simulator
+            "email": SendGridEmailAdapter(),
+            "braze": BrazeAdapter(),
+            "webhook": WebhookAdapter(),
         }
 
     def execute_action(self, action: Dict[str, Any]) -> Optional[str]:
@@ -43,6 +45,9 @@ class EngagementExecutor:
                 "ok": False,
                 "action_id": None,
                 "provider": "none",
+                "provider_mode": "none",
+                "provider_backend": "none",
+                "simulated": False,
                 "channel": str(action.get("channel", "unknown")) if action else "unknown",
                 "content": str(action.get("content", "")) if action else "",
                 "error": "decision_not_act",
@@ -59,6 +64,9 @@ class EngagementExecutor:
                 "ok": False,
                 "action_id": action_id,
                 "provider": "unsupported",
+                "provider_mode": "none",
+                "provider_backend": "unsupported",
+                "simulated": False,
                 "channel": str(channel),
                 "content": str(action.get("content", "")),
                 "error": f"unsupported_channel:{channel}",
@@ -80,6 +88,10 @@ class EngagementExecutor:
             return {
                 "action_id": action_id,
                 "provider": result.get("provider", "unknown"),
+                "provider_mode": result.get("provider_mode", "live"),
+                "provider_backend": result.get("provider_backend", result.get("provider", "unknown")),
+                "fallback_reason": result.get("fallback_reason"),
+                "simulated": bool(result.get("simulated")),
                 "channel": result.get("channel", channel),
                 "content": result.get("content", action.get("content", "")),
                 "status_code": result.get("status_code"),
@@ -90,6 +102,10 @@ class EngagementExecutor:
         return {
             "action_id": action_id,
             "provider": result.get("provider", "unknown"),
+            "provider_mode": result.get("provider_mode", "live"),
+            "provider_backend": result.get("provider_backend", result.get("provider", "unknown")),
+            "fallback_reason": result.get("fallback_reason"),
+            "simulated": bool(result.get("simulated")),
             "channel": result.get("channel", channel),
             "content": result.get("content", action.get("content", "")),
             "status_code": result.get("status_code"),

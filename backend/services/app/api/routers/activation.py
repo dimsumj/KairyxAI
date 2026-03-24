@@ -12,7 +12,7 @@ router = APIRouter(prefix="/activation", tags=["activation"])
 
 
 @router.post("/callbacks/{provider}")
-def ingest_provider_callbacks(
+async def ingest_provider_callbacks(
     provider: str,
     request: Request,
     payload: ActivationCallbackIngestRequest,
@@ -21,7 +21,17 @@ def ingest_provider_callbacks(
     context = get_governance_context(request)
     ensure_permission(context, "activation.callbacks.ingest")
     try:
-        result = service.ingest_delivery_callback(provider, [item.model_dump() for item in payload.callbacks])
+        result = service.ingest_delivery_callback(
+            provider,
+            [item.model_dump() for item in payload.callbacks],
+            signature=str(
+                request.headers.get("x-kairyx-signature")
+                or request.headers.get("x-signature")
+                or request.headers.get("x-webhook-signature")
+                or ""
+            ).strip() or None,
+            raw_body=await request.body(),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return build_audited_response(

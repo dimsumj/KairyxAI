@@ -12,6 +12,8 @@ from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+from app.core.request_context import get_request_context
+
 INT64_MAX = 2**63 - 1
 INT64_MIN = -(2**63)
 
@@ -47,9 +49,11 @@ def _sanitize_for_storage(data: Any) -> Any:
 
 def _shared_service_cache_key() -> tuple[Any, ...]:
     mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+    tenant_scope = _tenant_scope_key()
     if mode == "gcp":
         return (
             mode,
+            tenant_scope,
             os.getenv("BIGQUERY_PROJECT_ID", ""),
             os.getenv("BIGQUERY_DATASET_ID", "kairyx"),
             os.getenv("BIGQUERY_TABLE_NAME", "processed_events"),
@@ -61,8 +65,16 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
         )
     return (
         mode,
+        tenant_scope,
         os.getcwd(),
     )
+
+
+def _tenant_scope_key() -> str:
+    context = get_request_context()
+    raw_value = context.tenant_id if context is not None else os.getenv("BOOTSTRAP_TENANT_ID", "default")
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_value or "default").strip()).strip("_").lower()
+    return normalized or "default"
 
 
 @lru_cache(maxsize=8)
@@ -112,7 +124,9 @@ class BigQueryService:
         if not project_id:
             raise ValueError("BIGQUERY_PROJECT_ID must be set for DATA_BACKEND_MODE=gcp.")
 
-        dataset_id = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        tenant_scope = _tenant_scope_key()
+        dataset_base = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}")
         table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
         self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
         self._curated_table_id = os.getenv(
@@ -136,11 +150,12 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
-        self._cache_path = ".cache/bigquery_table.parquet"
-        self._curated_cache_path = ".cache/events_curated.parquet"
-        self._player_latest_state_cache_path = ".cache/player_latest_state.parquet"
-        self._dead_letter_cache_path = ".cache/pipeline_dead_letters.parquet"
-        self._prediction_results_cache_path = ".cache/prediction_results.parquet"
+        cache_root = Path(".cache") / _tenant_scope_key()
+        self._cache_path = str(cache_root / "bigquery_table.parquet")
+        self._curated_cache_path = str(cache_root / "events_curated.parquet")
+        self._player_latest_state_cache_path = str(cache_root / "player_latest_state.parquet")
+        self._dead_letter_cache_path = str(cache_root / "pipeline_dead_letters.parquet")
+        self._prediction_results_cache_path = str(cache_root / "prediction_results.parquet")
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)
@@ -673,6 +688,75 @@ class BigQueryService:
             "alias": alias,
             "fields": fields,
         }
+
+    @staticmethod
+    def _schema_field_type(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        try:
+            datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return "datetime"
+        except ValueError:
+            return "string"
+
+    def get_schema_contract(self, alias: str, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        resolved_alias = str(alias or "").strip()
+        aliases = self.get_v1_table_aliases()
+        targets = set(aliases.keys()) | set(aliases.values())
+        if resolved_alias not in targets:
+            raise KeyError(resolved_alias)
+        canonical_alias = next((name for name, target in aliases.items() if resolved_alias in {name, target}), resolved_alias)
+        rows = self.get_rows_for_alias(canonical_alias)
+        if job_id:
+            rows = [row for row in rows if self._row_matches_job(row, job_id)]
+        expected_fields = self._default_columns_for_alias(canonical_alias)
+        observed_fields: set[str] = set()
+        observed_types: Dict[str, str] = {}
+        schema_versions: Counter[str] = Counter()
+        for row in rows:
+            for field, value in row.items():
+                observed_fields.add(str(field))
+                observed_types.setdefault(str(field), self._schema_field_type(value))
+            schema_version = str(row.get("schema_version") or "").strip()
+            if schema_version:
+                schema_versions[schema_version] += 1
+        missing_required_fields = sorted(field for field in expected_fields if field not in observed_fields)
+        extra_fields = sorted(field for field in observed_fields if field not in expected_fields)
+        if not rows:
+            compatibility_status = "no_data"
+        elif missing_required_fields:
+            compatibility_status = "missing_required_fields"
+        elif extra_fields:
+            compatibility_status = "drifted"
+        else:
+            compatibility_status = "compatible"
+        return {
+            "alias": canonical_alias,
+            "table_name": aliases.get(canonical_alias, canonical_alias),
+            "job_id": job_id,
+            "schema_version": schema_versions.most_common(1)[0][0] if schema_versions else "v1",
+            "required_fields": expected_fields,
+            "observed_fields": sorted(observed_fields),
+            "observed_field_types": observed_types,
+            "missing_required_fields": missing_required_fields,
+            "extra_fields": extra_fields,
+            "compatibility_status": compatibility_status,
+            "row_count": len(rows),
+        }
+
+    def list_schema_contracts(self, *, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = []
+        for alias in self.get_v1_table_aliases():
+            items.append(self.get_schema_contract(alias, job_id=job_id))
+        return items
 
     def get_rejected_event_explanations(self, *, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         items = self.get_pipeline_dead_letters(job_id=job_id, limit=limit)

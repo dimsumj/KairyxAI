@@ -198,6 +198,28 @@ def list_workflow_deliveries(
     )
 
 
+@workflow_router.get("/{workflow_id}/delivery-diagnostics", response_model=dict)
+def get_workflow_delivery_diagnostics(
+    workflow_id: str,
+    request: Request,
+    service: WorkflowService = Depends(get_workflow_service),
+):
+    context = get_governance_context(request)
+    ensure_permission(context, "workflows.diagnostics.read")
+    try:
+        payload = service.get_delivery_diagnostics(workflow_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="workflow_delivery_diagnostics_read",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        payload=payload,
+    )
+
+
 @orchestrator_router.post("/kill-switch/on", response_model=dict)
 def enable_kill_switch(http_request: Request, service: WorkflowService = Depends(get_workflow_service)):
     ensure_permission(get_governance_context(http_request), "orchestrator.kill_switch")

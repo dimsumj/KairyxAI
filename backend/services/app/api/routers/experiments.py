@@ -60,6 +60,16 @@ def get_named_experiment_summary(experiment_id: str, service: ExperimentConfigSe
     return service.get_summary(experiment_id)
 
 
+@router.get("/{experiment_id}/integrity", response_model=dict)
+def get_experiment_integrity(
+    experiment_id: str,
+    http_request: Request,
+    service: ExperimentConfigService = Depends(get_experiment_service),
+):
+    ensure_permission(get_governance_context(http_request), "experiments.integrity.read")
+    return service.get_measurement_integrity(experiment_id)
+
+
 @router.get("/{experiment_id}/versions", response_model=dict)
 def get_experiment_versions(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return service.list_versions(experiment_id)

@@ -1,3 +1,4 @@
+# Legacy local/demo compatibility only. Production deploys use Cloud Run manifests under backend/services/cloudrun/.
 runtime: python314
 entrypoint: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
 

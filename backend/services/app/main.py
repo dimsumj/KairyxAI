@@ -1,22 +1,30 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
+import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from starlette.responses import FileResponse, JSONResponse
+from starlette.staticfiles import StaticFiles
 
-from app.api.routers import activation, audit, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, sql_workspace, templates, workflows
+from app.api.routers import activation, audit, auth, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, provider_connections, sql_workspace, templates, tenants, workflows
 from app.application.imports import ImportService
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
-from app.core.logging import configure_access_log_filters
+from app.core.auth import get_authenticator
+from app.core.errors import is_database_locked_error
+from app.core.governance import GovernanceContext
+from app.core.logging import configure_access_log_filters, emit_structured_log
+from app.core.request_context import RequestContext, request_context
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
-from app.core.settings import get_settings
+from app.core.settings import get_settings, validate_runtime_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
 
@@ -26,27 +34,98 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    validate_runtime_settings(settings)
     frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
     frontend_index = frontend_dir / "index.html"
+    frontend_static_dir = frontend_dir / "assets"
     configure_access_log_filters()
     app = FastAPI(title=settings.app_name)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(settings.cors_allowed_origins),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     @app.middleware("http")
-    async def _api_key_guard(request: Request, call_next):
-        protected_prefix = settings.api_v1_prefix.rstrip("/")
-        if settings.api_access_key and request.url.path.startswith(protected_prefix):
-            if request.url.path not in {f"{protected_prefix}/health", "/health"}:
-                provided = str(request.headers.get("x-api-key") or "").strip()
-                if provided != settings.api_access_key:
-                    return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
-        return await call_next(request)
+    async def _governance_context_guard(request: Request, call_next):
+        correlation_id = str(request.headers.get("x-correlation-id") or f"req_{uuid.uuid4().hex[:20]}").strip()
+        request.state.correlation_id = correlation_id
+        public_paths = {
+            "/health",
+            "/health/live",
+            f"{settings.api_v1_prefix}/health/live",
+            f"{settings.api_v1_prefix}/auth/oidc-config",
+            "/",
+        }
+        if request.url.path.startswith("/static/") or request.url.path in public_paths:
+            context = GovernanceContext(
+                actor_role="admin",
+                actor_id="system",
+                tenant_id=settings.bootstrap_tenant_id,
+                correlation_id=correlation_id,
+                platform_admin=True,
+                auth_mode="public",
+            )
+        else:
+            try:
+                context = _build_governance_context(request, settings, correlation_id)
+            except HTTPException as exc:
+                emit_structured_log(
+                    "request_rejected",
+                    path=request.url.path,
+                    method=request.method,
+                    tenant_id=settings.bootstrap_tenant_id,
+                    actor_id="anonymous",
+                    resource_type="http_request",
+                    correlation_id=correlation_id,
+                    status_code=exc.status_code,
+                    detail=exc.detail,
+                )
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail, "correlation_id": correlation_id},
+                )
+
+        request.state.governance_context = context
+        scoped_context = RequestContext(
+            actor_id=context.actor_id,
+            actor_role=context.actor_role,
+            tenant_id=context.tenant_id,
+            correlation_id=context.correlation_id,
+            platform_admin=context.platform_admin,
+            auth_mode=context.auth_mode,
+        )
+        with request_context(scoped_context):
+            response = await call_next(request)
+        emit_structured_log(
+            "http_request",
+            path=request.url.path,
+            method=request.method,
+            tenant_id=context.tenant_id,
+            actor_id=context.actor_id,
+            resource_type="http_request",
+            correlation_id=correlation_id,
+            status_code=response.status_code,
+            job_id=request.path_params.get("job_id") or request.query_params.get("job_id"),
+        )
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
+
+    @app.middleware("http")
+    async def _sqlite_lock_guard(request: Request, call_next):
+        try:
+            return await call_next(request)
+        except (SQLAlchemyOperationalError, sqlite3.OperationalError) as exc:
+            if is_database_locked_error(exc):
+                logger.warning("Control plane database lock while handling %s %s", request.method, request.url.path)
+                return JSONResponse(
+                    status_code=423,
+                    headers={"Retry-After": "1"},
+                    content={"detail": "Control plane database is busy; retry shortly."},
+                )
+            raise
 
     @app.on_event("startup")
     def _startup() -> None:
@@ -54,34 +133,85 @@ def create_app() -> FastAPI:
             return
         clear_shutdown_requested()
         clear_shared_bigquery_service_cache()
-        init_db()
-        session = get_session_factory()()
-        try:
-            repository = SqlAlchemyControlPlaneRepository(session)
-            bigquery_service = get_shared_bigquery_service()
+        with request_context(
+            RequestContext(
+                actor_id="system",
+                actor_role="admin",
+                tenant_id=settings.bootstrap_tenant_id,
+                correlation_id="startup",
+                platform_admin=True,
+                auth_mode="system",
+            )
+        ):
+            init_db()
+            session = get_session_factory()()
             try:
-                ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
-                ImportService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
-                PredictionService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
-                HealthMonitorService(repository, bigquery_service).snapshot(persist=True)
-                ControlLoopService(repository, settings, bigquery_service).ensure_default_jobs()
-            except Exception:
-                logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
-        finally:
-            session.close()
-        if settings.scheduler_enabled and getattr(app.state, "control_loop_thread", None) is None:
-            stop_event = threading.Event()
-
-            def _run_control_loop() -> None:
-                while not stop_event.wait(settings.scheduler_interval_seconds):
+                repository = SqlAlchemyControlPlaneRepository(session)
+                repository.ensure_tenant(settings.bootstrap_tenant_id, settings.bootstrap_tenant_name)
+                bigquery_service = get_shared_bigquery_service()
+                try:
+                    ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
+                    ImportService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
+                    PredictionService(repository, settings, bigquery_service=bigquery_service).cleanup_expired_jobs()
+                    ControlLoopService(repository, settings, bigquery_service).ensure_default_jobs()
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    logger.exception("Import restart reconciliation failed during startup. Continuing without blocking API startup.")
+            finally:
+                session.close()
+        if getattr(app.state, "health_warmup_thread", None) is None:
+            def _warm_health_snapshot() -> None:
+                with request_context(
+                    RequestContext(
+                        actor_id="system",
+                        actor_role="admin",
+                        tenant_id=settings.bootstrap_tenant_id,
+                        correlation_id="health-warmup",
+                        platform_admin=True,
+                        auth_mode="system",
+                    )
+                ):
                     session = get_session_factory()()
                     try:
                         repository = SqlAlchemyControlPlaneRepository(session)
-                        ControlLoopService(repository, settings, get_shared_bigquery_service()).tick()
+                        HealthMonitorService(repository, get_shared_bigquery_service()).snapshot(persist=True)
+                        session.commit()
                     except Exception:
-                        logger.exception("Control loop tick failed.")
+                        session.rollback()
+                        logger.exception("Health snapshot warm-up failed.")
                     finally:
                         session.close()
+
+            thread = threading.Thread(target=_warm_health_snapshot, name="kairyx-health-warmup", daemon=True)
+            app.state.health_warmup_thread = thread
+            thread.start()
+        scheduler_allowed = settings.scheduler_enabled and (settings.app_env != "prod" or settings.service_role == "scheduler-worker")
+        if scheduler_allowed and getattr(app.state, "control_loop_thread", None) is None:
+            stop_event = threading.Event()
+
+            def _run_control_loop() -> None:
+                with request_context(
+                    RequestContext(
+                        actor_id="system",
+                        actor_role="admin",
+                        tenant_id=settings.bootstrap_tenant_id,
+                        correlation_id="scheduler-loop",
+                        platform_admin=True,
+                        auth_mode="system",
+                    )
+                ):
+                    while not stop_event.wait(settings.scheduler_interval_seconds):
+                        session = get_session_factory()()
+                        try:
+                            repository = SqlAlchemyControlPlaneRepository(session)
+                            ControlLoopService(repository, settings, get_shared_bigquery_service()).tick()
+                            session.commit()
+                        except Exception:
+                            session.rollback()
+                            logger.exception("Control loop tick failed.")
+                        finally:
+                            session.close()
 
             thread = threading.Thread(target=_run_control_loop, name="kairyx-control-loop", daemon=True)
             app.state.control_loop_stop_event = stop_event
@@ -116,7 +246,17 @@ def create_app() -> FastAPI:
         finally:
             session.close()
 
+    @app.get("/health/live")
+    def root_health_live():
+        return health.health_live()
+
+    if frontend_static_dir.exists():
+        app.mount("/static", StaticFiles(directory=frontend_static_dir), name="frontend-static")
+
+    app.include_router(auth.router, prefix=settings.api_v1_prefix)
     app.include_router(health.router, prefix=settings.api_v1_prefix)
+    app.include_router(tenants.router, prefix=settings.api_v1_prefix)
+    app.include_router(provider_connections.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
     app.include_router(mappings.router, prefix=settings.api_v1_prefix)
     app.include_router(imports.router, prefix=settings.api_v1_prefix)
@@ -132,6 +272,85 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix=settings.api_v1_prefix)
     app.include_router(templates.router, prefix=settings.api_v1_prefix)
     return app
+
+
+def _build_governance_context(request: Request, settings, correlation_id: str) -> GovernanceContext:
+    protected_prefix = settings.api_v1_prefix.rstrip("/")
+    if not request.url.path.startswith(protected_prefix):
+        return GovernanceContext(
+            actor_role="admin",
+            actor_id="system",
+            tenant_id=settings.bootstrap_tenant_id,
+            correlation_id=correlation_id,
+            platform_admin=True,
+            auth_mode="public",
+        )
+
+    auth_header = str(request.headers.get("authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            principal = get_authenticator().authenticate_token(token)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+        requested_tenant = str(
+            request.headers.get("x-kairyx-tenant")
+            or request.headers.get("x-tenant-id")
+            or principal.claims.get("tenant_id")
+            or settings.bootstrap_tenant_id
+        ).strip() or settings.bootstrap_tenant_id
+        session = get_session_factory()()
+        try:
+            repository = SqlAlchemyControlPlaneRepository(session)
+            repository.ensure_tenant(settings.bootstrap_tenant_id, settings.bootstrap_tenant_name)
+            repository.upsert_platform_user(
+                principal.subject,
+                email=principal.email,
+                display_name=principal.display_name,
+            )
+            if principal.platform_admin:
+                repository.ensure_tenant(requested_tenant, requested_tenant)
+                session.commit()
+                return GovernanceContext(
+                    actor_role="admin",
+                    actor_id=principal.subject,
+                    tenant_id=requested_tenant,
+                    correlation_id=correlation_id,
+                    platform_admin=True,
+                    auth_mode="jwt",
+                )
+            membership = repository.get_tenant_membership(requested_tenant, principal.subject)
+            if membership is None or str(membership.get("status") or "").lower() != "active":
+                raise HTTPException(status_code=403, detail=f"Tenant membership for '{requested_tenant}' is missing or inactive.")
+            session.commit()
+            return GovernanceContext(
+                actor_role=str(membership.get("role") or "operator"),
+                actor_id=principal.subject,
+                tenant_id=requested_tenant,
+                correlation_id=correlation_id,
+                platform_admin=False,
+                auth_mode="jwt",
+            )
+        finally:
+            session.close()
+
+    if settings.legacy_header_auth_enabled:
+        if settings.api_access_key:
+            provided = str(request.headers.get("x-api-key") or "").strip()
+            if provided != settings.api_access_key:
+                raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+        actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower() or "admin"
+        actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
+        tenant_id = str(request.headers.get("x-tenant-id") or settings.bootstrap_tenant_id).strip() or settings.bootstrap_tenant_id
+        return GovernanceContext(
+            actor_role=actor_role,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            platform_admin=(actor_role == "admin"),
+            auth_mode="legacy_headers",
+        )
+    raise HTTPException(status_code=401, detail="Missing bearer token.")
 
 
 app = create_app()

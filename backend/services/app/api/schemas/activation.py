@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class ActivationCallbackEvent(BaseModel):
     delivery_id: str | None = None
     action_execution_id: str | None = None
+    provider_connection_id: str | None = None
     workflow_id: str | None = None
     user_id: str | None = None
     event_id: str | None = None

@@ -71,6 +71,10 @@ class WorkflowResponse(BaseModel):
     workflow_id: str
     name: str
     status: str
+    tenant_id: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+    correlation_id: str = ""
     current_version: int
     published_version: int | None = None
     definition: Dict[str, Any] = Field(default_factory=dict)

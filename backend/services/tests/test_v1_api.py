@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+import sqlite3
 import threading
 import time
 
+from alembic import command
+from alembic.config import Config
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,6 +22,14 @@ from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyC
 from app.main import create_app
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
+
+
+def _alembic_config(tmp_path: Path) -> Config:
+    services_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(services_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(services_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    return config
 
 
 @pytest.fixture
@@ -66,14 +77,45 @@ def test_root_serves_frontend_shell(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "window.location.origin" in resp.text
-    assert "/api/v1" in resp.text
+    assert "/static/operator-console.css" in resp.text
+    assert "/static/operator-console.js" in resp.text
+
+
+def test_root_serves_frontend_static_assets(client):
+    css_resp = client.get("/static/operator-console.css")
+    assert css_resp.status_code == 200
+    assert "text/css" in css_resp.headers["content-type"]
+    assert "--bg-color" in css_resp.text
+
+    js_resp = client.get("/static/operator-console.js")
+    assert js_resp.status_code == 200
+    assert "javascript" in js_resp.headers["content-type"]
+    assert "document.addEventListener('DOMContentLoaded'" in js_resp.text
+    assert "/api/v1" in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
     assert resp.json()["service"] == "KairyxAI Operator API"
+
+
+def test_health_live_aliases_return_lightweight_payload(client):
+    root_resp = client.get("/health/live")
+    assert root_resp.status_code == 200
+    root_payload = root_resp.json()
+    assert root_payload["status"] == "ok"
+    assert root_payload["mode"] == "mock"
+    assert "data_aliases" not in root_payload
+
+    api_resp = client.get("/api/v1/health/live")
+    assert api_resp.status_code == 200
+    api_payload = api_resp.json()
+    assert api_payload["status"] == "ok"
+    assert api_payload["mode"] == "mock"
+    assert "data_aliases" not in api_payload
+    assert api_payload["service"] == "KairyxAI Operator API"
+    assert api_payload["time"]
 
 
 def test_health_reports_local_cache_stats(client):
@@ -98,6 +140,129 @@ def test_prediction_model_runs_reports_untrained_readiness(client):
     assert readiness["using_model_version"] == "heuristic_v1"
     assert readiness["baseline_rows"] == 0
     assert readiness["min_rows_required"] == 12
+
+
+def test_health_live_bypasses_api_key_guard(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("API_ACCESS_KEY", "top-secret")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        live_resp = test_client.get("/api/v1/health/live")
+        assert live_resp.status_code == 200
+        assert live_resp.json()["status"] == "ok"
+
+        protected_resp = test_client.get("/api/v1/connectors")
+        assert protected_resp.status_code == 401
+
+
+def test_sqlite_control_plane_uses_wal_and_busy_timeout(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "12")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        engine = db_module.get_engine()
+        connection = engine.raw_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA journal_mode;")
+            assert str(cursor.fetchone()[0]).lower() == "wal"
+            cursor.execute("PRAGMA busy_timeout;")
+            assert int(cursor.fetchone()[0]) >= 12000
+        finally:
+            cursor.close()
+            connection.close()
+
+
+def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    legacy_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        legacy_connection.execute("DROP TABLE alembic_version")
+        legacy_connection.commit()
+    finally:
+        legacy_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert "tenant_id" in connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+    finally:
+        upgraded_connection.close()
+
+
+def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "0.1")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        connector_resp = test_client.post(
+            "/api/v1/connectors",
+            json={
+                "name": "Adjust Source",
+                "type": "adjust",
+                "config": {"api_token": "adjust-token"},
+            },
+        )
+        assert connector_resp.status_code == 201
+
+        lock_connection = sqlite3.connect(tmp_path / "control_plane.db", timeout=0.01, isolation_level=None)
+        try:
+            lock_connection.execute("PRAGMA busy_timeout=10;")
+            lock_connection.execute("BEGIN EXCLUSIVE;")
+            response = test_client.post(
+                "/api/v1/imports",
+                json={
+                    "source_name": "Adjust Source",
+                    "start_date": "20260301",
+                    "end_date": "20260302",
+                },
+            )
+        finally:
+            lock_connection.rollback()
+            lock_connection.close()
+
+    assert response.status_code == 423
+    assert response.json()["detail"] == "Control plane database is busy; retry shortly."
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
@@ -1035,6 +1200,104 @@ def test_import_processing_progress_reports_event_counts(client, monkeypatch):
     assert run_result["response"].json()["status"] == "completed"
 
 
+def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                },
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 2,
+                    "source_config_id": "Amplitude 1",
+                },
+            ],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(
+                1,
+                2,
+                {
+                    "manifests_processed": 1,
+                    "raw_normalized_events": 1000,
+                    "events_staging_written": 750,
+                    "pipeline_dead_letters_written": 250,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                },
+            )
+        raise RuntimeError("Normalization failed after staging manifests")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    assert run_import.json()["detail"] == "Normalization failed after staging manifests"
+
+    import_state = client.get(import_job["links"]["self"])
+    assert import_state.status_code == 200
+    payload = import_state.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_reason"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_stage"] == "processing"
+    assert payload["progress"]["details"]["checkpoint_state"]["failed"] == 2
+
+    checkpoints = client.get(import_job["links"]["checkpoints"])
+    assert checkpoints.status_code == 200
+    assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
+
+
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -1276,7 +1539,7 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     with TestClient(client.app) as control_client:
         stop_import = control_client.post(import_job["links"]["self"] + "/stop")
     assert stop_import.status_code == 200
-    assert stop_import.json()["status"] == "stopping"
+    assert stop_import.json()["status"] == "stopped"
 
     thread.join(timeout=5)
     assert not thread.is_alive()
@@ -1288,6 +1551,71 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     payload = import_state.json()
     assert payload["status"] == "stopped"
     assert payload["progress"]["details"]["stop_reason"] == "Stopped by user."
+
+
+def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    started = threading.Event()
+    release_worker = threading.Event()
+    run_result = {}
+
+    def stuck_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        started.set()
+        release_worker.wait(timeout=5)
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 0,
+            "events_staged": 0,
+            "last_checkpoint": None,
+            "shard_manifests": [],
+            "stopped": False,
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        stuck_fetch_and_stage_events,
+    )
+
+    def run_import_request():
+        with TestClient(client.app) as runner_client:
+            run_result["response"] = runner_client.post(import_job["links"]["self"] + "/run")
+
+    thread = threading.Thread(target=run_import_request)
+    thread.start()
+    assert started.wait(timeout=2)
+
+    with TestClient(client.app) as control_client:
+        stop_import = control_client.post(import_job["links"]["self"] + "/stop")
+    assert stop_import.status_code == 200
+    assert stop_import.json()["status"] == "stopped"
+
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert run_result["response"].status_code == 200
+    assert run_result["response"].json()["status"] == "stopped"
+
+    release_worker.set()
 
 
 def test_restart_discards_stopping_import_job(client):

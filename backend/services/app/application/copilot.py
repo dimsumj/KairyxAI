@@ -12,8 +12,9 @@ from app.application.experiments import ExperimentConfigService
 
 
 class CopilotService:
-    def __init__(self, repository, bigquery_service: BigQueryService | None = None):
+    def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
+        self.settings = settings
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
         self.cohorts = CohortService(repository, self.bigquery_service)
         self.experiments = ExperimentConfigService(repository)
@@ -413,6 +414,7 @@ class CopilotService:
         return self._record_query_log("recommend", response, {"metric_context": metric_context, "cohort_id": cohort_draft.get("cohort_id")})
 
     def report(self, report_type: str = "daily", *, time_window: str = "7d") -> Dict[str, Any]:
+        self._enforce_report_limit()
         response = self._build_report_response(report_type, time_window=time_window)
         return self._record_report(report_type, time_window, response, trigger="manual")
 
@@ -424,8 +426,11 @@ class CopilotService:
         latest_workflow = workflow_records[0].get("payload") if workflow_records else None
         latest_cohort = cohort_records[0].get("payload") if cohort_records else None
         if latest_experiment is None or latest_workflow is None or latest_cohort is None:
-            response = self._insufficient_evidence(metric_window=time_window, evidence=[{"report_type": report_type}], risk_notes=["Missing linked cohort/workflow/experiment resources."])
-            return self._record_report(report_type, time_window, response)
+            return self._insufficient_evidence(
+                metric_window=time_window,
+                evidence=[{"report_type": report_type}],
+                risk_notes=["Missing linked cohort/workflow/experiment resources."],
+            )
         experiment_summary = self.experiments.get_summary(latest_experiment["experiment_id"])
         cohort_metrics = self.cohorts.get_metrics(latest_cohort["cohort_id"])
         workflow_summary = self._workflow_summary(latest_workflow["workflow_id"])
@@ -463,6 +468,7 @@ class CopilotService:
         record = self._get_report_record(report_id)
         if record is None:
             raise KeyError(report_id)
+        self._enforce_report_limit()
         payload = record.get("payload") or {}
         root_report_id = str(payload.get("root_report_id") or payload.get("report_id") or report_id)
         response = self._build_report_response(payload.get("report_type") or "daily", time_window=payload.get("time_window") or "7d")
@@ -476,6 +482,12 @@ class CopilotService:
         )
         self._update_report_lineage(root_report_id, report_id, retried.get("report_id"))
         return retried
+
+    def _enforce_report_limit(self) -> None:
+        if len(self.list_reports()) >= int(self.settings.max_copilot_reports_per_tenant):
+            raise ValueError(
+                f"Copilot report limit reached for tenant; max stored reports is {self.settings.max_copilot_reports_per_tenant}."
+            )
 
     def _record_query_log(self, log_type: str, response: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         query_id = f"copq_{uuid.uuid4().hex[:20]}"

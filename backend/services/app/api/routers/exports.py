@@ -28,6 +28,8 @@ def create_export_job(request: ExportJobCreateRequest, http_request: Request, se
         raise HTTPException(status_code=404, detail=exc.detail)
     except ResourceLockedError as exc:
         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Prediction job '{request.prediction_job_id}' not found.")
     return build_audited_response(
