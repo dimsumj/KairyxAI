@@ -61,6 +61,25 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
     assert response.status_code == 200
 
 
+def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "state" / "control_plane.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{target}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    original_disabled = uvicorn_logger.disabled
+    uvicorn_logger.disabled = False
+    try:
+        db_module.init_db()
+        assert uvicorn_logger.disabled is False
+    finally:
+        uvicorn_logger.disabled = original_disabled
+
+
 def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
     target = tmp_path / "tracked" / "local_jobs.db"
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(target))
