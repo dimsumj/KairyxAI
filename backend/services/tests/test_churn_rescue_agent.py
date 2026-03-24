@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 import pytest
 
+from app.application.churn_models import LocalChurnModelService
 from app.core import db as db_module
 from app.core.db import session_scope
 from app.main import create_app
@@ -108,6 +109,55 @@ def _append_return_events(user_ids: list[str], occurred_at: str, job_id: str = "
     service.write_events_staging(rows, job_id=job_id)
     service.run_events_curation(job_id=job_id)
     service.refresh_player_latest_state(job_id=job_id)
+
+
+def test_prediction_model_readiness_is_learning_after_insufficient_training(client):
+    _seed_players()
+
+    train = client.post(
+        "/api/v1/predictions/models/train",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-20T08:00:00", "min_rows": 999},
+    )
+    assert train.status_code == 200
+    assert train.json()["model"]["model_version"] == "heuristic_v1"
+    assert train.json()["model"]["status"] == "fallback"
+
+    runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+    assert runs.status_code == 200
+    readiness = runs.json()["readiness"]
+    assert readiness["state"] == "learning"
+    assert readiness["using_model_version"] == "heuristic_v1"
+    assert readiness["baseline_rows"] > 0
+    assert readiness["min_rows_required"] == 999
+    assert "enough labeled data" in readiness["reason"]
+
+
+def test_prediction_model_readiness_is_fallback_when_trained_model_underperforms(client, monkeypatch):
+    _seed_players()
+
+    def fake_score_rows(self, rows, artifact):
+        return 0.4 if artifact is not None else 0.6
+
+    monkeypatch.setattr(LocalChurnModelService, "_score_rows", fake_score_rows)
+
+    train = client.post(
+        "/api/v1/predictions/models/train",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-20T08:00:00", "min_rows": 6},
+    )
+    assert train.status_code == 200
+    assert train.json()["model"]["status"] == "fallback"
+    assert train.json()["model"]["model_version"].startswith("crm_")
+
+    runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+    assert runs.status_code == 200
+    readiness = runs.json()["readiness"]
+    assert readiness["state"] == "fallback"
+    assert readiness["using_model_version"] == "heuristic_v1"
+    assert readiness["validation_accuracy"] == pytest.approx(0.4)
+    assert readiness["heuristic_accuracy"] == pytest.approx(0.6)
+    assert "did not outperform heuristic_v1" in readiness["reason"]
 
 
 def test_guarded_closed_loop_churn_rescue_agent(client):
@@ -311,6 +361,12 @@ def test_guarded_closed_loop_churn_rescue_agent(client):
     assert latest_model.status_code == 200
     assert latest_model.json()["model"]["model_version"].startswith("crm_")
 
+    model_runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+    assert model_runs.status_code == 200
+    readiness = model_runs.json()["readiness"]
+    assert readiness["state"] == "ready"
+    assert readiness["using_model_version"].startswith("crm_")
+
     prediction_job = client.post(
         "/api/v1/predictions",
         json={"import_job_id": "imp_churn_agent", "prediction_mode": "local"},
@@ -321,14 +377,21 @@ def test_guarded_closed_loop_churn_rescue_agent(client):
     run_prediction = client.post(f"/api/v1/predictions/{job_id}/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_state"] == "ready"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_version"].startswith("crm_")
 
     results = client.get(f"/api/v1/predictions/{job_id}/results")
     assert results.status_code == 200
     items = results.json()["items"]
     assert items
     assert any(item.get("model_version", "").startswith("crm_") for item in items)
-    assert any(item.get("recommended_variant") == "treatment_b" for item in items)
-    assert any(item.get("recommended_template_id") == "churn_rescue_push_b" for item in items)
+    assert all(item.get("effective_local_model_state") == "ready" for item in items)
+    assert all(str(item.get("effective_local_model_version") or "").startswith("crm_") for item in items)
+    assert all(item.get("policy_snapshot_id") == optimizer_body["policy_snapshot"]["policy_snapshot_id"] for item in items)
+    assert all(str(item.get("eligibility_reason") or "").strip() for item in items)
+    recommended_items = [item for item in items if item.get("recommended_variant")]
+    assert all(item.get("recommended_variant") == "treatment_b" for item in recommended_items)
+    assert all(item.get("recommended_template_id") == "churn_rescue_push_b" for item in recommended_items)
 
     scheduler = client.post(
         "/api/v1/health/scheduler/tick",
@@ -337,4 +400,3 @@ def test_guarded_closed_loop_churn_rescue_agent(client):
     )
     assert scheduler.status_code == 200
     assert any(item["job_id"] == "daily_churn_rescue_optimizer" for item in scheduler.json()["items"])
-

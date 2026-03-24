@@ -29,6 +29,7 @@ def list_prediction_model_runs(http_request: Request, service: PredictionService
     return {
         "items": service.list_model_versions(),
         "training_status": service.get_model_training_status(),
+        "readiness": service.get_model_readiness(),
     }
 
 

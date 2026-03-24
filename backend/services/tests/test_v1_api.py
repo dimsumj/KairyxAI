@@ -86,6 +86,20 @@ def test_health_reports_local_cache_stats(client):
     assert payload["local_cache"]["tables"]["prediction_results"]["rows"] >= 0
 
 
+def test_prediction_model_runs_reports_untrained_readiness(client):
+    runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+    assert runs.status_code == 200
+    payload = runs.json()
+    readiness = payload["readiness"]
+
+    assert payload["items"] == []
+    assert payload["training_status"] == {}
+    assert readiness["state"] == "untrained"
+    assert readiness["using_model_version"] == "heuristic_v1"
+    assert readiness["baseline_rows"] == 0
+    assert readiness["min_rows_required"] == 12
+
+
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -128,12 +142,16 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     assert run_prediction.json()["status"] == "completed"
     assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local Model"
     assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_version"] == "heuristic_v1"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_state"] == "untrained"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
     payload = results.json()
     assert payload["total"] >= 1
     assert payload["items"][0]["user_id"] == "adjust_user_1001"
+    assert payload["items"][0]["effective_local_model_version"] == "heuristic_v1"
+    assert payload["items"][0]["effective_local_model_state"] == "untrained"
 
     captured = {}
 

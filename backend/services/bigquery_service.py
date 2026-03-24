@@ -303,6 +303,7 @@ class BigQueryService:
                 "prediction_job_id", "user_id", "canonical_user_id", "email", "churn_state",
                 "predicted_churn_risk", "prediction_source", "suggested_action", "completed_at",
                 "baseline_churn_score", "model_version", "score_timestamp", "eligibility_reason",
+                "effective_local_model_version", "effective_local_model_state",
                 "recommended_template_id", "recommended_variant", "policy_snapshot_id",
             ],
             "pipeline_dead_letters": [

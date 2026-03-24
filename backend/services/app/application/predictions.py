@@ -152,6 +152,7 @@ class PredictionService:
 
     def create_job(self, import_job_id: str, prediction_mode: str = "local") -> Dict[str, Any]:
         self._require_completed_import(import_job_id)
+        local_model_readiness = self.local_models.get_model_readiness()
         execution_details = self._prediction_execution_details(
             prediction_mode,
             gemini_available=self._has_configured_gemini(),
@@ -172,6 +173,7 @@ class PredictionService:
                     "details": {
                         "import_job_id": import_job_id,
                         "prediction_mode": str(prediction_mode or "local").lower(),
+                        **self._build_local_model_details(local_model_readiness),
                         **execution_details,
                     },
                 },
@@ -203,6 +205,9 @@ class PredictionService:
 
     def get_model_training_status(self) -> Dict[str, Any]:
         return self.local_models.get_training_status()
+
+    def get_model_readiness(self) -> Dict[str, Any]:
+        return self.local_models.get_model_readiness()
 
     def _parse_timestamp(self, value: Any) -> datetime | None:
         if not value:
@@ -303,6 +308,7 @@ class PredictionService:
             self.bigquery_service.replace_prediction_results(job_id=job_id, rows=[])
             execution_details = self._prediction_execution_details(mode, gemini_available=gemini_client is not None)
             active_model = self.local_models.get_latest_model_payload()
+            local_model_readiness = self.local_models.get_model_readiness()
             policy_snapshot = self.experiments.get_latest_policy_snapshot()
 
             modeling_engine = PlayerModelingEngine(
@@ -326,6 +332,7 @@ class PredictionService:
                             "rows_written": 0,
                             "import_job_id": import_job_id,
                             "prediction_mode": mode,
+                            **self._build_local_model_details(local_model_readiness),
                             **execution_details,
                         },
                     }
@@ -351,6 +358,7 @@ class PredictionService:
                                     "import_job_id": import_job_id,
                                     "prediction_mode": mode,
                                     "last_user_id": str(player_id),
+                                    **self._build_local_model_details(local_model_readiness),
                                     **execution_details,
                                 },
                             }
@@ -404,6 +412,8 @@ class PredictionService:
                     "baseline_churn_score": round(model_score.baseline_churn_score, 4),
                     "model_version": model_score.model_version,
                     "score_timestamp": model_score.score_timestamp,
+                    "effective_local_model_version": local_model_readiness.get("using_model_version"),
+                    "effective_local_model_state": local_model_readiness.get("state"),
                     "eligibility_reason": recommendation.get("eligibility_reason"),
                     "recommended_template_id": recommendation.get("recommended_template_id"),
                     "recommended_variant": recommendation.get("recommended_variant"),
@@ -426,6 +436,7 @@ class PredictionService:
                                 "last_user_id": str(player_id),
                                 "model_version": model_score.model_version,
                                 "policy_snapshot_id": recommendation.get("policy_snapshot_id"),
+                                **self._build_local_model_details(local_model_readiness),
                                 **execution_details,
                             },
                         }
@@ -447,6 +458,7 @@ class PredictionService:
                             "prediction_mode": mode,
                             "model_version": str((active_model or {}).get("model_version") or "heuristic_v1"),
                             "policy_snapshot_id": str((policy_snapshot or {}).get("policy_snapshot_id") or ""),
+                            **self._build_local_model_details(local_model_readiness),
                             **execution_details,
                         },
                     },
@@ -668,4 +680,13 @@ class PredictionService:
             "subject": recommendation.get("subject"),
             "template_id": recommendation.get("recommended_template_id"),
             "variant_id": recommendation.get("recommended_variant"),
+        }
+
+    @staticmethod
+    def _build_local_model_details(readiness: Dict[str, Any] | None) -> Dict[str, Any]:
+        payload = dict(readiness or {})
+        return {
+            "effective_local_model_version": str(payload.get("using_model_version") or "heuristic_v1"),
+            "effective_local_model_state": str(payload.get("state") or "untrained"),
+            "effective_local_model_reason": str(payload.get("reason") or "").strip(),
         }

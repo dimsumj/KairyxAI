@@ -29,6 +29,7 @@ DEFAULT_SCORE_THRESHOLDS = {
 }
 
 DEFAULT_THRESHOLD_STEPS = [0.85, 0.75, 0.65, 0.55]
+DEFAULT_MIN_TRAIN_ROWS = 12
 
 
 def _utcnow() -> datetime:
@@ -118,6 +119,12 @@ class LocalChurnModelService:
     def get_training_status(self) -> Dict[str, Any]:
         record = self.repository.get_resource(self.STATUS_RESOURCE_TYPE, self.STATUS_RESOURCE_ID)
         return dict((record or {}).get("payload") or {})
+
+    def get_model_readiness(self, *, min_rows: int | None = None) -> Dict[str, Any]:
+        latest_model = self.get_latest_model_payload() or {}
+        training_status = self.get_training_status() or {}
+        min_rows_required = max(6, int(training_status.get("min_rows_required") or min_rows or DEFAULT_MIN_TRAIN_ROWS))
+        return self._build_model_readiness(latest_model, training_status, min_rows_required)
 
     def sanitize_payload(self, payload: Dict[str, Any] | None) -> Dict[str, Any] | None:
         if payload is None:
@@ -247,6 +254,7 @@ class LocalChurnModelService:
         min_rows: int = 12,
     ) -> Dict[str, Any]:
         resolved_time = _parse_dt(reference_time) or _utcnow()
+        min_rows_required = max(6, int(min_rows))
         dataset = self.build_training_dataset(reference_time=resolved_time.isoformat(), persist=True)
         rows = [item for item in dataset.get("rows") or [] if item.get("baseline_churn_label") in {0, 1}]
         labels = [int(item["baseline_churn_label"]) for item in rows]
@@ -259,10 +267,10 @@ class LocalChurnModelService:
             "class_balance": class_balance,
             "status": "insufficient_data",
             "trained_at": resolved_time.isoformat(),
+            "min_rows_required": min_rows_required,
         }
 
-        if len(rows) < max(6, int(min_rows)) or len(class_balance) < 2 or min(class_balance.values()) < 2:
-            self._persist_training_status(training_status)
+        if len(rows) < min_rows_required or len(class_balance) < 2 or min(class_balance.values()) < 2:
             fallback_payload = {
                 "model_version": "heuristic_v1",
                 "status": "fallback",
@@ -286,12 +294,13 @@ class LocalChurnModelService:
                 status="fallback",
                 payload=fallback_payload,
             )
+            training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
+            self._persist_training_status(training_status)
             return fallback_payload
 
         train_rows, validation_rows = self._split_rows_temporally(rows)
         if not train_rows or not validation_rows:
-            self._persist_training_status(training_status)
-            return {
+            fallback_payload = {
                 "model_version": "heuristic_v1",
                 "status": "fallback",
                 "trained_at": resolved_time.isoformat(),
@@ -308,6 +317,15 @@ class LocalChurnModelService:
                 "artifact": {"feature_names": FEATURE_COLUMNS, "thresholds": DEFAULT_SCORE_THRESHOLDS},
                 "reason": "Temporal validation split did not produce train and validation rows.",
             }
+            self._upsert_versioned_resource(
+                self.MODEL_RESOURCE_TYPE,
+                self.MODEL_RESOURCE_ID,
+                status="fallback",
+                payload=fallback_payload,
+            )
+            training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
+            self._persist_training_status(training_status)
+            return fallback_payload
 
         model_state = self._fit_model(train_rows)
         validation_accuracy = self._score_rows(validation_rows, model_state)
@@ -349,6 +367,7 @@ class LocalChurnModelService:
                 "metrics": payload["metrics"],
             }
         )
+        training_status["readiness"] = self._build_model_readiness(payload, training_status, min_rows_required)
         self._persist_training_status(training_status)
         return payload
 
@@ -746,6 +765,65 @@ class LocalChurnModelService:
             name=self.STATUS_RESOURCE_ID,
             payload=payload,
         )
+
+    def _build_model_readiness(
+        self,
+        latest_model: Dict[str, Any] | None,
+        training_status: Dict[str, Any] | None,
+        min_rows_required: int,
+    ) -> Dict[str, Any]:
+        latest_model = dict(latest_model or {})
+        training_status = dict(training_status or {})
+        latest_status = str(latest_model.get("status") or "").lower()
+        training_state = str(training_status.get("status") or "").lower()
+        latest_model_version = str(latest_model.get("model_version") or "").strip()
+        metrics = dict(latest_model.get("metrics") or training_status.get("metrics") or {})
+        baseline_rows = int(
+            training_status.get("row_count")
+            or ((latest_model.get("dataset") or {}).get("baseline_rows") or 0)
+            or 0
+        )
+        class_balance = dict(training_status.get("class_balance") or {})
+        last_trained_at = latest_model.get("trained_at") or training_status.get("trained_at")
+
+        if latest_status == "active":
+            state = "ready"
+            using_model_version = latest_model_version or "heuristic_v1"
+            reason = (
+                f"Local supervised model {using_model_version} is active and currently used for local scoring."
+            )
+        elif not latest_model and not training_status:
+            state = "untrained"
+            using_model_version = "heuristic_v1"
+            reason = "No local model training has been run yet. Local predictions use heuristic_v1."
+        elif training_state == "fallback" or (latest_status == "fallback" and latest_model_version not in {"", "heuristic_v1"}):
+            state = "fallback"
+            using_model_version = "heuristic_v1"
+            reason = "Latest trained local model did not outperform heuristic_v1, so local predictions continue using heuristic_v1."
+        else:
+            state = "learning"
+            using_model_version = "heuristic_v1"
+            if baseline_rows <= 0:
+                reason = (
+                    f"Using heuristic_v1 until the local model has at least {min_rows_required} labeled rows with class balance."
+                )
+            else:
+                reason = (
+                    f"Using heuristic_v1 until the local model has enough labeled data. "
+                    f"Current labeled rows: {baseline_rows}/{min_rows_required}."
+                )
+
+        return {
+            "state": state,
+            "using_model_version": using_model_version,
+            "reason": reason,
+            "last_trained_at": last_trained_at,
+            "baseline_rows": baseline_rows,
+            "min_rows_required": int(min_rows_required),
+            "class_balance": class_balance,
+            "validation_accuracy": metrics.get("validation_accuracy"),
+            "heuristic_accuracy": metrics.get("heuristic_accuracy"),
+        }
 
     def _upsert_versioned_resource(
         self,

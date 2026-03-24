@@ -639,10 +639,15 @@
                             <option value="cloud">Cloud</option>
                             <option value="parallel">AI + Cloud</option>
                         </select>
+                        <div id="prediction-model-readiness" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
+                            <span id="prediction-model-readiness-badge" style="display: inline-flex; align-items: center; padding: 0.15rem 0.55rem; border-radius: 999px; border: 1px solid var(--border-color); font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Learning</span>
+                            <span id="prediction-model-readiness-details" style="font-size: 0.78rem; color: var(--text-secondary);"></span>
+                        </div>
                     </div>
                     <button id="predict-churn-btn">Predict Churn</button>
                     <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
                 </div>
+                <div id="prediction-local-warning" style="font-size: 0.82rem; color: var(--yellow); margin-top: 0.6rem;"></div>
                 <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
                     <h2 style="font-size: 1rem; margin: 0 0 0.75rem 0;">Push Audience to Campaign Provider</h2>
                     <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0;">Exports a clean audience payload with normalized identifiers like <code>user_id</code> and <code>email</code>.</p>
@@ -1988,6 +1993,7 @@ dimensions: campaign,country,platform</pre>
             let cachedConnectors = [];
             let cachedImports = [];
             let cachedPredictionJobs = [];
+            let cachedPredictionModelReadiness = null;
             let cachedExportJobs = [];
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
@@ -2181,6 +2187,31 @@ dimensions: campaign,country,platform</pre>
                 return cachedPredictionJobs;
             }
 
+            function buildDefaultPredictionModelReadiness() {
+                return {
+                    state: 'untrained',
+                    using_model_version: 'heuristic_v1',
+                    reason: 'No local model training has been run yet. Local predictions use heuristic_v1.',
+                    last_trained_at: null,
+                    baseline_rows: 0,
+                    min_rows_required: 12,
+                    class_balance: {},
+                    validation_accuracy: null,
+                    heuristic_accuracy: null,
+                };
+            }
+
+            async function refreshPredictionModelReadinessState() {
+                try {
+                    const payload = await apiRequest('/predictions/models/runs');
+                    cachedPredictionModelReadiness = payload.readiness || buildDefaultPredictionModelReadiness();
+                } catch (error) {
+                    console.warn('Unable to refresh prediction model readiness:', error);
+                    cachedPredictionModelReadiness = buildDefaultPredictionModelReadiness();
+                }
+                return cachedPredictionModelReadiness;
+            }
+
             async function refreshExportJobsState() {
                 const payload = await apiRequest('/exports');
                 cachedExportJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
@@ -2217,6 +2248,92 @@ dimensions: campaign,country,platform</pre>
                 }
             }
 
+            function getPredictionModelReadiness() {
+                return cachedPredictionModelReadiness || buildDefaultPredictionModelReadiness();
+            }
+
+            function getPredictionModelBadgeLabel(state = '') {
+                switch (String(state || '').toLowerCase()) {
+                    case 'ready':
+                        return 'Ready';
+                    case 'fallback':
+                        return 'Fallback';
+                    default:
+                        return 'Learning';
+                }
+            }
+
+            function getPredictionModelBadgeStyles(state = '') {
+                switch (String(state || '').toLowerCase()) {
+                    case 'ready':
+                        return { color: 'var(--green)', borderColor: 'var(--green)' };
+                    case 'fallback':
+                        return { color: 'var(--yellow)', borderColor: 'var(--yellow)' };
+                    default:
+                        return { color: 'var(--primary-color)', borderColor: 'var(--border-color)' };
+                }
+            }
+
+            function formatPredictionModelMetric(value) {
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric)) {
+                    return '';
+                }
+                return `${(numeric * 100).toFixed(1)}%`;
+            }
+
+            function renderPredictionModelReadiness() {
+                const readiness = getPredictionModelReadiness();
+                const badgeLabel = getPredictionModelBadgeLabel(readiness.state);
+                const badgeStyles = getPredictionModelBadgeStyles(readiness.state);
+                const detailParts = [];
+                const usingModelVersion = String(readiness.using_model_version || 'heuristic_v1');
+                const baselineRows = Number(readiness.baseline_rows || 0);
+                const minRowsRequired = Number(readiness.min_rows_required || 12);
+                const validationAccuracy = formatPredictionModelMetric(readiness.validation_accuracy);
+                const heuristicAccuracy = formatPredictionModelMetric(readiness.heuristic_accuracy);
+
+                detailParts.push(usingModelVersion);
+                detailParts.push(`${baselineRows}/${minRowsRequired} labeled rows`);
+                if (validationAccuracy && heuristicAccuracy) {
+                    detailParts.push(`val ${validationAccuracy} vs heur ${heuristicAccuracy}`);
+                }
+                if (readiness.last_trained_at) {
+                    detailParts.push(`trained ${formatDateTime(readiness.last_trained_at)}`);
+                }
+
+                const titleLines = [
+                    String(readiness.reason || '').trim(),
+                    `Using model: ${usingModelVersion}`,
+                    `Labeled rows: ${baselineRows}/${minRowsRequired}`,
+                ];
+                if (validationAccuracy && heuristicAccuracy) {
+                    titleLines.push(`Validation accuracy: ${validationAccuracy}`);
+                    titleLines.push(`Heuristic accuracy: ${heuristicAccuracy}`);
+                }
+                if (readiness.last_trained_at) {
+                    titleLines.push(`Last trained: ${formatDateTime(readiness.last_trained_at)}`);
+                }
+
+                if (predictionModelReadinessBadge) {
+                    predictionModelReadinessBadge.textContent = badgeLabel;
+                    predictionModelReadinessBadge.style.color = badgeStyles.color;
+                    predictionModelReadinessBadge.style.borderColor = badgeStyles.borderColor;
+                    predictionModelReadinessBadge.title = titleLines.filter(Boolean).join('\n');
+                }
+                if (predictionModelReadinessDetails) {
+                    predictionModelReadinessDetails.textContent = detailParts.filter(Boolean).join(' · ');
+                    predictionModelReadinessDetails.title = titleLines.filter(Boolean).join('\n');
+                }
+                if (predictionLocalWarning) {
+                    if (getSelectedPredictionMode() === 'local' && String(readiness.state || '').toLowerCase() !== 'ready') {
+                        predictionLocalWarning.textContent = 'Using heuristic fallback until the local model has enough labeled data.';
+                    } else {
+                        predictionLocalWarning.textContent = '';
+                    }
+                }
+            }
+
             function getSelectedPredictionMode() {
                 return String((predictionModeSelect && predictionModeSelect.value) || 'local').toLowerCase();
             }
@@ -2227,6 +2344,7 @@ dimensions: campaign,country,platform</pre>
                 }
                 const jobMode = String((((job || {}).spec || {}).prediction_mode) || '').toLowerCase();
                 predictionModeSelect.value = jobMode || getSelectedPredictionMode();
+                renderPredictionModelReadiness();
             }
 
             function getPredictionStartStatusMessage(job = null, predictionMode = getSelectedPredictionMode()) {
@@ -2892,6 +3010,9 @@ dimensions: campaign,country,platform</pre>
             // Operator Hub Logic
             const datasetSelect = document.getElementById('dataset-select');
             const predictionModeSelect = document.getElementById('prediction-mode-select');
+            const predictionModelReadinessBadge = document.getElementById('prediction-model-readiness-badge');
+            const predictionModelReadinessDetails = document.getElementById('prediction-model-readiness-details');
+            const predictionLocalWarning = document.getElementById('prediction-local-warning');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
             const predictionProgressInfo = document.getElementById('prediction-progress-info');
             const campaignProviderSelect = document.getElementById('campaign-provider-select');
@@ -3026,6 +3147,22 @@ dimensions: campaign,country,platform</pre>
                 return getPredictionModeLabel(predictionMode);
             }
 
+            function getPredictionEffectiveLocalModelLabel(details = {}, normalizedStatus = '') {
+                const modelVersion = String(
+                    details.effective_local_model_version
+                    || details.model_version
+                    || ''
+                ).trim();
+                if (!modelVersion) {
+                    return '';
+                }
+                if (!['ready', 'completed'].includes(normalizedStatus)) {
+                    return '';
+                }
+                const readinessLabel = getPredictionModelBadgeLabel(details.effective_local_model_state || '');
+                return readinessLabel ? `${modelVersion} (${readinessLabel})` : modelVersion;
+            }
+
             function getPredictionReusePromptMessage(completedJob, selectedPredictionMode) {
                 const cachedMode = getPredictionJobMode(completedJob);
                 const cachedLabel = getPredictionModeLabel(cachedMode);
@@ -3052,7 +3189,9 @@ dimensions: campaign,country,platform</pre>
                 }
                 const executionLabel = getPredictionExecutionLabel(details)
                     .replace(/\b\w/g, (c) => c.toUpperCase());
-                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)`;
+                const localModelLabel = getPredictionEffectiveLocalModelLabel(details, normalizedStatus);
+                const modelSuffix = localModelLabel ? ` · Model ${localModelLabel}` : '';
+                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}`;
             }
 
             function formatCount(value) {
@@ -3128,6 +3267,7 @@ dimensions: campaign,country,platform</pre>
                         refreshConnectorsState(),
                         refreshImportsState(),
                         refreshPredictionJobsState(),
+                        refreshPredictionModelReadinessState(),
                     ]);
                     const jobs = cachedImports;
                     const readyJobs = jobs.filter(job => job.status === 'Ready to Use');
@@ -3180,6 +3320,7 @@ dimensions: campaign,country,platform</pre>
                         clearPersistedActivePredictionJob();
                         clearBaselinePredictionRows();
                         allChurnPredictionPlayers = [];
+                        renderPredictionModelReadiness();
                         renderChurnTable();
                         setPredictionActionState('idle');
                         pushAudienceBtn.disabled = false;
@@ -3191,6 +3332,7 @@ dimensions: campaign,country,platform</pre>
                         activePredictionJobId = null;
                         clearPersistedActivePredictionJob();
                         clearBaselinePredictionRows();
+                        renderPredictionModelReadiness();
                         setPredictionActionState('idle');
                         predictChurnBtn.disabled = true;
                         datasetSelect.disabled = true;
@@ -3201,6 +3343,7 @@ dimensions: campaign,country,platform</pre>
                 } catch (error) {
                     clearBaselinePredictionRows();
                     datasetSelect.innerHTML = `<option>Error loading datasets</option>`;
+                    renderPredictionModelReadiness();
                     setPredictionActionState('idle');
                     predictChurnBtn.disabled = true;
                     datasetSelect.disabled = true;
@@ -3261,7 +3404,8 @@ dimensions: campaign,country,platform</pre>
                 let predictionJob = null;
                 try {
                     await ensureHealthState();
-                    await Promise.all([refreshConnectorsState(), refreshPredictionJobsState()]);
+                    await Promise.all([refreshConnectorsState(), refreshPredictionJobsState(), refreshPredictionModelReadinessState()]);
+                    renderPredictionModelReadiness();
                     predictionJob = !shouldForceRecalculate ? getLatestActivePredictionJob(importJobId, selectedPredictionMode) : null;
                     if (!predictionJob && !shouldForceRecalculate) {
                         const completedJob = (
@@ -3490,8 +3634,13 @@ dimensions: campaign,country,platform</pre>
                 renderChurnTable();
                 predictionStopRequested = false;
                 predictionProgressInfo.textContent = '';
+                renderPredictionModelReadiness();
                 setPredictionActionState('idle');
                 setCampaignExportStatus('');
+            });
+
+            predictionModeSelect.addEventListener('change', () => {
+                renderPredictionModelReadiness();
             });
 
             predictChurnBtn.addEventListener('click', async () => {

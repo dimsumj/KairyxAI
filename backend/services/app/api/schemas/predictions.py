@@ -29,6 +29,8 @@ class PredictionResultItem(BaseModel):
     baseline_churn_score: float | str | None = None
     model_version: str | None = None
     score_timestamp: str | None = None
+    effective_local_model_version: str | None = None
+    effective_local_model_state: str | None = None
     eligibility_reason: str | None = None
     recommended_template_id: str | None = None
     recommended_variant: str | None = None
