@@ -7,6 +7,8 @@ These instructions apply to the entire repository.
 - Read the relevant files before editing and keep changes scoped to the user's request.
 - Do not revert or overwrite unrelated local changes.
 - Prefer the smallest complete fix that satisfies the request.
+- When a change adds, removes, renames, or materially changes any user-facing product function, workflow, button, form field, or operator flow, update `README.md` and `docs/GITHUB_WIKI_PRODUCT_USER_GUIDE.md` in the same change.
+- Use the `wiki-readme-sync` skill when it is available for any user-facing function or workflow change that affects product documentation.
 
 ## Validation
 

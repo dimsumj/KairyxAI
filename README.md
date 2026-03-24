@@ -49,6 +49,7 @@ What is still in progress is not the existence of the core APIs, but the remaini
 The source of truth for that roadmap lives in:
 
 - [KairyxAI v1 Master PRD](docs/KAIRYXAI_V1_MASTER_PRD.md)
+- [GitHub Wiki product user guide source](docs/GITHUB_WIKI_PRODUCT_USER_GUIDE.md)
 - [Data Core v1 PRD](docs/DATA_CORE_V1_PRD.md)
 - [Insight Copilot v1 PRD](docs/COPILOT_V1_PRD.md)
 - [Audience Engine v1 PRD](docs/AUDIENCE_ENGINE_V1_PRD.md)
