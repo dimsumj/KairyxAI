@@ -223,6 +223,91 @@ def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(mo
         upgraded_connection.close()
 
 
+def test_startup_resumes_partial_multitenant_sqlite_upgrade(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    partial_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        partial_connection.executescript(
+            """
+            CREATE TABLE tenants_v1 (
+                tenant_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                status VARCHAR(64) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX ix_tenants_v1_name ON tenants_v1 (name);
+            CREATE INDEX ix_tenants_v1_status ON tenants_v1 (status);
+            CREATE TABLE platform_users_v1 (
+                user_id VARCHAR(128) NOT NULL PRIMARY KEY,
+                email VARCHAR(255),
+                display_name VARCHAR(255),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX ix_platform_users_v1_email ON platform_users_v1 (email);
+            CREATE TABLE tenant_memberships_v1 (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                tenant_id VARCHAR(64) NOT NULL,
+                user_id VARCHAR(128) NOT NULL,
+                role VARCHAR(32) NOT NULL,
+                status VARCHAR(64) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_tenant_membership_tenant_user UNIQUE (tenant_id, user_id)
+            );
+            CREATE INDEX ix_tenant_memberships_v1_tenant_id ON tenant_memberships_v1 (tenant_id);
+            CREATE INDEX ix_tenant_memberships_v1_user_id ON tenant_memberships_v1 (user_id);
+            CREATE INDEX ix_tenant_memberships_v1_role ON tenant_memberships_v1 (role);
+            CREATE INDEX ix_tenant_memberships_v1_status ON tenant_memberships_v1 (status);
+            CREATE INDEX ix_field_mappings_v2_connector_name ON field_mappings_v2 (connector_name);
+            CREATE INDEX ix_experiment_configs_config_key ON experiment_configs (config_key);
+            CREATE INDEX ix_action_history_v2_action_type ON action_history_v2 (action_type);
+            CREATE INDEX ix_action_history_v2_resource_type ON action_history_v2 (resource_type);
+            CREATE INDEX ix_action_history_v2_resource_id ON action_history_v2 (resource_id);
+            INSERT INTO tenants_v1 (tenant_id, name, status, created_at, updated_at)
+            VALUES ('default', 'Default Tenant', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """
+        )
+        partial_connection.commit()
+    finally:
+        partial_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert {"tenant_id", "connector_id", "created_by", "updated_by", "correlation_id"} <= connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+
+        bootstrap_tenants = upgraded_connection.execute(
+            "SELECT COUNT(*) FROM tenants_v1 WHERE tenant_id = 'default'"
+        ).fetchone()
+        assert bootstrap_tenants is not None
+        assert bootstrap_tenants[0] == 1
+    finally:
+        upgraded_connection.close()
+
+
 def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
