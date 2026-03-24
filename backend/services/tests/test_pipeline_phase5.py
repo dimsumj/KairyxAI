@@ -150,6 +150,76 @@ def test_bigquery_service_keeps_distinct_events_when_source_event_id_is_nan_afte
     assert len(curated_events) == 2
 
 
+def test_bigquery_service_merges_latest_state_across_imports_and_keeps_job_rosters(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "phase5_merged_history.db"))
+
+    service = BigQueryService()
+    service.write_events_staging(
+        [
+            {
+                "job_id": "job-phase5-old",
+                "job_identifier": "job-phase5-old",
+                "source": "dummy",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "evt-old-1",
+                "event_fingerprint": "fp-old-1",
+                "event_type": "session_start",
+                "event_time": "2026-02-10T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "player1@example.com"},
+            },
+            {
+                "job_id": "job-phase5-old",
+                "job_identifier": "job-phase5-old",
+                "source": "dummy",
+                "player_id": "player-2",
+                "canonical_user_id": "canon-2",
+                "source_event_id": "evt-old-2",
+                "event_fingerprint": "fp-old-2",
+                "event_type": "session_start",
+                "event_time": "2026-02-11T00:00:00",
+                "event_properties": {},
+                "user_properties": {},
+            },
+            {
+                "job_id": "job-phase5-new",
+                "job_identifier": "job-phase5-new",
+                "source": "dummy",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "evt-new-1",
+                "event_fingerprint": "fp-new-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-20T00:00:00",
+                "event_properties": {"campaign": "revive"},
+                "user_properties": {"email": "player1@example.com"},
+            },
+        ]
+    )
+
+    service.run_events_curation()
+    aggregate_stats = service.refresh_player_latest_state()
+
+    assert aggregate_stats["players_aggregated"] == 2
+    assert service.get_import_roster_player_ids("job-phase5-old") == ["player-1", "player-2"]
+    assert service.get_import_roster_player_ids("job-phase5-new") == ["player-1"]
+
+    latest_rows = service.get_rows_for_alias("mart_user_daily")
+    merged_player_rows = [row for row in latest_rows if row.get("canonical_user_id") == "canon-1"]
+    assert len(merged_player_rows) == 1
+
+    latest = service.get_player_latest_state("player-1")
+    assert latest is not None
+    assert latest["last_job_id"] == "job-phase5-new"
+    assert latest["last_seen_at"].startswith("2026-03-20")
+
+    lag_summary = service.get_pipeline_lag_summary(job_id="job-phase5-old")
+    assert lag_summary["table_counts"]["player_latest_state_rows"] == 2
+
+
 def test_player_modeling_engine_prefers_aggregate_latest_state(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")

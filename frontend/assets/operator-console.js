@@ -1694,10 +1694,23 @@
                 return readinessLabel ? `${modelVersion} (${readinessLabel})` : modelVersion;
             }
 
+            function isPredictionJobStale(job = {}) {
+                return Boolean((((job || {}).progress || {}).details || {}).stale);
+            }
+
+            function getPredictionJobStaleReason(job = {}) {
+                return String(((((job || {}).progress || {}).details || {}).stale_reason) || '').trim();
+            }
+
             function getPredictionReusePromptMessage(completedJob, selectedPredictionMode) {
                 const cachedMode = getPredictionJobMode(completedJob);
                 const cachedLabel = getPredictionModeLabel(cachedMode);
                 const selectedLabel = getPredictionModeLabel(selectedPredictionMode);
+                if (isPredictionJobStale(completedJob)) {
+                    const staleReason = getPredictionJobStaleReason(completedJob);
+                    const staleSuffix = staleReason ? ` ${staleReason}` : ' Newer imports changed the merged player history.';
+                    return `${cachedLabel} results for this dataset are finished but stale.${staleSuffix} Select OK to rerun with ${selectedLabel}, or Cancel to load the cached stale results.`;
+                }
                 if (cachedMode === String(selectedPredictionMode || '').toLowerCase()) {
                     return `${cachedLabel} results for this dataset are already finished and cached. Select OK to rerun with ${selectedLabel}, or Cancel to load the cached results.`;
                 }
@@ -1722,7 +1735,8 @@
                     .replace(/\b\w/g, (c) => c.toUpperCase());
                 const localModelLabel = getPredictionEffectiveLocalModelLabel(details, normalizedStatus);
                 const modelSuffix = localModelLabel ? ` · Model ${localModelLabel}` : '';
-                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}`;
+                const staleSuffix = isPredictionJobStale(job) ? ' · Stale' : '';
+                return `Prediction job: ${rawStatus} · ${executionLabel} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}${staleSuffix}`;
             }
 
             function formatCount(value) {

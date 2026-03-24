@@ -20,7 +20,7 @@ from app.core.settings import get_settings
 from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, get_shared_bigquery_service
 from gcs_service import GcsService
 
 
@@ -43,6 +43,41 @@ def client(monkeypatch, tmp_path):
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
+
+
+def _create_completed_import_job(
+    job_id: str,
+    *,
+    source_name: str = "Manual Source",
+    start_date: str = "20260301",
+    end_date: str = "20260301",
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> dict:
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        job = repo.create_import_job(
+            {
+                "id": job_id,
+                "source_name": source_name,
+                "status": "completed",
+                "spec": {
+                    "source_name": source_name,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+                "progress": {},
+            }
+        )
+        row = session.get(ImportJobModel, job_id)
+        if row is None:
+            raise AssertionError(f"import job {job_id} was not created")
+        if created_at is not None:
+            row.created_at = created_at
+        if updated_at is not None:
+            row.updated_at = updated_at
+        session.flush()
+        return repo.get_import_job(job_id)
 
 
 def test_v1_connectors_and_mappings_persist(client):
@@ -530,6 +565,7 @@ def test_prediction_local_mode_ignores_saved_google_connector(client, monkeypatc
     monkeypatch.setattr("app.application.predictions.GeminiClient", UnexpectedGeminiClient)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -557,7 +593,7 @@ def test_prediction_local_mode_ignores_saved_google_connector(client, monkeypatc
     assert captured["decision_gemini_client_present"] is False
     assert captured["estimate_called"] is True
     assert captured["decision_called"] is True
-    assert captured["job_id"] == import_job["id"]
+    assert captured["job_id"] is None
 
 
 def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
@@ -652,6 +688,7 @@ def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.GeminiClient", FakeGeminiClient)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -682,7 +719,7 @@ def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
     assert captured["reset_called"] is True
     assert captured["gemini_client_present"] is True
     assert captured["estimate_called"] is True
-    assert captured["job_id"] == import_job["id"]
+    assert captured["job_id"] is None
 
 
 def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
@@ -778,6 +815,7 @@ def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
     monkeypatch.setattr("app.application.predictions.GeminiClient", SlowGeminiClient)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -883,6 +921,7 @@ def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
     monkeypatch.setattr("bigquery_service.BigQueryService.append_prediction_results", tracking_append)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -1000,6 +1039,7 @@ def test_prediction_results_are_returned_newest_first(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -1088,6 +1128,7 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", ShutdownAfterFirstDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -1111,6 +1152,185 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
     assert results.status_code == 200
     payload = results.json()
     assert payload["total"] == 0
+
+
+def test_prediction_uses_merged_history_for_selected_import_roster(client):
+    old_updated_at = datetime(2026, 3, 1, 12, 0, 0)
+    new_updated_at = datetime(2026, 3, 23, 12, 0, 0)
+    old_import = _create_completed_import_job(
+        "imp_old_history",
+        source_name="Manual Old Import",
+        start_date="20260201",
+        end_date="20260228",
+        created_at=old_updated_at,
+        updated_at=old_updated_at,
+    )
+    _create_completed_import_job(
+        "imp_new_history",
+        source_name="Manual New Import",
+        start_date="20260320",
+        end_date="20260323",
+        created_at=new_updated_at,
+        updated_at=new_updated_at,
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": old_import["id"],
+                "job_identifier": old_import["id"],
+                "source": "manual",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "old-evt-1",
+                "event_fingerprint": "old-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-02-15T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "player-1@example.com"},
+            },
+            {
+                "job_id": old_import["id"],
+                "job_identifier": old_import["id"],
+                "source": "manual",
+                "player_id": "player-2",
+                "canonical_user_id": "canon-2",
+                "source_event_id": "old-evt-2",
+                "event_fingerprint": "old-fp-2",
+                "event_type": "session_start",
+                "event_time": "2026-02-16T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "player-2@example.com"},
+            },
+            {
+                "job_id": "imp_new_history",
+                "job_identifier": "imp_new_history",
+                "source": "manual",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "new-evt-1",
+                "event_fingerprint": "new-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-23T00:00:00",
+                "event_properties": {"campaign": "revive"},
+                "user_properties": {"email": "player-1@example.com"},
+            },
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    assert service.get_import_roster_player_ids(old_import["id"]) == ["player-1", "player-2"]
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": old_import["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["history_scope"] == "tenant_merged"
+    assert run_prediction.json()["progress"]["details"]["history_snapshot_at"]
+    assert run_prediction.json()["progress"]["details"]["stale"] is False
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    items = {item["user_id"]: item for item in results.json()["items"]}
+    assert set(items) == {"player-1", "player-2"}
+    assert items["player-1"]["churn_state"] == "active"
+    assert int(items["player-1"]["days_since_last_seen"]) < 14
+    assert items["player-2"]["churn_state"] == "churned"
+    assert int(items["player-2"]["days_since_last_seen"]) >= 14
+
+
+def test_completed_prediction_job_is_marked_stale_after_later_import(client):
+    import_job = _create_completed_import_job(
+        "imp_stale_anchor",
+        source_name="Manual Anchor Import",
+        start_date="20260301",
+        end_date="20260301",
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": import_job["id"],
+                "job_identifier": import_job["id"],
+                "source": "manual",
+                "player_id": "player-stale",
+                "canonical_user_id": "canon-stale",
+                "source_event_id": "anchor-evt-1",
+                "event_fingerprint": "anchor-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-10T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "stale@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    snapshot_at = run_prediction.json()["progress"]["details"]["history_snapshot_at"]
+    assert snapshot_at
+
+    later_import = _create_completed_import_job(
+        "imp_stale_newer",
+        source_name="Manual Later Import",
+        start_date="20260324",
+        end_date="20260324",
+    )
+    service.write_events_staging(
+        [
+            {
+                "job_id": later_import["id"],
+                "job_identifier": later_import["id"],
+                "source": "manual",
+                "player_id": "player-fresh",
+                "canonical_user_id": "canon-fresh",
+                "source_event_id": "later-evt-1",
+                "event_fingerprint": "later-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-24T00:00:00",
+                "event_properties": {},
+                "user_properties": {},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    stale_job = client.get(prediction_job["links"]["self"])
+    assert stale_job.status_code == 200
+    assert stale_job.json()["progress"]["details"]["history_scope"] == "tenant_merged"
+    assert stale_job.json()["progress"]["details"]["history_snapshot_at"] == snapshot_at
+    assert stale_job.json()["progress"]["details"]["stale"] is True
+    assert later_import["id"] in stale_job.json()["progress"]["details"]["stale_reason"]
+
+    listed_jobs = client.get("/api/v1/predictions")
+    assert listed_jobs.status_code == 200
+    listed_item = next(item for item in listed_jobs.json()["items"] if item["id"] == prediction_job["id"])
+    assert listed_item["progress"]["details"]["stale"] is True
 
 
 def test_import_failure_marks_job_failed(client, monkeypatch):

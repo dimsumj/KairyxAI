@@ -127,7 +127,7 @@ class PredictionService:
         if job is None:
             raise KeyError(job_id)
         if str(job.get("status") or "").lower() == JobStatus.STOPPED.value:
-            return job
+            return self._decorate_prediction_job(job)
 
         progress = job.get("progress") or {}
         details = dict(progress.get("details") or {})
@@ -148,7 +148,7 @@ class PredictionService:
         )
         self.repository.record_action("prediction_job_stopped", "prediction_job", job_id, stopped)
         self._commit_session()
-        return stopped
+        return self._decorate_prediction_job(stopped)
 
     def create_job(self, import_job_id: str, prediction_mode: str = "local") -> Dict[str, Any]:
         self._require_completed_import(import_job_id)
@@ -173,6 +173,10 @@ class PredictionService:
                     "details": {
                         "import_job_id": import_job_id,
                         "prediction_mode": str(prediction_mode or "local").lower(),
+                        "history_scope": "tenant_merged",
+                        "history_snapshot_at": None,
+                        "stale": False,
+                        "stale_reason": "",
                         **self._build_local_model_details(local_model_readiness),
                         **execution_details,
                     },
@@ -181,13 +185,14 @@ class PredictionService:
         )
         self.repository.record_action("prediction_job_created", "prediction_job", job["id"], job)
         PubSubService(topic_name=self.settings.prediction_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "prediction"})
-        return job
+        return self._decorate_prediction_job(job)
 
     def list_jobs(self) -> List[Dict[str, Any]]:
-        return self.repository.list_prediction_jobs()
+        return [self._decorate_prediction_job(job) for job in self.repository.list_prediction_jobs()]
 
     def get_job(self, job_id: str) -> Dict[str, Any] | None:
-        return self.repository.get_prediction_job(job_id)
+        job = self.repository.get_prediction_job(job_id)
+        return self._decorate_prediction_job(job) if job else None
 
     def list_results(self, job_id: str, page: int, page_size: int) -> Dict[str, Any]:
         return self.bigquery_service.list_prediction_results(job_id=job_id, page=page, page_size=page_size)
@@ -213,9 +218,56 @@ class PredictionService:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(str(value))
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         except ValueError:
             return None
+
+    def _compute_prediction_staleness(self, job: Dict[str, Any]) -> tuple[bool, str]:
+        if not job:
+            return False, ""
+
+        spec = job.get("spec") or {}
+        progress = job.get("progress") or {}
+        details = progress.get("details") or {}
+        import_job_id = str(job.get("import_job_id") or spec.get("import_job_id") or "").strip()
+        if not import_job_id:
+            return False, ""
+
+        snapshot_at = details.get("history_snapshot_at") or job.get("updated_at") or job.get("created_at")
+        snapshot_dt = self._parse_timestamp(snapshot_at)
+        if snapshot_dt is None:
+            return False, ""
+
+        for import_job in self.repository.list_import_jobs():
+            if str(import_job.get("status") or "").lower() != JobStatus.COMPLETED.value:
+                continue
+            if str(import_job.get("id") or "") == import_job_id:
+                continue
+            completed_at = self._parse_timestamp(import_job.get("updated_at") or import_job.get("created_at"))
+            if completed_at is None or completed_at <= snapshot_dt:
+                continue
+            completed_at_text = completed_at.isoformat()
+            return True, (
+                f"Newer import {import_job.get('id')} completed at {completed_at_text}, "
+                "so cached merged-history predictions are stale."
+            )
+        return False, ""
+
+    def _decorate_prediction_job(self, job: Dict[str, Any] | None) -> Dict[str, Any] | None:
+        if job is None:
+            return None
+
+        decorated = dict(job)
+        progress = dict(decorated.get("progress") or {})
+        details = dict(progress.get("details") or {})
+        details.setdefault("history_scope", "tenant_merged")
+        details.setdefault("history_snapshot_at", None)
+        stale, stale_reason = self._compute_prediction_staleness(decorated)
+        details["stale"] = stale
+        details["stale_reason"] = stale_reason
+        progress["details"] = details
+        decorated["progress"] = progress
+        return decorated
 
     def cleanup_expired_jobs(self) -> int:
         cutoff = datetime.utcnow() - timedelta(days=max(1, int(self.settings.job_retention_days)))
@@ -256,7 +308,7 @@ class PredictionService:
 
         status = str(job.get("status") or "").lower()
         if status == JobStatus.STOPPED.value:
-            return job
+            return self._decorate_prediction_job(job)
         if status == JobStatus.QUEUED.value:
             return self._mark_stopped(job_id)
         if status == JobStatus.RUNNING.value:
@@ -277,9 +329,9 @@ class PredictionService:
             )
             self.repository.record_action("prediction_job_stop_requested", "prediction_job", job_id, stopping)
             self._commit_session()
-            return stopping
+            return self._decorate_prediction_job(stopping)
         if status == JobStatus.STOPPING.value:
-            return job
+            return self._decorate_prediction_job(job)
         raise ValueError("Only queued or running prediction jobs can be stopped.")
 
     def run_job(self, job_id: str) -> Dict[str, Any]:
@@ -289,13 +341,14 @@ class PredictionService:
         if is_shutdown_requested():
             return self._mark_stopped(job_id, self._stop_reason())
         if str(job.get("status") or "").lower() == JobStatus.STOPPED.value:
-            return job
+            return self._decorate_prediction_job(job)
         if str(job.get("status") or "").lower() == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id, self._stop_reason())
         import_job_id = job["spec"]["import_job_id"]
         self._require_completed_import(import_job_id)
 
         mode = str(job["spec"].get("prediction_mode", "local")).lower()
+        history_snapshot_at = datetime.utcnow().isoformat()
         self.repository.update_prediction_job(job_id, {"status": JobStatus.RUNNING.value, "error": None})
         self._commit_session()
 
@@ -314,10 +367,10 @@ class PredictionService:
             modeling_engine = PlayerModelingEngine(
                 gemini_client=gemini_client,
                 bigquery_service=self.bigquery_service,
-                job_id=import_job_id,
+                job_id=None,
             )
             decision_engine = GrowthDecisionEngine(gemini_client)
-            player_ids = modeling_engine.get_all_player_ids()
+            player_ids = self.bigquery_service.get_import_roster_player_ids(import_job_id)
             total = len(player_ids)
             rows_written = 0
 
@@ -332,6 +385,10 @@ class PredictionService:
                             "rows_written": 0,
                             "import_job_id": import_job_id,
                             "prediction_mode": mode,
+                            "history_scope": "tenant_merged",
+                            "history_snapshot_at": history_snapshot_at,
+                            "stale": False,
+                            "stale_reason": "",
                             **self._build_local_model_details(local_model_readiness),
                             **execution_details,
                         },
@@ -357,6 +414,10 @@ class PredictionService:
                                     "rows_written": rows_written,
                                     "import_job_id": import_job_id,
                                     "prediction_mode": mode,
+                                    "history_scope": "tenant_merged",
+                                    "history_snapshot_at": history_snapshot_at,
+                                    "stale": False,
+                                    "stale_reason": "",
                                     "last_user_id": str(player_id),
                                     **self._build_local_model_details(local_model_readiness),
                                     **execution_details,
@@ -433,6 +494,10 @@ class PredictionService:
                                 "rows_written": rows_written,
                                 "import_job_id": import_job_id,
                                 "prediction_mode": mode,
+                                "history_scope": "tenant_merged",
+                                "history_snapshot_at": history_snapshot_at,
+                                "stale": False,
+                                "stale_reason": "",
                                 "last_user_id": str(player_id),
                                 "model_version": model_score.model_version,
                                 "policy_snapshot_id": recommendation.get("policy_snapshot_id"),
@@ -456,6 +521,10 @@ class PredictionService:
                             "rows_written": rows_written,
                             "import_job_id": import_job_id,
                             "prediction_mode": mode,
+                            "history_scope": "tenant_merged",
+                            "history_snapshot_at": history_snapshot_at,
+                            "stale": False,
+                            "stale_reason": "",
                             "model_version": str((active_model or {}).get("model_version") or "heuristic_v1"),
                             "policy_snapshot_id": str((policy_snapshot or {}).get("policy_snapshot_id") or ""),
                             **self._build_local_model_details(local_model_readiness),
@@ -466,7 +535,7 @@ class PredictionService:
             )
             self.repository.record_action("prediction_job_completed", "prediction_job", job_id, completed)
             self._commit_session()
-            return completed
+            return self._decorate_prediction_job(completed)
         except Exception as exc:
             self.rollback_session()
             try:
