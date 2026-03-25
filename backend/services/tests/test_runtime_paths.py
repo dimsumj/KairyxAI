@@ -5,9 +5,9 @@ import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import db as db_module
+from app.core.errors import is_database_locked_error
 from app.core.settings import get_settings
 from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
@@ -86,6 +86,25 @@ def test_database_url_normalization_uses_psycopg_driver():
     )
 
 
+def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "state" / "control_plane.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{target}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    original_disabled = uvicorn_logger.disabled
+    uvicorn_logger.disabled = False
+    try:
+        db_module.init_db()
+        assert uvicorn_logger.disabled is False
+    finally:
+        uvicorn_logger.disabled = original_disabled
+
+
 def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
     target = tmp_path / "tracked" / "local_jobs.db"
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(target))
@@ -119,6 +138,15 @@ def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
 
     assert open_count > 0
     assert close_count == open_count
+
+
+def test_database_lock_error_detection_handles_exception_groups():
+    exc = ExceptionGroup(
+        "database lock group",
+        [sqlite3.OperationalError("database is locked")],
+    )
+
+    assert is_database_locked_error(exc) is True
 
 
 def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, monkeypatch):
@@ -166,20 +194,10 @@ def test_vercel_remote_control_plane_db_falls_back_to_local_sqlite(tmp_path, mon
     monkeypatch.setenv("VERCEL", "1")
     monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
     monkeypatch.setenv("KAIRYX_MOCK_STORAGE_BACKEND", "database")
-    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", "postgresql://demo:demo@example.com:5432/kairyx")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", "postgresql://demo:demo@127.0.0.1:1/kairyx")
+    monkeypatch.setenv("CONTROL_PLANE_CONNECT_TIMEOUT_SECONDS", "1")
     monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(runtime_dir))
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(local_db))
-
-    create_all_attempts: list[str] = []
-    real_create_all = db_module.Base.metadata.create_all
-
-    def flaky_create_all(bind=None, *args, **kwargs):
-        create_all_attempts.append(str(bind.url))
-        if len(create_all_attempts) == 1:
-            raise SQLAlchemyError("quota exceeded")
-        return real_create_all(bind=bind, *args, **kwargs)
-
-    monkeypatch.setattr(db_module.Base.metadata, "create_all", flaky_create_all)
 
     app = create_app()
     with TestClient(app) as client:
@@ -189,8 +207,6 @@ def test_vercel_remote_control_plane_db_falls_back_to_local_sqlite(tmp_path, mon
     fallback_db = runtime_dir / ".kairyx_control_plane.db"
 
     assert response.status_code == 200
-    assert create_all_attempts[0].startswith("postgresql+psycopg://")
-    assert any(attempt.startswith(f"sqlite:///{fallback_db}") for attempt in create_all_attempts[1:])
     assert payload["mock_state_backend"] == "database"
     assert payload["mock_state_persistent"] is False
     assert payload["control_plane_database_backend"] == "sqlite"

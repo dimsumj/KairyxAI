@@ -3,12 +3,16 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+import sqlite3
 import threading
 import time
 
+from alembic import command
+from alembic.config import Config
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.churn_models import LocalChurnModelService
 from app.application.imports import ImportService
 from app.core import db as db_module
 from app.core.deps import get_settings_dependency
@@ -17,10 +21,18 @@ from app.core.settings import get_settings
 from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, get_shared_bigquery_service
 from connectors.adjust_connector import AdjustConnector
 from connectors.appsflyer_connector import AppsFlyerConnector
 from gcs_service import GcsService
+
+
+def _alembic_config(tmp_path: Path) -> Config:
+    services_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(services_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(services_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    return config
 
 
 @pytest.fixture
@@ -36,6 +48,41 @@ def client(monkeypatch, tmp_path):
     with TestClient(app) as test_client:
         yield test_client
     db_module.clear_runtime_database_fallback()
+
+
+def _create_completed_import_job(
+    job_id: str,
+    *,
+    source_name: str = "Manual Source",
+    start_date: str = "20260301",
+    end_date: str = "20260301",
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> dict:
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        job = repo.create_import_job(
+            {
+                "id": job_id,
+                "source_name": source_name,
+                "status": "completed",
+                "spec": {
+                    "source_name": source_name,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+                "progress": {},
+            }
+        )
+        row = session.get(ImportJobModel, job_id)
+        if row is None:
+            raise AssertionError(f"import job {job_id} was not created")
+        if created_at is not None:
+            row.created_at = created_at
+        if updated_at is not None:
+            row.updated_at = updated_at
+        session.flush()
+        return repo.get_import_job(job_id)
 
 
 def test_v1_connectors_and_mappings_persist(client):
@@ -70,14 +117,45 @@ def test_root_serves_frontend_shell(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "window.location.origin" in resp.text
-    assert "/api/v1" in resp.text
+    assert "/static/operator-console.css" in resp.text
+    assert "/static/operator-console.js" in resp.text
+
+
+def test_root_serves_frontend_static_assets(client):
+    css_resp = client.get("/static/operator-console.css")
+    assert css_resp.status_code == 200
+    assert "text/css" in css_resp.headers["content-type"]
+    assert "--bg-color" in css_resp.text
+
+    js_resp = client.get("/static/operator-console.js")
+    assert js_resp.status_code == 200
+    assert "javascript" in js_resp.headers["content-type"]
+    assert "document.addEventListener('DOMContentLoaded'" in js_resp.text
+    assert "/api/v1" in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
     assert resp.json()["service"] == "KairyxAI Operator API"
+
+
+def test_health_live_aliases_return_lightweight_payload(client):
+    root_resp = client.get("/health/live")
+    assert root_resp.status_code == 200
+    root_payload = root_resp.json()
+    assert root_payload["status"] == "ok"
+    assert root_payload["mode"] == "mock"
+    assert "data_aliases" not in root_payload
+
+    api_resp = client.get("/api/v1/health/live")
+    assert api_resp.status_code == 200
+    api_payload = api_resp.json()
+    assert api_payload["status"] == "ok"
+    assert api_payload["mode"] == "mock"
+    assert "data_aliases" not in api_payload
+    assert api_payload["service"] == "KairyxAI Operator API"
+    assert api_payload["time"]
 
 
 def test_health_reports_local_cache_stats(client):
@@ -103,15 +181,121 @@ def test_health_reports_database_mock_storage(monkeypatch, tmp_path):
     db_module.get_session_factory.cache_clear()
 
     app = create_app()
-    with TestClient(app) as database_client:
-        health = database_client.get("/api/v1/health")
+    with TestClient(app) as test_client:
+        health = test_client.get("/api/v1/health")
 
     assert health.status_code == 200
     payload = health.json()
     assert payload["mode"] == "mock"
     assert payload["mock_state_backend"] == "database"
     assert payload["mock_state_persistent"] is True
+    assert payload["control_plane_database_backend"] == "sqlite"
+    assert payload["control_plane_database_persistent"] is True
+    assert payload["control_plane_database_fallback_active"] is False
     assert payload["local_cache"]["storage_backend"] == "database"
+    assert payload["local_cache"]["persistent"] is True
+
+
+def test_prediction_model_runs_reports_untrained_readiness(client):
+    runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+    assert runs.status_code == 200
+    payload = runs.json()
+    readiness = payload["readiness"]
+
+    assert payload["items"] == []
+    assert payload["training_status"] == {}
+    assert readiness["state"] == "untrained"
+    assert readiness["using_model_version"] == "heuristic_v1"
+    assert readiness["baseline_rows"] == 0
+    assert readiness["min_rows_required"] == 12
+
+
+def test_prediction_model_training_can_start_stop_and_report_progress(client, monkeypatch):
+    def fake_train_model(self, *, reference_time=None, min_rows=12, should_stop=None, persist_initial_status=True):
+        for index in range(1, 6):
+            training_status = self.get_training_status() or {}
+            training_status.update(
+                {
+                    "status": "running",
+                    "stage": "building_dataset",
+                    "reference_time": reference_time,
+                    "started_at": reference_time,
+                    "min_rows_required": min_rows,
+                    "row_count": index * 3,
+                    "users_processed": index,
+                    "users_total": 5,
+                    "exposures_processed": 0,
+                    "exposures_total": 0,
+                }
+            )
+            self._persist_training_status(training_status)
+            self._commit_session()
+            time.sleep(0.03)
+            if should_stop and should_stop():
+                self.mark_training_stopped(reason="Stopped by user.")
+                return {"model_version": "heuristic_v1", "status": "stopped"}
+        return {"model_version": "heuristic_v1", "status": "fallback"}
+
+    monkeypatch.setattr(LocalChurnModelService, "train_model", fake_train_model)
+
+    start = client.post(
+        "/api/v1/predictions/models/train/start",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-24T09:00:00", "min_rows": 12},
+    )
+    assert start.status_code == 200
+    assert start.json()["started"] is True
+    assert start.json()["training_status"]["status"] == "running"
+
+    progress_payload = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+        assert runs.status_code == 200
+        progress_payload = runs.json()
+        if int(progress_payload["training_status"].get("row_count") or 0) > 0:
+            break
+        time.sleep(0.03)
+
+    assert progress_payload is not None
+    assert int(progress_payload["training_status"].get("row_count") or 0) > 0
+
+    stop = client.post("/api/v1/predictions/models/train/stop", headers={"x-actor-role": "operator"})
+    assert stop.status_code == 200
+    assert stop.json()["training_status"]["status"] in {"stopping", "stopped"}
+
+    stopped_payload = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+        assert runs.status_code == 200
+        stopped_payload = runs.json()
+        if str(stopped_payload["training_status"].get("status") or "").lower() == "stopped":
+            break
+        time.sleep(0.03)
+
+    assert stopped_payload is not None
+    assert stopped_payload["training_status"]["status"] == "stopped"
+    assert stopped_payload["training_status"]["stop_reason"] == "Stopped by user."
+
+
+def test_health_live_bypasses_api_key_guard(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("API_ACCESS_KEY", "top-secret")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        live_resp = test_client.get("/api/v1/health/live")
+        assert live_resp.status_code == 200
+        assert live_resp.json()["status"] == "ok"
+
+        protected_resp = test_client.get("/api/v1/connectors")
+        assert protected_resp.status_code == 401
 
 
 def test_mock_database_storage_persists_between_service_instances(monkeypatch, tmp_path):
@@ -180,6 +364,195 @@ def test_mock_connectors_accept_escaped_newline_backend_mode(monkeypatch):
     assert appsflyer_rows[0]["player_id"] == "af_user_2001"
 
 
+def test_sqlite_control_plane_uses_wal_and_busy_timeout(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "12")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        engine = db_module.get_engine()
+        connection = engine.raw_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA journal_mode;")
+            assert str(cursor.fetchone()[0]).lower() == "wal"
+            cursor.execute("PRAGMA busy_timeout;")
+            assert int(cursor.fetchone()[0]) >= 12000
+        finally:
+            cursor.close()
+            connection.close()
+
+
+def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    legacy_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        legacy_connection.execute("DROP TABLE alembic_version")
+        legacy_connection.commit()
+    finally:
+        legacy_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert "tenant_id" in connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+    finally:
+        upgraded_connection.close()
+
+
+def test_startup_resumes_partial_multitenant_sqlite_upgrade(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+
+    command.upgrade(_alembic_config(tmp_path), "20260310_0002")
+    partial_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        partial_connection.executescript(
+            """
+            CREATE TABLE tenants_v1 (
+                tenant_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                status VARCHAR(64) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX ix_tenants_v1_name ON tenants_v1 (name);
+            CREATE INDEX ix_tenants_v1_status ON tenants_v1 (status);
+            CREATE TABLE platform_users_v1 (
+                user_id VARCHAR(128) NOT NULL PRIMARY KEY,
+                email VARCHAR(255),
+                display_name VARCHAR(255),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX ix_platform_users_v1_email ON platform_users_v1 (email);
+            CREATE TABLE tenant_memberships_v1 (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                tenant_id VARCHAR(64) NOT NULL,
+                user_id VARCHAR(128) NOT NULL,
+                role VARCHAR(32) NOT NULL,
+                status VARCHAR(64) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_tenant_membership_tenant_user UNIQUE (tenant_id, user_id)
+            );
+            CREATE INDEX ix_tenant_memberships_v1_tenant_id ON tenant_memberships_v1 (tenant_id);
+            CREATE INDEX ix_tenant_memberships_v1_user_id ON tenant_memberships_v1 (user_id);
+            CREATE INDEX ix_tenant_memberships_v1_role ON tenant_memberships_v1 (role);
+            CREATE INDEX ix_tenant_memberships_v1_status ON tenant_memberships_v1 (status);
+            CREATE INDEX ix_field_mappings_v2_connector_name ON field_mappings_v2 (connector_name);
+            CREATE INDEX ix_experiment_configs_config_key ON experiment_configs (config_key);
+            CREATE INDEX ix_action_history_v2_action_type ON action_history_v2 (action_type);
+            CREATE INDEX ix_action_history_v2_resource_type ON action_history_v2 (resource_type);
+            CREATE INDEX ix_action_history_v2_resource_id ON action_history_v2 (resource_id);
+            INSERT INTO tenants_v1 (tenant_id, name, status, created_at, updated_at)
+            VALUES ('default', 'Default Tenant', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """
+        )
+        partial_connection.commit()
+    finally:
+        partial_connection.close()
+
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        listed = test_client.get("/api/v1/connectors")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
+    upgraded_connection = sqlite3.connect(tmp_path / "control_plane.db")
+    try:
+        connector_columns = {
+            row[1]
+            for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
+        }
+        assert {"tenant_id", "connector_id", "created_by", "updated_by", "correlation_id"} <= connector_columns
+
+        version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        assert version_row is not None
+        assert version_row[0] == "20260322_0003"
+
+        bootstrap_tenants = upgraded_connection.execute(
+            "SELECT COUNT(*) FROM tenants_v1 WHERE tenant_id = 'default'"
+        ).fetchone()
+        assert bootstrap_tenants is not None
+        assert bootstrap_tenants[0] == 1
+    finally:
+        upgraded_connection.close()
+
+
+def test_create_import_returns_423_when_control_plane_database_is_locked(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_SECONDS", "0.1")
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        connector_resp = test_client.post(
+            "/api/v1/connectors",
+            json={
+                "name": "Adjust Source",
+                "type": "adjust",
+                "config": {"api_token": "adjust-token"},
+            },
+        )
+        assert connector_resp.status_code == 201
+
+        lock_connection = sqlite3.connect(tmp_path / "control_plane.db", timeout=0.01, isolation_level=None)
+        try:
+            lock_connection.execute("PRAGMA busy_timeout=10;")
+            lock_connection.execute("BEGIN EXCLUSIVE;")
+            response = test_client.post(
+                "/api/v1/imports",
+                json={
+                    "source_name": "Adjust Source",
+                    "start_date": "20260301",
+                    "end_date": "20260302",
+                },
+            )
+        finally:
+            lock_connection.rollback()
+            lock_connection.close()
+
+    assert response.status_code == 423
+    assert response.json()["detail"] == "Control plane database is busy; retry shortly."
+    assert response.headers["Retry-After"] == "1"
+
+
 def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -220,14 +593,18 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     run_prediction = client.post(prediction_job["links"]["self"] + "/run")
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
-    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local Model"
     assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_version"] == "heuristic_v1"
+    assert run_prediction.json()["progress"]["details"]["effective_local_model_state"] == "untrained"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
     payload = results.json()
     assert payload["total"] >= 1
     assert payload["items"][0]["user_id"] == "adjust_user_1001"
+    assert payload["items"][0]["effective_local_model_version"] == "heuristic_v1"
+    assert payload["items"][0]["effective_local_model_state"] == "untrained"
 
     captured = {}
 
@@ -267,7 +644,127 @@ def test_v1_import_prediction_and_export_flow(client, monkeypatch):
     assert captured["json"]["count"] >= 1
 
 
-def test_prediction_uses_saved_google_connector(client, monkeypatch):
+def test_prediction_local_mode_ignores_saved_google_connector(client, monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GEMINI_MODEL", raising=False)
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    gemini_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Google Gemini 1",
+            "type": "google",
+            "config": {
+                "api_key": "google-api-key-from-connector",
+                "model_name": "gemini-2.5-flash",
+            },
+        },
+    )
+    assert gemini_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+
+    captured = {}
+
+    class UnexpectedGeminiClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("local prediction mode should not construct GeminiClient")
+
+    class FakePlayerModelingEngine:
+        def __init__(self, gemini_client, bigquery_service, churn_inactive_days=14, job_id=None):
+            captured["modeling_gemini_client_present"] = gemini_client is not None
+            captured["job_id"] = job_id
+
+        def get_all_player_ids(self):
+            return ["player-1"]
+
+        def build_player_profile(self, player_id):
+            return {
+                "player_id": player_id,
+                "email": "player-1@example.com",
+                "first_seen_date": "2026-03-01T00:00:00",
+                "last_seen_date": "2026-03-06T00:00:00",
+                "total_sessions": 4,
+                "total_events": 12,
+                "total_revenue": 9.99,
+                "days_since_last_seen": 1,
+                "churn_state": "active",
+                "churn_inactive_days": 14,
+            }
+
+        async def estimate_churn_risk(self, player_id, player_profile=None):
+            captured["estimate_called"] = True
+            return {
+                "player_id": player_id,
+                "churn_state": "active",
+                "churn_risk": "high",
+                "reason": "Local model estimate",
+                "top_signals": [{"signal": "recent_drop", "value": 3}],
+            }
+
+    class FakeDecisionEngine:
+        def __init__(self, gemini_client):
+            captured["decision_gemini_client_present"] = gemini_client is not None
+
+        def decide_next_action(self, player_profile, churn_estimate, objective):
+            captured["decision_called"] = True
+            return {"content": "Local retention action"}
+
+    monkeypatch.setattr("app.application.predictions.GeminiClient", UnexpectedGeminiClient)
+    monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["execution_label"] == "Local Model"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["churn_reason"] == "Local model estimate"
+    assert payload["items"][0]["suggested_action"] == "Local retention action"
+    assert captured["modeling_gemini_client_present"] is False
+    assert captured["decision_gemini_client_present"] is False
+    assert captured["estimate_called"] is True
+    assert captured["decision_called"] is True
+    assert captured["job_id"] is None
+
+
+def test_prediction_ai_mode_uses_saved_google_connector(client, monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GEMINI_MODEL", raising=False)
 
@@ -310,10 +807,15 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     captured = {}
 
     class FakeGeminiClient:
-        def __init__(self, api_key=None, model_name=None, stop_checker=None):
+        def __init__(self, api_key=None, model_name=None, stop_checker=None, circuit_namespace=None):
             captured["api_key"] = api_key
             captured["model_name"] = model_name
             captured["stop_checker_present"] = stop_checker is not None
+            captured["circuit_namespace"] = circuit_namespace
+            captured["reset_called"] = False
+
+        def reset_circuit_breaker(self):
+            captured["reset_called"] = True
 
         def get_ai_response(self, prompt: str):
             if "Provide JSON with keys" in prompt:
@@ -354,12 +856,13 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.GeminiClient", FakeGeminiClient)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
         json={
             "import_job_id": import_job["id"],
-            "prediction_mode": "local",
+            "prediction_mode": "ai",
         },
     )
     assert create_prediction.status_code == 201
@@ -369,7 +872,7 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     assert run_prediction.status_code == 200
     assert run_prediction.json()["status"] == "completed"
     assert run_prediction.json()["progress"]["details"]["execution_label"] == "AI"
-    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "local"
+    assert run_prediction.json()["progress"]["details"]["prediction_mode"] == "ai"
 
     results = client.get(prediction_job["links"]["results"])
     assert results.status_code == 200
@@ -380,9 +883,11 @@ def test_prediction_uses_saved_google_connector(client, monkeypatch):
     assert captured["api_key"] == "google-api-key-from-connector"
     assert captured["model_name"] == "gemini-2.5-flash"
     assert captured["stop_checker_present"] is True
+    assert captured["circuit_namespace"] == "predictions"
+    assert captured["reset_called"] is True
     assert captured["gemini_client_present"] is True
     assert captured["estimate_called"] is True
-    assert captured["job_id"] == import_job["id"]
+    assert captured["job_id"] is None
 
 
 def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
@@ -427,8 +932,11 @@ def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
     assert run_import.status_code == 200
 
     class SlowGeminiClient:
-        def __init__(self, api_key=None, model_name=None, stop_checker=None):
+        def __init__(self, api_key=None, model_name=None, stop_checker=None, circuit_namespace=None):
             self.stop_checker = stop_checker
+
+        def reset_circuit_breaker(self):
+            return None
 
         def get_ai_response(self, prompt):
             time.sleep(2.0)
@@ -475,12 +983,13 @@ def test_online_prediction_times_out_and_marks_job_failed(client, monkeypatch):
     monkeypatch.setattr("app.application.predictions.GeminiClient", SlowGeminiClient)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
         json={
             "import_job_id": import_job["id"],
-            "prediction_mode": "local",
+            "prediction_mode": "ai",
         },
     )
     assert create_prediction.status_code == 201
@@ -580,6 +1089,7 @@ def test_prediction_streams_partial_rows_and_can_be_stopped(client, monkeypatch)
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
     monkeypatch.setattr("bigquery_service.BigQueryService.append_prediction_results", tracking_append)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -697,6 +1207,7 @@ def test_prediction_results_are_returned_newest_first(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", FakeDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -785,6 +1296,7 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
 
     monkeypatch.setattr("app.application.predictions.PlayerModelingEngine", FakePlayerModelingEngine)
     monkeypatch.setattr("app.application.predictions.GrowthDecisionEngine", ShutdownAfterFirstDecisionEngine)
+    monkeypatch.setattr(BigQueryService, "get_import_roster_player_ids", lambda self, job_id: ["player-1", "player-2", "player-3"])
 
     create_prediction = client.post(
         "/api/v1/predictions",
@@ -808,6 +1320,276 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
     assert results.status_code == 200
     payload = results.json()
     assert payload["total"] == 0
+
+
+def test_prediction_uses_merged_history_for_selected_import_roster(client):
+    old_updated_at = datetime(2026, 3, 1, 12, 0, 0)
+    new_updated_at = datetime(2026, 3, 23, 12, 0, 0)
+    old_import = _create_completed_import_job(
+        "imp_old_history",
+        source_name="Manual Old Import",
+        start_date="20260201",
+        end_date="20260228",
+        created_at=old_updated_at,
+        updated_at=old_updated_at,
+    )
+    _create_completed_import_job(
+        "imp_new_history",
+        source_name="Manual New Import",
+        start_date="20260320",
+        end_date="20260323",
+        created_at=new_updated_at,
+        updated_at=new_updated_at,
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": old_import["id"],
+                "job_identifier": old_import["id"],
+                "source": "manual",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "old-evt-1",
+                "event_fingerprint": "old-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-02-15T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "player-1@example.com"},
+            },
+            {
+                "job_id": old_import["id"],
+                "job_identifier": old_import["id"],
+                "source": "manual",
+                "player_id": "player-2",
+                "canonical_user_id": "canon-2",
+                "source_event_id": "old-evt-2",
+                "event_fingerprint": "old-fp-2",
+                "event_type": "session_start",
+                "event_time": "2026-02-16T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "player-2@example.com"},
+            },
+            {
+                "job_id": "imp_new_history",
+                "job_identifier": "imp_new_history",
+                "source": "manual",
+                "player_id": "player-1",
+                "canonical_user_id": "canon-1",
+                "source_event_id": "new-evt-1",
+                "event_fingerprint": "new-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-23T00:00:00",
+                "event_properties": {"campaign": "revive"},
+                "user_properties": {"email": "player-1@example.com"},
+            },
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    assert service.get_import_roster_player_ids(old_import["id"]) == ["player-1", "player-2"]
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": old_import["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["progress"]["details"]["history_scope"] == "tenant_merged"
+    assert run_prediction.json()["progress"]["details"]["history_snapshot_at"]
+    assert run_prediction.json()["progress"]["details"]["stale"] is False
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    items = {item["user_id"]: item for item in results.json()["items"]}
+    assert set(items) == {"player-1", "player-2"}
+    assert items["player-1"]["churn_state"] == "active"
+    assert int(items["player-1"]["days_since_last_seen"]) < 14
+    assert items["player-2"]["churn_state"] == "churned"
+    assert int(items["player-2"]["days_since_last_seen"]) >= 14
+
+
+def test_completed_prediction_job_is_marked_stale_after_later_import(client):
+    import_job = _create_completed_import_job(
+        "imp_stale_anchor",
+        source_name="Manual Anchor Import",
+        start_date="20260301",
+        end_date="20260301",
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": import_job["id"],
+                "job_identifier": import_job["id"],
+                "source": "manual",
+                "player_id": "player-stale",
+                "canonical_user_id": "canon-stale",
+                "source_event_id": "anchor-evt-1",
+                "event_fingerprint": "anchor-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-10T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "stale@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "import_job_id": import_job["id"],
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    snapshot_at = run_prediction.json()["progress"]["details"]["history_snapshot_at"]
+    assert snapshot_at
+
+    later_import = _create_completed_import_job(
+        "imp_stale_newer",
+        source_name="Manual Later Import",
+        start_date="20260324",
+        end_date="20260324",
+    )
+    service.write_events_staging(
+        [
+            {
+                "job_id": later_import["id"],
+                "job_identifier": later_import["id"],
+                "source": "manual",
+                "player_id": "player-fresh",
+                "canonical_user_id": "canon-fresh",
+                "source_event_id": "later-evt-1",
+                "event_fingerprint": "later-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-24T00:00:00",
+                "event_properties": {},
+                "user_properties": {},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    stale_job = client.get(prediction_job["links"]["self"])
+    assert stale_job.status_code == 200
+    assert stale_job.json()["progress"]["details"]["history_scope"] == "tenant_merged"
+    assert stale_job.json()["progress"]["details"]["history_snapshot_at"] == snapshot_at
+    assert stale_job.json()["progress"]["details"]["stale"] is True
+    assert later_import["id"] in stale_job.json()["progress"]["details"]["stale_reason"]
+
+    listed_jobs = client.get("/api/v1/predictions")
+    assert listed_jobs.status_code == 200
+    listed_item = next(item for item in listed_jobs.json()["items"] if item["id"] == prediction_job["id"])
+    assert listed_item["progress"]["details"]["stale"] is True
+
+
+def test_prediction_source_mode_resolves_latest_import_on_run(client):
+    source_name = "Amplitude 1"
+    current_import_time = datetime(2026, 3, 20, 12, 0, 0)
+    latest_import_time = datetime(2026, 3, 24, 12, 0, 0)
+    current_import = _create_completed_import_job(
+        "imp_source_current",
+        source_name=source_name,
+        start_date="20260320",
+        end_date="20260320",
+        created_at=current_import_time,
+        updated_at=current_import_time,
+    )
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": current_import["id"],
+                "job_identifier": current_import["id"],
+                "source": "manual",
+                "player_id": "player-current",
+                "canonical_user_id": "canon-current",
+                "source_event_id": "current-evt-1",
+                "event_fingerprint": "current-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-20T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "current@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    create_prediction = client.post(
+        "/api/v1/predictions",
+        json={
+            "source_name": source_name,
+            "audience_scope": "source",
+            "prediction_mode": "local",
+        },
+    )
+    assert create_prediction.status_code == 201
+    prediction_job = create_prediction.json()
+    assert prediction_job["spec"]["audience_scope"] == "source"
+    assert prediction_job["spec"]["source_name"] == source_name
+    assert prediction_job["spec"]["import_job_id"] == current_import["id"]
+
+    latest_import = _create_completed_import_job(
+        "imp_source_latest",
+        source_name=source_name,
+        start_date="20260324",
+        end_date="20260324",
+        created_at=latest_import_time,
+        updated_at=latest_import_time,
+    )
+    service.write_events_staging(
+        [
+            {
+                "job_id": latest_import["id"],
+                "job_identifier": latest_import["id"],
+                "source": "manual",
+                "player_id": "player-latest",
+                "canonical_user_id": "canon-latest",
+                "source_event_id": "latest-evt-1",
+                "event_fingerprint": "latest-fp-1",
+                "event_type": "session_start",
+                "event_time": "2026-03-24T00:00:00",
+                "event_properties": {},
+                "user_properties": {"email": "latest@example.com"},
+            }
+        ]
+    )
+    service.run_events_curation()
+    service.refresh_player_latest_state()
+
+    run_prediction = client.post(prediction_job["links"]["self"] + "/run")
+    assert run_prediction.status_code == 200
+    assert run_prediction.json()["status"] == "completed"
+    assert run_prediction.json()["spec"]["import_job_id"] == latest_import["id"]
+    assert run_prediction.json()["progress"]["details"]["audience_scope"] == "source"
+    assert run_prediction.json()["progress"]["details"]["source_name"] == source_name
+    assert run_prediction.json()["progress"]["details"]["import_job_id"] == latest_import["id"]
+
+    results = client.get(prediction_job["links"]["results"])
+    assert results.status_code == 200
+    payload = results.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["user_id"] == "player-latest"
 
 
 def test_import_failure_marks_job_failed(client, monkeypatch):
@@ -980,6 +1762,104 @@ def test_import_processing_progress_reports_event_counts(client, monkeypatch):
     assert not thread.is_alive()
     assert run_result["response"].status_code == 200
     assert run_result["response"].json()["status"] == "completed"
+
+
+def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                },
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 2,
+                    "source_config_id": "Amplitude 1",
+                },
+            ],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(
+                1,
+                2,
+                {
+                    "manifests_processed": 1,
+                    "raw_normalized_events": 1000,
+                    "events_staging_written": 750,
+                    "pipeline_dead_letters_written": 250,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                },
+            )
+        raise RuntimeError("Normalization failed after staging manifests")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    assert run_import.json()["detail"] == "Normalization failed after staging manifests"
+
+    import_state = client.get(import_job["links"]["self"])
+    assert import_state.status_code == 200
+    payload = import_state.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_reason"] == "Normalization failed after staging manifests"
+    assert payload["progress"]["details"]["failure_stage"] == "processing"
+    assert payload["progress"]["details"]["checkpoint_state"]["failed"] == 2
+
+    checkpoints = client.get(import_job["links"]["checkpoints"])
+    assert checkpoints.status_code == 200
+    assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
 
 
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
@@ -1223,7 +2103,7 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     with TestClient(client.app) as control_client:
         stop_import = control_client.post(import_job["links"]["self"] + "/stop")
     assert stop_import.status_code == 200
-    assert stop_import.json()["status"] == "stopping"
+    assert stop_import.json()["status"] == "stopped"
 
     thread.join(timeout=5)
     assert not thread.is_alive()
@@ -1235,6 +2115,71 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     payload = import_state.json()
     assert payload["status"] == "stopped"
     assert payload["progress"]["details"]["stop_reason"] == "Stopped by user."
+
+
+def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    started = threading.Event()
+    release_worker = threading.Event()
+    run_result = {}
+
+    def stuck_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        started.set()
+        release_worker.wait(timeout=5)
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 0,
+            "events_staged": 0,
+            "last_checkpoint": None,
+            "shard_manifests": [],
+            "stopped": False,
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        stuck_fetch_and_stage_events,
+    )
+
+    def run_import_request():
+        with TestClient(client.app) as runner_client:
+            run_result["response"] = runner_client.post(import_job["links"]["self"] + "/run")
+
+    thread = threading.Thread(target=run_import_request)
+    thread.start()
+    assert started.wait(timeout=2)
+
+    with TestClient(client.app) as control_client:
+        stop_import = control_client.post(import_job["links"]["self"] + "/stop")
+    assert stop_import.status_code == 200
+    assert stop_import.json()["status"] == "stopped"
+
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert run_result["response"].status_code == 200
+    assert run_result["response"].json()["status"] == "stopped"
+
+    release_worker.set()
 
 
 def test_restart_discards_stopping_import_job(client):

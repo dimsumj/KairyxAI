@@ -13,6 +13,12 @@ class ExperimentConfigRequest(BaseModel):
     blacklist_user_ids: List[str] = Field(default_factory=list)
     rollout_policy: str = "conservative"
     multiple_comparisons_method: str = "none"
+    scenario_type: str = "churn_rescue"
+    optimization_mode: str = "fixed_ab"
+    holdout_floor_pct: float = 0.10
+    max_daily_shift_pct: float = 0.10
+    approved_variants: List[Dict[str, Any]] = Field(default_factory=list)
+    eligibility_threshold_steps: List[float] = Field(default_factory=lambda: [0.85, 0.75, 0.65, 0.55])
 
 
 class ExperimentConfigResponse(BaseModel):
@@ -31,6 +37,12 @@ class ExperimentLifecycleRequest(BaseModel):
     blacklist_user_ids: List[str] = Field(default_factory=list)
     rollout_policy: str = "conservative"
     multiple_comparisons_method: str = "none"
+    scenario_type: str = "churn_rescue"
+    optimization_mode: str = "fixed_ab"
+    holdout_floor_pct: float = 0.10
+    max_daily_shift_pct: float = 0.10
+    approved_variants: List[Dict[str, Any]] = Field(default_factory=list)
+    eligibility_threshold_steps: List[float] = Field(default_factory=lambda: [0.85, 0.75, 0.65, 0.55])
 
 
 class ExperimentEventPage(BaseModel):
@@ -44,8 +56,15 @@ class ExperimentOutcomeEvent(BaseModel):
     user_id: str
     occurred_at: str
     action_execution_id: str | None = None
+    delivery_id: str | None = None
+    provider_callback_id: str | None = None
     group: str = "treatment"
     outcome_name: str = "returned"
+    product_outcome_type: str | None = None
+    attribution_window_days: int = 7
+    exposure_id: str | None = None
+    variant_id: str | None = None
+    template_id: str | None = None
     source: str = "internal_writeback"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -63,3 +82,8 @@ class ExperimentDecisionResponse(BaseModel):
     summary: Dict[str, Any]
     next_step: str
     decision_reason: str | None = None
+
+
+class ExperimentOptimizerRunRequest(BaseModel):
+    reference_time: str | None = None
+    apply_changes: bool = True

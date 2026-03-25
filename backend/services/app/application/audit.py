@@ -27,8 +27,9 @@ class AuditService:
         actor_role: str | None = None,
         tenant_id: str | None = None,
         high_risk_only: bool = False,
+        include_all_tenants: bool = False,
     ) -> Dict[str, Any]:
-        raw_items = self.repository.list_actions(limit=max(50, int(limit) * 10))
+        raw_items = self.repository.list_actions(limit=max(50, int(limit) * 10), include_all_tenants=include_all_tenants)
         items = []
         for item in raw_items:
             payload = item.get("payload") or {}

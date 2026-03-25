@@ -5,563 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <title>Kairyx AI - Player Engagement Platform</title>
-    <style>
-        :root {
-            --bg-color: #f4f7fa;
-            --sidebar-bg: #ffffff;
-            --main-text: #2d3748;
-            --subtle-text: #718096;
-            --text-secondary: #718096;
-            --border-color: #e2e8f0;
-            --primary-color: #4a5568;
-            --primary-hover: #2d3748;
-            --white: #fff;
-            --green: #48bb78;
-            --red: #f56565;
-            --yellow: #ecc94b;
-            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        }
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/operator-console.css">
 
-        body.dark-theme {
-            --bg-color: #121212;
-            --sidebar-bg: #1e1e1e;
-            --main-text: #e0e0e0;
-            --subtle-text: #a0a0a0;
-            --text-secondary: #a0a0a0;
-            --border-color: #333333;
-            --primary-color: #63b3ed;
-            --primary-hover: #4299e1;
-            --white: #1e1e1e; /* Used for card backgrounds */
-            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-            --button-text-color: #ffffff;
-            --button-bg-color: #63b3ed;
-        }
-
-        body.dark-theme .slider {
-            background-color: #4a5568; /* A neutral dark theme color */
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            margin: 0;
-            background-color: var(--bg-color);
-            color: var(--main-text);
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        .sidebar {
-            width: 240px;
-            background-color: var(--sidebar-bg);
-            border-right: 1px solid var(--border-color);
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            flex-shrink: 0;
-        }
-
-        .sidebar-header {
-            padding: 1.5rem;
-            font-size: 1.25rem;
-            font-weight: 600;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .sidebar-nav {
-            list-style: none;
-            padding: 1rem 0;
-            margin: 0;
-        }
-
-        .sidebar-nav li a {
-            display: block;
-            padding: 0.75rem 1.5rem;
-            color: var(--subtle-text);
-            text-decoration: none;
-            font-weight: 500;
-            transition: all 0.2s ease-in-out;
-        }
-
-        .sidebar-nav li a:hover {
-            color: var(--primary-hover);
-            background-color: var(--bg-color);
-        }
-
-        .sidebar-nav li a.active {
-            color: var(--primary-hover);
-            font-weight: 600;
-            border-left: 3px solid var(--primary-color);
-            padding-left: calc(1.5rem - 3px);
-        }
-
-        .sidebar-nav li a span {
-            display: block;
-        }
-
-        .sidebar-nav li a small {
-            display: block;
-            margin-top: 0.2rem;
-            font-size: 0.74rem;
-            font-weight: 400;
-            color: var(--text-secondary);
-        }
-
-        .sidebar-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .sidebar-footer .form-group {
-            margin-bottom: 0.75rem;
-        }
-
-        .sidebar-footer .form-group label {
-            font-size: 0.78rem;
-            margin-bottom: 0.35rem;
-        }
-
-        .sidebar-footer .form-group input,
-        .sidebar-footer .form-group select {
-            padding: 0.55rem 0.65rem;
-            font-size: 0.85rem;
-        }
-
-        #health-status {
-            display: flex;
-            align-items: center;
-            font-size: 0.875rem;
-            font-weight: 500;
-            margin-top: 0.75rem;
-        }
-
-        #health-status .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            margin-right: 0.75rem;
-            background-color: #f56565; /* Red for disconnected */
-        }
-
-        #health-status.connected .status-dot {
-            background-color: #48bb78; /* Green for connected */
-        }
-
-        .content {
-            flex-grow: 1;
-            padding: 2rem;
-            overflow-y: auto;
-            min-width: 0;
-        }
-
-        .page {
-            display: none;
-        }
-
-        .page.active {
-            display: block;
-        }
-
-        h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            margin-bottom: 1.5rem;
-        }
-
-        .card {
-            background: var(--white);
-            border-radius: 8px;
-            padding: 1.5rem;
-            box-shadow: var(--shadow);
-            margin-bottom: 1.5rem;
-            min-width: 0;
-        }
-
-        .module-shell {
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            align-items: flex-start;
-        }
-
-        .module-title {
-            font-size: 1.15rem;
-            font-weight: 700;
-            margin-bottom: 0.35rem;
-        }
-
-        .module-subtitle {
-            margin: 0;
-            color: var(--text-secondary);
-            max-width: 58rem;
-            font-size: 0.92rem;
-        }
-
-        .module-subnav {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            justify-content: flex-end;
-        }
-
-        .module-subnav button {
-            background: transparent;
-            color: var(--main-text);
-            border: 1px solid var(--border-color);
-            padding: 0.6rem 0.85rem;
-        }
-
-        .module-subnav button.active {
-            background: var(--primary-color);
-            color: #ffffff;
-            border-color: var(--primary-color);
-        }
-
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-group label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            box-sizing: border-box;
-            background-color: var(--white);
-            color: var(--main-text);
-        }
-
-        button {
-            background-color: var(--primary-color);
-            color: var(--white);
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 4px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        button:hover {
-            background-color: var(--primary-hover);
-        }
-
-        .inline-actions {
-            display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .grid-2,
-        .grid-3,
-        .stats-grid {
-            display: grid;
-            gap: 1rem;
-        }
-
-        .grid-2 > *,
-        .grid-3 > *,
-        .stats-grid > *,
-        .split-card {
-            min-width: 0;
-        }
-
-        .grid-2 {
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        }
-
-        .grid-3 {
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        }
-
-        .stats-grid {
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        }
-
-        .stat-card {
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1rem;
-            background: color-mix(in srgb, var(--white) 88%, var(--bg-color) 12%);
-        }
-
-        .stat-card .label {
-            color: var(--text-secondary);
-            font-size: 0.8rem;
-            margin-bottom: 0.35rem;
-        }
-
-        .stat-card .value {
-            font-size: 1.3rem;
-            font-weight: 700;
-        }
-
-        .subtle {
-            color: var(--text-secondary);
-            font-size: 0.88rem;
-        }
-
-        .json-output {
-            margin: 0;
-            min-height: 8rem;
-            max-width: 100%;
-            padding: 1rem;
-            border-radius: 8px;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            color: #e2e8f0;
-            white-space: pre-wrap;
-            overflow: auto;
-            font-size: 0.82rem;
-        }
-
-        .module-section-header {
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .module-section-header h2 {
-            margin: 0;
-            font-size: 1.05rem;
-        }
-
-        .pill {
-            display: inline-flex;
-            align-items: center;
-            border-radius: 999px;
-            padding: 0.2rem 0.55rem;
-            font-size: 0.78rem;
-            font-weight: 600;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-        }
-
-        .list-empty {
-            padding: 1rem;
-            border: 1px dashed var(--border-color);
-            border-radius: 8px;
-            color: var(--text-secondary);
-            text-align: center;
-        }
-
-        .table-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .table-actions button {
-            padding: 0.45rem 0.75rem;
-            font-size: 0.8rem;
-        }
-
-        .help-card ul,
-        .help-card ol {
-            margin: 0.5rem 0 0 1.25rem;
-            padding: 0;
-        }
-
-        .help-card li + li {
-            margin-top: 0.45rem;
-        }
-
-        .help-callout {
-            padding: 1rem 1.1rem;
-            border-left: 3px solid var(--primary-color);
-            background: color-mix(in srgb, var(--white) 90%, var(--bg-color) 10%);
-            border-radius: 8px;
-            color: var(--text-secondary);
-        }
-
-        .help-code-title {
-            font-size: 0.84rem;
-            font-weight: 600;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-
-        .metric-line {
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 0.9rem;
-        }
-
-        .metric-line:last-child {
-            border-bottom: none;
-        }
-
-        .split-card {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-
-        .table-shell {
-            width: 100%;
-            max-width: 100%;
-            overflow-x: auto;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-        }
-
-        #service-status-list .service-item {
-            display: flex;
-            align-items: center;
-            padding: 1rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-        #service-status-list .service-item:last-child {
-            border-bottom: none;
-        }
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 1rem;
-        }
-        .status-ok { background-color: var(--green); }
-        .status-error { background-color: var(--red); }
-        .status-warning { background-color: var(--yellow); }
-        .status-neutral { background-color: var(--primary-color); }
-        .status-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            vertical-align: middle;
-        }
-        .status-help {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 1rem;
-            height: 1rem;
-            border-radius: 999px;
-            border: 1px solid currentColor;
-            font-size: 0.7rem;
-            font-weight: 700;
-            line-height: 1;
-            cursor: help;
-        }
-        .service-name {
-            font-weight: 600;
-        }
-
-        th, td {
-            text-align: left;
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--border-color);
-            vertical-align: top;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-        }
-
-        th {
-            background-color: var(--bg-color);
-        }
-
-        #connector-list .card {
-            display: flex;
-            justify-content: space-between;
-        }
-
-        /* Theme Toggle Switch */
-        .theme-switch-wrapper {
-            display: flex;
-            align-items: center;
-            position: absolute;
-            top: 1.5rem;
-            right: 2rem;
-        }
-
-        .theme-switch {
-            display: inline-block;
-            height: 24px;
-            position: relative;
-            width: 48px;
-            margin-left: 10px;
-        }
-
-        .theme-switch input {
-            display:none;
-        }
-
-        .slider {
-            background-color: #ccc;
-            bottom: 0;
-            cursor: pointer;
-            left: 0;
-            position: absolute;
-            right: 0;
-            top: 0;
-            transition: .4s;
-            border-radius: 24px;
-        }
-
-        input:checked + .slider {
-            background-color: var(--primary-color);
-        }
-
-        .slider:before {
-            background-color: #fff;
-            bottom: 4px;
-            content: "";
-            height: 16px;
-            left: 4px;
-            position: absolute;
-            transition: .4s;
-            width: 16px;
-            border-radius: 50%;
-        }
-
-        input:checked + .slider:before {
-            transform: translateX(24px);
-        }
-
-        @media (max-width: 960px) {
-            body {
-                flex-direction: column;
-                height: auto;
-                overflow: auto;
-            }
-
-            .sidebar {
-                width: 100%;
-                border-right: none;
-                border-bottom: 1px solid var(--border-color);
-            }
-
-            .content {
-                padding: 1.25rem;
-            }
-
-            .module-shell {
-                flex-direction: column;
-            }
-
-            .module-subnav {
-                justify-content: flex-start;
-            }
-        }
-    </style>
 </head>
 <body>
 
@@ -595,6 +41,14 @@
                 <input type="text" id="tenant-id-input" value="default">
             </div>
             <div class="form-group">
+                <label for="auth-status-text">Auth Session</label>
+                <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Legacy local session</div>
+            </div>
+            <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button type="button" id="oidc-login-btn">OIDC Login</button>
+                <button type="button" id="oidc-logout-btn">Logout</button>
+            </div>
+            <div class="form-group">
                 <label for="api-key-input">API Key</label>
                 <input type="password" id="api-key-input" placeholder="Optional">
             </div>
@@ -625,15 +79,44 @@
         <section id="operator-hub" class="page active">
             <h1>Churn Rescue Workbench</h1>
             <div class="card" id="operator-hub-controls">
-                <p>Select a processed dataset and run churn prediction on its members.</p>
-                <div class="form-group">
-                    <label for="dataset-select">Select Dataset</label>
-                    <select id="dataset-select"></select>
+                <p>Select a source or a completed import and run churn prediction on that audience. Source mode resolves to the latest completed import when the job starts.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
+                    <div class="form-group">
+                        <label for="prediction-audience-scope-select">Prediction Target</label>
+                        <select id="prediction-audience-scope-select">
+                            <option value="source" selected>Source</option>
+                            <option value="import">Import</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label id="dataset-select-label" for="dataset-select">Select Source</label>
+                        <select id="dataset-select"></select>
+                        <div id="dataset-select-help" style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.45rem;"></div>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+                    <div class="form-group" style="margin-bottom: 0; min-width: 220px;">
+                        <label for="prediction-mode-select">Prediction Engine</label>
+                        <select id="prediction-mode-select">
+                            <option value="local">Local Model</option>
+                            <option value="ai">AI</option>
+                            <option value="cloud">Cloud</option>
+                            <option value="parallel">AI + Cloud</option>
+                        </select>
+                        <div id="prediction-model-readiness" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem;">
+                            <span id="prediction-model-readiness-badge" style="display: inline-flex; align-items: center; padding: 0.15rem 0.55rem; border-radius: 999px; border: 1px solid var(--border-color); font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Learning</span>
+                            <span id="prediction-model-readiness-details" style="font-size: 0.78rem; color: var(--text-secondary);"></span>
+                        </div>
+                    </div>
                     <button id="predict-churn-btn">Predict Churn</button>
                     <span id="prediction-progress-info" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
                 </div>
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-top: 0.85rem;">
+                    <button id="train-local-model-btn" type="button" style="background: #0f766e;">Train Local Model</button>
+                    <button id="refresh-local-model-status-btn" type="button" style="background: var(--subtle-text);">Refresh Model Status</button>
+                    <span id="prediction-model-training-status" style="font-size: 0.82rem; color: var(--text-secondary);"></span>
+                </div>
+                <div id="prediction-local-warning" style="font-size: 0.82rem; color: var(--yellow); margin-top: 0.6rem;"></div>
                 <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
                     <h2 style="font-size: 1rem; margin: 0 0 0.75rem 0;">Push Audience to Campaign Provider</h2>
                     <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0;">Exports a clean audience payload with normalized identifiers like <code>user_id</code> and <code>email</code>.</p>
@@ -683,30 +166,41 @@
                 </div>
             </div>
             <div class="card">
-                <table>
-                    <div id="operator-hub-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
-                            <select id="items-per-page" style="padding: 0.5rem; border-radius: 4px;">
-                                <option value="25" selected>25</option>
-                                <option value="50">50</option>
-                                <option value="100">100</option>
-                            </select>
-                        </div>
+                <div id="operator-hub-table-controls" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="items-per-page" style="display: inline-block; margin-right: 0.5rem;">Show:</label>
+                        <select id="items-per-page" style="padding: 0.5rem; border-radius: 4px;">
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
                     </div>
-                    <thead>
-                        <tr>
-                            <th>User ID</th>
-                            <th>LTV</th>
-                            <th>Session Count</th>
-                            <th>Event Count</th>
-                            <th>Predicted Churn Risk</th>
-                            <th>Churn Reason</th>
-                            <th>Suggested Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="operator-hub-results"></tbody>
-                </table>
+                </div>
+                <div class="table-shell">
+                    <table class="operator-hub-table">
+                        <colgroup>
+                            <col style="width: 16%">
+                            <col style="width: 6%">
+                            <col style="width: 9%">
+                            <col style="width: 9%">
+                            <col style="width: 12%">
+                            <col style="width: 32%">
+                            <col style="width: 16%">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>User ID</th>
+                                <th>LTV</th>
+                                <th>Session Count</th>
+                                <th>Event Count</th>
+                                <th>Predicted Churn Risk</th>
+                                <th>Churn Reason</th>
+                                <th>Suggested Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="operator-hub-results"></tbody>
+                    </table>
+                </div>
                 <div id="pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
                     <!-- Pagination buttons will be injected here -->
                 </div>
@@ -737,8 +231,57 @@
             <div class="card">
                 <h2>Imported Data</h2>
                 <p>List of imported and processed datasets available for analysis.</p>
+                <span id="import-list-status" class="subtle"></span>
                 <div id="import-list-container">
                     <!-- Import jobs will be listed here -->
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Import Operations</h2>
+                        <span class="pill">Manifest & Remediation</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-detail-select">Import Job</label>
+                            <select id="import-detail-select">
+                                <option value="">Load imports first</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-load-operations-btn">Load Operations</button>
+                            <button id="import-load-quality-btn">Load Quality</button>
+                            <button id="import-load-manifests-btn">Load Manifests</button>
+                        </div>
+                    </div>
+                    <span id="import-detail-status" class="subtle"></span>
+                    <pre id="import-detail-output" class="json-output">Import operations and quality detail will appear here.</pre>
+                    <div id="import-manifests-list"></div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Schema Contracts</h2>
+                        <span class="pill">Warehouse Contract</span>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-schema-alias-select">Alias</label>
+                            <select id="import-schema-alias-select">
+                                <option value="standardized" selected>standardized</option>
+                                <option value="fact_events_unified">fact_events_unified</option>
+                                <option value="mart_user_daily">mart_user_daily</option>
+                                <option value="prediction_results">prediction_results</option>
+                                <option value="pipeline_dead_letters">pipeline_dead_letters</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-load-schema-btn">Load Contract</button>
+                            <button id="import-load-schema-list-btn">List All</button>
+                        </div>
+                    </div>
+                    <span id="import-schema-status" class="subtle"></span>
+                    <pre id="import-schema-output" class="json-output">Schema contract details will appear here.</pre>
                 </div>
             </div>
         </section>
@@ -773,17 +316,25 @@
                     <button id="action-history-refresh-btn">Refresh Audit Log</button>
                     <span id="action-history-status" class="subtle"></span>
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Action</th>
-                            <th>Status</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody id="action-history-results"></tbody>
-                </table>
+                <div class="table-shell">
+                    <table class="audit-trail-table">
+                        <colgroup>
+                            <col style="width: 19%">
+                            <col style="width: 25%">
+                            <col style="width: 12%">
+                            <col style="width: 44%">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Action</th>
+                                <th>Status</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="action-history-results"></tbody>
+                    </table>
+                </div>
                 <div id="action-history-pagination-controls" style="display: flex; justify-content: center; align-items: center; margin-top: 1.5rem;">
                     <!-- Pagination buttons will be injected here -->
                 </div>
@@ -1307,7 +858,11 @@ WHERE predicted_churn_risk = 'high'
                         <h2>Deliveries</h2>
                         <span class="pill">Audited</span>
                     </div>
+                    <div class="inline-actions">
+                        <button id="workflow-load-delivery-diagnostics-btn">Load Diagnostics</button>
+                    </div>
                     <div id="workflow-deliveries-list"></div>
+                    <pre id="workflow-delivery-diagnostics-output" class="json-output">Workflow delivery diagnostics will appear here.</pre>
                 </div>
             </div>
         </section>
@@ -1378,9 +933,13 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card split-card">
                     <div class="module-section-header">
                         <h2>Summary</h2>
-                        <button id="experiment-refresh-btn">Refresh Summary</button>
+                        <div class="inline-actions">
+                            <button id="experiment-refresh-btn">Refresh Summary</button>
+                            <button id="experiment-load-integrity-btn">Load Integrity</button>
+                        </div>
                     </div>
                     <pre id="experiment-summary-output" class="json-output">Experiment summary will appear here.</pre>
+                    <pre id="experiment-integrity-output" class="json-output">Experiment integrity will appear here.</pre>
                 </div>
             </div>
             <div class="grid-2">
@@ -1739,24 +1298,9 @@ dimensions: campaign,country,platform</pre>
         </section>
     </main>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const navLinks = document.querySelectorAll('.nav-link');
-            const pages = document.querySelectorAll('.page');
-            const moduleTitle = document.getElementById('module-title');
-            const moduleSubtitle = document.getElementById('module-subtitle');
-            const moduleSubnav = document.getElementById('module-subnav');
-            const actorRoleSelect = document.getElementById('actor-role-select');
-            const actorIdInput = document.getElementById('actor-id-input');
-            const tenantIdInput = document.getElementById('tenant-id-input');
-            const apiKeyInput = document.getElementById('api-key-input');
-            const ACTOR_ROLE_STORAGE_KEY = 'kairyx.actorRole';
-            const ACTOR_ID_STORAGE_KEY = 'kairyx.actorId';
-            const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
-            const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
-            let activeModuleId = 'data-core';
-            let activePageId = 'operator-hub';
+    <script src="/static/operator-console.js"></script>
 
+<!-- Legacy inline operator console script is intentionally disabled after the merge.
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -5999,6 +5543,7 @@ dimensions: campaign,country,platform</pre>
         });
 
     </script>
+-->
 
 </body>
 </html>

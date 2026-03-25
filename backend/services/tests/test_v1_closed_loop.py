@@ -369,14 +369,42 @@ def test_closed_loop_sql_cohort_workflow_experiment_and_copilot(client):
     assert copilot_report.json()["methodology"]["report_type"] == "daily"
     assert len(copilot_report.json()["evidence"]) == 3
     assert copilot_report.json()["report_id"]
+    report_id = copilot_report.json()["report_id"]
+
+    report_detail = client.get(f"/api/v1/copilot/reports/{report_id}", headers={"x-actor-role": "analyst"})
+    assert report_detail.status_code == 200
+    assert report_detail.json()["run_count"] >= 1
+    assert any(item["resource_type"] == "copilot_query_log" for item in report_detail.json()["linked_resources"])
+
+    report_runs = client.get(f"/api/v1/copilot/reports/{report_id}/runs", headers={"x-actor-role": "analyst"})
+    assert report_runs.status_code == 200
+    assert len(report_runs.json()["items"]) >= 1
+
+    report_review = client.post(
+        f"/api/v1/copilot/reports/{report_id}/review",
+        json={"disposition": "acknowledged", "notes": "Reviewed for operator handoff"},
+        headers={"x-actor-role": "analyst", "x-actor-id": "qa_reviewer"},
+    )
+    assert report_review.status_code == 200
+    assert report_review.json()["review"]["status"] == "acknowledged"
 
     reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
     assert reports.status_code == 200
     assert len(reports.json()["items"]) >= 1
+    assert len({item["report_id"] for item in reports.json()["items"]}) == len(reports.json()["items"])
+
+    copilot_overview = client.get("/api/v1/copilot/overview", headers={"x-actor-role": "analyst"})
+    assert copilot_overview.status_code == 200
+    assert copilot_overview.json()["report_counts"]["total"] >= 1
 
     health_after = client.get("/api/v1/health")
     assert health_after.status_code == 200
     assert "operational_metrics" in health_after.json()
+
+    cohort_overview = client.get(f"/api/v1/cohorts/{cohort_id}/overview", headers={"x-actor-role": "analyst"})
+    assert cohort_overview.status_code == 200
+    assert cohort_overview.json()["metrics"]["measurement_state"]["delivery_signal_status"] == "ready"
+    assert cohort_overview.json()["linked_workflows"][0]["workflow_id"] == workflow_id
 
 
 def test_import_quality_resume_and_replay(client):
@@ -677,6 +705,207 @@ def test_data_core_identity_conflicts_and_sql_guardrails(client):
     assert preview_scan_blocked.status_code == 400
 
 
+def test_import_operations_and_backfill_control_plane(client):
+    service = get_shared_bigquery_service()
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.upsert_connector("Adjust Source", "adjust", {"api_token": "adjust-token"})
+        repository.create_import_job(
+            {
+                "id": "imp_ops_1",
+                "source_name": "Adjust Source",
+                "status": "completed",
+                "spec": {"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260302"},
+                "progress": {
+                    "current": 1,
+                    "total": 1,
+                    "pct": 100.0,
+                    "details": {
+                        "mapping_coverage": 100.0,
+                        "checkpoint_state": {"total": 1, "processed": 1, "pending": 0, "counts": {"processed": 1}},
+                    },
+                },
+            }
+        )
+        repository.upsert_checkpoint(
+            {
+                "job_id": "imp_ops_1",
+                "shard_index": 0,
+                "source_name": "Adjust Source",
+                "status": "processed",
+                "cursor": "0",
+                "gcs_uri": "gs://mock/raw/source=adjust/job=imp_ops_1/part-000001.jsonl.gz",
+                "message_id": "msg-1",
+                "manifest": {"job_id": "imp_ops_1", "source": "adjust", "shard_index": 0},
+                "event_count": 1,
+            }
+        )
+        repository.create_import_job(
+            {
+                "id": "imp_ops_2",
+                "source_name": "Adjust Source",
+                "status": "awaiting_mapping",
+                "spec": {"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260303"},
+                "progress": {
+                    "current": 0,
+                    "total": 0,
+                    "pct": 0.0,
+                    "details": {
+                        "mapping_coverage": 60.0,
+                        "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
+                    },
+                },
+            }
+        )
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "imp_ops_1",
+                "source": "adjust",
+                "player_id": "u_ops_1",
+                "canonical_user_id": "u_ops_1",
+                "event_type": "session_start",
+                "event_time": "2026-03-08T10:00:00",
+                "event_fingerprint": "fp_existing",
+                "event_properties": {"campaign": "ops_campaign"},
+                "user_properties": {"email": "ops1@example.com"},
+            }
+        ],
+        job_id="imp_ops_1",
+    )
+    service.run_events_curation(job_id="imp_ops_1")
+    service.refresh_player_latest_state(job_id="imp_ops_1")
+    service.write_pipeline_dead_letters(
+        [
+            {
+                "job_id": "imp_ops_1",
+                "rejection_reason": "missing_campaign_mapping",
+                "normalized_event": {
+                    "job_id": "imp_ops_1",
+                    "source": "adjust",
+                    "player_id": "u_ops_1",
+                    "canonical_user_id": "u_ops_1",
+                    "event_type": "promo_view",
+                    "event_time": "2026-03-08T11:00:00",
+                    "event_fingerprint": "fp_replay_1",
+                    "data_quality_flags": [],
+                    "event_properties": {"campaign": "ops_campaign"},
+                    "user_properties": {"email": "ops1@example.com"},
+                },
+            }
+        ],
+        job_id="imp_ops_1",
+    )
+
+    operations = client.get("/api/v1/imports/imp_ops_1/operations", headers={"x-actor-role": "analyst"})
+    assert operations.status_code == 200
+    assert operations.json()["processing_contract"]["mode"] == "manifest-driven"
+    assert operations.json()["dead_letters"]["count"] == 1
+    assert operations.json()["dead_letters"]["replayable_count"] == 1
+    assert operations.json()["remediation"]["recommended_action"] == "replay_rejected_rows"
+    assert operations.json()["schema_contracts"]
+
+    manifests = client.get("/api/v1/imports/imp_ops_1/manifests", headers={"x-actor-role": "analyst"})
+    assert manifests.status_code == 200
+    assert manifests.json()["items"][0]["manifest_id"] == "imp_ops_1:0"
+
+    schema_contract = client.get("/api/v1/imports/schema-contracts/standardized", headers={"x-actor-role": "analyst"})
+    assert schema_contract.status_code == 200
+    assert schema_contract.json()["alias"] == "standardized"
+    assert "player_id" in schema_contract.json()["required_fields"]
+
+    schema_contracts = client.get("/api/v1/imports/schema-contracts", headers={"x-actor-role": "analyst"})
+    assert schema_contracts.status_code == 200
+    assert any(item["alias"] == "fact_events_unified" for item in schema_contracts.json()["items"])
+
+    backfill = client.post(
+        "/api/v1/imports/backfills",
+        headers={"x-actor-role": "operator"},
+        json={"source_name": "Adjust Source", "start_date": "20260301", "end_date": "20260303"},
+    )
+    assert backfill.status_code == 200
+    assert backfill.json()["matched_jobs"] == 2
+    assert any(item["job_id"] == "imp_ops_1" and item["status"] == "completed" for item in backfill.json()["items"])
+    assert any(item["job_id"] == "imp_ops_2" and item["status"] == "blocked" for item in backfill.json()["items"])
+
+    listed = client.get("/api/v1/imports/backfills", headers={"x-actor-role": "analyst"})
+    assert listed.status_code == 200
+    assert any(item["backfill_id"] == backfill.json()["backfill_id"] for item in listed.json()["items"])
+
+    fetched = client.get(f"/api/v1/imports/backfills/{backfill.json()['backfill_id']}", headers={"x-actor-role": "analyst"})
+    assert fetched.status_code == 200
+    assert fetched.json()["backfill_id"] == backfill.json()["backfill_id"]
+    assert fetched.json()["completed_jobs"] == 1
+
+
+def test_health_snapshot_includes_data_core_lag_alerts(client):
+    service = get_shared_bigquery_service()
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_seed",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "session_start",
+                "event_time": "2026-03-08T10:00:00",
+                "event_properties": {"platform": "ios"},
+                "user_properties": {},
+            }
+        ],
+        job_id="lag_seed",
+    )
+    service.run_events_curation(job_id="lag_seed")
+    service.refresh_player_latest_state(job_id="lag_seed")
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_curated",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "promo_view",
+                "event_time": "2026-03-09T10:00:00",
+                "event_properties": {"platform": "ios"},
+                "user_properties": {},
+            }
+        ],
+        job_id="lag_curated",
+    )
+    service.run_events_curation(job_id="lag_curated")
+
+    service.write_events_staging(
+        [
+            {
+                "job_id": "lag_pending",
+                "source": "adjust",
+                "player_id": "lag_user",
+                "canonical_user_id": "lag_user",
+                "event_type": "item_purchased",
+                "event_time": "2026-03-10T10:00:00",
+                "event_properties": {"platform": "ios", "revenue_usd": 1.99},
+                "user_properties": {},
+                "unexpected_field": "schema_drift",
+            }
+        ],
+        job_id="lag_pending",
+    )
+
+    health = client.get("/api/v1/health")
+    assert health.status_code == 200
+    assert health.json()["operational_metrics"]["staging_to_curated_lag_seconds"] > 0
+    assert health.json()["operational_metrics"]["aggregate_refresh_lag_seconds"] > 0
+    assert health.json()["operational_metrics"]["schema_drift_count"] > 0
+    alert_codes = {item["code"] for item in health.json()["alerts"]}
+    assert "curation_lag_present" in alert_codes
+    assert "aggregate_refresh_lag_present" in alert_codes
+    assert "schema_drift_present" in alert_codes
+
+
 def test_workflow_event_threshold_confirmation_and_experiment_extensions(client):
     _seed_mock_warehouse()
     _seed_prediction_job()
@@ -773,6 +1002,7 @@ def test_workflow_event_threshold_confirmation_and_experiment_extensions(client)
             "action": {
                 "channel": "webhook",
                 "content": "Threshold fallback",
+                "webhook_url": "http://127.0.0.1:9/unreachable",
                 "retry_policy": {"max_retries": 2, "base_backoff_seconds": 1},
             },
             "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
@@ -794,6 +1024,12 @@ def test_workflow_event_threshold_confirmation_and_experiment_extensions(client)
     deliveries = client.get(f"/api/v1/workflows/{threshold_workflow_id}/deliveries", headers={"x-actor-role": "operator"})
     assert deliveries.status_code == 200
     assert deliveries.json()["items"][0]["delivery_diagnostics"]["attempt_count"] == 3
+    assert deliveries.json()["items"][0]["provider_mode"] == "live"
+
+    diagnostics = client.get(f"/api/v1/workflows/{threshold_workflow_id}/delivery-diagnostics", headers={"x-actor-role": "operator"})
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["by_status"]["failed"] >= 1
+    assert diagnostics.json()["failure_classifications"]["provider_error"] >= 1
 
 
 def test_workflow_lifecycle_guards_return_locked(client):
@@ -977,6 +1213,11 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     )
     assert callback.status_code == 200
 
+    integrity = client.get("/api/v1/experiments/weekly_report_exp/integrity", headers={"x-actor-role": "analyst"})
+    assert integrity.status_code == 200
+    assert integrity.json()["outcome_count"] >= 1
+    assert integrity.json()["orphan_outcomes"] == 0
+
     metrics = client.get("/api/v1/copilot/metrics", headers={"x-actor-role": "analyst"})
     assert metrics.status_code == 200
     assert len(metrics.json()["items"]) >= 20
@@ -999,6 +1240,15 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     retry = client.post(f"/api/v1/copilot/reports/{report_id}/retry", headers={"x-actor-role": "analyst"})
     assert retry.status_code == 200
     assert retry.json()["report_id"]
+    retry_report_id = retry.json()["report_id"]
+
+    report_detail = client.get(f"/api/v1/copilot/reports/{report_id}", headers={"x-actor-role": "analyst"})
+    assert report_detail.status_code == 200
+    assert report_detail.json()["latest_retry_report_id"] == retry_report_id
+
+    report_runs = client.get(f"/api/v1/copilot/reports/{report_id}/runs", headers={"x-actor-role": "analyst"})
+    assert report_runs.status_code == 200
+    assert len(report_runs.json()["items"]) >= 2
 
     reports = client.get("/api/v1/copilot/reports", headers={"x-actor-role": "analyst"})
     assert reports.status_code == 200
@@ -1008,7 +1258,7 @@ def test_audience_copilot_weekly_report_and_permanent_delete(client):
     assert archived.status_code == 423
 
     denied_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "operator"})
-    assert denied_delete.status_code == 403
+    assert denied_delete.status_code == 423
 
     locked_delete = client.delete(f"/api/v1/cohorts/{cohort_id}/permanent", headers={"x-actor-role": "admin"})
     assert locked_delete.status_code == 423

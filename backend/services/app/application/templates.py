@@ -8,6 +8,7 @@ from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
 from app.application.workflows import WorkflowService
+from app.core.settings import get_settings
 
 
 class ScenarioTemplateService:
@@ -16,7 +17,7 @@ class ScenarioTemplateService:
         self.cohorts = CohortService(repository)
         self.experiments = ExperimentConfigService(repository)
         self.workflows = WorkflowService(repository)
-        self.copilot = CopilotService(repository)
+        self.copilot = CopilotService(repository, get_settings())
 
     def list_templates(self) -> Dict[str, Any]:
         return {"items": [self._template_summary(item) for item in self._templates()]}
@@ -41,17 +42,55 @@ class ScenarioTemplateService:
         cohort_name = f"{prefix}_{suffix}_cohort"
         experiment_id = f"{template_id}_{suffix}"
         workflow_name = f"{prefix}_{suffix}_workflow"
+        cohort_template = template["cohort_template"]
+        cohort_type = cohort_template["type"]
+        cohort_definition = dict(cohort_template["definition"])
+        refresh_mode = cohort_template.get("refresh_mode") or "daily"
+        cohort_tags = list(cohort_template.get("tags") or [template_id])
 
-        cohort = self.cohorts.create_cohort(
-            name=cohort_name,
-            cohort_type=template["cohort_template"]["type"],
-            definition=dict(template["cohort_template"]["definition"]),
-            refresh_mode=template["cohort_template"].get("refresh_mode") or "daily",
-            owner=owner,
-            description=template["description"],
-            tags=list(template["cohort_template"].get("tags") or [template_id]),
-            activate=bool(activate_cohort),
-        )
+        try:
+            cohort = self.cohorts.create_cohort(
+                name=cohort_name,
+                cohort_type=cohort_type,
+                definition=cohort_definition,
+                refresh_mode=refresh_mode,
+                owner=owner,
+                description=template["description"],
+                tags=cohort_tags,
+                activate=bool(activate_cohort),
+            )
+        except ValueError as exc:
+            fallback_members = list(cohort_template.get("fallback_members") or [])
+            if (not activate_cohort) or (not fallback_members) or "activation preflight failed" not in str(exc).lower():
+                raise
+            existing_cohort = next(
+                (item for item in self.cohorts.list_cohorts() if str(item.get("name") or "") == cohort_name),
+                None,
+            )
+            if existing_cohort is None:
+                cohort = self.cohorts.create_cohort(
+                    name=cohort_name,
+                    cohort_type="list",
+                    definition={"members": fallback_members},
+                    refresh_mode="manual",
+                    owner=owner,
+                    description=f"{template['description']} (demo fallback cohort)",
+                    tags=cohort_tags,
+                    activate=True,
+                )
+            else:
+                self.cohorts.update_cohort(
+                    existing_cohort["cohort_id"],
+                    {
+                        "type": "list",
+                        "definition": {"members": fallback_members},
+                        "refresh_mode": "manual",
+                        "description": f"{template['description']} (demo fallback cohort)",
+                        "tags": cohort_tags,
+                    },
+                )
+                self.cohorts.refresh_cohort(existing_cohort["cohort_id"], force=True)
+                cohort = self.cohorts.activate_cohort(existing_cohort["cohort_id"])
         experiment_payload = {
             **template["experiment_template"],
             "experiment_id": experiment_id,
@@ -141,7 +180,8 @@ class ScenarioTemplateService:
                     "refresh_mode": "daily",
                     "definition": {
                         "sql": (
-                            "SELECT canonical_user_id, email, predicted_churn_risk, churn_state "
+                            "SELECT canonical_user_id, email, predicted_churn_risk, churn_state, "
+                            "baseline_churn_score, recommended_template_id, recommended_variant "
                             "FROM prediction_results "
                             "WHERE predicted_churn_risk = 'high' AND COALESCE(churn_state, 'active') != 'churned'"
                         )
@@ -168,6 +208,26 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 24,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.0,
+                    "scenario_type": "churn_rescue",
+                    "optimization_mode": "fixed_ab",
+                    "holdout_floor_pct": 0.1,
+                    "max_daily_shift_pct": 0.1,
+                    "approved_variants": [
+                        {
+                            "variant_id": "treatment_a",
+                            "template_id": "churn_rescue_push_a",
+                            "channel": "push_notification",
+                            "content": "Return today for a win-back reward.",
+                            "send_window": {"hour": 9, "minute": 0},
+                        },
+                        {
+                            "variant_id": "treatment_b",
+                            "template_id": "churn_rescue_push_b",
+                            "channel": "push_notification",
+                            "content": "Come back now to claim your comeback bonus.",
+                            "send_window": {"hour": 11, "minute": 0},
+                        },
+                    ],
                     "rollout_policy": "conservative",
                     "multiple_comparisons_method": "none",
                 },
@@ -217,6 +277,7 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 24,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.2,
+                    "scenario_type": "monetization_lift",
                     "rollout_policy": "balanced",
                     "multiple_comparisons_method": "holm_bonferroni",
                 },
@@ -237,9 +298,23 @@ class ScenarioTemplateService:
                         "logic": "AND",
                         "conditions": [
                             {"field": "sessions_7d", "op": "<=", "value": 2},
-                            {"field": "days_since_last_seen", "op": "<=", "value": 7},
+                            {"field": "days_since_last_seen", "op": "<=", "value": 30},
                         ],
                     },
+                    "fallback_members": [
+                        {
+                            "canonical_user_id": "onboarding_demo_u1",
+                            "email": "demo_onboarding_u1@example.com",
+                            "sessions_7d": 1,
+                            "days_since_last_seen": 2,
+                        },
+                        {
+                            "canonical_user_id": "onboarding_demo_u2",
+                            "email": "demo_onboarding_u2@example.com",
+                            "sessions_7d": 2,
+                            "days_since_last_seen": 4,
+                        },
+                    ],
                     "tags": ["onboarding", "activation"],
                 },
                 "workflow_template": {
@@ -262,6 +337,7 @@ class ScenarioTemplateService:
                     "min_runtime_hours": 12,
                     "holdout_pct": 0.1,
                     "b_variant_pct": 0.0,
+                    "scenario_type": "onboarding_activation",
                     "rollout_policy": "aggressive",
                     "multiple_comparisons_method": "none",
                 },

@@ -7,14 +7,20 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
 class SqlWorkspaceService:
-    def __init__(self, repository, bigquery_service: BigQueryService | None = None):
+    def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
+        self.settings = settings
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
     def preview(self, sql: str, *, limit: int = 50, timeout_seconds: int = 30, scan_limit_rows: int = 50000) -> Dict[str, Any]:
+        resolved_limit = max(1, int(limit))
+        if resolved_limit > int(self.settings.max_sql_preview_rows_per_tenant):
+            raise ValueError(
+                f"SQL preview limit exceeds tenant cap of {self.settings.max_sql_preview_rows_per_tenant} rows."
+            )
         payload = self.bigquery_service.run_readonly_query(
             sql,
-            limit=limit,
+            limit=resolved_limit,
             timeout_seconds=timeout_seconds,
             max_scan_rows=scan_limit_rows,
         )
@@ -22,7 +28,7 @@ class SqlWorkspaceService:
         audit_payload = {
             "query_id": audit_id,
             "sql": sql,
-            "limit": limit,
+            "limit": resolved_limit,
             "timeout_seconds": timeout_seconds,
             "scan_limit_rows": scan_limit_rows,
             "estimated_scan_rows": payload.get("estimated_scan_rows", 0),

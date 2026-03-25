@@ -1,436 +1,464 @@
-**Why KairyxAI Exists**
+# KairyxAI
 
-As a Product Manager in the mobile gaming industry for over 7-8 years, I have been feeling the pain regularly regarding the disconnection between data analytics and marketing/retargeting efforts. 
+KairyxAI is an AI-driven operator platform for game growth, retention, and lifecycle execution. It is designed to sit between messy product data and downstream engagement tools so teams can move from raw events to audiences, actions, experiments, and reports in one system.
 
-It has been a messy process for each of the team members that they have to do manual process regularly (create rules, visualize data, make the decision, download data from one place, upload data to another place, execute the decisions etc etc). A lot of the time the data gets swamped in tasks and not synced up across teams (marketing, live ops, CS folks, PMs, Engs) so the result is on and off. Teams have to do caliberations again and again to make sure the rule is setup correctly, the data is cleaned up properly and uploaded without any issue before do the property marketing efforts. It just take TOO MUCH Time!
+The current repository already implements a working v1 control plane for:
 
-I want to stitch the splited data from different sources again with the AI powered decision making system and automate the whole process (at least majority of it for now).
+- `Data Core`: connectors, mappings, imports, predictions, SQL workspace, quality, identity, and governance
+- `Audience Engine`: cohort lifecycle, refresh, versions, metrics, compare, and activation controls
+- `Action Orchestrator`: workflows, triggers, delivery diagnostics, policy guards, and activation callbacks
+- `Experiment Hub`: config, assignment, exposure, outcome, integrity, summary, and rollout suggestion
+- `Insight Copilot`: query, explain, recommend, report, anomaly, and evidence-oriented reporting
 
+## Product Vision
 
-Modern game teams already have:
+Modern game teams already have analytics tools, messaging tools, attribution tools, and warehouses. What they usually do not have is a single execution layer that can:
 
-- MMPs (AppsFlyer, Adjust)
+- normalize inconsistent event data
+- identify high-value or at-risk player groups quickly
+- decide what action to take, or when to do nothing
+- execute and measure that action in a controlled way
+- explain results back to PM, growth, live ops, and data teams
 
-- Analytics (Firebase, Amplitude, Mixpanel)
+KairyxAI is the decision and operations layer for that loop.
 
-- Messaging tools (Braze, SendGrid, push providers)
+The v1 product direction is centered on one closed-loop outcome:
 
-What they don’t have is a system that:
+`unified data -> high-value audience -> workflow execution -> experiment measurement -> copilot insight -> weekly review`
 
-- Understands messy, inconsistent event data automatically
+The first end-to-end scenario is `Churn Rescue`, with `Monetization Lift` and `Onboarding Activation` following as reusable templates.
 
-- Learns player behavior patterns without manual segmentation
+## Current Repository Status
 
-- Decides when not to message as much as when to engage
+This repository is no longer just an early prototype. It now contains:
 
-- Continuously optimizes for retention and monetization outcomes
+- a FastAPI-based operator API under `/api/v1`
+- a static operator console served by the backend
+- SQLAlchemy + Alembic control-plane persistence
+- mock-first local development mode
+- a growing set of production-shaped contracts for imports, workflows, experiments, copilot, audit, and health
 
+What is still in progress is not the existence of the core APIs, but the remaining hardening work around:
 
-_KairyxAI is built to be that AI decision layer._
+- production readiness
+- stronger provider-backed activation and measurement
+- deeper frontend productization
+- broader tenant UX polish beyond the new OIDC + tenant-switching baseline
+- more automated optimization under manual confirmation
 
+The source of truth for that roadmap lives in:
 
-**What KairyxAI Does**
+- [KairyxAI v1 Master PRD](docs/KAIRYXAI_V1_MASTER_PRD.md)
+- [GitHub Wiki product user guide source](docs/GITHUB_WIKI_PRODUCT_USER_GUIDE.md)
+- [Data Core v1 PRD](docs/DATA_CORE_V1_PRD.md)
+- [Insight Copilot v1 PRD](docs/COPILOT_V1_PRD.md)
+- [Audience Engine v1 PRD](docs/AUDIENCE_ENGINE_V1_PRD.md)
+- [Action Orchestrator v1 PRD](docs/ACTION_ORCHESTRATOR_V1_PRD.md)
+- [Experiment Hub v1 PRD](docs/EXPERIMENT_HUB_V1_PRD.md)
 
-At a high level, KairyxAI:
+## Core Modules
 
-1. Connects to existing data sources via APIs and webhooks
+### 1. Data Core
 
-2. Automatically normalizes and tags events using AI
+Data Core owns the upstream control plane:
 
-3. Builds player-level behavioral models in near real time
+- connector configuration and health
+- field mapping and mapping governance
+- import jobs, replay, backfill, and quality gates
+- identity stitching and source-of-truth decisions
+- SQL workspace and read-only warehouse access
+- prediction jobs and prediction result availability
 
-4. Decides the best action (or no action) for each player
+Primary backend surface:
 
-5. Executes engagement via email, push notification, or in-game hooks
+- `/api/v1/connectors`
+- `/api/v1/mappings`
+- `/api/v1/imports`
+- `/api/v1/predictions`
+- `/api/v1/sql-workspace`
 
-6. Learns from outcomes to improve future decisions
+### 2. Audience Engine
 
-All without requiring teams to define funnels, segments, or rules upfront.
+Audience Engine turns unified data into reusable targeting assets:
 
+- rule, SQL, and list-based cohorts
+- versioning and refresh history
+- snapshot and delta tracking
+- activation preflight
+- metrics and version comparison
 
-**Core Principles**
+Primary backend surface:
 
-- MMP-agnostic – Bring your existing stack
+- `/api/v1/cohorts`
 
-- Decision-first – Analytics exist only to drive actions
+### 3. Action Orchestrator
 
-- Respectful engagement – Fewer, smarter messages
+Action Orchestrator controls how audiences become actions:
 
-- Continuous learning – Every action improves the system
-
-- Explainable AI – Every decision has a reason
-
-
-**System Architecture (Conceptual)**
-
-
-        Data Sources (MMPs / Analytics / Game Events)
-               
-                ↓
-        
-        AI Data Normalization
-              
-                ↓
-      
-        Player Modeling & Embeddings
-              
-                ↓
-        
-        Decision & Optimization Engine
-               
-                ↓
-    
-        Execution (Email / Push / In-Game)
-              
-                ↓
-          
-        Outcome Feedback Loop
-
-        
-
-**What This Repository Is**
-
-This repo focuses on:
-
-- Core system modules and interfaces
-
-- AI agent prompts and system instructions
-
-- Data normalization and decision logic
-
-- Reference implementations for connectors and execution
-
-**Current Status**
-
-🚧 Early-stage / active development
-
-Initial focus:
-
-- API-based data ingestion
-
-- AI-driven event normalization
-
-- Player modeling and segmentation
-
-- Automated churn-prevention actions
-
-**Who This Is For**
-
-- Game engineers and data engineers
-
-- Product managers working on growth / live ops
-
-- AI engineers interested in applied decision systems
-
-- Founders building tooling for games or consumer apps
-
-## Scalability Direction
-
-The repository keeps its current local-first demo flow and is evolving toward a production GCP ingestion path for high-volume event processing.
-
-- Local play-around mode remains centered on `DATA_BACKEND_MODE=mock`
-- Production scale target is GCS + Pub/Sub + Dataflow + BigQuery
-- The implementation blueprint lives in [docs/scalable-ingestion-blueprint.md](/Users/jeremyz/Projects/KairyxAI/docs/scalable-ingestion-blueprint.md)
-
-**Disclaimer**
-
-KairyxAI is an experimental project.
-
-Expect rapid iteration, architectural changes, and evolving abstractions.
-
-=========================================
-
-Test locally (no full infra required):
-
-### Fast start (recommended)
+- workflow drafts and published versions
+- daily, event, threshold, and manual triggers
+- delivery diagnostics and callback ingestion
+- policy counters, cooldowns, budgets, and guardrails
+- exports and downstream execution controls
+
+Primary backend surface:
+
+- `/api/v1/workflows`
+- `/api/v1/orchestrator`
+- `/api/v1/activation`
+- `/api/v1/exports`
+
+### 4. Experiment Hub
+
+Experiment Hub measures whether actions worked:
+
+- experiment configs and versions
+- deterministic assignment
+- exposure and outcome logging
+- integrity checks
+- summary and decision outputs
+- rollout suggestions
+
+Primary backend surface:
+
+- `/api/v1/experiments`
+
+### 5. Insight Copilot
+
+Insight Copilot is the operator-facing analysis layer:
+
+- natural-language metric query
+- anomaly explanation
+- action recommendation drafts
+- daily and weekly reports
+- evidence-backed structured output
+
+Primary backend surface:
+
+- `/api/v1/copilot`
+
+## Architecture Overview
+
+### Current implementation
+
+- Backend: FastAPI
+- Control-plane persistence: SQLAlchemy + Alembic
+- Local default database: SQLite
+- Local runtime mode: `DATA_BACKEND_MODE=mock`
+- Frontend: static HTML/CSS/JS operator console served by the backend
+- Operator auth: OIDC bearer token + `X-Kairyx-Tenant`, with legacy header auth available only for local/demo compatibility
+- Secrets: `*_ref` resolution via environment variables or Google Secret Manager
+- Local smoke coverage: Playwright-driven operator console smoke script
+
+### Runtime modes
+
+KairyxAI currently supports two practical shapes:
+
+1. `Local demo mode`
+   - mock-backed
+   - fastest way to explore the operator flows
+   - best for development, UI checks, and API iteration
+
+2. `Production-shaped SaaS mode`
+   - shared multi-tenant control plane on Postgres
+   - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
+   - tenant-scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
+   - OIDC PKCE login in the frontend and bearer-token operator traffic on `/api/v1`
+
+## Repository Layout
+
+```text
+KairyxAI/
+├── backend/services/
+│   ├── app/
+│   │   ├── api/            # FastAPI routers and schemas
+│   │   ├── application/    # Service-layer module logic
+│   │   ├── core/           # settings, db, governance, errors, runtime
+│   │   └── infrastructure/ # SQLAlchemy repositories and db models
+│   ├── tests/              # backend test coverage
+│   ├── cloudrun/           # Cloud Run service manifests
+│   ├── main_service.py     # backend entrypoint shim for local demo
+│   └── requirements.txt
+├── frontend/
+│   ├── index.html
+│   └── assets/
+│       ├── operator-console.css
+│       ├── operator-console.js
+│       └── favicon.svg
+├── docs/                   # master PRD + module PRDs + development memory
+├── scripts/
+│   └── operator_console_smoke.sh
+└── run_local_demo.sh
+```
+
+## Quick Start
+
+### Prerequisites
+
+- Python `3.14`
+- `bash`
+- optional: Playwright CLI support if you want to run the operator-console smoke flow
+
+### Recommended local start
 ```bash
 ./run_local_demo.sh
 ```
-This starts:
-- Backend: `http://localhost:8000`
-- Frontend (served by backend): `http://localhost:8000`
 
-Default mode is local mock data backend (`DATA_BACKEND_MODE=mock`).
-The local demo now requires Python `3.14` and will create/use `.venv` automatically.
+This starts:
+
+- backend API at `http://localhost:8000`
+- frontend operator console at `http://localhost:8000`
+
+Default local behavior:
+
+- `DATA_BACKEND_MODE=mock`
+- control-plane DB stored under `backend/services/.kairyx_control_plane.db`
+- local runtime DB stored under `backend/services/.kairyx_local.db`
+- `LEGACY_HEADER_AUTH_ENABLED=true` so the local console can operate without a live IdP
 
 ### Manual start
-1. Checkout the project
-2. browse to `/backend/services/`
-3. create a Python 3.14 virtualenv from the repo root: `python3.14 -m venv .venv && source .venv/bin/activate`
-4. run: `pip install -r requirements.txt`
-5. choose data backend mode:
-   - Mock mode (dev/qa): `export DATA_BACKEND_MODE=mock`
-   - GCP mode (prod-like): `export DATA_BACKEND_MODE=gcp`
-6. for GCP mode, set:
-   - `export BIGQUERY_PROJECT_ID=<your_project_id>`
-   - `export GCS_BUCKET_NAME=<your_bucket_name>`
-   - configure ADC (Application Default Credentials)
-<<<<<<< HEAD
-6. run backend: `uvicorn main_service:app --reload --host 0.0.0.0 --port 8000 --reload-dir ../../frontend`
-
-The frontend is served directly by the backend at `/`.
-
-Gemini API key is optional now: if unavailable, churn scoring/action uses local heuristic fallback mode.
-
-Local reliability/security defaults added:
-- Ingestion retry + backoff for external source pulls
-- Dead-letter log for failed ingestion: `.cache/ingest_dlq.jsonl`
-- Local audit log for connector changes: `.audit.log.jsonl`
-- Local SQLite job persistence: `backend/services/.kairyx_local.db`
-
-P1 execution adapters (local-friendly):
-- `email` channel routes via SendGrid when configured, otherwise local simulation
-- `braze` channel routes via Braze REST when configured, otherwise push simulation
-- Configure Braze via `POST /configure-braze` with `{ api_key, rest_endpoint }`
-
-P1 experimentation (A/B + holdout, local):
-- Experiment config endpoint: `GET/POST /experiments/config`
-- Summary endpoint: `GET /experiments/summary?experiment_id=...`
-- Exposure log: `.experiments_exposure.jsonl`
-- Outcome log: `.experiments_outcome.jsonl`
-- Default setup: 10% holdout, remaining users split A/B 50:50
-
-## Experiment Framework: Setup & Usage
-
-This project includes a built-in local experimentation framework for churn engagement decisions.
-
-### 1) Start the app
-```bash
-./run_local_demo.sh
-```
-
-### 2) Configure experiment parameters
-Use the Backend Workbench UI (Experiment Control section), or call API directly.
-
-Get current config:
-```bash
-curl http://localhost:8000/experiments/config
-```
-
-Update config:
-```bash
-curl -X POST http://localhost:8000/experiments/config \
-  -H "Content-Type: application/json" \
-  -d '{
-    "experiment_id": "churn_engagement_v1",
-    "enabled": true,
-    "holdout_pct": 0.10,
-    "b_variant_pct": 0.50
-  }'
-```
-
-Config meanings:
-- `experiment_id`: logical name for one experiment run
-- `enabled`: enable/disable experiment routing
-- `holdout_pct`: % of users receiving no action (control)
-- `b_variant_pct`: split of non-holdout traffic between A/B
-
-### 3) Generate experiment exposures
-Run player analysis flow (UI: Player Inspector / Analyze & Engage) or API:
-```bash
-curl -X POST http://localhost:8000/analyze-and-engage-player \
-  -H "Content-Type: application/json" \
-  -d '{"player_id":"p_8921","prediction_mode":"local"}'
-```
-
-What happens automatically:
-- user is deterministically assigned to `holdout`, `treatment_a`, or `treatment_b`
-- holdout users get `NO_ACTION`
-- treatment B gets a variant-marked message
-- exposure and outcome are logged locally
-
-### 4) Inspect results and uplift
-```bash
-curl "http://localhost:8000/experiments/summary?experiment_id=churn_engagement_v1"
-```
-
-Summary includes per-group:
-- sample size `n`
-- `engagement_rate`
-- `return_rate`
-- `uplift_vs_holdout_return_rate` (for treatment groups)
-
-### 5) Local files used
-- Exposures: `.experiments_exposure.jsonl`
-- Outcomes: `.experiments_outcome.jsonl`
-
-### Notes
-- This is a local/demo experimentation pipeline (not a full statistical engine yet).
-- Assignment is stable for a given `(experiment_id, player_id)`.
-- For clean reruns, change `experiment_id` or archive/remove local experiment log files.
-
-## Multi-Source Connector Layer (Adjust / AppsFlyer / Amplitude)
-
-KairyxAI now uses a connector registry under `backend/services/connectors/`:
-- `amplitude_connector.py`
-- `adjust_connector.py`
-- `appsflyer_connector.py`
-- `registry.py` (connector routing)
-
-Ingestion pipeline uses the selected connector automatically via connector type.
-
-### Configure connectors
-- Amplitude: `POST /configure-amplitude-keys`
-- Adjust: `POST /configure-adjust-credentials` (`api_token`, optional `api_url`)
-- AppsFlyer: `POST /configure-appsflyer` (`api_token`, `app_id`, optional `pull_api_url`)
-
-AppsFlyer configure example:
-```bash
-curl -X POST http://localhost:8000/configure-appsflyer \
-  -H "Content-Type: application/json" \
-  -d '{"api_token":"YOUR_TOKEN","app_id":"com.your.game"}'
-```
-
-### Import from connector sources
-Once configured, sources appear in the workbench import source selector (Amplitude/Adjust/AppsFlyer).
-You can import from multiple sources in one job by passing comma-separated connector names:
 
 ```bash
-curl -X POST http://localhost:8000/ingest-and-process-data \
-  -H "Content-Type: application/json" \
-  -d '{"start_date":"20250101","end_date":"20250103","source":"Amplitude 1,AppsFlyer 1,Adjust 1","continue_on_source_error":true,"auto_mapping":false}'
+python3.14 -m venv .venv
+source .venv/bin/activate
+cd backend/services
+pip install -r requirements.txt
+export DATA_BACKEND_MODE=mock
+uvicorn main_service:app --host 0.0.0.0 --port 8000 --reload --reload-dir ../../frontend
 ```
 
-`auto_mapping` behavior:
-- default: `false` (unchecked)
-- when `true`: job pulls data then pauses at `Awaiting Mapping` status
-- Workbench now shows a guided banner for paused jobs and auto-focuses mapping panel to the first pending source
-- after you complete manual mapping, call:
+Then open:
+
+- [http://localhost:8000](http://localhost:8000)
+
+Gemini is optional. When no trained local churn model is active, `prediction_mode=local` still runs using the built-in `heuristic_v1` fallback.
+
+## Local Model Readiness
+
+The `Local Model` path stays available even when no promoted supervised churn model exists yet.
+
+- `heuristic_v1` is the always-available local baseline
+- a supervised local churn model retrains in batch from holdout / untreated rows and observed outcomes
+- the learned model is promoted only when it beats the heuristic baseline on validation
+- until then, `prediction_mode=local` continues to run using `heuristic_v1`
+
+Readiness is exposed through:
+
+- `GET /api/v1/predictions/models/runs`
+  - includes top-level `readiness`
+  - `state`: `untrained | learning | fallback | ready`
+  - `using_model_version`
+  - `reason`
+  - `last_trained_at`
+  - `baseline_rows`
+  - `min_rows_required`
+  - `class_balance`
+  - `validation_accuracy`
+  - `heuristic_accuracy`
+- `GET /api/v1/predictions/models/latest`
+  - returns the latest trained local model version when one exists
+- `POST /api/v1/predictions/models/train`
+  - triggers a local batch retrain
+  - updates `training_status` as the run progresses and completes
+
+Prediction job metadata also records:
+
+- `effective_local_model_version`
+- `effective_local_model_state`
+
+The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` badge beside the prediction engine selector, warns when `Local Model` is currently using `heuristic_v1`, and includes:
+
+- `Train Local Model`
+  - manually starts a local retrain from the operator workbench
+- `Refresh Model Status`
+  - refreshes the latest readiness and training status without starting a new run
+- inline training status
+  - shows the latest training state, labeled-row count, class balance, and last update time
+
+## Prediction Audience Selection
+
+The churn workbench now supports two prediction audience modes:
+
+- `Source` is the default operator path
+  - choose a source such as `Amplitude 1`
+  - the prediction job resolves to the latest completed import for that source when the run starts
+- `Import` remains available for audit, debugging, and replay against a specific completed import
+
+In both modes:
+
+- the selected audience defines the roster that gets scored
+- churn features come from merged tenant history across completed imports
+- the prediction job records the resolved `import_job_id` that was actually used
+- completed cached jobs can be viewed, but stale jobs require explicit rerun confirmation in the UI
+
+## Import Diagnostics Load Behavior
+
+The Imports page now keeps restart-time load lighter:
+
+- import operations, quality, and manifest diagnostics load on demand instead of auto-fetching on first page render
+- schema contracts are also loaded on demand
+- import polling continues only while at least one import job is `queued`, `running`, or `stopping`
+- when the control plane is temporarily busy right after restart, import detail reads retry once and then surface a retryable busy message instead of silently failing
+
+## Key Environment Variables
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DATA_BACKEND_MODE` | Data runtime mode | `mock` |
+| `CONTROL_PLANE_DATABASE_URL` | Control-plane database URL | local SQLite path |
+| `KAIRYX_LOCAL_DB_PATH` | Local runtime/checkpoint DB | local SQLite path |
+| `APP_ENV` | Runtime environment (`local`, `prod`) | `local` |
+| `API_ACCESS_KEY` | Optional API key for legacy local header auth | empty |
+| `LEGACY_HEADER_AUTH_ENABLED` | Enables `x-actor-*` local/demo auth headers | `true` |
+| `OIDC_ISSUER` | Expected JWT issuer for operator traffic | empty |
+| `OIDC_AUDIENCE` | Expected JWT audience for operator traffic | empty |
+| `OIDC_JWKS_URL` | JWKS endpoint for bearer-token validation | empty |
+| `OIDC_JWT_SIGNING_SECRET` | HS256 signing secret for local/test bearer-token validation | empty |
+| `CORS_ALLOWED_ORIGINS` | Explicit browser origins allowed in production | `*` |
+| `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |
+| `SERVICE_ROLE` | Runtime role (`operator-api`, `scheduler-worker`, etc.) | `operator-api` |
+| `SCHEDULER_ENABLED` | Enables background control loop | `true` |
+| `SQLITE_BUSY_TIMEOUT_SECONDS` | SQLite busy timeout | `15` |
+| `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import network timeout | `60` |
+| `PREDICTION_NETWORK_TIMEOUT_SECONDS` | Prediction network timeout | `20` |
+| `MAX_SQL_PREVIEW_ROWS_PER_TENANT` | Tenant limit for SQL preview rows | `1000` |
+| `MAX_IMPORT_JOBS_PER_TENANT` | Tenant limit for active imports | `10` |
+| `MAX_EXPORT_JOBS_PER_TENANT` | Tenant limit for active exports | `20` |
+| `MAX_COPILOT_REPORTS_PER_TENANT` | Tenant limit for stored reports | `50` |
+
+## Production Deployment
+
+The production entrypoint is `app.main:app`. `backend/services/main_service.py` and `backend/services/app.yaml` remain only for local/demo compatibility and are not the production deployment path.
+
+Production deployment assets in this repository now include:
+
+- [backend/services/Dockerfile](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/Dockerfile)
+- [backend/services/.env.example](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/.env.example)
+- [backend/services/cloudrun/operator-api.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/operator-api.yaml)
+- [backend/services/cloudrun/import-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/import-worker.yaml)
+- [backend/services/cloudrun/prediction-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/prediction-worker.yaml)
+- [backend/services/cloudrun/export-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/export-worker.yaml)
+- [backend/services/cloudrun/scheduler-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/scheduler-worker.yaml)
+- [docs/RUNBOOKS_MULTITENANT_GCP.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md)
+
+For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, and ADC credentials.
+
+## How to Use the Product Locally
+
+### Operator console path
+
+1. Start the demo
+2. Open the left navigation in the operator console
+3. Work through the modules in sequence:
+   - `Data Core`
+   - `Audience Engine`
+   - `Action Orchestrator`
+   - `Experiment Hub`
+   - `Insight Copilot`
+   - `Help`
+
+### Typical local flow
+
+1. Create or inspect a connector
+2. Run an import
+3. Run predictions
+4. Create or refresh a cohort
+5. Publish or test a workflow
+6. Review experiment summary or integrity
+7. Ask Copilot for explanation or a report
+
+## API Surface Snapshot
+
+The current repo exposes a resource-oriented v1 control plane under `/api/v1`.
+
+Common resources include:
+
+- `/api/v1/health`
+- `/api/v1/connectors`
+- `/api/v1/mappings`
+- `/api/v1/imports`
+- `/api/v1/predictions`
+- `/api/v1/sql-workspace`
+- `/api/v1/cohorts`
+- `/api/v1/workflows`
+- `/api/v1/orchestrator`
+- `/api/v1/activation`
+- `/api/v1/exports`
+- `/api/v1/experiments`
+- `/api/v1/copilot`
+- `/api/v1/audit`
+- `/api/v1/templates`
+
+There is also a lightweight liveness endpoint at:
+
+- `/api/v1/health/live`
+- `/health/live`
+
+## Validation and Local Development
+
+### Backend tests
 
 ```bash
-curl -X POST http://localhost:8000/job/<job_name>/process-after-mapping
+.venv/bin/pytest backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
 ```
 
-### Connector health check
+### Frontend/operator smoke
+
 ```bash
-curl http://localhost:8000/connector-health/<connector_name>
+BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
 ```
-Example:
+
+### Lightweight frontend checks
+
 ```bash
-curl http://localhost:8000/connector-health/AppsFlyer%201
+node --check frontend/assets/operator-console.js
+git diff --check
 ```
 
-### Source freshness / last success
-```bash
-curl http://localhost:8000/connector-freshness
-```
-Returns per-connector:
-- `last_attempt_at`
-- `last_success_at`
-- `last_ingested_events`
-- `last_error`
+## Current Strengths
 
-### Local demo behavior
-In `DATA_BACKEND_MODE=mock`, Adjust and AppsFlyer return deterministic mock attribution events so the full pipeline can be tested locally without external infra.
+The repository is already strong in these areas:
 
-### Merge + dedupe strategy (current)
-During processing, events from all selected sources are normalized and merged.
+- local mock closed-loop development
+- resource-oriented operator APIs
+- audit and health surfaces
+- job lifecycle management for imports, predictions, and exports
+- cohort, workflow, experiment, and copilot control-plane coverage
+- frontend served directly by the backend with no build pipeline required
 
-Identity resolution (phase 1-2):
-- build deterministic identity links by `(source, source_user_id) -> canonical_user_id`
-- if same `source_user_id` appears across sources, it links to the same canonical id
-- inspect with: `GET /identity-links`
+## Current Limitations
 
-Dedupe priority:
-1. `source_event_id` if present
-2. fallback key: `(canonical_user_id, event_type, event_time, source)`
+The remaining v1 work is mostly hardening and productionization:
 
-Connector API response parsing supports common wrappers (`data`, `results`, `items`, `rows`, `events`, nested `data.records`) to reduce integration friction.
+- production-grade auth, tenant isolation, and secret management are not complete
+- provider-backed activation and outcome measurement still need deeper stabilization
+- the operator console is improving, but is not yet a fully productized multi-surface app
+- automated optimization remains intentionally limited and should remain human-confirmed by default
 
-Per-job import output now includes:
-- `source_stats`: ingested event counts per source
-- `processing_stats`: normalized count, deduped count, duplicates removed
-- `processing_stats.quality`: clean/flagged rows and data-quality flag counts
+## Roadmap Direction
 
-Cleanup P1 currently performs:
-- timestamp normalization to ISO with `invalid_event_time` flag
-- player ID fallback (`unknown_user`) with `missing_player_id` flag
-- revenue type coercion (`revenue_usd`) with `malformed_revenue` flag
-- currency normalization to uppercase
+Near-term v1 backlog themes:
 
-Cleanup P2 adds:
-- rejection policy: critically bad rows (missing player id / invalid event time) are isolated to `.cache/rejected_events.jsonl`
-- conflict resolution logging: cross-source conflicts on `campaign/adset/media_source` for same canonical event are logged to `.cache/conflict_log.jsonl`
-- job stats include `rejected_events` and `conflicts_logged`
+- operator console hardening
+- production readiness baseline
+- real activation and measurement stabilization
+- tighter evidence loops across Copilot, Audience, Action, and Experiment
 
-APIs:
-- `GET /cleanup/rejected-events` (supports `limit`, `job_identifier`, `source`)
-- `GET /cleanup/conflicts` (supports `limit`, `job_identifier`, `source`)
+Next-step themes after that:
 
-P2.5 frontend observability:
-- Workbench includes a Cleanup Observability panel
-- Filter rejected/conflict logs by job/source
-- Table views for quick triage
+- controlled closed-loop optimization
+- more productized module consoles
+- stronger deployment, monitoring, and runbook maturity
 
-### Manual field mapping (canonical override)
-Use this when sources use different field names (e.g., `PID`, `uid`, `user_id`).
+The detailed backlog and ownership live in the PRDs under `docs/`.
 
-API:
-- `GET /field-mapping/{connector_name}`
-- `POST /field-mapping/{connector_name}` with `{ "mapping": { ... } }`
-- `POST /field-mapping/preview` with a sample raw record
+## Who This Repository Is For
 
-Example mapping:
-```json
-{
-  "canonical_user_id": "event_properties.PID",
-  "event_name": "event_type",
-  "event_time": "timestamp",
-  "source_event_id": "insert_id",
-  "campaign": "campaign_name",
-  "adset": "adgroup",
-  "media_source": "network"
-}
-```
+- game product managers and growth operators
+- live ops and CRM teams
+- data engineers and backend engineers
+- AI engineers building decision systems on top of product data
 
-Frontend workbench now includes:
-- Manual Field Mapping section (load/save/preview)
-- Identity Links table for cross-source user matching visibility
+## Disclaimer
 
-## Churn prediction model split (active vs already churned)
-
-Churn is now evaluated in 2 layers:
-1. **Already churned** (rule-based):
-   - configurable `churn_inactive_days` (default 14)
-   - if `days_since_last_seen >= churn_inactive_days` => `churn_state = churned`
-2. **Likely to churn** (risk scoring):
-   - only evaluated for `churn_state = active`
-   - returns `churn_risk`, `reason`, and `top_signals`
-
-API:
-- `GET /churn/config`
-- `POST /churn/config` with `{ "churn_inactive_days": 14, "third_party_for_active": true }`
-
-Notes:
-- `third_party_for_active=true` makes active-user churn prediction use local+cloud (parallel) mode by default.
-- Already-churned users still use rule-based result only (no third-party call).
-
-External churn risk list ingestion (match by user_id or email):
-- `POST /churn/external-updates`
-- `GET /churn/external-updates`
-
-Example:
-```json
-{
-  "items": [
-    {"user_id": "u_123", "churn_risk": "high", "reason": "CRM model score", "source": "crm_model_v2"},
-    {"email": "a@b.com", "churn_risk": "medium", "source": "warehouse_batch"}
-  ]
-}
-```
-When matched, predictions are auto-overridden for active users and `prediction_source` is marked as `external:<source>`.
-
-Workbench now includes an **External Churn Updates** panel to paste/upload JSON lists and view ingest stats.
-It also supports pre-upload validation (`/churn/external-updates/validate`) with preview + row-level errors.
-
-Export churn audience lists:
-- Export estimate: `GET /churn/export/estimate?job_name=<job>&prediction_mode=local&include_churned=true&include_risks=high,medium,low`
-- CSV download: `GET /churn/export/csv?job_name=<job>&prediction_mode=local&include_churned=true&include_risks=high,medium,low`
-- Third-party push: `POST /churn/export/third-party`
-  - Supports webhook URL/token from request or `/churn/config`
-
-Import status now includes step/progress fields:
-- `status`
-- `current_step`
-- `progress_pct`
-(frontend shows progress bar instead of only `Processing`).
+KairyxAI is still an actively evolving v1 platform. The repository is usable, but the architecture, interfaces, and operational boundaries are still being hardened as the product moves from mock-first local development toward production-grade execution.

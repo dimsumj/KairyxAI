@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
+from typing import Any
 
 
 class PredictionPollingAccessFilter(logging.Filter):
@@ -49,3 +51,9 @@ def configure_access_log_filters() -> None:
     if any(isinstance(item, PredictionPollingAccessFilter) for item in access_logger.filters):
         return
     access_logger.addFilter(PredictionPollingAccessFilter())
+
+
+def emit_structured_log(event_type: str, **fields: Any) -> None:
+    logger = logging.getLogger("kairyx.structured")
+    payload = {"event_type": event_type, **fields}
+    logger.info(json.dumps(payload, sort_keys=True, default=str))

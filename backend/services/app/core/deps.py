@@ -78,8 +78,9 @@ def get_cohort_service(
 
 def get_sql_workspace_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
 ) -> SqlWorkspaceService:
-    return SqlWorkspaceService(repository)
+    return SqlWorkspaceService(repository, settings)
 
 
 def get_workflow_service(
@@ -90,8 +91,9 @@ def get_workflow_service(
 
 def get_copilot_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
 ) -> CopilotService:
-    return CopilotService(repository)
+    return CopilotService(repository, settings)
 
 
 def get_health_monitor_service(

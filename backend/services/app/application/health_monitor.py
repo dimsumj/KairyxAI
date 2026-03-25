@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List
 
+from app.application.experiments import ExperimentConfigService
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
@@ -50,6 +51,18 @@ class HealthMonitorService:
         identity_summary = self.bigquery_service.build_identity_summary()
         rejected_count = len(self.bigquery_service.get_pipeline_dead_letters(limit=5000))
         standardized_rows = len(self.bigquery_service.get_rows_for_alias("standardized"))
+        schema_contracts = self.bigquery_service.list_schema_contracts()
+        schema_drift_count = sum(1 for item in schema_contracts if str(item.get("compatibility_status") or "") not in {"compatible", "no_data"})
+        lag_summary = self.bigquery_service.get_pipeline_lag_summary()
+        lag_freshness = lag_summary.get("freshness") or {}
+        lag_counts = lag_summary.get("table_counts") or {}
+        experiment_service = ExperimentConfigService(self.repository)
+        experiment_integrity = []
+        for record in self.repository.list_resources("experiment"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("status") or record.get("status") or "").lower() not in {"active", "stopped"}:
+                continue
+            experiment_integrity.append(experiment_service.get_measurement_integrity(str(payload.get("experiment_id") or record.get("resource_id"))))
         invalid_decisions = sum(
             1
             for item in decision_logs
@@ -61,6 +74,9 @@ class HealthMonitorService:
             if str((item.get("payload") or {}).get("response", {}).get("conclusion") or (item.get("payload") or {}).get("conclusion") or "") == "insufficient_evidence"
         )
         provider_failures = sum(1 for item in deliveries if str(item.get("delivery_status") or "") == "failed")
+        simulator_deliveries = sum(1 for item in deliveries if bool(item.get("simulated")) or str(item.get("provider_mode") or "") in {"simulator", "fallback_simulator"})
+        integrity_warning_count = sum(int(item.get("warning_count") or 0) for item in experiment_integrity)
+        max_outcome_lag_seconds = max((int(item.get("outcome_lag_seconds") or 0) for item in experiment_integrity), default=0)
         metrics = {
             "awaiting_mapping_count": sum(1 for job in import_jobs if str(job.get("status") or "") == "awaiting_mapping"),
             "cohort_refresh_failure_rate": round(len(cohort_failures) / max(1, len(cohort_events) + len(cohort_failures)), 4),
@@ -74,6 +90,13 @@ class HealthMonitorService:
             "canonical_user_id_coverage": round(float(identity_summary.get("canonical_user_id_coverage") or 0.0), 2),
             "reject_rate": round(rejected_count / max(1, standardized_rows + rejected_count), 4),
             "provider_failure_rate": round(provider_failures / max(1, len(deliveries)), 4),
+            "simulator_delivery_rate": round(simulator_deliveries / max(1, len(deliveries)), 4),
+            "dead_letter_rows": int(lag_counts.get("dead_letter_rows") or 0),
+            "staging_to_curated_lag_seconds": int(lag_freshness.get("staging_to_curated_lag_seconds") or 0),
+            "aggregate_refresh_lag_seconds": int(lag_freshness.get("curated_to_latest_state_lag_seconds") or 0),
+            "schema_drift_count": schema_drift_count,
+            "experiment_integrity_warning_count": integrity_warning_count,
+            "experiment_outcome_lag_seconds": max_outcome_lag_seconds,
         }
         alerts = []
         if metrics["awaiting_mapping_count"] > 0:
@@ -82,20 +105,44 @@ class HealthMonitorService:
             alerts.append(self._alert("data_core", "canonical_coverage_low", "critical", metrics["canonical_user_id_coverage"], "canonical_user_id coverage is below 90%.", resolved_at))
         if metrics["reject_rate"] > 0.05:
             alerts.append(self._alert("data_core", "reject_rate_high", "critical", metrics["reject_rate"], "Reject rate exceeded the 5% gate.", resolved_at))
+        if metrics["dead_letter_rows"] > 0:
+            alerts.append(self._alert("data_core", "dead_letters_present", "warning", metrics["dead_letter_rows"], "Dead-letter rows require remediation review.", resolved_at))
+        if metrics["staging_to_curated_lag_seconds"] > 0:
+            alerts.append(self._alert("data_core", "curation_lag_present", "warning", metrics["staging_to_curated_lag_seconds"], "events_staging is ahead of events_curated.", resolved_at))
+        if metrics["aggregate_refresh_lag_seconds"] > 0:
+            alerts.append(self._alert("data_core", "aggregate_refresh_lag_present", "warning", metrics["aggregate_refresh_lag_seconds"], "player_latest_state is behind curated events.", resolved_at))
+        if metrics["schema_drift_count"] > 0:
+            alerts.append(self._alert("data_core", "schema_drift_present", "warning", metrics["schema_drift_count"], "Schema contract drift detected in warehouse aliases.", resolved_at))
         if metrics["cohort_refresh_failure_rate"] > 0.05:
             alerts.append(self._alert("audience_engine", "refresh_failure_high", "warning", metrics["cohort_refresh_failure_rate"], "Dynamic cohort refresh success is below 95%.", resolved_at))
         if metrics["provider_failure_rate"] > 0.1:
             alerts.append(self._alert("action_orchestrator", "provider_failure_high", "warning", metrics["provider_failure_rate"], "Provider delivery failures are above 10%.", resolved_at))
+        if metrics["simulator_delivery_rate"] > 0.25:
+            alerts.append(self._alert("action_orchestrator", "simulator_delivery_high", "warning", metrics["simulator_delivery_rate"], "Simulator or fallback delivery usage is above 25%.", resolved_at))
         if metrics["invalid_experiment_decision_rate"] > 0.0:
             alerts.append(self._alert("experiment_hub", "invalid_decisions_present", "warning", metrics["invalid_experiment_decision_rate"], "Some experiment decisions are invalid and require investigation.", resolved_at))
+        if metrics["experiment_integrity_warning_count"] > 0:
+            alerts.append(self._alert("experiment_hub", "measurement_integrity_warning", "warning", metrics["experiment_integrity_warning_count"], "Measurement integrity warnings require investigation.", resolved_at))
         if metrics["copilot_insufficient_evidence_rate"] > 0.25:
             alerts.append(self._alert("insight_copilot", "insufficient_evidence_high", "warning", metrics["copilot_insufficient_evidence_rate"], "Copilot insufficient evidence rate is above 25%.", resolved_at))
 
         modules = {
-            "data_core": self._module_status("data_core", alerts, {"canonical_user_id_coverage": metrics["canonical_user_id_coverage"], "reject_rate": metrics["reject_rate"]}, resolved_at),
+            "data_core": self._module_status(
+                "data_core",
+                alerts,
+                {
+                    "canonical_user_id_coverage": metrics["canonical_user_id_coverage"],
+                    "reject_rate": metrics["reject_rate"],
+                    "dead_letter_rows": metrics["dead_letter_rows"],
+                    "staging_to_curated_lag_seconds": metrics["staging_to_curated_lag_seconds"],
+                    "aggregate_refresh_lag_seconds": metrics["aggregate_refresh_lag_seconds"],
+                    "schema_drift_count": metrics["schema_drift_count"],
+                },
+                resolved_at,
+            ),
             "audience_engine": self._module_status("audience_engine", alerts, {"cohort_refresh_failure_rate": metrics["cohort_refresh_failure_rate"]}, resolved_at),
-            "action_orchestrator": self._module_status("action_orchestrator", alerts, {"provider_failure_rate": metrics["provider_failure_rate"], "policy_block_rate": metrics["policy_block_rate"]}, resolved_at),
-            "experiment_hub": self._module_status("experiment_hub", alerts, {"invalid_experiment_decision_rate": metrics["invalid_experiment_decision_rate"]}, resolved_at),
+            "action_orchestrator": self._module_status("action_orchestrator", alerts, {"provider_failure_rate": metrics["provider_failure_rate"], "simulator_delivery_rate": metrics["simulator_delivery_rate"], "policy_block_rate": metrics["policy_block_rate"]}, resolved_at),
+            "experiment_hub": self._module_status("experiment_hub", alerts, {"invalid_experiment_decision_rate": metrics["invalid_experiment_decision_rate"], "experiment_integrity_warning_count": metrics["experiment_integrity_warning_count"], "experiment_outcome_lag_seconds": metrics["experiment_outcome_lag_seconds"]}, resolved_at),
             "insight_copilot": self._module_status("insight_copilot", alerts, {"copilot_insufficient_evidence_rate": metrics["copilot_insufficient_evidence_rate"]}, resolved_at),
         }
         return {

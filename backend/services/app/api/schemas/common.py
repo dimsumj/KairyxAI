@@ -16,6 +16,10 @@ class JobResponse(BaseModel):
     id: str
     type: str
     status: str
+    tenant_id: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+    correlation_id: str = ""
     created_at: str
     updated_at: str
     progress: JobProgress = Field(default_factory=JobProgress)

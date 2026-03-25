@@ -1,16 +1,65 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.schemas.jobs import build_job_response
-from app.api.schemas.predictions import PredictionJobCreateRequest, PredictionResultsPage
+from app.api.schemas.predictions import PredictionJobCreateRequest, PredictionModelTrainRequest, PredictionResultsPage
 from app.application.predictions import PredictionService
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.deps import get_prediction_service, get_settings_dependency
+from app.core.governance import ensure_permission, get_governance_context
 
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
+
+
+@router.get("/models/latest", response_model=dict)
+def get_latest_prediction_model(http_request: Request, service: PredictionService = Depends(get_prediction_service)):
+    ensure_permission(get_governance_context(http_request), "predictions.models.read")
+    payload = service.get_latest_model()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No churn model version has been trained yet.")
+    return {"model": payload}
+
+
+@router.get("/models/runs", response_model=dict)
+def list_prediction_model_runs(http_request: Request, service: PredictionService = Depends(get_prediction_service)):
+    ensure_permission(get_governance_context(http_request), "predictions.models.read")
+    return {
+        "items": service.list_model_versions(),
+        "training_status": service.get_model_training_status(),
+        "readiness": service.get_model_readiness(),
+    }
+
+
+@router.post("/models/train", response_model=dict)
+def train_prediction_model(
+    request: PredictionModelTrainRequest,
+    http_request: Request,
+    service: PredictionService = Depends(get_prediction_service),
+):
+    ensure_permission(get_governance_context(http_request), "predictions.models.train")
+    return {"model": service.train_local_model(reference_time=request.reference_time, min_rows=request.min_rows)}
+
+
+@router.post("/models/train/start", response_model=dict)
+def start_prediction_model_training(
+    request: PredictionModelTrainRequest,
+    http_request: Request,
+    service: PredictionService = Depends(get_prediction_service),
+):
+    ensure_permission(get_governance_context(http_request), "predictions.models.train")
+    return service.start_local_model_training(reference_time=request.reference_time, min_rows=request.min_rows)
+
+
+@router.post("/models/train/stop", response_model=dict)
+def stop_prediction_model_training(http_request: Request, service: PredictionService = Depends(get_prediction_service)):
+    ensure_permission(get_governance_context(http_request), "predictions.models.train")
+    try:
+        return service.stop_local_model_training()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("")
@@ -30,7 +79,12 @@ def list_prediction_jobs(service: PredictionService = Depends(get_prediction_ser
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_prediction_job(request: PredictionJobCreateRequest, service: PredictionService = Depends(get_prediction_service)):
     try:
-        job = service.create_job(request.import_job_id, request.prediction_mode)
+        job = service.create_job(
+            import_job_id=request.import_job_id,
+            source_name=request.source_name,
+            audience_scope=request.audience_scope,
+            prediction_mode=request.prediction_mode,
+        )
     except MissingDependencyError as exc:
         raise HTTPException(status_code=404, detail=exc.detail)
     except ResourceLockedError as exc:

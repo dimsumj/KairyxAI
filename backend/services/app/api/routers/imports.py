@@ -12,10 +12,19 @@ from app.core.deps import get_import_service
 
 
 class ImportJobCreateRequest(BaseModel):
-    source_name: str
+    source_name: str | None = None
+    connector_id: str | None = None
     start_date: str
     end_date: str
     page_size: int | None = None
+
+
+class ImportBackfillRequest(BaseModel):
+    source_name: str
+    start_date: str
+    end_date: str
+    mode: str = "replay_rejected_rows"
+    limit_jobs: int = 50
 
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -36,11 +45,99 @@ def list_imports(service: ImportService = Depends(get_import_service)):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_import(request: ImportJobCreateRequest, service: ImportService = Depends(get_import_service)):
+    source_ref = request.connector_id or request.source_name
+    if not source_ref:
+        raise HTTPException(status_code=409, detail="source_name or connector_id is required.")
     try:
-        job = service.create_job(request.source_name, request.start_date, request.end_date, request.page_size)
+        job = service.create_job(source_ref, request.start_date, request.end_date, request.page_size)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Connector '{request.source_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"Connector '{source_ref}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+
+
+@router.get("/backfills")
+def list_import_backfills(request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.backfills.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_backfills_read",
+        resource_type="import_backfill",
+        resource_id=None,
+        payload=service.list_backfills(),
+    )
+
+
+@router.post("/backfills")
+def create_import_backfill(request: ImportBackfillRequest, http_request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "imports.backfills.create")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_backfill_create",
+        resource_type="import_backfill",
+        resource_id=None,
+        payload=service.create_backfill(
+            source_name=request.source_name,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            mode=request.mode,
+            limit_jobs=request.limit_jobs,
+        ),
+    )
+
+
+@router.get("/backfills/{backfill_id}")
+def get_import_backfill(backfill_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.backfills.read")
+    try:
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_backfill_read",
+            resource_type="import_backfill",
+            resource_id=backfill_id,
+            payload=service.get_backfill(backfill_id),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import backfill '{backfill_id}' not found.")
+
+
+@router.get("/schema-contracts")
+def list_import_schema_contracts(request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.schema.read")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_schema_contracts_read",
+        resource_type="import_schema_contract",
+        resource_id=None,
+        payload=service.list_schema_contracts(),
+    )
+
+
+@router.get("/schema-contracts/{alias}")
+def get_import_schema_contract(alias: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.schema.read")
+    try:
+        payload = service.get_schema_contract(alias)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Schema contract '{alias}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_schema_contract_read",
+        resource_type="import_schema_contract",
+        resource_id=alias,
+        payload=payload,
+    )
 
 
 @router.get("/{job_id}")
@@ -124,6 +221,41 @@ def get_import_quality(job_id: str, request: Request, service: ImportService = D
             resource_type="import_job",
             resource_id=job_id,
             payload=service.get_quality(job_id),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+
+
+@router.get("/{job_id}/manifests")
+def get_import_manifests(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.operations.read")
+    try:
+        payload = service.list_manifests(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_manifests_read",
+        resource_type="import_job",
+        resource_id=job_id,
+        payload=payload,
+    )
+
+
+@router.get("/{job_id}/operations")
+def get_import_operations(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.operations.read")
+    try:
+        return build_audited_response(
+            service.repository,
+            context,
+            action_type="imports_operations_read",
+            resource_type="import_job",
+            resource_id=job_id,
+            payload=service.get_operations(job_id),
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")

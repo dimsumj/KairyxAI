@@ -8,6 +8,7 @@ from app.api.schemas.experiments import (
     ExperimentDecisionResponse,
     ExperimentEventPage,
     ExperimentLifecycleRequest,
+    ExperimentOptimizerRunRequest,
     ExperimentOutcomeIngestRequest,
 )
 from app.application.experiments import ExperimentConfigService
@@ -59,6 +60,16 @@ def get_named_experiment_summary(experiment_id: str, service: ExperimentConfigSe
     return service.get_summary(experiment_id)
 
 
+@router.get("/{experiment_id}/integrity", response_model=dict)
+def get_experiment_integrity(
+    experiment_id: str,
+    http_request: Request,
+    service: ExperimentConfigService = Depends(get_experiment_service),
+):
+    ensure_permission(get_governance_context(http_request), "experiments.integrity.read")
+    return service.get_measurement_integrity(experiment_id)
+
+
 @router.get("/{experiment_id}/versions", response_model=dict)
 def get_experiment_versions(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return service.list_versions(experiment_id)
@@ -107,3 +118,28 @@ def post_experiment_decision(
 @router.get("/{experiment_id}/rollout-suggestion", response_model=dict)
 def get_experiment_rollout_suggestion(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return service.get_rollout_suggestion(experiment_id)
+
+
+@router.get("/{experiment_id}/optimizer", response_model=dict)
+def get_experiment_optimizer_state(
+    experiment_id: str,
+    http_request: Request,
+    service: ExperimentConfigService = Depends(get_experiment_service),
+):
+    ensure_permission(get_governance_context(http_request), "experiments.rollout.read")
+    return service.get_optimizer_state(experiment_id)
+
+
+@router.post("/{experiment_id}/optimizer/run", response_model=dict)
+def run_experiment_optimizer(
+    experiment_id: str,
+    request: ExperimentOptimizerRunRequest,
+    http_request: Request,
+    service: ExperimentConfigService = Depends(get_experiment_service),
+):
+    ensure_permission(get_governance_context(http_request), "experiments.optimizer.run")
+    return service.run_optimizer(
+        experiment_id,
+        reference_time=request.reference_time,
+        apply_changes=request.apply_changes,
+    )

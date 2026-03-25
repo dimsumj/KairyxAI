@@ -1,16 +1,18 @@
 # bigquery_service.py
 
+from collections import Counter
 from functools import lru_cache
 import os
 import json
 import re
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+from app.core.request_context import get_request_context
 from runtime_paths import normalize_env_text, resolve_runtime_file_path
 
 INT64_MAX = 2**63 - 1
@@ -57,9 +59,11 @@ def _normalize_mock_storage_backend(raw_value: Any) -> str:
 
 def _shared_service_cache_key() -> tuple[Any, ...]:
     mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
+    tenant_scope = _tenant_scope_key()
     if mode == "gcp":
         return (
             mode,
+            tenant_scope,
             normalize_env_text(os.getenv("BIGQUERY_PROJECT_ID", "")),
             normalize_env_text(os.getenv("BIGQUERY_DATASET_ID", "kairyx")),
             normalize_env_text(os.getenv("BIGQUERY_TABLE_NAME", "processed_events")),
@@ -71,11 +75,19 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
         )
     return (
         mode,
+        tenant_scope,
         _normalize_mock_storage_backend(os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")),
         normalize_env_text(os.getenv("CONTROL_PLANE_DATABASE_URL", "")),
         normalize_env_text(os.getenv("DATABASE_URL", "")),
         os.getcwd(),
     )
+
+
+def _tenant_scope_key() -> str:
+    context = get_request_context()
+    raw_value = context.tenant_id if context is not None else os.getenv("BOOTSTRAP_TENANT_ID", "default")
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_value or "default").strip()).strip("_").lower()
+    return normalized or "default"
 
 
 @lru_cache(maxsize=8)
@@ -129,7 +141,9 @@ class BigQueryService:
         if not project_id:
             raise ValueError("BIGQUERY_PROJECT_ID must be set for DATA_BACKEND_MODE=gcp.")
 
-        dataset_id = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        tenant_scope = _tenant_scope_key()
+        dataset_base = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
+        dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}")
         table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
         self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
         self._curated_table_id = os.getenv(
@@ -156,11 +170,12 @@ class BigQueryService:
         self._mock_storage_backend = _normalize_mock_storage_backend(
             os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")
         )
-        self._cache_path = str(resolve_runtime_file_path(".cache/bigquery_table.parquet", ensure_parent=True))
-        self._curated_cache_path = str(resolve_runtime_file_path(".cache/events_curated.parquet", ensure_parent=True))
-        self._player_latest_state_cache_path = str(resolve_runtime_file_path(".cache/player_latest_state.parquet", ensure_parent=True))
-        self._dead_letter_cache_path = str(resolve_runtime_file_path(".cache/pipeline_dead_letters.parquet", ensure_parent=True))
-        self._prediction_results_cache_path = str(resolve_runtime_file_path(".cache/prediction_results.parquet", ensure_parent=True))
+        cache_root = Path(".cache") / _tenant_scope_key()
+        self._cache_path = str(resolve_runtime_file_path(cache_root / "bigquery_table.parquet", ensure_parent=True))
+        self._curated_cache_path = str(resolve_runtime_file_path(cache_root / "events_curated.parquet", ensure_parent=True))
+        self._player_latest_state_cache_path = str(resolve_runtime_file_path(cache_root / "player_latest_state.parquet", ensure_parent=True))
+        self._dead_letter_cache_path = str(resolve_runtime_file_path(cache_root / "pipeline_dead_letters.parquet", ensure_parent=True))
+        self._prediction_results_cache_path = str(resolve_runtime_file_path(cache_root / "prediction_results.parquet", ensure_parent=True))
         if self._mock_storage_backend == "database":
             from app.core.db import init_db
 
@@ -171,7 +186,6 @@ class BigQueryService:
             self._dead_letter_table = pd.DataFrame()
             self._prediction_results_table = pd.DataFrame()
             return
-
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)
@@ -427,6 +441,9 @@ class BigQueryService:
             "prediction_results": [
                 "prediction_job_id", "user_id", "canonical_user_id", "email", "churn_state",
                 "predicted_churn_risk", "prediction_source", "suggested_action", "completed_at",
+                "baseline_churn_score", "model_version", "score_timestamp", "eligibility_reason",
+                "effective_local_model_version", "effective_local_model_state",
+                "recommended_template_id", "recommended_variant", "policy_snapshot_id",
             ],
             "pipeline_dead_letters": [
                 "job_id", "player_id", "event_type", "event_time", "rejection_reason",
@@ -811,6 +828,75 @@ class BigQueryService:
             "fields": fields,
         }
 
+    @staticmethod
+    def _schema_field_type(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        try:
+            datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return "datetime"
+        except ValueError:
+            return "string"
+
+    def get_schema_contract(self, alias: str, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        resolved_alias = str(alias or "").strip()
+        aliases = self.get_v1_table_aliases()
+        targets = set(aliases.keys()) | set(aliases.values())
+        if resolved_alias not in targets:
+            raise KeyError(resolved_alias)
+        canonical_alias = next((name for name, target in aliases.items() if resolved_alias in {name, target}), resolved_alias)
+        rows = self.get_rows_for_alias(canonical_alias)
+        if job_id:
+            rows = [row for row in rows if self._row_matches_job(row, job_id)]
+        expected_fields = self._default_columns_for_alias(canonical_alias)
+        observed_fields: set[str] = set()
+        observed_types: Dict[str, str] = {}
+        schema_versions: Counter[str] = Counter()
+        for row in rows:
+            for field, value in row.items():
+                observed_fields.add(str(field))
+                observed_types.setdefault(str(field), self._schema_field_type(value))
+            schema_version = str(row.get("schema_version") or "").strip()
+            if schema_version:
+                schema_versions[schema_version] += 1
+        missing_required_fields = sorted(field for field in expected_fields if field not in observed_fields)
+        extra_fields = sorted(field for field in observed_fields if field not in expected_fields)
+        if not rows:
+            compatibility_status = "no_data"
+        elif missing_required_fields:
+            compatibility_status = "missing_required_fields"
+        elif extra_fields:
+            compatibility_status = "drifted"
+        else:
+            compatibility_status = "compatible"
+        return {
+            "alias": canonical_alias,
+            "table_name": aliases.get(canonical_alias, canonical_alias),
+            "job_id": job_id,
+            "schema_version": schema_versions.most_common(1)[0][0] if schema_versions else "v1",
+            "required_fields": expected_fields,
+            "observed_fields": sorted(observed_fields),
+            "observed_field_types": observed_types,
+            "missing_required_fields": missing_required_fields,
+            "extra_fields": extra_fields,
+            "compatibility_status": compatibility_status,
+            "row_count": len(rows),
+        }
+
+    def list_schema_contracts(self, *, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = []
+        for alias in self.get_v1_table_aliases():
+            items.append(self.get_schema_contract(alias, job_id=job_id))
+        return items
+
     def get_rejected_event_explanations(self, *, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         items = self.get_pipeline_dead_letters(job_id=job_id, limit=limit)
         explanations: List[Dict[str, Any]] = []
@@ -828,6 +914,163 @@ class BigQueryService:
                 }
             )
         return explanations
+
+    @staticmethod
+    def _row_matches_job(row: Dict[str, Any], job_id: Optional[str]) -> bool:
+        if not job_id:
+            return True
+        match_value = str(job_id)
+        return str(row.get("job_id") or row.get("job_identifier") or "") == match_value
+
+    @staticmethod
+    def _parse_datetime_value(value: Any) -> datetime | None:
+        if value in (None, "", []):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return None
+
+    def _row_identity_values(self, row: Dict[str, Any]) -> List[str]:
+        values: List[str] = []
+        for field in ("player_id", "canonical_user_id"):
+            normalized = self._normalize_identity_value(row.get(field))
+            if normalized and normalized not in values:
+                values.append(normalized)
+        return values
+
+    def _preferred_player_identity(self, row: Dict[str, Any]) -> str | None:
+        values = self._row_identity_values(row)
+        return values[0] if values else None
+
+    def get_import_roster_player_ids(self, job_id: str) -> List[Any]:
+        normalized_job_id = str(job_id or "").strip()
+        if not normalized_job_id:
+            return []
+
+        if self.mode == "gcp":
+            query = f"""
+                SELECT CAST(player_id AS STRING) AS player_id, CAST(canonical_user_id AS STRING) AS canonical_user_id
+                FROM `{self._curated_table_id}`
+                WHERE (
+                    CAST(job_id AS STRING) = @job_id
+                    OR CAST(job_identifier AS STRING) = @job_id
+                )
+                UNION ALL
+                SELECT CAST(player_id AS STRING) AS player_id, CAST(canonical_user_id AS STRING) AS canonical_user_id
+                FROM `{self._table_id}`
+                WHERE (
+                    CAST(job_id AS STRING) = @job_id
+                    OR CAST(job_identifier AS STRING) = @job_id
+                )
+            """
+            job_config = self._bigquery.QueryJobConfig(
+                query_parameters=[
+                    self._bigquery.ScalarQueryParameter("job_id", "STRING", normalized_job_id)
+                ]
+            )
+            try:
+                rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
+            except Exception:
+                rows = []
+        else:
+            rows = []
+            for table in (self._curated_table, self._table):
+                filtered_table = self._filter_table_by_job(table, job_id=normalized_job_id)
+                if filtered_table.empty:
+                    continue
+                rows.extend(filtered_table.to_dict(orient="records"))
+
+        deduped: List[str] = []
+        seen_identity_keys: set[str] = set()
+        for row in rows:
+            identity_key = self._normalize_identity_value(row.get("canonical_user_id")) or self._normalize_identity_value(row.get("player_id"))
+            if identity_key is None or identity_key in seen_identity_keys:
+                continue
+            preferred_identity = self._preferred_player_identity(row)
+            if preferred_identity is None:
+                continue
+            seen_identity_keys.add(identity_key)
+            deduped.append(preferred_identity)
+        return deduped
+
+    def get_pipeline_lag_summary(self, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        standardized_rows = [row for row in self.get_rows_for_alias("standardized") if self._row_matches_job(row, job_id)]
+        curated_rows = [row for row in self.get_rows_for_alias("fact_events_unified") if self._row_matches_job(row, job_id)]
+        latest_state_rows = self.get_rows_for_alias("mart_user_daily")
+        if job_id:
+            roster_ids = set(self.get_import_roster_player_ids(job_id))
+            latest_state_rows = [
+                row
+                for row in latest_state_rows
+                if any(identity in roster_ids for identity in self._row_identity_values(row))
+            ]
+        dead_letter_rows = [row for row in self.get_pipeline_dead_letters(job_id=job_id, limit=5000)]
+
+        def _latest(rows: List[Dict[str, Any]], *fields: str) -> str | None:
+            latest_value: datetime | None = None
+            for row in rows:
+                for field in fields:
+                    parsed = self._parse_datetime_value(row.get(field))
+                    if parsed is not None and (latest_value is None or parsed > latest_value):
+                        latest_value = parsed
+            return latest_value.isoformat() if latest_value is not None else None
+
+        latest_standardized_event_time = _latest(standardized_rows, "event_time")
+        latest_curated_event_time = _latest(curated_rows, "event_time")
+        latest_player_state_time = _latest(latest_state_rows, "last_seen_at", "updated_at", "event_time")
+        latest_dead_letter_time = _latest(dead_letter_rows, "event_time", "ingested_at", "created_at")
+
+        standardized_dt = self._parse_datetime_value(latest_standardized_event_time)
+        curated_dt = self._parse_datetime_value(latest_curated_event_time)
+        latest_state_dt = self._parse_datetime_value(latest_player_state_time)
+
+        staging_to_curated_lag_seconds = 0
+        if standardized_dt is not None and curated_dt is not None and standardized_dt > curated_dt:
+            staging_to_curated_lag_seconds = int((standardized_dt - curated_dt).total_seconds())
+
+        curated_to_latest_state_lag_seconds = 0
+        if curated_dt is not None and latest_state_dt is not None and curated_dt > latest_state_dt:
+            curated_to_latest_state_lag_seconds = int((curated_dt - latest_state_dt).total_seconds())
+
+        return {
+            "job_id": job_id,
+            "table_counts": {
+                "standardized_rows": len(standardized_rows),
+                "curated_rows": len(curated_rows),
+                "player_latest_state_rows": len(latest_state_rows),
+                "dead_letter_rows": len(dead_letter_rows),
+            },
+            "freshness": {
+                "latest_standardized_event_time": latest_standardized_event_time,
+                "latest_curated_event_time": latest_curated_event_time,
+                "latest_player_latest_state_at": latest_player_state_time,
+                "latest_dead_letter_at": latest_dead_letter_time,
+                "staging_to_curated_lag_seconds": staging_to_curated_lag_seconds,
+                "curated_to_latest_state_lag_seconds": curated_to_latest_state_lag_seconds,
+            },
+        }
+
+    def get_dead_letter_summary(self, *, job_id: Optional[str] = None) -> Dict[str, Any]:
+        explanations = self.get_rejected_event_explanations(job_id=job_id, limit=5000)
+        reason_counts = Counter(str(item.get("reason") or "unknown_rejection") for item in explanations)
+        top_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in reason_counts.most_common(5)
+        ]
+        return {
+            "job_id": job_id,
+            "count": len(explanations),
+            "top_reasons": top_reasons,
+            "examples": explanations[:10],
+        }
 
     def get_identity_links(self, *, job_id: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
         rows = self.get_rows_for_alias("fact_events_unified")
@@ -1240,46 +1483,31 @@ class BigQueryService:
         return self._get_local_events_for_identity(player_id, job_id=job_id, target="events_staging")
 
     def get_all_player_ids(self, job_id: Optional[str] = None) -> List[Any]:
+        if job_id:
+            return self.get_import_roster_player_ids(job_id)
+
         if self.mode == "gcp":
-            job_filter = ""
-            if job_id:
-                job_filter = """
-                    AND (
-                        CAST(job_id AS STRING) = @job_id
-                        OR CAST(job_identifier AS STRING) = @job_id
-                    )
-                """
             queries = [
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._player_latest_state_table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
-                    {job_filter}
                 """,
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._curated_table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
-                    {job_filter}
                 """,
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
                     FROM `{self._table_id}`
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
-                    {job_filter}
                 """,
             ]
             for query in queries:
                 try:
-                    job_config = None
-                    if job_id:
-                        job_config = self._bigquery.QueryJobConfig(
-                            query_parameters=[
-                                self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id))
-                            ]
-                        )
                     rows = []
-                    for row in self._client.query(query, job_config=job_config).result():
+                    for row in self._client.query(query).result():
                         value = row["player_id"]
                         if value is not None:
                             rows.append(value)
@@ -1296,9 +1524,9 @@ class BigQueryService:
                 continue
             ids: List[str] = []
             for row in filtered_table.to_dict(orient="records"):
-                value = row.get("player_id") or row.get("canonical_user_id")
+                value = self._preferred_player_identity(row)
                 if value is not None:
-                    ids.append(str(value))
+                    ids.append(value)
             if ids:
                 return list(dict.fromkeys(ids))
         return []
@@ -1323,14 +1551,9 @@ class BigQueryService:
                 player = row.get("player_id")
                 identity_keys.append(str(canonical or player or "unknown_user"))
             curated_df["_identity_key"] = identity_keys
-            curated_df["_job_scope"] = curated_df.apply(
-                lambda row: str(row.get("job_identifier") or row.get("job_id") or "unknown_job"),
-                axis=1,
-            )
-
             latest_state_rows: List[Dict[str, Any]] = []
-            for (job_scope, identity_key), group_df in curated_df.groupby(["_job_scope", "_identity_key"], sort=False):
-                latest_state = self._build_latest_state_from_events(identity_key, group_df.copy(), job_id=job_scope)
+            for identity_key, group_df in curated_df.groupby("_identity_key", sort=False):
+                latest_state = self._build_latest_state_from_events(identity_key, group_df.copy(), job_id=None)
                 if latest_state:
                     latest_state_rows.append(latest_state)
 
@@ -1686,7 +1909,16 @@ class BigQueryService:
     def _deserialize_prediction_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         parsed = dict(row)
         for key, value in list(parsed.items()):
+            try:
+                if value is None or bool(pd.isna(value)):
+                    parsed[key] = None
+                    continue
+            except (TypeError, ValueError):
+                pass
             if not isinstance(value, str):
+                continue
+            if value.strip().lower() == "nan":
+                parsed[key] = None
                 continue
             if not value.startswith("{") and not value.startswith("["):
                 continue

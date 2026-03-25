@@ -27,6 +27,11 @@ class CopilotReportRequest(BaseModel):
     time_window: str = "7d"
 
 
+class CopilotReportReviewRequest(BaseModel):
+    disposition: str = "acknowledged"
+    notes: str = ""
+
+
 class CopilotResponse(BaseModel):
     conclusion: str
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
