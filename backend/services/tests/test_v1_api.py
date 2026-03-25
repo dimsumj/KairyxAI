@@ -441,7 +441,7 @@ def test_startup_resumes_partial_multitenant_sqlite_upgrade(monkeypatch, tmp_pat
 
         version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
         assert version_row is not None
-        assert version_row[0] == "20260322_0003"
+        assert version_row[0] == "20260324_0004"
 
         bootstrap_tenants = upgraded_connection.execute(
             "SELECT COUNT(*) FROM tenants_v1 WHERE tenant_id = 'default'"
