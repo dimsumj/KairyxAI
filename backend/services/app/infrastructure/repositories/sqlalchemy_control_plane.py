@@ -1234,7 +1234,7 @@ class SqlAlchemyControlPlaneRepository:
     def _job_to_dict(self, row: Any, job_type: str) -> Dict[str, Any]:
         spec = _from_json_text(row.spec_json)
         progress = _from_json_text(row.progress_json)
-        return {
+        payload = {
             "tenant_id": row.tenant_id,
             "project_id": row.project_id,
             "id": row.id,
@@ -1249,6 +1249,11 @@ class SqlAlchemyControlPlaneRepository:
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
         }
+        if hasattr(row, "import_job_id"):
+            payload["import_job_id"] = getattr(row, "import_job_id")
+        if hasattr(row, "source_name"):
+            payload["source_name"] = getattr(row, "source_name")
+        return payload
 
     def _checkpoint_to_dict(self, row: IngestionCheckpointModel) -> Dict[str, Any]:
         payload = _from_json_text(row.payload_json)
@@ -1331,6 +1336,10 @@ class SqlAlchemyControlPlaneRepository:
         metadata = self._metadata(tenant_id or getattr(row, "tenant_id", None), project_id or getattr(row, "project_id", None))
         if "status" in patch:
             row.status = patch["status"]
+        if "import_job_id" in patch and hasattr(row, "import_job_id"):
+            row.import_job_id = patch["import_job_id"]
+        if "source_name" in patch and hasattr(row, "source_name"):
+            row.source_name = patch["source_name"]
         if "spec" in patch:
             spec_payload = self._augment_payload(
                 patch["spec"],

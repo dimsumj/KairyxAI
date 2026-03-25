@@ -11,7 +11,8 @@ from app.infrastructure import db_models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Preserve application loggers like uvicorn during programmatic startup migrations.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

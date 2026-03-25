@@ -6,6 +6,7 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.core.errors import is_database_locked_error
 from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
@@ -61,6 +62,25 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
     assert response.status_code == 200
 
 
+def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "state" / "control_plane.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{target}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    original_disabled = uvicorn_logger.disabled
+    uvicorn_logger.disabled = False
+    try:
+        db_module.init_db()
+        assert uvicorn_logger.disabled is False
+    finally:
+        uvicorn_logger.disabled = original_disabled
+
+
 def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
     target = tmp_path / "tracked" / "local_jobs.db"
     monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(target))
@@ -94,6 +114,15 @@ def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
 
     assert open_count > 0
     assert close_count == open_count
+
+
+def test_database_lock_error_detection_handles_exception_groups():
+    exc = ExceptionGroup(
+        "database lock group",
+        [sqlite3.OperationalError("database is locked")],
+    )
+
+    assert is_database_locked_error(exc) is True
 
 
 def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, monkeypatch):

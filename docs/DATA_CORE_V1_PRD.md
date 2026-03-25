@@ -94,6 +94,14 @@ Keep the `Local Model` prediction path always available and interpretable within
   - `class_balance`
   - `validation_accuracy`
   - `heuristic_accuracy`
+- The same endpoint must also return `training_status`, including:
+  - `status`
+  - `stage`
+  - `started_at`
+  - `trained_at`
+  - `row_count`
+  - `class_balance`
+  - `min_rows_required`
 - `prediction job` progress details and completed metadata must explicitly include:
   - `effective_local_model_version`
   - `effective_local_model_state`
@@ -112,6 +120,8 @@ Keep the `Local Model` prediction path always available and interpretable within
 #### Operator UX Contract (v1)
 - The Operator Console must show a local-model status badge beside the prediction engine selector: `Ready / Learning / Fallback`
 - When `Local Model` is not ready, the UI must clearly warn that `heuristic_v1` fallback is being used
+- The Operator Console must provide an explicit `Train Local Model` control that triggers local batch retraining without leaving the churn workbench
+- The Operator Console must provide a `Refresh Model Status` control and an inline training-status line showing the latest training outcome, labeled-row count, class balance, and last update time
 - Completed prediction jobs must show the actual local model version and state used so cached results remain interpretable
 
 #### Definition of Done
@@ -119,6 +129,66 @@ Keep the `Local Model` prediction path always available and interpretable within
 2. Readiness state is available through a single API contract, without frontend inference
 3. Prediction jobs and result rows expose the actual local model version and state used
 4. The operator UI clearly distinguishes `learning` and `fallback` from a truly `ready` local model
+5. Operators can manually trigger and inspect local model retraining from the workbench
+
+### 4.1.8 Source-First Prediction Audience Selection
+
+#### Goal
+Reduce operator friction in the churn workbench by allowing prediction to run against a source such as `Amplitude 1`, while preserving a concrete resolved import snapshot for reproducibility, exports, and audit.
+
+#### Strategy Boundaries
+- `Source` is the default operator audience mode in v1
+- `Import` remains available as an explicit override for debugging, audit review, and backfill comparison
+- `Source` mode resolves to the latest completed import for that source when the prediction job starts
+- Prediction roster selection still comes from the resolved import, not from unioning every historical import for the source
+- Merged tenant history remains the feature source for churn scoring after the roster is selected
+
+#### Control-plane / API Contract
+- `POST /api/v1/predictions` accepts either:
+  - `import_job_id` with `audience_scope=import`
+  - `source_name` with `audience_scope=source`
+- Prediction jobs must store:
+  - `audience_scope`
+  - `source_name` when source mode is used
+  - the resolved `import_job_id` actually used for scoring
+- Prediction progress metadata must expose:
+  - `audience_scope`
+  - `source_name`
+  - `resolved_import_display_name`
+- Source-mode jobs may update their resolved `import_job_id` at run start if a newer completed import exists for the same source
+
+#### Operator UX Contract (v1)
+- The churn workbench must show a `Prediction Target` selector with `Source` and `Import`
+- In `Source` mode, the selector shows available sources backed by at least one completed import
+- In `Import` mode, the selector shows completed imports directly
+- The UI must explain that source mode resolves to the latest completed import when the job starts
+- Cached completed predictions remain viewable, but stale jobs must still require explicit rerun confirmation
+
+#### Definition of Done
+1. Operators can run prediction by source without manually choosing among repeated imports from that source
+2. Prediction jobs still record the concrete import snapshot that was scored
+3. Import-mode prediction remains available and behaviorally unchanged for explicit import selection
+4. Source-mode caching, active-job recovery, and export lookup all key off `audience_scope + audience_key`
+
+### 4.1.9 Import Diagnostics On-Demand Loading
+
+#### Goal
+Keep the Imports page responsive after backend restart by deferring expensive diagnostics until the operator explicitly asks for them, while preserving full operational detail when needed.
+
+#### Operator UX Contract (v1)
+- Opening the Imports page must load the import list without automatically fetching `operations`, `quality`, `manifests`, or full schema-contract detail
+- Import diagnostics load only when the operator clicks `Load Operations`, `Load Quality`, `Load Manifests`, `Load Contract`, or `List All`
+- Automatic polling on the Imports page continues only while at least one import job is active (`queued`, `running`, or `stopping`)
+- If the control plane is temporarily busy immediately after restart, the UI must surface a retryable busy message rather than an opaque failure
+
+#### Runtime / Error-Handling Contract
+- Startup-time SQLite lock contention must degrade to a retryable busy response for request paths that touch the control plane, including import diagnostics
+- On-demand diagnostics remain auditable and do not change the underlying import-control-plane contract
+
+#### Definition of Done
+1. Initial Imports page load does not automatically trigger heavy import diagnostics
+2. Completed-only import lists stop polling automatically
+3. Busy-after-restart import detail reads degrade to a retryable busy experience instead of an opaque 500
 
 ---
 
@@ -863,6 +933,7 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 - SQLAlchemy + Alembic control-plane persistence already exists, with local SQLite fallback and a production Postgres target reflected in the code structure
 - Paged connector ingestion, ingestion checkpoints, BigQuery-backed prediction-result storage, and paginated reads already exist
 - `Local Model` readiness contract, `heuristic_v1` fallback semantics, effective model metadata, and operator badge/warning are implemented
+- Manual local-model retraining controls, inline training-status surfacing, and on-demand import diagnostics are implemented in the operator console
 
 ### 6.2 Remaining Gaps
 

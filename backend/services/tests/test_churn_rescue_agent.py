@@ -125,7 +125,11 @@ def test_prediction_model_readiness_is_learning_after_insufficient_training(clie
 
     runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
     assert runs.status_code == 200
+    training_status = runs.json()["training_status"]
     readiness = runs.json()["readiness"]
+    assert training_status["status"] == "insufficient_data"
+    assert training_status["stage"] == "completed"
+    assert training_status["started_at"] == "2026-03-20T08:00:00"
     assert readiness["state"] == "learning"
     assert readiness["using_model_version"] == "heuristic_v1"
     assert readiness["baseline_rows"] > 0
@@ -152,7 +156,10 @@ def test_prediction_model_readiness_is_fallback_when_trained_model_underperforms
 
     runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
     assert runs.status_code == 200
+    training_status = runs.json()["training_status"]
     readiness = runs.json()["readiness"]
+    assert training_status["status"] == "fallback"
+    assert training_status["stage"] == "completed"
     assert readiness["state"] == "fallback"
     assert readiness["using_model_version"] == "heuristic_v1"
     assert readiness["validation_accuracy"] == pytest.approx(0.4)

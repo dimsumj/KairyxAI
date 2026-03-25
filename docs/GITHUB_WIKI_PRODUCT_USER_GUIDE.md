@@ -144,10 +144,14 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Select Dataset` | Select | Choose a completed import dataset. | `Amplitude 1-20260322-101500` | The selected dataset becomes the prediction source. |
+| `Prediction Target` | Select | Choose whether to run prediction by `Source` or by explicit `Import`. | `Source` | The audience selector switches between source-level and import-level options. |
+| `Select Source` / `Select Import` | Select | In `Source` mode, choose a source such as `Amplitude 1`. In `Import` mode, choose a specific completed import. | `Amplitude 1` | Source mode resolves to the latest completed import for that source when the job starts; import mode uses the selected import directly. |
 | `Prediction Engine` | Select | Choose the prediction execution mode. | `AI + Cloud` | The request uses the selected prediction mode. |
 | Local model status badge | Badge | Read the current readiness of the `Local Model` path before running prediction. | `Learning` | Shows whether local prediction is `Ready`, `Learning`, or `Fallback`. |
-| `Predict Churn` | Button | Starts prediction for the selected dataset. | None | A prediction job is created and results populate the table when complete. |
+| `Train Local Model` | Button | Manually trigger a local batch retrain from the workbench. | None | Starts a local training run and updates the inline training status when complete. |
+| `Refresh Model Status` | Button | Reload the latest local-model readiness and training status without starting a run. | None | Refreshes the badge, readiness details, and inline training status. |
+| Local model training status | Inline status text | Read the latest training state, labeled-row count, class balance, and last update time. | `Fallback · 42/12 labeled rows` | Shows the most recent local model training outcome and supporting detail. |
+| `Predict Churn` | Button | Starts prediction for the selected source or import. | None | A prediction job is created and results populate the table when complete. |
 | `Provider` | Select | Choose the audience export target. | `Braze` | Export request uses Braze provider settings. |
 | `Channel` | Select | Choose the downstream delivery channel. | `Push Notification` | Export metadata is tagged with the selected channel. |
 | `Risk Filters` | Text box | Comma-separated predicted risk levels to include. | `high,medium` | Only those risk levels are exported. |
@@ -161,7 +165,8 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 #### Sample prediction input
 ```text
-Dataset: Amplitude 1-20260322-101500
+Prediction Target: Source
+Source: Amplitude 1
 Prediction Engine: AI + Cloud
 ```
 
@@ -169,7 +174,9 @@ Prediction Engine: AI + Cloud
 - `Local Model` always remains runnable, even when no trained supervised model is active yet.
 - When the badge shows `Learning` or `Fallback`, the console warns that `heuristic_v1` fallback is being used.
 - When the badge shows `Ready`, local predictions are using the active learned churn model.
+- `Train Local Model` uses the local batch trainer and refreshes the same readiness contract used by the workbench.
 - Completed prediction jobs may also show the effective local model version and state used for that run.
+- In `Source` mode, the workbench resolves to the latest completed import when the prediction job starts, and the resolved import remains recorded on the job for audit.
 
 #### Sample prediction output
 ```json
@@ -232,12 +239,12 @@ Prediction Engine: AI + Cloud
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation. |
 | `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
-| `Load Operations` | Button | Loads import operational detail. | None | Operations JSON appears in the detail output. |
-| `Load Quality` | Button | Loads import quality detail. | None | Quality JSON appears in the detail output. |
-| `Load Manifests` | Button | Loads manifest detail for the selected import. | None | Manifest JSON and list appear. |
+| `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
+| `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |
+| `Load Manifests` | Button | Loads manifest detail for the selected import on demand. | None | Manifest JSON and list appear. |
 | `Alias` | Select | Choose a warehouse contract alias. | `standardized` | Contract detail request targets that alias. |
-| `Load Contract` | Button | Loads the selected schema contract. | None | Contract JSON appears in the schema output. |
-| `List All` | Button | Lists all available schema contracts. | None | Contract list is displayed for all aliases. |
+| `Load Contract` | Button | Loads the selected schema contract on demand. | None | Contract JSON appears in the schema output. |
+| `List All` | Button | Lists all available schema contracts on demand. | None | Contract list is displayed for all aliases. |
 
 #### Sample import input
 ```json
@@ -274,6 +281,12 @@ Prediction Engine: AI + Cloud
   "checkpoint": "2026-03-07T23:59:59Z"
 }
 ```
+
+#### Import diagnostics behavior
+- The Imports page no longer auto-loads heavy diagnostics on first render.
+- Operations, quality, manifests, and schema-contract detail load only when you request them.
+- Import polling continues automatically only while at least one import job is still active.
+- Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
 ### 3.3 Connectors
 Use this page to register upstream ingestion sources and downstream service credentials.
