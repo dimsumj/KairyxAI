@@ -42,10 +42,9 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 ### 2.2 Recommended First-Time Path
 1. Use `OIDC Login`.
 2. If this is your first login, complete the onboarding wizard:
-   - create the `Organization Space`
-   - create the first `Project`
-   - optionally generate an invite link
-   - choose `Connect Now` or `Skip for Now`
+   - enter the `Organization Name`
+   - continue to the `Project Name`
+   - create the first workspace
 3. If you already belong to more than one organization space or project, use the `Switcher` button or the sidebar selects to choose the active workspace.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
@@ -60,22 +59,12 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Organization Space Name` | Text box | Enter the display name for the new organization space. | `North Star Games` | The name is shown in the workspace selectors and summary card. |
-| `Organization Space ID` | Text box | Enter the immutable slug for the organization space. | `northstar` | Stored as the backend `tenant` id and used in `X-Kairyx-Tenant`. |
-| `Next` | Button | Moves from the organization-space step to the project step. | None | Keeps the entered org values and opens the first-project form. |
-| `First Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
-| `Project ID` | Text box | Enter the immutable slug for the first project. | `liveops` | Stored as the project id and used in `X-Kairyx-Project`. |
-| `Project Description` | Text area | Describe the scope of the first project. | `Primary production lifecycle execution` | Saved on the project record. |
-| `Create Space` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard advances to the invite step and the new workspace becomes active. |
-| `Teammate Email` | Text box | Optional. Email that must match the invited user during redemption. | `ops@northstar.example` | Added to the generated invite link metadata. |
-| `Display Name` | Text box | Optional display name shown in the invite payload. | `Live Ops Lead` | Included in the invite metadata. |
-| `Organization Role` | Select | Chooses the teammate’s organization-space role. | `Member` | Invite grants `member` org access on redemption. |
-| `Project Role` | Select | Chooses the teammate’s project role. | `Analyst` | Invite grants `analyst` project access on redemption. |
-| `Generate Invite Link` | Button | Creates a shareable invite link for the active project. | None | The `Invite Link` box fills with a redeemable URL. |
-| `Invite Link` | Text area | Read-only output. Copy and share it with the teammate. | `https://.../?invite_code=pinv_123...` | The recipient can log in and redeem into the target org/project. |
-| `Continue` | Button | Moves from the invite step to the connect-data step. | None | Keeps the created invite link and opens the source recommendations. |
-| `Connect Now` | Button | Closes the wizard and opens `Data Core -> Connectors`. | None | The user lands on the connectors page to configure sources. |
-| `Skip for Now` | Button | Closes the wizard without opening connectors. | None | The user lands in the main console shell with the new workspace active. |
+| `Organization Name` | Text box | Enter the display name for the new organization space. | `North Star Games` | The name is shown in the workspace selectors and summary card. |
+| `Continue` | Button | Moves from the organization step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
+| `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
+| `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes and the new workspace becomes active. |
+
+The console now generates the internal `organization_id` and `project_id` automatically from the names you type. Those ids are still what the backend stores as `tenant_id` and `project_id`, but they are not exposed as editable fields in the current onboarding UI.
 
 #### Sample onboarding request
 ```json
@@ -111,19 +100,20 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Organization Space` | Select | Choose the organization space to browse. | `northstar` | The project list updates for that organization space. |
-| `Project` | Select | Choose the project you want to enter. | `sandbox` | The selected project becomes the active console context after continue. |
-| `Continue` | Button | Confirms the current overlay selections. | None | The overlay closes and the console reloads data for that org/project. |
-| `Create Project` | Button | Opens the new-project overlay for the selected organization space. | None | Lets an org admin create and switch into a new project. |
+| `Existing Project` | Select | Choose a project that already exists inside the selected organization space. | `sandbox` | The selected project becomes the active console context after continue. |
+| `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes and the console reloads data for that org/project. |
+| `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization space. | `Growth Sandbox` | The console generates the internal project id automatically. |
+| `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization space. | None | The project is created, the creator becomes a project admin, and the console switches into it. |
 
 #### New-project overlay
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Project Name` | Text box | Enter the display name for the new project. | `Growth Sandbox` | The project is created with this name. |
-| `Project ID` | Text box | Enter the immutable project slug. | `growth-sandbox` | Stored as the new project id. |
-| `Project Description` | Text area | Describe the new project. | `Safe testing environment for experiments` | Saved on the project record. |
 | `Create Project` | Button | Creates the project in the selected organization space. | None | The project is created, the creator becomes a project admin, and the console switches into it. |
 | `Cancel` | Button | Closes the new-project overlay. | None | Returns to the prior workspace selection state. |
+
+As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
 #### Invite redemption behavior
 - If the browser opens a URL containing `invite_code`, the console stores that invite locally before OIDC login.

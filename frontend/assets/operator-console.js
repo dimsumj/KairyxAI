@@ -33,9 +33,11 @@
             const workspaceCreateProjectPanel = document.getElementById('workspace-create-project-panel');
             const workspaceModalOrgSelect = document.getElementById('workspace-modal-org-select');
             const workspaceModalProjectSelect = document.getElementById('workspace-modal-project-select');
+            const workspaceSelectionCopy = document.getElementById('workspace-selection-copy');
             const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
             const workspaceSelectionContinueBtn = document.getElementById('workspace-selection-continue-btn');
             const workspaceSelectionCreateProjectBtn = document.getElementById('workspace-selection-create-project-btn');
+            const workspaceOnboardingStepLabel = document.getElementById('workspace-onboarding-step-label');
             const onboardingOrganizationNameInput = document.getElementById('onboarding-organization-name');
             const onboardingOrganizationIdInput = document.getElementById('onboarding-organization-id');
             const onboardingProjectNameInput = document.getElementById('onboarding-project-name');
@@ -53,11 +55,13 @@
             const onboardingGenerateInviteBtn = document.getElementById('onboarding-generate-invite-btn');
             const onboardingConnectBtn = document.getElementById('onboarding-connect-btn');
             const onboardingSkipBtn = document.getElementById('onboarding-skip-btn');
-            const onboardingSteps = document.querySelectorAll('.workspace-step');
             const onboardingStepPanels = document.querySelectorAll('.workspace-step-panel');
             const workspaceCreateProjectNameInput = document.getElementById('workspace-create-project-name');
             const workspaceCreateProjectIdInput = document.getElementById('workspace-create-project-id');
             const workspaceCreateProjectDescriptionInput = document.getElementById('workspace-create-project-description');
+            const workspaceCreateProjectInlineNameInput = document.getElementById('workspace-create-project-inline-name');
+            const workspaceCreateProjectInlineIdInput = document.getElementById('workspace-create-project-inline-id');
+            const workspaceCreateProjectInlineDescriptionInput = document.getElementById('workspace-create-project-inline-description');
             const workspaceCreateProjectStatus = document.getElementById('workspace-create-project-status');
             const workspaceCreateProjectCancelBtn = document.getElementById('workspace-create-project-cancel-btn');
             const workspaceCreateProjectSubmitBtn = document.getElementById('workspace-create-project-submit-btn');
@@ -302,27 +306,65 @@
                 });
             }
 
+            function syncWorkspaceGateClass() {
+                const gated = workspaceOverlayMode === 'onboarding'
+                    || workspaceOverlayMode === 'selection'
+                    || isWorkspaceSelectionRequired();
+                document.body.classList.toggle('workspace-gated', gated);
+            }
+
+            function refreshWorkspaceSelectionCopy() {
+                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
+                const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
+                const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
+                if (workspaceOverlayMode === 'selection') {
+                    workspaceModalTitle.textContent = selectedTenantId ? 'Choose how to continue' : 'Choose an organization';
+                    workspaceModalSubtitle.textContent = selectedTenantId
+                        ? 'Use an existing project in this organization space, or add a new one.'
+                        : 'Select the organization space you want to continue in.';
+                }
+                if (workspaceSelectionCopy) {
+                    if (!selectedTenantId) {
+                        workspaceSelectionCopy.textContent = 'Choose an organization space first. After that you can use an existing project or add a new one.';
+                    } else if (hasExistingProjects) {
+                        workspaceSelectionCopy.textContent = 'This organization space already has projects. Use one below, or enter a new project name to add another project.';
+                    } else {
+                        workspaceSelectionCopy.textContent = 'This organization space does not have a project yet. Enter a project name to create the first one.';
+                    }
+                }
+                workspaceSelectionContinueBtn.disabled = !hasExistingProjects || !workspaceModalProjectSelect.value;
+                workspaceModalProjectSelect.disabled = !hasExistingProjects;
+                workspaceSelectionCreateProjectBtn.disabled = !selectedTenantId;
+                workspaceSelectionCreateProjectBtn.textContent = hasExistingProjects ? 'Add New Project' : 'Create First Project';
+            }
+
             function openWorkspaceOverlay(mode, { allowClose = false } = {}) {
                 workspaceOverlayMode = mode;
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
                 workspaceModalCloseBtn.classList.toggle('hidden', !allowClose);
                 if (mode === 'onboarding') {
-                    workspaceModalEyebrow.textContent = 'Onboarding';
-                    workspaceModalTitle.textContent = 'Create your organization space';
-                    workspaceModalSubtitle.textContent = 'Set up the first organization space, create its first project, invite teammates, then connect data.';
+                    workspaceModalEyebrow.textContent = 'Workspace Setup';
+                    workspaceModalTitle.textContent = onboardingStep === 1 ? 'Name your organization' : 'Create your first project';
+                    workspaceModalSubtitle.textContent = onboardingStep === 1
+                        ? 'Start with the organization name. We will create the first project next.'
+                        : 'Enter the project name you want to create inside this organization space.';
                     setWorkspaceOverlayPanel(workspaceOnboardingPanel);
                 } else if (mode === 'create-project') {
                     workspaceModalEyebrow.textContent = 'Project';
-                    workspaceModalTitle.textContent = 'Create a new project';
-                    workspaceModalSubtitle.textContent = 'Projects isolate data, cohorts, workflows, experiments, exports, and audit history inside the selected organization space.';
+                    workspaceModalTitle.textContent = 'Add a project';
+                    workspaceModalSubtitle.textContent = 'Create a new project inside the selected organization space.';
                     setWorkspaceOverlayPanel(workspaceCreateProjectPanel);
                 } else {
                     workspaceModalEyebrow.textContent = 'Workspace';
-                    workspaceModalTitle.textContent = 'Select your workspace';
-                    workspaceModalSubtitle.textContent = 'Choose the organization space and project you want to operate in.';
+                    workspaceModalTitle.textContent = workspaceModalOrgSelect.value ? 'Choose how to continue' : 'Choose an organization';
+                    workspaceModalSubtitle.textContent = workspaceModalOrgSelect.value
+                        ? 'Use an existing project in this organization space, or add a new one.'
+                        : 'Select the organization space you want to continue in.';
                     setWorkspaceOverlayPanel(workspaceSelectionPanel);
+                    refreshWorkspaceSelectionCopy();
                 }
+                syncWorkspaceGateClass();
             }
 
             function closeWorkspaceOverlay(force = false) {
@@ -332,27 +374,25 @@
                 workspaceOverlayMode = null;
                 workspaceOverlay.classList.add('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'true');
+                syncWorkspaceGateClass();
             }
 
             function setOnboardingStep(step) {
-                onboardingStep = Math.max(1, Math.min(4, Number(step) || 1));
-                onboardingSteps.forEach((item) => {
-                    item.classList.toggle('active', Number(item.dataset.step) === onboardingStep);
-                });
+                onboardingStep = Math.max(1, Math.min(2, Number(step) || 1));
                 onboardingStepPanels.forEach((panel) => {
                     panel.classList.toggle('hidden', Number(panel.dataset.step) !== onboardingStep);
                 });
+                if (workspaceOnboardingStepLabel) {
+                    workspaceOnboardingStepLabel.textContent = `Step ${onboardingStep} of 2`;
+                }
                 onboardingBackBtn.classList.toggle('hidden', onboardingStep === 1);
-                onboardingGenerateInviteBtn.classList.toggle('hidden', onboardingStep !== 3);
-                onboardingConnectBtn.classList.toggle('hidden', onboardingStep !== 4);
-                onboardingSkipBtn.classList.toggle('hidden', onboardingStep !== 4);
-                onboardingNextBtn.classList.toggle('hidden', onboardingStep === 4);
-                if (onboardingStep === 1) {
-                    onboardingNextBtn.textContent = 'Next';
-                } else if (onboardingStep === 2) {
-                    onboardingNextBtn.textContent = 'Create Space';
-                } else {
-                    onboardingNextBtn.textContent = 'Continue';
+                onboardingGenerateInviteBtn.classList.add('hidden');
+                onboardingConnectBtn.classList.add('hidden');
+                onboardingSkipBtn.classList.add('hidden');
+                onboardingNextBtn.classList.remove('hidden');
+                onboardingNextBtn.textContent = onboardingStep === 1 ? 'Continue' : 'Create Project';
+                if (workspaceOverlayMode === 'onboarding') {
+                    openWorkspaceOverlay('onboarding');
                 }
             }
 
@@ -369,10 +409,11 @@
                 populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
                 populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
                 populateWorkspaceSelect(projectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select a project', 'project_id');
-                populateWorkspaceSelect(workspaceModalProjectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select a project', 'project_id');
+                populateWorkspaceSelect(workspaceModalProjectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select an existing project', 'project_id');
                 if (payload?.tenant_id || payload?.project_id) {
                     persistWorkspaceSelection(payload.tenant_id || '', payload.project_id || '');
                 }
+                refreshWorkspaceSelectionCopy();
                 syncAuthModeUi();
                 syncWorkspaceSummary(payload);
             }
@@ -427,19 +468,16 @@
             });
             apiKeyInput.addEventListener('change', persistActorContext);
             onboardingOrganizationNameInput.addEventListener('input', () => {
-                if (!onboardingOrganizationIdInput.value.trim()) {
-                    onboardingOrganizationIdInput.value = slugifyIdentifier(onboardingOrganizationNameInput.value);
-                }
+                onboardingOrganizationIdInput.value = slugifyIdentifier(onboardingOrganizationNameInput.value);
             });
             onboardingProjectNameInput.addEventListener('input', () => {
-                if (!onboardingProjectIdInput.value.trim()) {
-                    onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
-                }
+                onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
             });
             workspaceCreateProjectNameInput.addEventListener('input', () => {
-                if (!workspaceCreateProjectIdInput.value.trim()) {
-                    workspaceCreateProjectIdInput.value = slugifyIdentifier(workspaceCreateProjectNameInput.value);
-                }
+                workspaceCreateProjectIdInput.value = slugifyIdentifier(workspaceCreateProjectNameInput.value);
+            });
+            workspaceCreateProjectInlineNameInput.addEventListener('input', () => {
+                workspaceCreateProjectInlineIdInput.value = slugifyIdentifier(workspaceCreateProjectInlineNameInput.value);
             });
 
             function clearPageIntervals() {
@@ -746,10 +784,6 @@
             }
 
             function syncWorkspaceOverlayFromSession() {
-                if (workspaceOverlayMode === 'onboarding' && onboardingResult && onboardingStep >= 3) {
-                    openWorkspaceOverlay('onboarding', { allowClose: true });
-                    return;
-                }
                 if (authSessionState?.needs_onboarding) {
                     onboardingResult = null;
                     setOnboardingStep(1);
@@ -770,6 +804,7 @@
                 if (workspaceOverlayMode !== 'create-project') {
                     closeWorkspaceOverlay(true);
                 }
+                syncWorkspaceGateClass();
             }
 
             async function hydrateAuthSession(retryCount = 0) {
@@ -916,9 +951,9 @@
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Select an organization space before creating a project.', true);
                     return;
                 }
-                workspaceCreateProjectNameInput.value = '';
-                workspaceCreateProjectIdInput.value = '';
-                workspaceCreateProjectDescriptionInput.value = '';
+                workspaceCreateProjectInlineNameInput.value = '';
+                workspaceCreateProjectInlineIdInput.value = '';
+                workspaceCreateProjectInlineDescriptionInput.value = '';
                 setWorkspaceTextStatus(workspaceCreateProjectStatus, '');
                 openWorkspaceOverlay('create-project', { allowClose: true });
             }
@@ -945,7 +980,6 @@
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
             });
             workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
-            workspaceSelectionCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
             orgSpaceSelect.addEventListener('change', async () => {
                 try {
                     setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching organization space…');
@@ -970,15 +1004,30 @@
             workspaceModalOrgSelect.addEventListener('change', async () => {
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects…');
+                    workspaceCreateProjectNameInput.value = '';
+                    workspaceCreateProjectIdInput.value = '';
+                    workspaceModalProjectSelect.value = '';
+                    refreshWorkspaceSelectionCopy();
                     await switchWorkspaceSelection(workspaceModalOrgSelect.value || '', '', { reloadPage: false });
                     workspaceModalOrgSelect.value = authSessionState?.tenant_id || workspaceModalOrgSelect.value;
                     workspaceModalProjectSelect.value = authSessionState?.project_id || '';
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Select a project to continue.');
+                    refreshWorkspaceSelectionCopy();
+                    setWorkspaceTextStatus(
+                        workspaceSelectionStatus,
+                        (authSessionState?.accessible_projects || []).length
+                            ? 'Use an existing project, or enter a new project name.'
+                            : 'Enter a project name to continue.',
+                    );
                 } catch (error) {
                     setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to load projects.', true);
                 }
             });
+            workspaceModalProjectSelect.addEventListener('change', refreshWorkspaceSelectionCopy);
             workspaceSelectionContinueBtn.addEventListener('click', async () => {
+                if (!workspaceModalProjectSelect.value) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Select an existing project first.', true);
+                    return;
+                }
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace…');
                     const payload = await switchWorkspaceSelection(
@@ -993,6 +1042,36 @@
                     setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to apply workspace.', true);
                 }
             });
+            workspaceSelectionCreateProjectBtn.addEventListener('click', async () => {
+                const tenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
+                const projectName = workspaceCreateProjectNameInput.value.trim();
+                const projectId = slugifyIdentifier(workspaceCreateProjectIdInput.value || projectName);
+                if (!tenantId) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Select an organization space first.', true);
+                    return;
+                }
+                if (!projectName || !projectId) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter a project name to add a new project.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Adding project to organization space…');
+                    await switchWorkspaceSelection(tenantId, '', { reloadPage: false });
+                    await apiRequest('/projects', {
+                        method: 'POST',
+                        body: {
+                            project_id: projectId,
+                            name: projectName,
+                            description: workspaceCreateProjectDescriptionInput.value.trim(),
+                        },
+                    });
+                    await switchWorkspaceSelection(tenantId, projectId);
+                    closeWorkspaceOverlay(true);
+                    setWorkspaceTextStatus(workspaceSelectorStatus, `Added project ${projectId}.`);
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to add the project.', true);
+                }
+            });
             workspaceCreateProjectCancelBtn.addEventListener('click', () => {
                 if (isWorkspaceSelectionRequired()) {
                     openWorkspaceOverlay('selection');
@@ -1001,9 +1080,9 @@
                 closeWorkspaceOverlay(true);
             });
             workspaceCreateProjectSubmitBtn.addEventListener('click', async () => {
-                const projectId = slugifyIdentifier(workspaceCreateProjectIdInput.value || workspaceCreateProjectNameInput.value);
-                if (!projectId || !workspaceCreateProjectNameInput.value.trim()) {
-                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Project name and project ID are required.', true);
+                const projectId = slugifyIdentifier(workspaceCreateProjectInlineIdInput.value || workspaceCreateProjectInlineNameInput.value);
+                if (!projectId || !workspaceCreateProjectInlineNameInput.value.trim()) {
+                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Enter a project name to continue.', true);
                     return;
                 }
                 try {
@@ -1012,8 +1091,8 @@
                         method: 'POST',
                         body: {
                             project_id: projectId,
-                            name: workspaceCreateProjectNameInput.value.trim(),
-                            description: workspaceCreateProjectDescriptionInput.value.trim(),
+                            name: workspaceCreateProjectInlineNameInput.value.trim(),
+                            description: workspaceCreateProjectInlineDescriptionInput.value.trim(),
                         },
                     });
                     await switchWorkspaceSelection(getActiveTenantId(), projectId);
@@ -1033,7 +1112,7 @@
                 if (onboardingStep === 1) {
                     const organizationId = slugifyIdentifier(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
                     if (!organizationId || !onboardingOrganizationNameInput.value.trim()) {
-                        setWorkspaceTextStatus(onboardingStatus, 'Organization space name and ID are required.', true);
+                        setWorkspaceTextStatus(onboardingStatus, 'Enter an organization name to continue.', true);
                         return;
                     }
                     onboardingOrganizationIdInput.value = organizationId;
@@ -1045,7 +1124,7 @@
                     const organizationId = slugifyIdentifier(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
                     const projectId = slugifyIdentifier(onboardingProjectIdInput.value || onboardingProjectNameInput.value);
                     if (!organizationId || !projectId || !onboardingProjectNameInput.value.trim()) {
-                        setWorkspaceTextStatus(onboardingStatus, 'Project name and ID are required.', true);
+                        setWorkspaceTextStatus(onboardingStatus, 'Enter a project name to continue.', true);
                         return;
                     }
                     onboardingProjectIdInput.value = projectId;
@@ -1066,16 +1145,11 @@
                             onboardingResult.project?.project_id || projectId,
                         );
                         await hydrateAuthSession();
-                        setWorkspaceTextStatus(onboardingStatus, 'Organization space created. Invite teammates or continue.');
-                        setOnboardingStep(3);
+                        closeWorkspaceOverlay(true);
+                        setWorkspaceTextStatus(workspaceSelectorStatus, `Created ${organizationId} / ${projectId}.`);
                     } catch (error) {
                         setWorkspaceTextStatus(onboardingStatus, error.message || 'Failed to create organization space.', true);
                     }
-                    return;
-                }
-                if (onboardingStep === 3) {
-                    setWorkspaceTextStatus(onboardingStatus, '');
-                    setOnboardingStep(4);
                 }
             });
             onboardingGenerateInviteBtn.addEventListener('click', async () => {

@@ -163,7 +163,7 @@ KairyxAI currently supports two practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - OIDC PKCE login in the frontend, self-serve organization-space creation, project invites, and bearer-token operator traffic on `/api/v1`
+   - OIDC PKCE login in the frontend, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/api/v1`
 
 ## Workspace Model
 
@@ -176,8 +176,9 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
-- first-login onboarding to create the first organization space and project
-- a project invite flow based on shareable invite links
+- a full-screen first-login onboarding gate that asks for the organization name first and the first project name second
+- a full-screen workspace gate that lets users choose an existing project or add a new one inside the selected organization space
+- invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
 - a legacy local/demo fallback where raw `Tenant ID` and `Project ID` headers can still be entered manually
 

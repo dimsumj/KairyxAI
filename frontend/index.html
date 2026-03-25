@@ -1318,159 +1318,96 @@ dimensions: campaign,country,platform</pre>
         <div class="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
             <div class="workspace-modal-header">
                 <div>
-                    <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace</div>
-                    <h2 id="workspace-modal-title">Select your workspace</h2>
-                    <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Choose the organization space and project you want to operate in.</p>
+                    <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Setup</div>
+                    <h2 id="workspace-modal-title">Name your organization</h2>
+                    <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Start with an organization name. The first project comes next.</p>
                 </div>
                 <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
             </div>
 
             <div id="workspace-selection-panel" class="workspace-panel hidden">
-                <div class="grid-2">
-                    <div class="form-group">
-                        <label for="workspace-modal-org-select">Organization Space</label>
-                        <select id="workspace-modal-org-select">
-                            <option value="">Select an organization space</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="workspace-modal-project-select">Project</label>
-                        <select id="workspace-modal-project-select">
-                            <option value="">Select a project</option>
-                        </select>
-                    </div>
+                <div class="form-group">
+                    <label for="workspace-modal-org-select">Organization Space</label>
+                    <select id="workspace-modal-org-select">
+                        <option value="">Select an organization space</option>
+                    </select>
                 </div>
                 <div class="workspace-tip-list">
-                    <div>Organization spaces isolate teams and shared governance.</div>
-                    <div>Projects isolate connectors, imports, cohorts, workflows, experiments, exports, and audit history.</div>
+                    <div id="workspace-selection-copy">If this organization space already has a project, use it. Otherwise add a new project to it.</div>
                 </div>
+                <div class="form-group">
+                    <label for="workspace-modal-project-select">Existing Project</label>
+                    <select id="workspace-modal-project-select">
+                        <option value="">Select an existing project</option>
+                    </select>
+                </div>
+                <div class="workspace-divider">or</div>
+                <div class="form-group">
+                    <label for="workspace-create-project-name">New Project Name</label>
+                    <input type="text" id="workspace-create-project-name" placeholder="Live Ops">
+                </div>
+                <input type="text" id="workspace-create-project-id" class="hidden" aria-hidden="true">
+                <textarea id="workspace-create-project-description" class="hidden" aria-hidden="true"></textarea>
                 <div id="workspace-selection-status" class="workspace-panel-status"></div>
                 <div class="workspace-modal-actions">
-                    <button type="button" id="workspace-selection-continue-btn">Continue</button>
-                    <button type="button" id="workspace-selection-create-project-btn">Create Project</button>
+                    <button type="button" id="workspace-selection-continue-btn">Use Existing Project</button>
+                    <button type="button" id="workspace-selection-create-project-btn">Add New Project</button>
                 </div>
             </div>
 
             <div id="workspace-onboarding-panel" class="workspace-panel hidden">
-                <div class="workspace-stepper">
-                    <span class="workspace-step active" data-step="1">1. Organization Space</span>
-                    <span class="workspace-step" data-step="2">2. First Project</span>
-                    <span class="workspace-step" data-step="3">3. Invite Teammates</span>
-                    <span class="workspace-step" data-step="4">4. Connect Data</span>
-                </div>
+                <div id="workspace-onboarding-step-label" class="workspace-step-label">Step 1 of 2</div>
 
                 <div class="workspace-step-panel" data-step="1">
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label for="onboarding-organization-name">Organization Space Name</label>
-                            <input type="text" id="onboarding-organization-name" placeholder="North Star Games">
-                        </div>
-                        <div class="form-group">
-                            <label for="onboarding-organization-id">Organization Space ID</label>
-                            <input type="text" id="onboarding-organization-id" placeholder="north-star-games">
-                        </div>
+                    <div class="form-group">
+                        <label for="onboarding-organization-name">Organization Name</label>
+                        <input type="text" id="onboarding-organization-name" placeholder="North Star Games">
                     </div>
+                    <input type="text" id="onboarding-organization-id" class="hidden" aria-hidden="true">
                     <div class="workspace-tip-list">
-                        <div>Use a stable slug for the ID. It becomes the immutable workspace key used in API headers and storage prefixes.</div>
-                        <div>The first authenticated user becomes the organization-space owner.</div>
+                        <div>Enter the organization name. We generate the internal id automatically.</div>
                     </div>
                 </div>
 
                 <div class="workspace-step-panel hidden" data-step="2">
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label for="onboarding-project-name">First Project Name</label>
-                            <input type="text" id="onboarding-project-name" placeholder="Live Ops">
-                        </div>
-                        <div class="form-group">
-                            <label for="onboarding-project-id">Project ID</label>
-                            <input type="text" id="onboarding-project-id" placeholder="live-ops">
-                        </div>
-                    </div>
                     <div class="form-group">
-                        <label for="onboarding-project-description">Project Description</label>
-                        <textarea id="onboarding-project-description" placeholder="Production lifecycle execution for the live game."></textarea>
+                        <label for="onboarding-project-name">Project Name</label>
+                        <input type="text" id="onboarding-project-name" placeholder="Live Ops">
                     </div>
+                    <input type="text" id="onboarding-project-id" class="hidden" aria-hidden="true">
+                    <textarea id="onboarding-project-description" class="hidden" aria-hidden="true"></textarea>
                     <div class="workspace-tip-list">
-                        <div>The first project is where you connect data, define cohorts, and run workflows.</div>
-                        <div>The project creator becomes a project admin automatically.</div>
+                        <div>Create the first project inside this organization space.</div>
                     </div>
                 </div>
 
-                <div class="workspace-step-panel hidden" data-step="3">
-                    <div class="grid-3">
-                        <div class="form-group">
-                            <label for="onboarding-invite-email">Teammate Email</label>
-                            <input type="email" id="onboarding-invite-email" placeholder="ops@northstar.example">
-                        </div>
-                        <div class="form-group">
-                            <label for="onboarding-invite-display-name">Display Name</label>
-                            <input type="text" id="onboarding-invite-display-name" placeholder="Live Ops Lead">
-                        </div>
-                        <div class="form-group">
-                            <label for="onboarding-invite-org-role">Organization Role</label>
-                            <select id="onboarding-invite-org-role">
-                                <option value="member" selected>Member</option>
-                                <option value="admin">Admin</option>
-                                <option value="owner">Owner</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label for="onboarding-invite-project-role">Project Role</label>
-                            <select id="onboarding-invite-project-role">
-                                <option value="operator" selected>Operator</option>
-                                <option value="analyst">Analyst</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="onboarding-invite-link">Invite Link</label>
-                            <textarea id="onboarding-invite-link" readonly placeholder="Generate an invite link to share with a teammate."></textarea>
-                        </div>
-                    </div>
-                    <div id="onboarding-invite-status" class="workspace-panel-status"></div>
-                </div>
-
-                <div class="workspace-step-panel hidden" data-step="4">
-                    <div class="workspace-tip-list">
-                        <div>Recommended first connections: Amplitude, Adjust, AppsFlyer, or BigQuery.</div>
-                        <div>You can finish onboarding now and configure downstream provider connections later.</div>
-                    </div>
-                    <div class="workspace-connect-grid">
-                        <button type="button" class="workspace-source-chip">Amplitude</button>
-                        <button type="button" class="workspace-source-chip">Adjust</button>
-                        <button type="button" class="workspace-source-chip">AppsFlyer</button>
-                        <button type="button" class="workspace-source-chip">BigQuery</button>
-                    </div>
-                </div>
-
+                <input type="email" id="onboarding-invite-email" class="hidden" aria-hidden="true">
+                <input type="text" id="onboarding-invite-display-name" class="hidden" aria-hidden="true">
+                <select id="onboarding-invite-org-role" class="hidden" aria-hidden="true">
+                    <option value="member" selected>Member</option>
+                </select>
+                <select id="onboarding-invite-project-role" class="hidden" aria-hidden="true">
+                    <option value="operator" selected>Operator</option>
+                </select>
+                <textarea id="onboarding-invite-link" class="hidden" aria-hidden="true"></textarea>
+                <div id="onboarding-invite-status" class="hidden" aria-hidden="true"></div>
                 <div id="workspace-onboarding-status" class="workspace-panel-status"></div>
                 <div class="workspace-modal-actions">
                     <button type="button" id="onboarding-back-btn">Back</button>
+                    <button type="button" id="onboarding-next-btn">Continue</button>
                     <button type="button" id="onboarding-generate-invite-btn" class="hidden">Generate Invite Link</button>
-                    <button type="button" id="onboarding-next-btn">Next</button>
                     <button type="button" id="onboarding-connect-btn" class="hidden">Connect Now</button>
                     <button type="button" id="onboarding-skip-btn" class="hidden">Skip for Now</button>
                 </div>
             </div>
 
             <div id="workspace-create-project-panel" class="workspace-panel hidden">
-                <div class="grid-2">
-                    <div class="form-group">
-                        <label for="workspace-create-project-name">Project Name</label>
-                        <input type="text" id="workspace-create-project-name" placeholder="Growth Sandbox">
-                    </div>
-                    <div class="form-group">
-                        <label for="workspace-create-project-id">Project ID</label>
-                        <input type="text" id="workspace-create-project-id" placeholder="growth-sandbox">
-                    </div>
-                </div>
                 <div class="form-group">
-                    <label for="workspace-create-project-description">Project Description</label>
-                    <textarea id="workspace-create-project-description" placeholder="Experiment safely before promoting workflows into production."></textarea>
+                    <label for="workspace-create-project-inline-name">Project Name</label>
+                    <input type="text" id="workspace-create-project-inline-name" placeholder="Growth Sandbox">
                 </div>
+                <input type="text" id="workspace-create-project-inline-id" class="hidden" aria-hidden="true">
+                <textarea id="workspace-create-project-inline-description" class="hidden" aria-hidden="true"></textarea>
                 <div id="workspace-create-project-status" class="workspace-panel-status"></div>
                 <div class="workspace-modal-actions">
                     <button type="button" id="workspace-create-project-cancel-btn">Cancel</button>
