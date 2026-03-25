@@ -6,6 +6,7 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.core.errors import is_database_locked_error
 from app.core.logging import PredictionPollingAccessFilter
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
@@ -113,6 +114,15 @@ def test_local_job_store_closes_sqlite_connections(tmp_path, monkeypatch):
 
     assert open_count > 0
     assert close_count == open_count
+
+
+def test_database_lock_error_detection_handles_exception_groups():
+    exc = ExceptionGroup(
+        "database lock group",
+        [sqlite3.OperationalError("database is locked")],
+    )
+
+    assert is_database_locked_error(exc) is True
 
 
 def test_shared_bigquery_service_reuses_instance_per_runtime_context(tmp_path, monkeypatch):

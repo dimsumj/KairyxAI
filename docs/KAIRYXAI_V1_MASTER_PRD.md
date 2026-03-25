@@ -95,6 +95,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 **v1 launch standard (scenario-level)**
 - Rescue cohort refreshes automatically every day
 - Operators can launch churn prediction by source, with import override retained for audit and debugging
+- Operators can manually trigger local churn-model retraining and read readiness / training status directly from the churn workbench
 - At least one rescue workflow runs stably
 - Win-back rate improves by at least 15% relative within 4 to 8 weeks
 

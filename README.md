@@ -259,13 +259,21 @@ Readiness is exposed through:
   - returns the latest trained local model version when one exists
 - `POST /api/v1/predictions/models/train`
   - triggers a local batch retrain
+  - updates `training_status` as the run progresses and completes
 
 Prediction job metadata also records:
 
 - `effective_local_model_version`
 - `effective_local_model_state`
 
-The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` badge beside the prediction engine selector and warns when `Local Model` is currently using `heuristic_v1`.
+The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` badge beside the prediction engine selector, warns when `Local Model` is currently using `heuristic_v1`, and includes:
+
+- `Train Local Model`
+  - manually starts a local retrain from the operator workbench
+- `Refresh Model Status`
+  - refreshes the latest readiness and training status without starting a new run
+- inline training status
+  - shows the latest training state, labeled-row count, class balance, and last update time
 
 ## Prediction Audience Selection
 
@@ -282,6 +290,15 @@ In both modes:
 - churn features come from merged tenant history across completed imports
 - the prediction job records the resolved `import_job_id` that was actually used
 - completed cached jobs can be viewed, but stale jobs require explicit rerun confirmation in the UI
+
+## Import Diagnostics Load Behavior
+
+The Imports page now keeps restart-time load lighter:
+
+- import operations, quality, and manifest diagnostics load on demand instead of auto-fetching on first page render
+- schema contracts are also loaded on demand
+- import polling continues only while at least one import job is `queued`, `running`, or `stopping`
+- when the control plane is temporarily busy right after restart, import detail reads retry once and then surface a retryable busy message instead of silently failing
 
 ## Key Environment Variables
 

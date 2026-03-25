@@ -16,17 +16,23 @@ class MissingDependencyError(KeyError):
 
 
 def is_database_locked_error(exc: BaseException) -> bool:
-    current: BaseException | None = exc
+    pending: list[BaseException] = [exc]
     seen: set[int] = set()
-    while current is not None and id(current) not in seen:
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
         seen.add(id(current))
         message = str(current).lower()
         if "database is locked" in message or "database table is locked" in message:
             return True
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, tuple):
+            pending.extend(item for item in nested if isinstance(item, BaseException))
         next_exc = getattr(current, "orig", None)
         if isinstance(next_exc, BaseException):
-            current = next_exc
-            continue
+            pending.append(next_exc)
         cause = getattr(current, "__cause__", None)
-        current = cause if isinstance(cause, BaseException) else None
+        if isinstance(cause, BaseException):
+            pending.append(cause)
     return False

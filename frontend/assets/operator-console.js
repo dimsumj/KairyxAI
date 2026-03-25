@@ -142,8 +142,6 @@
                 if (pageId === 'player-cohorts') {
                     loadConfiguredSources();
                     loadImportedDataList();
-                    loadImportSchemaContracts(true);
-                    importListInterval = setInterval(loadImportedDataList, 3000);
                 }
                 if (pageId === 'action-history') {
                     loadActionHistory();
@@ -258,6 +256,7 @@
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedPredictionModelReadiness = null;
+            let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
@@ -724,15 +723,24 @@
                 };
             }
 
+            function buildDefaultPredictionModelTrainingStatus() {
+                return {};
+            }
+
             async function refreshPredictionModelReadinessState() {
                 try {
                     const payload = await apiRequest('/predictions/models/runs');
                     cachedPredictionModelReadiness = payload.readiness || buildDefaultPredictionModelReadiness();
+                    cachedPredictionModelTrainingStatus = payload.training_status || buildDefaultPredictionModelTrainingStatus();
                 } catch (error) {
                     console.warn('Unable to refresh prediction model readiness:', error);
                     cachedPredictionModelReadiness = buildDefaultPredictionModelReadiness();
+                    cachedPredictionModelTrainingStatus = buildDefaultPredictionModelTrainingStatus();
                 }
-                return cachedPredictionModelReadiness;
+                return {
+                    readiness: cachedPredictionModelReadiness,
+                    training_status: cachedPredictionModelTrainingStatus,
+                };
             }
 
             async function refreshExportJobsState() {
@@ -775,6 +783,10 @@
                 return cachedPredictionModelReadiness || buildDefaultPredictionModelReadiness();
             }
 
+            function getPredictionModelTrainingStatus() {
+                return cachedPredictionModelTrainingStatus || buildDefaultPredictionModelTrainingStatus();
+            }
+
             function getPredictionModelBadgeLabel(state = '') {
                 switch (String(state || '').toLowerCase()) {
                     case 'ready':
@@ -803,6 +815,93 @@
                     return '';
                 }
                 return `${(numeric * 100).toFixed(1)}%`;
+            }
+
+            function formatPredictionTrainingStatusLabel(value = '') {
+                const normalized = String(value || '').trim().toLowerCase();
+                if (!normalized) {
+                    return '';
+                }
+                if (normalized === 'running') {
+                    return 'Training';
+                }
+                return normalized.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            }
+
+            function formatPredictionTrainingStageLabel(value = '') {
+                const normalized = String(value || '').trim().toLowerCase();
+                if (!normalized) {
+                    return '';
+                }
+                return normalized.replace(/_/g, ' ');
+            }
+
+            function formatPredictionTrainingClassBalance(classBalance = {}) {
+                const entries = Object.entries(classBalance || {})
+                    .filter(([, value]) => Number.isFinite(Number(value)))
+                    .map(([label, value]) => `${label}:${Number(value)}`);
+                return entries.length ? entries.join(', ') : '';
+            }
+
+            function renderPredictionModelTrainingStatus(customMessage = '') {
+                const trainingStatus = getPredictionModelTrainingStatus();
+                const readiness = getPredictionModelReadiness();
+                const statusLabel = formatPredictionTrainingStatusLabel(trainingStatus.status);
+                const stageLabel = formatPredictionTrainingStageLabel(trainingStatus.stage);
+                const rowCount = Number(trainingStatus.row_count || readiness.baseline_rows || 0);
+                const minRowsRequired = Number(trainingStatus.min_rows_required || readiness.min_rows_required || 12);
+                const classBalanceLabel = formatPredictionTrainingClassBalance(trainingStatus.class_balance || {});
+                const trainedAt = trainingStatus.trained_at || readiness.last_trained_at;
+                const detailParts = [];
+                const titleLines = [];
+
+                if (customMessage) {
+                    detailParts.push(String(customMessage).trim());
+                } else if (statusLabel) {
+                    detailParts.push(statusLabel);
+                } else {
+                    detailParts.push('No local model training status recorded yet.');
+                }
+
+                if (stageLabel && String(trainingStatus.status || '').toLowerCase() === 'running') {
+                    detailParts.push(stageLabel);
+                }
+                detailParts.push(`${rowCount}/${minRowsRequired} labeled rows`);
+                if (classBalanceLabel) {
+                    detailParts.push(`classes ${classBalanceLabel}`);
+                }
+                if (trainedAt) {
+                    detailParts.push(`updated ${formatDateTime(trainedAt)}`);
+                }
+
+                if (statusLabel) {
+                    titleLines.push(`Status: ${statusLabel}`);
+                }
+                if (stageLabel) {
+                    titleLines.push(`Stage: ${stageLabel}`);
+                }
+                titleLines.push(`Labeled rows: ${rowCount}/${minRowsRequired}`);
+                if (classBalanceLabel) {
+                    titleLines.push(`Class balance: ${classBalanceLabel}`);
+                }
+                if (trainingStatus.dataset_id) {
+                    titleLines.push(`Dataset: ${trainingStatus.dataset_id}`);
+                }
+                if (trainingStatus.error) {
+                    titleLines.push(`Error: ${trainingStatus.error}`);
+                }
+                if (trainedAt) {
+                    titleLines.push(`Last updated: ${formatDateTime(trainedAt)}`);
+                }
+
+                if (predictionModelTrainingStatus) {
+                    const normalizedTrainingStatus = String(trainingStatus.status || '').toLowerCase();
+                    predictionModelTrainingStatus.style.color = normalizedTrainingStatus === 'failed'
+                        ? 'var(--red)'
+                        : (normalizedTrainingStatus === 'running' ? 'var(--primary-color)' : 'var(--text-secondary)');
+                    predictionModelTrainingStatus.textContent = detailParts.filter(Boolean).join(' · ');
+                    predictionModelTrainingStatus.title = titleLines.filter(Boolean).join('\n');
+                }
             }
 
             function renderPredictionModelReadiness() {
@@ -856,6 +955,8 @@
                         predictionLocalWarning.textContent = '';
                     }
                 }
+                renderPredictionModelTrainingStatus();
+                setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
             }
 
             function getSelectedPredictionMode() {
@@ -1552,6 +1653,9 @@
             const predictionModeSelect = document.getElementById('prediction-mode-select');
             const predictionModelReadinessBadge = document.getElementById('prediction-model-readiness-badge');
             const predictionModelReadinessDetails = document.getElementById('prediction-model-readiness-details');
+            const trainLocalModelBtn = document.getElementById('train-local-model-btn');
+            const refreshLocalModelStatusBtn = document.getElementById('refresh-local-model-status-btn');
+            const predictionModelTrainingStatus = document.getElementById('prediction-model-training-status');
             const predictionLocalWarning = document.getElementById('prediction-local-warning');
             const predictChurnBtn = document.getElementById('predict-churn-btn');
             const predictionProgressInfo = document.getElementById('prediction-progress-info');
@@ -1576,6 +1680,7 @@
             let itemsPerPage = 25;
             let activePredictionJobId = null;
             let predictionStopRequested = false;
+            let predictionModelTrainingRequest = null;
             const ACTIVE_PREDICTION_STORAGE_KEY = 'kairyx.activePredictionJob';
 
             function getPredictionImportJobId(job) {
@@ -1729,6 +1834,16 @@
                 return job;
             }
 
+            function setPredictionModelTrainingActionState(isRunning = false) {
+                if (trainLocalModelBtn) {
+                    trainLocalModelBtn.disabled = isRunning || Boolean(activePredictionJobId);
+                    trainLocalModelBtn.textContent = isRunning ? 'Training...' : 'Train Local Model';
+                }
+                if (refreshLocalModelStatusBtn) {
+                    refreshLocalModelStatusBtn.disabled = isRunning;
+                }
+            }
+
             function setPredictionActionState(state = 'idle') {
                 if (state === 'starting') {
                     predictChurnBtn.textContent = 'Starting...';
@@ -1737,6 +1852,7 @@
                     datasetSelect.disabled = true;
                     predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
+                    setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
                     return;
                 }
 
@@ -1747,6 +1863,7 @@
                     datasetSelect.disabled = true;
                     predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
+                    setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
                     return;
                 }
 
@@ -1757,6 +1874,7 @@
                     datasetSelect.disabled = true;
                     predictionAudienceScopeSelect.disabled = true;
                     predictionModeSelect.disabled = true;
+                    setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
                     return;
                 }
 
@@ -1766,6 +1884,7 @@
                 datasetSelect.disabled = false;
                 predictionAudienceScopeSelect.disabled = false;
                 predictionModeSelect.disabled = false;
+                setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
             }
 
             function renderPredictionProgress(job = {}) {
@@ -2024,6 +2143,94 @@
                     predictionModeSelect.disabled = true;
                     pushAudienceBtn.disabled = true;
                     console.error('Error loading prediction audiences for Operator Hub:', error);
+                }
+            }
+
+            async function refreshLocalModelTrainingStatus() {
+                try {
+                    await refreshPredictionModelReadinessState();
+                    renderPredictionModelReadiness();
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        'Refreshed local model status.',
+                    );
+                } catch (error) {
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        error.message || 'Failed to refresh local model status.',
+                        true,
+                    );
+                }
+            }
+
+            async function trainLocalPredictionModel() {
+                if (predictionModelTrainingRequest) {
+                    return predictionModelTrainingRequest;
+                }
+
+                const minRows = Number(getPredictionModelReadiness().min_rows_required || 12);
+                const referenceTime = new Date().toISOString();
+                let pollInterval = null;
+                setInlineStatus(
+                    predictionModelTrainingStatus,
+                    `Training local model with minimum ${minRows} labeled rows...`,
+                );
+                cachedPredictionModelTrainingStatus = {
+                    ...getPredictionModelTrainingStatus(),
+                    status: 'running',
+                    stage: 'building_dataset',
+                    reference_time: referenceTime,
+                    started_at: referenceTime,
+                    min_rows_required: minRows,
+                };
+                renderPredictionModelReadiness();
+                setPredictionModelTrainingActionState(true);
+
+                predictionModelTrainingRequest = apiRequest('/predictions/models/train', {
+                    method: 'POST',
+                    body: {
+                        reference_time: referenceTime,
+                        min_rows: minRows,
+                    },
+                });
+
+                try {
+                    pollInterval = window.setInterval(async () => {
+                        try {
+                            await refreshPredictionModelReadinessState();
+                            renderPredictionModelReadiness();
+                        } catch (error) {
+                            console.warn('Unable to refresh local model training status while training:', error);
+                        }
+                    }, 1000);
+
+                    const payload = await predictionModelTrainingRequest;
+                    await refreshPredictionModelReadinessState();
+                    renderPredictionModelReadiness();
+
+                    const model = payload.model || {};
+                    const resolvedStatus = formatPredictionTrainingStatusLabel(model.status || getPredictionModelTrainingStatus().status || '');
+                    const resolvedVersion = String(model.model_version || getPredictionModelReadiness().using_model_version || 'heuristic_v1');
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        `Training finished: ${resolvedVersion} · ${resolvedStatus || 'Completed'}.`,
+                    );
+                    return payload;
+                } catch (error) {
+                    await refreshPredictionModelReadinessState().catch(() => null);
+                    renderPredictionModelReadiness();
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        error.message || 'Local model training failed.',
+                        true,
+                    );
+                    throw error;
+                } finally {
+                    if (pollInterval) {
+                        window.clearInterval(pollInterval);
+                    }
+                    predictionModelTrainingRequest = null;
+                    setPredictionModelTrainingActionState(false);
                 }
             }
 
@@ -2346,6 +2553,14 @@
                 renderPredictionModelReadiness();
             });
 
+            trainLocalModelBtn?.addEventListener('click', () => {
+                trainLocalPredictionModel().catch(() => null);
+            });
+
+            refreshLocalModelStatusBtn?.addEventListener('click', () => {
+                refreshLocalModelTrainingStatus().catch(() => null);
+            });
+
             predictChurnBtn.addEventListener('click', async () => {
                 if (activePredictionJobId) {
                     requestPredictionStop();
@@ -2429,6 +2644,22 @@
             }
 
             let countdownInterval = null;
+            function shouldPollImportJobs(imports = []) {
+                return imports.some((job) => ['queued', 'running', 'stopping'].includes(String(job.raw_status || '').toLowerCase()));
+            }
+
+            function syncImportListPolling(imports = []) {
+                const shouldPoll = shouldPollImportJobs(imports);
+                if (shouldPoll && !importListInterval) {
+                    importListInterval = setInterval(loadImportedDataList, 3000);
+                    return;
+                }
+                if (!shouldPoll && importListInterval) {
+                    clearInterval(importListInterval);
+                    importListInterval = null;
+                }
+            }
+
             function populateImportDetailSelect(imports = []) {
                 if (!importDetailSelect) return;
                 const previous = selectedImportJobId || importDetailSelect.value;
@@ -2455,6 +2686,22 @@
                 }
             }
 
+            async function retryBusyRequest(callback, attempts = 2, waitMs = 750) {
+                let lastError = null;
+                for (let attempt = 0; attempt < attempts; attempt += 1) {
+                    try {
+                        return await callback();
+                    } catch (error) {
+                        lastError = error;
+                        if (Number(error.status || 0) !== 423 || attempt === attempts - 1) {
+                            throw error;
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, waitMs));
+                    }
+                }
+                throw lastError || new Error('Request failed.');
+            }
+
             async function loadImportOperatorView(view = 'operations', silent = false) {
                 const jobId = importDetailSelect?.value;
                 if (!jobId) {
@@ -2468,7 +2715,7 @@
                         setInlineStatus(importDetailStatus, `Loading import ${view}...`);
                     }
                     if (view === 'manifests') {
-                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/manifests`);
+                        const payload = await retryBusyRequest(() => apiRequest(`/imports/${encodeURIComponent(jobId)}/manifests`));
                         renderSimpleTable(
                             importManifestsList,
                             [
@@ -2483,21 +2730,24 @@
                         );
                         renderJsonOutput(importDetailOutput, payload, 'Manifest detail unavailable.');
                     } else if (view === 'quality') {
-                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/quality`);
+                        const payload = await retryBusyRequest(() => apiRequest(`/imports/${encodeURIComponent(jobId)}/quality`));
                         renderJsonOutput(importDetailOutput, payload, 'Import quality unavailable.');
                     } else {
-                        const payload = await apiRequest(`/imports/${encodeURIComponent(jobId)}/operations`);
+                        const payload = await retryBusyRequest(() => apiRequest(`/imports/${encodeURIComponent(jobId)}/operations`));
                         renderJsonOutput(importDetailOutput, payload, 'Import operations unavailable.');
                     }
                     if (!silent) {
                         setInlineStatus(importDetailStatus, `Loaded import ${view} for ${jobId}.`);
                     }
                 } catch (error) {
+                    const detailMessage = Number(error.status || 0) === 423
+                        ? 'The control plane is busy after restart. Retry in a moment.'
+                        : (error.message || 'Failed to load import detail.');
                     renderJsonOutput(importDetailOutput, { error: error.message }, 'Import detail unavailable.');
                     if (view === 'manifests') {
                         renderSimpleTable(importManifestsList, [], [], 'Manifest detail unavailable.');
                     }
-                    setInlineStatus(importDetailStatus, error.message || 'Failed to load import detail.', true);
+                    setInlineStatus(importDetailStatus, detailMessage, true);
                 }
             }
 
@@ -2525,12 +2775,14 @@
                     const imports = await refreshImportsState();
 
                     if (!imports || imports.length === 0) {
+                        syncImportListPolling([]);
                         if (countdownInterval) {
                             clearInterval(countdownInterval);
                             countdownInterval = null;
                         }
                         importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
                         populateImportDetailSelect([]);
+                        setInlineStatus(importListStatus, 'No imports found.');
                         return;
                     }
                     const priorSelectedImport = selectedImportJobId;
@@ -2614,11 +2866,22 @@
                     });
                     populateImportDetailSelect(imports);
                     if (!priorSelectedImport && selectedImportJobId) {
-                        await loadImportOperatorView('operations', true);
+                        renderJsonOutput(importDetailOutput, null, 'Select a view to load import diagnostics on demand.');
+                        renderSimpleTable(importManifestsList, [], [], 'Manifest detail loads on demand.');
+                        setInlineStatus(importDetailStatus, 'Import diagnostics now load on demand to keep page startup fast.');
                     }
+                    syncImportListPolling(imports);
+                    setInlineStatus(
+                        importListStatus,
+                        shouldPollImportJobs(imports)
+                            ? `Loaded ${imports.length} import(s). Active imports will refresh automatically.`
+                            : `Loaded ${imports.length} import(s). Select a job and click Load Operations, Load Quality, or Load Manifests when needed.`,
+                    );
 
                 } catch (error) {
+                    syncImportListPolling([]);
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                    setInlineStatus(importListStatus, error.message || 'Failed to load imports.', true);
                 } finally {
                     startCountdownTimers(); // Ensure timers are always started/restarted after data load
                 }

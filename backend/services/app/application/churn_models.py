@@ -100,6 +100,16 @@ class LocalChurnModelService:
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
 
+    def _commit_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.commit()
+
+    def _rollback_session(self) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.rollback()
+
     def get_active_model_payload(self) -> Dict[str, Any] | None:
         record = self.repository.get_resource(self.MODEL_RESOURCE_TYPE, self.MODEL_RESOURCE_ID)
         if record is None:
@@ -255,121 +265,175 @@ class LocalChurnModelService:
     ) -> Dict[str, Any]:
         resolved_time = _parse_dt(reference_time) or _utcnow()
         min_rows_required = max(6, int(min_rows))
-        dataset = self.build_training_dataset(reference_time=resolved_time.isoformat(), persist=True)
-        rows = [item for item in dataset.get("rows") or [] if item.get("baseline_churn_label") in {0, 1}]
-        labels = [int(item["baseline_churn_label"]) for item in rows]
-        class_balance = {label: labels.count(label) for label in sorted(set(labels))}
-
         training_status = {
             "reference_time": resolved_time.isoformat(),
-            "dataset_id": dataset["dataset_id"],
-            "row_count": len(rows),
-            "class_balance": class_balance,
-            "status": "insufficient_data",
-            "trained_at": resolved_time.isoformat(),
+            "status": "running",
+            "stage": "building_dataset",
+            "started_at": resolved_time.isoformat(),
+            "trained_at": None,
             "min_rows_required": min_rows_required,
+            "row_count": 0,
+            "class_balance": {},
         }
-
-        if len(rows) < min_rows_required or len(class_balance) < 2 or min(class_balance.values()) < 2:
-            fallback_payload = {
-                "model_version": "heuristic_v1",
-                "status": "fallback",
-                "trained_at": resolved_time.isoformat(),
-                "reference_time": resolved_time.isoformat(),
-                "dataset": {
-                    "dataset_id": dataset["dataset_id"],
-                    "row_count": dataset["row_count"],
-                    "baseline_rows": dataset["baseline_rows"],
-                },
-                "metrics": {
-                    "validation_accuracy": None,
-                    "heuristic_accuracy": None,
-                },
-                "artifact": {"feature_names": FEATURE_COLUMNS, "thresholds": DEFAULT_SCORE_THRESHOLDS},
-                "reason": "Not enough untreated rows with class balance for model training.",
-            }
-            self._upsert_versioned_resource(
-                self.MODEL_RESOURCE_TYPE,
-                self.MODEL_RESOURCE_ID,
-                status="fallback",
-                payload=fallback_payload,
-            )
-            training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
-            self._persist_training_status(training_status)
-            return fallback_payload
-
-        train_rows, validation_rows = self._split_rows_temporally(rows)
-        if not train_rows or not validation_rows:
-            fallback_payload = {
-                "model_version": "heuristic_v1",
-                "status": "fallback",
-                "trained_at": resolved_time.isoformat(),
-                "reference_time": resolved_time.isoformat(),
-                "dataset": {
-                    "dataset_id": dataset["dataset_id"],
-                    "row_count": dataset["row_count"],
-                    "baseline_rows": dataset["baseline_rows"],
-                },
-                "metrics": {
-                    "validation_accuracy": None,
-                    "heuristic_accuracy": None,
-                },
-                "artifact": {"feature_names": FEATURE_COLUMNS, "thresholds": DEFAULT_SCORE_THRESHOLDS},
-                "reason": "Temporal validation split did not produce train and validation rows.",
-            }
-            self._upsert_versioned_resource(
-                self.MODEL_RESOURCE_TYPE,
-                self.MODEL_RESOURCE_ID,
-                status="fallback",
-                payload=fallback_payload,
-            )
-            training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
-            self._persist_training_status(training_status)
-            return fallback_payload
-
-        model_state = self._fit_model(train_rows)
-        validation_accuracy = self._score_rows(validation_rows, model_state)
-        heuristic_accuracy = self._score_rows(validation_rows, None)
-        model_status = "active" if validation_accuracy >= heuristic_accuracy else "fallback"
-        model_version = f"crm_{resolved_time.strftime('%Y%m%d%H%M%S')}"
-
-        payload = {
-            "model_version": model_version,
-            "status": model_status,
-            "trained_at": resolved_time.isoformat(),
-            "reference_time": resolved_time.isoformat(),
-            "dataset": {
-                "dataset_id": dataset["dataset_id"],
-                "row_count": dataset["row_count"],
-                "baseline_rows": dataset["baseline_rows"],
-                "validation_rows": len(validation_rows),
-                "training_rows": len(train_rows),
-            },
-            "metrics": {
-                "validation_accuracy": round(validation_accuracy, 4),
-                "heuristic_accuracy": round(heuristic_accuracy, 4),
-            },
-            "artifact": {
-                **model_state,
-                "thresholds": DEFAULT_SCORE_THRESHOLDS,
-            },
-        }
-        self._upsert_versioned_resource(
-            self.MODEL_RESOURCE_TYPE,
-            self.MODEL_RESOURCE_ID,
-            status=model_status,
-            payload=payload,
-        )
-        training_status.update(
-            {
-                "status": model_status,
-                "model_version": model_version,
-                "metrics": payload["metrics"],
-            }
-        )
-        training_status["readiness"] = self._build_model_readiness(payload, training_status, min_rows_required)
         self._persist_training_status(training_status)
-        return payload
+        self._commit_session()
+
+        try:
+            dataset = self.build_training_dataset(reference_time=resolved_time.isoformat(), persist=True)
+            rows = [item for item in dataset.get("rows") or [] if item.get("baseline_churn_label") in {0, 1}]
+            labels = [int(item["baseline_churn_label"]) for item in rows]
+            class_balance = {label: labels.count(label) for label in sorted(set(labels))}
+
+            training_status.update(
+                {
+                    "dataset_id": dataset["dataset_id"],
+                    "row_count": len(rows),
+                    "class_balance": class_balance,
+                    "stage": "evaluating_dataset",
+                }
+            )
+            self._persist_training_status(training_status)
+            self._commit_session()
+
+            if len(rows) < min_rows_required or len(class_balance) < 2 or min(class_balance.values()) < 2:
+                fallback_payload = {
+                    "model_version": "heuristic_v1",
+                    "status": "fallback",
+                    "trained_at": resolved_time.isoformat(),
+                    "reference_time": resolved_time.isoformat(),
+                    "dataset": {
+                        "dataset_id": dataset["dataset_id"],
+                        "row_count": dataset["row_count"],
+                        "baseline_rows": dataset["baseline_rows"],
+                    },
+                    "metrics": {
+                        "validation_accuracy": None,
+                        "heuristic_accuracy": None,
+                    },
+                    "artifact": {"feature_names": FEATURE_COLUMNS, "thresholds": DEFAULT_SCORE_THRESHOLDS},
+                    "reason": "Not enough untreated rows with class balance for model training.",
+                }
+                self._upsert_versioned_resource(
+                    self.MODEL_RESOURCE_TYPE,
+                    self.MODEL_RESOURCE_ID,
+                    status="fallback",
+                    payload=fallback_payload,
+                )
+                training_status.update(
+                    {
+                        "status": "insufficient_data",
+                        "stage": "completed",
+                        "trained_at": resolved_time.isoformat(),
+                    }
+                )
+                training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
+                self._persist_training_status(training_status)
+                self._commit_session()
+                return fallback_payload
+
+            train_rows, validation_rows = self._split_rows_temporally(rows)
+            if not train_rows or not validation_rows:
+                fallback_payload = {
+                    "model_version": "heuristic_v1",
+                    "status": "fallback",
+                    "trained_at": resolved_time.isoformat(),
+                    "reference_time": resolved_time.isoformat(),
+                    "dataset": {
+                        "dataset_id": dataset["dataset_id"],
+                        "row_count": dataset["row_count"],
+                        "baseline_rows": dataset["baseline_rows"],
+                    },
+                    "metrics": {
+                        "validation_accuracy": None,
+                        "heuristic_accuracy": None,
+                    },
+                    "artifact": {"feature_names": FEATURE_COLUMNS, "thresholds": DEFAULT_SCORE_THRESHOLDS},
+                    "reason": "Temporal validation split did not produce train and validation rows.",
+                }
+                self._upsert_versioned_resource(
+                    self.MODEL_RESOURCE_TYPE,
+                    self.MODEL_RESOURCE_ID,
+                    status="fallback",
+                    payload=fallback_payload,
+                )
+                training_status.update(
+                    {
+                        "status": "insufficient_data",
+                        "stage": "completed",
+                        "trained_at": resolved_time.isoformat(),
+                    }
+                )
+                training_status["readiness"] = self._build_model_readiness(fallback_payload, training_status, min_rows_required)
+                self._persist_training_status(training_status)
+                self._commit_session()
+                return fallback_payload
+
+            training_status.update({"stage": "fitting_model"})
+            self._persist_training_status(training_status)
+            self._commit_session()
+            model_state = self._fit_model(train_rows)
+
+            training_status.update({"stage": "validating_model"})
+            self._persist_training_status(training_status)
+            self._commit_session()
+            validation_accuracy = self._score_rows(validation_rows, model_state)
+            heuristic_accuracy = self._score_rows(validation_rows, None)
+            model_status = "active" if validation_accuracy >= heuristic_accuracy else "fallback"
+            model_version = f"crm_{resolved_time.strftime('%Y%m%d%H%M%S')}"
+
+            payload = {
+                "model_version": model_version,
+                "status": model_status,
+                "trained_at": resolved_time.isoformat(),
+                "reference_time": resolved_time.isoformat(),
+                "dataset": {
+                    "dataset_id": dataset["dataset_id"],
+                    "row_count": dataset["row_count"],
+                    "baseline_rows": dataset["baseline_rows"],
+                    "validation_rows": len(validation_rows),
+                    "training_rows": len(train_rows),
+                },
+                "metrics": {
+                    "validation_accuracy": round(validation_accuracy, 4),
+                    "heuristic_accuracy": round(heuristic_accuracy, 4),
+                },
+                "artifact": {
+                    **model_state,
+                    "thresholds": DEFAULT_SCORE_THRESHOLDS,
+                },
+            }
+            self._upsert_versioned_resource(
+                self.MODEL_RESOURCE_TYPE,
+                self.MODEL_RESOURCE_ID,
+                status=model_status,
+                payload=payload,
+            )
+            training_status.update(
+                {
+                    "status": model_status,
+                    "stage": "completed",
+                    "trained_at": resolved_time.isoformat(),
+                    "model_version": model_version,
+                    "metrics": payload["metrics"],
+                }
+            )
+            training_status["readiness"] = self._build_model_readiness(payload, training_status, min_rows_required)
+            self._persist_training_status(training_status)
+            self._commit_session()
+            return payload
+        except Exception as exc:
+            self._rollback_session()
+            training_status.update(
+                {
+                    "status": "failed",
+                    "stage": "failed",
+                    "trained_at": _utcnow().isoformat(),
+                    "error": str(exc),
+                }
+            )
+            self._persist_training_status(training_status)
+            self._commit_session()
+            raise
 
     def score_profile(self, profile: Dict[str, Any]) -> ProfileScore:
         resolved_time = _utcnow().isoformat()
@@ -792,6 +856,10 @@ class LocalChurnModelService:
             reason = (
                 f"Local supervised model {using_model_version} is active and currently used for local scoring."
             )
+        elif training_state == "running":
+            state = "learning"
+            using_model_version = "heuristic_v1"
+            reason = "Local model training is running. Local predictions continue using heuristic_v1 until training finishes."
         elif not latest_model and not training_status:
             state = "untrained"
             using_model_version = "heuristic_v1"

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
@@ -117,7 +116,7 @@ def create_app() -> FastAPI:
     async def _sqlite_lock_guard(request: Request, call_next):
         try:
             return await call_next(request)
-        except (SQLAlchemyOperationalError, sqlite3.OperationalError) as exc:
+        except Exception as exc:
             if is_database_locked_error(exc):
                 logger.warning("Control plane database lock while handling %s %s", request.method, request.url.path)
                 return JSONResponse(
