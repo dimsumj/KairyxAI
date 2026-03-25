@@ -46,13 +46,17 @@ async def handle_pubsub_push(request: Request) -> dict:
         raise HTTPException(status_code=404, detail=f"Export job '{job_id}' not found.")
 
     tenant_id = str(job.get("tenant_id") or os.getenv("BOOTSTRAP_TENANT_ID", "default"))
+    project_id = str(job.get("project_id") or os.getenv("BOOTSTRAP_PROJECT_ID", "default"))
     with request_context(
         RequestContext(
             actor_id="worker:export",
             actor_role="admin",
             tenant_id=tenant_id,
+            project_id=project_id,
             correlation_id=f"worker-export-{job_id}",
             platform_admin=True,
+            org_role="owner",
+            project_role="admin",
             auth_mode="worker",
         )
     ):

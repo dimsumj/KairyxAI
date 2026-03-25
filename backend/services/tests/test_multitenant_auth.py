@@ -39,11 +39,15 @@ def _make_token(subject: str, *, platform_admin: bool = False, extra_claims: dic
     return jwt.encode(claims, OIDC_SECRET, algorithm="HS256")
 
 
-def _auth_headers(token: str, tenant_id: str) -> dict[str, str]:
-    return {
+def _auth_headers(token: str, tenant_id: str | None = None, project_id: str | None = None) -> dict[str, str]:
+    headers = {
         "Authorization": f"Bearer {token}",
-        "X-Kairyx-Tenant": tenant_id,
     }
+    if tenant_id is not None:
+        headers["X-Kairyx-Tenant"] = tenant_id
+    if project_id is not None:
+        headers["X-Kairyx-Project"] = project_id
+    return headers
 
 
 @contextmanager
@@ -104,6 +108,99 @@ def test_jwt_auth_bootstraps_membership_and_rejects_wrong_tenant(monkeypatch, tm
 
         wrong_tenant = client.get("/api/v1/auth/me", headers=_auth_headers(user_token, "studio-b"))
         assert wrong_tenant.status_code == 403
+
+
+def test_jwt_user_without_membership_can_onboard_but_cannot_access_product_routes(monkeypatch, tmp_path):
+    user_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        me = client.get("/api/v1/auth/me", headers=_auth_headers(user_token))
+        assert me.status_code == 200
+        assert me.json()["needs_onboarding"] is True
+        assert me.json()["tenant_id"] is None
+        assert me.json()["project_id"] is None
+
+        blocked = client.get("/api/v1/connectors", headers=_auth_headers(user_token))
+        assert blocked.status_code == 403
+
+
+def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    teammate_token = _make_token(
+        "studio-analyst",
+        extra_claims={
+            "email": "studio-analyst@example.com",
+            "name": "Studio Analyst",
+        },
+    )
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+        assert onboard.json()["organization_space"]["tenant_id"] == "northstar"
+        assert onboard.json()["project"]["project_id"] == "liveops"
+
+        founder_me = client.get("/api/v1/auth/me", headers=_auth_headers(founder_token, "northstar", "liveops"))
+        assert founder_me.status_code == 200
+        assert founder_me.json()["tenant_id"] == "northstar"
+        assert founder_me.json()["project_id"] == "liveops"
+        assert founder_me.json()["org_role"] == "owner"
+        assert founder_me.json()["project_role"] == "admin"
+        assert founder_me.json()["needs_onboarding"] is False
+
+        project = client.post(
+            "/api/v1/projects",
+            headers=_auth_headers(founder_token, "northstar", "liveops"),
+            json={
+                "project_id": "sandbox",
+                "name": "Sandbox",
+                "description": "Experiment workspace",
+            },
+        )
+        assert project.status_code == 201
+        assert project.json()["project"]["project_id"] == "sandbox"
+
+        founder_sandbox = client.get("/api/v1/auth/me", headers=_auth_headers(founder_token, "northstar", "sandbox"))
+        assert founder_sandbox.status_code == 200
+        assert founder_sandbox.json()["project_role"] == "admin"
+
+        invite = client.post(
+            "/api/v1/projects/liveops/invites",
+            headers=_auth_headers(founder_token, "northstar", "liveops"),
+            json={
+                "email": "studio-analyst@example.com",
+                "display_name": "Studio Analyst",
+                "org_role": "member",
+                "project_role": "analyst",
+            },
+        )
+        assert invite.status_code == 201
+        invite_code = invite.json()["invite"]["invite_code"]
+
+        redeem = client.post(
+            "/api/v1/project-invites/redeem",
+            headers=_auth_headers(teammate_token),
+            json={"invite_code": invite_code},
+        )
+        assert redeem.status_code == 200
+        assert redeem.json()["project"]["project_id"] == "liveops"
+
+        teammate_me = client.get("/api/v1/auth/me", headers=_auth_headers(teammate_token, "northstar", "liveops"))
+        assert teammate_me.status_code == 200
+        assert teammate_me.json()["org_role"] == "member"
+        assert teammate_me.json()["project_role"] == "analyst"
+        assert [item["project_id"] for item in teammate_me.json()["accessible_projects"]] == ["liveops"]
+
+        wrong_project = client.get("/api/v1/auth/me", headers=_auth_headers(teammate_token, "northstar", "sandbox"))
+        assert wrong_project.status_code == 403
 
 
 def test_secret_bearing_responses_are_redacted(monkeypatch, tmp_path):

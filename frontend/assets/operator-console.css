@@ -104,6 +104,10 @@
             border-top: 1px solid var(--border-color);
         }
 
+        .hidden {
+            display: none !important;
+        }
+
         .sidebar-footer .form-group {
             margin-bottom: 0.75rem;
         }
@@ -117,6 +121,42 @@
         .sidebar-footer .form-group select {
             padding: 0.55rem 0.65rem;
             font-size: 0.85rem;
+        }
+
+        .workspace-summary-card {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.85rem;
+            margin-bottom: 0.9rem;
+            background: color-mix(in srgb, var(--bg-color) 55%, var(--white) 45%);
+        }
+
+        .workspace-summary-label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.35rem;
+        }
+
+        .workspace-summary-value {
+            font-size: 0.92rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .workspace-summary-meta,
+        .workspace-inline-status {
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }
+
+        .workspace-inline-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.5rem;
         }
 
         #health-status {
@@ -144,6 +184,152 @@
             padding: 2rem;
             overflow-y: auto;
             min-width: 0;
+        }
+
+        .workspace-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .workspace-overlay-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.52);
+            backdrop-filter: blur(5px);
+        }
+
+        .workspace-modal {
+            position: relative;
+            width: min(920px, 100%);
+            max-height: calc(100vh - 3rem);
+            overflow-y: auto;
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            background: var(--white);
+            box-shadow: var(--shadow);
+            padding: 1.5rem;
+        }
+
+        .workspace-modal-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .workspace-modal-eyebrow {
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.35rem;
+        }
+
+        .workspace-modal-subtitle {
+            margin: 0;
+            color: var(--text-secondary);
+        }
+
+        .workspace-modal-close {
+            background: transparent;
+            color: var(--main-text);
+            border: 1px solid var(--border-color);
+        }
+
+        .workspace-panel-status {
+            min-height: 1.2rem;
+            margin-top: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .workspace-modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            margin-top: 1rem;
+        }
+
+        .workspace-stepper {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .workspace-step {
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            padding: 0.45rem 0.75rem;
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+        }
+
+        .workspace-step.active {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: #ffffff;
+        }
+
+        .workspace-tip-list {
+            display: grid;
+            gap: 0.55rem;
+            margin: 0.75rem 0 0 0;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .workspace-connect-grid {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        .workspace-source-chip {
+            background: transparent;
+            color: var(--main-text);
+            border: 1px solid var(--border-color);
+        }
+
+        .workspace-source-chip:hover {
+            background: var(--bg-color);
+        }
+
+        @media (max-width: 900px) {
+            body {
+                flex-direction: column;
+                height: auto;
+                overflow: auto;
+            }
+
+            .sidebar {
+                width: 100%;
+                border-right: 0;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .content {
+                padding: 1rem;
+            }
+
+            .workspace-modal {
+                padding: 1rem;
+                max-height: calc(100vh - 2rem);
+            }
+
+            .workspace-modal-header,
+            .module-shell {
+                flex-direction: column;
+            }
         }
 
         .page {

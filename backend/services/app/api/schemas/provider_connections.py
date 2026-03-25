@@ -23,6 +23,7 @@ class ProviderConnectionResponse(BaseModel):
     status: str
     config: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: str
+    project_id: str
     created_by: str
     updated_by: str
     correlation_id: str

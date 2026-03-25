@@ -11,8 +11,11 @@ class RequestContext:
     actor_id: str
     actor_role: str
     tenant_id: str | None
+    project_id: str | None
     correlation_id: str
     platform_admin: bool = False
+    org_role: str | None = None
+    project_role: str | None = None
     auth_mode: str = "system"
     claims: dict[str, Any] = field(default_factory=dict)
 

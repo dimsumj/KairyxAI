@@ -53,6 +53,7 @@ class PubSubService:
         context = get_request_context()
         if context is not None:
             safe_attributes.setdefault("tenant_id", str(context.tenant_id or ""))
+            safe_attributes.setdefault("project_id", str(context.project_id or ""))
             safe_attributes.setdefault("correlation_id", context.correlation_id)
         if self.mode == "gcp":
             data = json.dumps(payload).encode("utf-8")

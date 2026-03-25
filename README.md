@@ -43,7 +43,7 @@ What is still in progress is not the existence of the core APIs, but the remaini
 - production readiness
 - stronger provider-backed activation and measurement
 - deeper frontend productization
-- broader tenant UX polish beyond the new OIDC + tenant-switching baseline
+- broader org-space/project UX polish beyond the new OIDC onboarding and workspace-switching baseline
 - more automated optimization under manual confirmation
 
 The source of truth for that roadmap lives in:
@@ -146,7 +146,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: static HTML/CSS/JS operator console served by the backend
-- Operator auth: OIDC bearer token + `X-Kairyx-Tenant`, with legacy header auth available only for local/demo compatibility
+- Operator auth: OIDC bearer token + `X-Kairyx-Tenant` + `X-Kairyx-Project`, with self-serve organization-space onboarding, project switching, and legacy header auth only for local/demo compatibility
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
@@ -162,8 +162,24 @@ KairyxAI currently supports two practical shapes:
 2. `Production-shaped SaaS mode`
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
-   - tenant-scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - OIDC PKCE login in the frontend and bearer-token operator traffic on `/api/v1`
+   - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
+   - OIDC PKCE login in the frontend, self-serve organization-space creation, project invites, and bearer-token operator traffic on `/api/v1`
+
+## Workspace Model
+
+The current operator console uses a two-level workspace hierarchy:
+
+- `Organization Space`
+  - the top-level shared boundary for memberships, governance, and billing-style ownership
+- `Project`
+  - the isolation boundary for connectors, imports, cohorts, workflows, experiments, exports, and audit history
+
+In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
+
+- first-login onboarding to create the first organization space and project
+- a project invite flow based on shareable invite links
+- authenticated organization-space and project selectors in the sidebar
+- a legacy local/demo fallback where raw `Tenant ID` and `Project ID` headers can still be entered manually
 
 ## Repository Layout
 

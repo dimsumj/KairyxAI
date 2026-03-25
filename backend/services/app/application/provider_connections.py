@@ -113,6 +113,7 @@ class ProviderConnectionService:
             "status": record.get("status") or payload.get("status") or "active",
             "config": redact_secret_values(dict(payload.get("config") or {})),
             "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+            "project_id": record.get("project_id") or payload.get("project_id"),
             "created_by": record.get("created_by") or payload.get("created_by") or "system",
             "updated_by": record.get("updated_by") or payload.get("updated_by") or "system",
             "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",

@@ -40,7 +40,7 @@ class GcsService:
         self._bucket = self._client.bucket(self.bucket_name)
 
     def _init_mock_backend(self):
-        self._bucket_path = os.path.join(".cache", "raw", self._tenant_scope_key(), self.bucket_name)
+        self._bucket_path = os.path.join(".cache", "raw", self._tenant_scope_key(), self._project_scope_key(), self.bucket_name)
         self._legacy_bucket_path = os.path.join(".gcs_bucket", self.bucket_name)
         os.makedirs(self._bucket_path, exist_ok=True)
 
@@ -50,8 +50,14 @@ class GcsService:
         normalized = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in str(raw_value or "default").strip())
         return normalized or "default"
 
+    def _project_scope_key(self) -> str:
+        context = get_request_context()
+        raw_value = context.project_id if context is not None else os.getenv("BOOTSTRAP_PROJECT_ID", "default")
+        normalized = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in str(raw_value or "default").strip())
+        return normalized or "default"
+
     def _tenant_blob_name(self, blob_name: str) -> str:
-        prefix = f"tenants/{self._tenant_scope_key()}"
+        prefix = f"tenants/{self._tenant_scope_key()}/projects/{self._project_scope_key()}"
         normalized = str(blob_name).lstrip("/")
         if normalized.startswith(prefix):
             return normalized

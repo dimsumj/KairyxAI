@@ -48,6 +48,7 @@ class ConnectorService:
         health = connector.health_check()
         return {
             "tenant_id": connector_record.get("tenant_id"),
+            "project_id": connector_record.get("project_id"),
             "connector_id": connector_record.get("connector_id"),
             "name": connector_record["name"],
             "type": connector_record["type"],

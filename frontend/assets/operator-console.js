@@ -8,20 +8,76 @@
             const actorRoleSelect = document.getElementById('actor-role-select');
             const actorIdInput = document.getElementById('actor-id-input');
             const tenantIdInput = document.getElementById('tenant-id-input');
+            const projectIdInput = document.getElementById('project-id-input');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
             const apiKeyInput = document.getElementById('api-key-input');
+            const legacyAuthControls = document.getElementById('legacy-auth-controls');
+            const legacyApiKeyGroup = document.getElementById('legacy-api-key-group');
+            const oidcWorkspaceControls = document.getElementById('oidc-workspace-controls');
+            const orgSpaceSelect = document.getElementById('org-space-select');
+            const projectSelect = document.getElementById('project-select');
+            const workspaceSummaryText = document.getElementById('workspace-summary-text');
+            const workspaceRoleSummary = document.getElementById('workspace-role-summary');
+            const workspaceSelectorStatus = document.getElementById('workspace-selector-status');
+            const workspaceOpenSwitcherBtn = document.getElementById('workspace-open-switcher-btn');
+            const workspaceCreateProjectBtn = document.getElementById('workspace-create-project-btn');
+            const workspaceOverlay = document.getElementById('workspace-overlay');
+            const workspaceModalTitle = document.getElementById('workspace-modal-title');
+            const workspaceModalSubtitle = document.getElementById('workspace-modal-subtitle');
+            const workspaceModalEyebrow = document.getElementById('workspace-modal-eyebrow');
+            const workspaceModalCloseBtn = document.getElementById('workspace-modal-close-btn');
+            const workspaceSelectionPanel = document.getElementById('workspace-selection-panel');
+            const workspaceOnboardingPanel = document.getElementById('workspace-onboarding-panel');
+            const workspaceCreateProjectPanel = document.getElementById('workspace-create-project-panel');
+            const workspaceModalOrgSelect = document.getElementById('workspace-modal-org-select');
+            const workspaceModalProjectSelect = document.getElementById('workspace-modal-project-select');
+            const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
+            const workspaceSelectionContinueBtn = document.getElementById('workspace-selection-continue-btn');
+            const workspaceSelectionCreateProjectBtn = document.getElementById('workspace-selection-create-project-btn');
+            const onboardingOrganizationNameInput = document.getElementById('onboarding-organization-name');
+            const onboardingOrganizationIdInput = document.getElementById('onboarding-organization-id');
+            const onboardingProjectNameInput = document.getElementById('onboarding-project-name');
+            const onboardingProjectIdInput = document.getElementById('onboarding-project-id');
+            const onboardingProjectDescriptionInput = document.getElementById('onboarding-project-description');
+            const onboardingInviteEmailInput = document.getElementById('onboarding-invite-email');
+            const onboardingInviteDisplayNameInput = document.getElementById('onboarding-invite-display-name');
+            const onboardingInviteOrgRoleSelect = document.getElementById('onboarding-invite-org-role');
+            const onboardingInviteProjectRoleSelect = document.getElementById('onboarding-invite-project-role');
+            const onboardingInviteLinkInput = document.getElementById('onboarding-invite-link');
+            const onboardingInviteStatus = document.getElementById('onboarding-invite-status');
+            const onboardingStatus = document.getElementById('workspace-onboarding-status');
+            const onboardingBackBtn = document.getElementById('onboarding-back-btn');
+            const onboardingNextBtn = document.getElementById('onboarding-next-btn');
+            const onboardingGenerateInviteBtn = document.getElementById('onboarding-generate-invite-btn');
+            const onboardingConnectBtn = document.getElementById('onboarding-connect-btn');
+            const onboardingSkipBtn = document.getElementById('onboarding-skip-btn');
+            const onboardingSteps = document.querySelectorAll('.workspace-step');
+            const onboardingStepPanels = document.querySelectorAll('.workspace-step-panel');
+            const workspaceCreateProjectNameInput = document.getElementById('workspace-create-project-name');
+            const workspaceCreateProjectIdInput = document.getElementById('workspace-create-project-id');
+            const workspaceCreateProjectDescriptionInput = document.getElementById('workspace-create-project-description');
+            const workspaceCreateProjectStatus = document.getElementById('workspace-create-project-status');
+            const workspaceCreateProjectCancelBtn = document.getElementById('workspace-create-project-cancel-btn');
+            const workspaceCreateProjectSubmitBtn = document.getElementById('workspace-create-project-submit-btn');
             const ACTOR_ROLE_STORAGE_KEY = 'kairyx.actorRole';
             const ACTOR_ID_STORAGE_KEY = 'kairyx.actorId';
             const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
+            const PROJECT_ID_STORAGE_KEY = 'kairyx.projectId';
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
             const ACCESS_TOKEN_STORAGE_KEY = 'kairyx.accessToken';
             const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
+            const PENDING_INVITE_STORAGE_KEY = 'kairyx.pendingInvite';
             let activeModuleId = 'data-core';
             let activePageId = 'operator-hub';
             let oidcConfig = null;
             let accessToken = '';
+            let authSessionState = null;
+            let workspaceOverlayMode = null;
+            let onboardingStep = 1;
+            let onboardingResult = null;
+            let inviteRedemptionInFlight = false;
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -64,16 +120,32 @@
                 },
             };
 
+            function setWorkspaceTextStatus(element, message = '', isError = false) {
+                if (!element) return;
+                element.textContent = message;
+                element.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
+            }
+
+            function slugifyIdentifier(value) {
+                return String(value || '')
+                    .trim()
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .slice(0, 64);
+            }
+
             function readStoredActorContext() {
                 try {
                     return {
                         role: localStorage.getItem(ACTOR_ROLE_STORAGE_KEY) || 'admin',
                         actorId: localStorage.getItem(ACTOR_ID_STORAGE_KEY) || 'admin',
                         tenantId: localStorage.getItem(TENANT_ID_STORAGE_KEY) || 'default',
+                        projectId: localStorage.getItem(PROJECT_ID_STORAGE_KEY) || 'default',
                         apiKey: localStorage.getItem(API_KEY_STORAGE_KEY) || '',
                     };
                 } catch (error) {
-                    return { role: 'admin', actorId: 'admin', tenantId: 'default', apiKey: '' };
+                    return { role: 'admin', actorId: 'admin', tenantId: 'default', projectId: 'default', apiKey: '' };
                 }
             }
 
@@ -82,22 +154,242 @@
                     localStorage.setItem(ACTOR_ROLE_STORAGE_KEY, actorRoleSelect.value || 'admin');
                     localStorage.setItem(ACTOR_ID_STORAGE_KEY, actorIdInput.value || actorRoleSelect.value || 'admin');
                     localStorage.setItem(TENANT_ID_STORAGE_KEY, tenantIdInput.value || 'default');
+                    localStorage.setItem(PROJECT_ID_STORAGE_KEY, projectIdInput.value || 'default');
                     localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value || '');
                 } catch (error) {
                     console.warn('Unable to persist actor context:', error);
                 }
             }
 
+            function persistWorkspaceSelection(tenantId, projectId) {
+                try {
+                    if (tenantId !== undefined) {
+                        if (tenantId) {
+                            localStorage.setItem(TENANT_ID_STORAGE_KEY, tenantId);
+                        } else {
+                            localStorage.removeItem(TENANT_ID_STORAGE_KEY);
+                        }
+                    }
+                    if (projectId !== undefined) {
+                        if (projectId) {
+                            localStorage.setItem(PROJECT_ID_STORAGE_KEY, projectId);
+                        } else {
+                            localStorage.removeItem(PROJECT_ID_STORAGE_KEY);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Unable to persist workspace selection:', error);
+                }
+            }
+
+            function readPendingInvite() {
+                try {
+                    const raw = localStorage.getItem(PENDING_INVITE_STORAGE_KEY);
+                    return raw ? JSON.parse(raw) : null;
+                } catch (error) {
+                    return null;
+                }
+            }
+
+            function persistPendingInvite(payload) {
+                try {
+                    if (!payload || !payload.inviteCode) {
+                        localStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
+                        return;
+                    }
+                    localStorage.setItem(PENDING_INVITE_STORAGE_KEY, JSON.stringify(payload));
+                } catch (error) {
+                    console.warn('Unable to persist pending invite:', error);
+                }
+            }
+
+            function clearPendingInvite() {
+                persistPendingInvite(null);
+            }
+
+            function getStoredWorkspaceSelection() {
+                const stored = readStoredActorContext();
+                return {
+                    tenantId: stored.tenantId || '',
+                    projectId: stored.projectId || '',
+                };
+            }
+
+            function getActiveTenantId() {
+                if (accessToken) {
+                    return String(orgSpaceSelect.value || '').trim();
+                }
+                return (tenantIdInput.value || 'default').trim() || 'default';
+            }
+
+            function getActiveProjectId() {
+                if (accessToken) {
+                    return String(projectSelect.value || '').trim();
+                }
+                return (projectIdInput.value || 'default').trim() || 'default';
+            }
+
+            function isWorkspaceSelectionRequired() {
+                return Boolean(
+                    accessToken
+                    && authSessionState
+                    && (authSessionState.needs_onboarding || authSessionState.needs_org_selection || authSessionState.needs_project_selection)
+                );
+            }
+
+            function syncWorkspaceSummary(payload = authSessionState) {
+                if (!workspaceSummaryText || !workspaceRoleSummary) return;
+                if (!accessToken) {
+                    workspaceSummaryText.textContent = `Local demo / ${(tenantIdInput.value || 'default').trim() || 'default'} / ${(projectIdInput.value || 'default').trim() || 'default'}`;
+                    workspaceRoleSummary.textContent = `Actor ${(actorIdInput.value || actorRoleSelect.value || 'admin').trim()} • ${actorRoleSelect.value || 'admin'}`;
+                    return;
+                }
+                const tenantItems = Array.isArray(payload?.accessible_tenants) ? payload.accessible_tenants : [];
+                const projectItems = Array.isArray(payload?.accessible_projects) ? payload.accessible_projects : [];
+                const selectedTenantId = payload?.tenant_id || getActiveTenantId();
+                const selectedProjectId = payload?.project_id || getActiveProjectId();
+                const tenant = tenantItems.find((item) => item.tenant_id === selectedTenantId);
+                const project = projectItems.find((item) => item.project_id === selectedProjectId);
+                const tenantLabel = tenant?.name || selectedTenantId || 'Select organization space';
+                const projectLabel = project?.name || selectedProjectId || 'Select project';
+                workspaceSummaryText.textContent = `${tenantLabel} / ${projectLabel}`;
+                const roleBits = [];
+                roleBits.push(payload?.display_name || payload?.actor_id || 'Authenticated user');
+                if (payload?.org_role) {
+                    roleBits.push(`org: ${payload.org_role}`);
+                }
+                if (payload?.project_role) {
+                    roleBits.push(`project: ${payload.project_role}`);
+                }
+                workspaceRoleSummary.textContent = roleBits.join(' • ');
+            }
+
+            function syncAuthModeUi() {
+                const usingOidc = Boolean(accessToken);
+                legacyAuthControls.classList.toggle('hidden', usingOidc);
+                legacyApiKeyGroup.classList.toggle('hidden', usingOidc);
+                oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
+                workspaceOpenSwitcherBtn.disabled = !usingOidc;
+                workspaceCreateProjectBtn.disabled = !usingOidc;
+                syncWorkspaceSummary();
+            }
+
+            function populateWorkspaceSelect(select, items, selectedValue, emptyLabel, idKey) {
+                if (!select) return;
+                const previousValue = selectedValue !== undefined ? selectedValue : select.value;
+                select.innerHTML = '';
+                const emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = emptyLabel;
+                select.appendChild(emptyOption);
+                (items || []).forEach((item) => {
+                    const option = document.createElement('option');
+                    option.value = item[idKey];
+                    const role = item.role ? ` (${item.role})` : '';
+                    option.textContent = `${item.name || item[idKey]}${role}`;
+                    select.appendChild(option);
+                });
+                if (previousValue && (items || []).some((item) => item[idKey] === previousValue)) {
+                    select.value = previousValue;
+                } else {
+                    select.value = '';
+                }
+            }
+
+            function setWorkspaceOverlayPanel(panel) {
+                [workspaceSelectionPanel, workspaceOnboardingPanel, workspaceCreateProjectPanel].forEach((entry) => {
+                    entry.classList.toggle('hidden', entry !== panel);
+                });
+            }
+
+            function openWorkspaceOverlay(mode, { allowClose = false } = {}) {
+                workspaceOverlayMode = mode;
+                workspaceOverlay.classList.remove('hidden');
+                workspaceOverlay.setAttribute('aria-hidden', 'false');
+                workspaceModalCloseBtn.classList.toggle('hidden', !allowClose);
+                if (mode === 'onboarding') {
+                    workspaceModalEyebrow.textContent = 'Onboarding';
+                    workspaceModalTitle.textContent = 'Create your organization space';
+                    workspaceModalSubtitle.textContent = 'Set up the first organization space, create its first project, invite teammates, then connect data.';
+                    setWorkspaceOverlayPanel(workspaceOnboardingPanel);
+                } else if (mode === 'create-project') {
+                    workspaceModalEyebrow.textContent = 'Project';
+                    workspaceModalTitle.textContent = 'Create a new project';
+                    workspaceModalSubtitle.textContent = 'Projects isolate data, cohorts, workflows, experiments, exports, and audit history inside the selected organization space.';
+                    setWorkspaceOverlayPanel(workspaceCreateProjectPanel);
+                } else {
+                    workspaceModalEyebrow.textContent = 'Workspace';
+                    workspaceModalTitle.textContent = 'Select your workspace';
+                    workspaceModalSubtitle.textContent = 'Choose the organization space and project you want to operate in.';
+                    setWorkspaceOverlayPanel(workspaceSelectionPanel);
+                }
+            }
+
+            function closeWorkspaceOverlay(force = false) {
+                if (!force && isWorkspaceSelectionRequired()) {
+                    return;
+                }
+                workspaceOverlayMode = null;
+                workspaceOverlay.classList.add('hidden');
+                workspaceOverlay.setAttribute('aria-hidden', 'true');
+            }
+
+            function setOnboardingStep(step) {
+                onboardingStep = Math.max(1, Math.min(4, Number(step) || 1));
+                onboardingSteps.forEach((item) => {
+                    item.classList.toggle('active', Number(item.dataset.step) === onboardingStep);
+                });
+                onboardingStepPanels.forEach((panel) => {
+                    panel.classList.toggle('hidden', Number(panel.dataset.step) !== onboardingStep);
+                });
+                onboardingBackBtn.classList.toggle('hidden', onboardingStep === 1);
+                onboardingGenerateInviteBtn.classList.toggle('hidden', onboardingStep !== 3);
+                onboardingConnectBtn.classList.toggle('hidden', onboardingStep !== 4);
+                onboardingSkipBtn.classList.toggle('hidden', onboardingStep !== 4);
+                onboardingNextBtn.classList.toggle('hidden', onboardingStep === 4);
+                if (onboardingStep === 1) {
+                    onboardingNextBtn.textContent = 'Next';
+                } else if (onboardingStep === 2) {
+                    onboardingNextBtn.textContent = 'Create Space';
+                } else {
+                    onboardingNextBtn.textContent = 'Continue';
+                }
+            }
+
+            function applyAuthSessionPayload(payload) {
+                authSessionState = payload || null;
+                if (payload?.actor_id) {
+                    actorIdInput.value = payload.actor_id;
+                }
+                if (payload?.actor_role) {
+                    actorRoleSelect.value = payload.actor_role;
+                }
+                const selectedTenantId = payload?.tenant_id || getStoredWorkspaceSelection().tenantId || '';
+                const selectedProjectId = payload?.project_id || getStoredWorkspaceSelection().projectId || '';
+                populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
+                populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
+                populateWorkspaceSelect(projectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select a project', 'project_id');
+                populateWorkspaceSelect(workspaceModalProjectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select a project', 'project_id');
+                if (payload?.tenant_id || payload?.project_id) {
+                    persistWorkspaceSelection(payload.tenant_id || '', payload.project_id || '');
+                }
+                syncAuthModeUi();
+                syncWorkspaceSummary(payload);
+            }
+
             const storedActorContext = readStoredActorContext();
             actorRoleSelect.value = storedActorContext.role;
             actorIdInput.value = storedActorContext.actorId;
             tenantIdInput.value = storedActorContext.tenantId;
+            projectIdInput.value = storedActorContext.projectId;
             apiKeyInput.value = storedActorContext.apiKey;
             try {
                 accessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || '';
             } catch (error) {
                 accessToken = '';
             }
+            setOnboardingStep(1);
+            syncAuthModeUi();
             if (authStatusText) {
                 authStatusText.textContent = accessToken ? 'Validating OIDC session…' : 'Legacy local session';
             }
@@ -107,26 +399,48 @@
                     actorIdInput.value = actorRoleSelect.value;
                 }
                 persistActorContext();
+                syncWorkspaceSummary();
                 if (activePageId) {
                     activatePage(activePageId);
                 }
             });
             actorIdInput.addEventListener('change', () => {
                 persistActorContext();
+                syncWorkspaceSummary();
                 if (activePageId) {
                     activatePage(activePageId);
                 }
             });
             tenantIdInput.addEventListener('change', () => {
                 persistActorContext();
-                if (accessToken) {
-                    hydrateAuthSession().catch((error) => setAuthStatus(error.message || 'Tenant switch failed.'));
+                syncWorkspaceSummary();
+                if (activePageId) {
+                    activatePage(activePageId);
                 }
+            });
+            projectIdInput.addEventListener('change', () => {
+                persistActorContext();
+                syncWorkspaceSummary();
                 if (activePageId) {
                     activatePage(activePageId);
                 }
             });
             apiKeyInput.addEventListener('change', persistActorContext);
+            onboardingOrganizationNameInput.addEventListener('input', () => {
+                if (!onboardingOrganizationIdInput.value.trim()) {
+                    onboardingOrganizationIdInput.value = slugifyIdentifier(onboardingOrganizationNameInput.value);
+                }
+            });
+            onboardingProjectNameInput.addEventListener('input', () => {
+                if (!onboardingProjectIdInput.value.trim()) {
+                    onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
+                }
+            });
+            workspaceCreateProjectNameInput.addEventListener('input', () => {
+                if (!workspaceCreateProjectIdInput.value.trim()) {
+                    workspaceCreateProjectIdInput.value = slugifyIdentifier(workspaceCreateProjectNameInput.value);
+                }
+            });
 
             function clearPageIntervals() {
                 if (importListInterval) {
@@ -284,12 +598,33 @@
 
             function clearBearerSession() {
                 persistAccessToken('');
+                authSessionState = null;
                 try {
                     localStorage.removeItem(OIDC_CODE_VERIFIER_STORAGE_KEY);
                 } catch (error) {
                     console.warn('Unable to clear PKCE verifier:', error);
                 }
+                syncAuthModeUi();
+                closeWorkspaceOverlay(true);
+                setWorkspaceTextStatus(workspaceSelectorStatus, '');
                 setAuthStatus('Legacy local session');
+            }
+
+            function captureWorkspaceHintsFromUrl() {
+                const params = new URLSearchParams(window.location.search);
+                const inviteCode = params.get('invite_code');
+                const tenantId = params.get('tenant_id');
+                const projectId = params.get('project_id');
+                if (tenantId || projectId) {
+                    persistWorkspaceSelection(tenantId || '', projectId || '');
+                }
+                if (inviteCode) {
+                    persistPendingInvite({
+                        inviteCode,
+                        tenantId: tenantId || '',
+                        projectId: projectId || '',
+                    });
+                }
             }
 
             function base64UrlEncode(buffer) {
@@ -377,31 +712,117 @@
                 window.history.replaceState({}, document.title, redirectUri());
             }
 
-            async function hydrateAuthSession() {
+            async function redeemPendingInviteIfNeeded() {
+                const pendingInvite = readPendingInvite();
+                if (!accessToken || !pendingInvite || !pendingInvite.inviteCode || inviteRedemptionInFlight) {
+                    return false;
+                }
+                inviteRedemptionInFlight = true;
+                try {
+                    setAuthStatus('Redeeming project invite…');
+                    const response = await fetch(`${apiBaseUrl}/project-invites/redeem`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ invite_code: pendingInvite.inviteCode }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Project invite redemption failed.');
+                    }
+                    persistWorkspaceSelection(
+                        payload.organization_space?.tenant_id || pendingInvite.tenantId || '',
+                        payload.project?.project_id || pendingInvite.projectId || '',
+                    );
+                    clearPendingInvite();
+                    setWorkspaceTextStatus(onboardingInviteStatus, 'Invite redeemed.', false);
+                    window.history.replaceState({}, document.title, redirectUri());
+                    return true;
+                } finally {
+                    inviteRedemptionInFlight = false;
+                }
+            }
+
+            function syncWorkspaceOverlayFromSession() {
+                if (workspaceOverlayMode === 'onboarding' && onboardingResult && onboardingStep >= 3) {
+                    openWorkspaceOverlay('onboarding', { allowClose: true });
+                    return;
+                }
+                if (authSessionState?.needs_onboarding) {
+                    onboardingResult = null;
+                    setOnboardingStep(1);
+                    openWorkspaceOverlay('onboarding');
+                    setWorkspaceTextStatus(onboardingStatus, 'Create your first organization space to continue.');
+                    return;
+                }
+                if (authSessionState?.needs_org_selection || authSessionState?.needs_project_selection) {
+                    openWorkspaceOverlay('selection');
+                    setWorkspaceTextStatus(
+                        workspaceSelectionStatus,
+                        authSessionState.needs_org_selection
+                            ? 'Select an organization space to continue.'
+                            : 'Select a project to continue.',
+                    );
+                    return;
+                }
+                if (workspaceOverlayMode !== 'create-project') {
+                    closeWorkspaceOverlay(true);
+                }
+            }
+
+            async function hydrateAuthSession(retryCount = 0) {
                 if (!accessToken) {
+                    authSessionState = null;
+                    syncAuthModeUi();
                     setAuthStatus(oidcConfig && oidcConfig.authorize_url ? 'OIDC available. Login required.' : 'Legacy local session');
                     return;
                 }
-                const tenantId = (tenantIdInput.value || 'default').trim() || 'default';
+                const tenantId = getActiveTenantId();
+                const projectId = getActiveProjectId();
+                const headers = {
+                    Authorization: `Bearer ${accessToken}`,
+                };
+                if (tenantId) {
+                    headers['X-Kairyx-Tenant'] = tenantId;
+                }
+                if (projectId) {
+                    headers['X-Kairyx-Project'] = projectId;
+                }
                 const response = await fetch(`${apiBaseUrl}/auth/me`, {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'X-Kairyx-Tenant': tenantId,
-                    },
+                    headers,
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
-                    clearBearerSession();
+                    if (response.status === 401) {
+                        clearBearerSession();
+                        throw new Error(payload.detail || 'OIDC session validation failed.');
+                    }
+                    if (retryCount === 0 && (tenantId || projectId) && (response.status === 403 || response.status === 409)) {
+                        if (projectId) {
+                            persistWorkspaceSelection(tenantId || '', '');
+                        } else {
+                            persistWorkspaceSelection('', '');
+                        }
+                        return hydrateAuthSession(retryCount + 1);
+                    }
                     throw new Error(payload.detail || 'OIDC session validation failed.');
                 }
-                actorIdInput.value = payload.actor_id || actorIdInput.value;
-                actorRoleSelect.value = payload.actor_role || actorRoleSelect.value;
-                tenantIdInput.value = payload.tenant_id || tenantId;
-                persistActorContext();
-                setAuthStatus(`OIDC ${payload.actor_id || 'user'} @ ${tenantIdInput.value}`);
+                if (await redeemPendingInviteIfNeeded()) {
+                    return hydrateAuthSession(retryCount + 1);
+                }
+                applyAuthSessionPayload(payload);
+                const workspaceBits = [payload.tenant_id, payload.project_id].filter(Boolean);
+                setAuthStatus(
+                    `OIDC ${payload.display_name || payload.actor_id || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
+                );
+                syncWorkspaceOverlayFromSession();
+                return payload;
             }
 
             async function startOidcLogin() {
+                captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
                     setAuthStatus('OIDC is not configured on the backend.');
@@ -429,15 +850,22 @@
             }
 
             function buildApiHeaders(includeJsonContentType = false) {
-                const tenantId = (tenantIdInput.value || 'default').trim() || 'default';
+                const tenantId = getActiveTenantId();
+                const projectId = getActiveProjectId();
                 const headers = {};
                 if (accessToken) {
                     headers.Authorization = `Bearer ${accessToken}`;
-                    headers['X-Kairyx-Tenant'] = tenantId;
+                    if (tenantId) {
+                        headers['X-Kairyx-Tenant'] = tenantId;
+                    }
+                    if (projectId) {
+                        headers['X-Kairyx-Project'] = projectId;
+                    }
                 } else {
                     headers['x-actor-role'] = actorRoleSelect.value || 'admin';
                     headers['x-actor-id'] = (actorIdInput.value || actorRoleSelect.value || 'admin').trim();
-                    headers['x-tenant-id'] = tenantId;
+                    headers['x-tenant-id'] = tenantId || 'default';
+                    headers['x-project-id'] = projectId || 'default';
                 }
                 if (!accessToken && (apiKeyInput.value || '').trim()) {
                     headers['x-api-key'] = apiKeyInput.value.trim();
@@ -473,6 +901,28 @@
                 return payload;
             }
 
+            async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true } = {}) {
+                persistWorkspaceSelection(tenantId || '', projectId || '');
+                const payload = await hydrateAuthSession();
+                if (reloadPage && activePageId && (!accessToken || payload?.project_id)) {
+                    activatePage(activePageId);
+                }
+                return payload;
+            }
+
+            function openCreateProjectOverlay() {
+                if (!getActiveTenantId()) {
+                    openWorkspaceOverlay('selection');
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Select an organization space before creating a project.', true);
+                    return;
+                }
+                workspaceCreateProjectNameInput.value = '';
+                workspaceCreateProjectIdInput.value = '';
+                workspaceCreateProjectDescriptionInput.value = '';
+                setWorkspaceTextStatus(workspaceCreateProjectStatus, '');
+                openWorkspaceOverlay('create-project', { allowClose: true });
+            }
+
             oidcLoginBtn.addEventListener('click', async () => {
                 try {
                     await startOidcLogin();
@@ -487,6 +937,180 @@
                 if (logoutUrl) {
                     window.location.assign(logoutUrl);
                 }
+            });
+
+            workspaceModalCloseBtn.addEventListener('click', () => closeWorkspaceOverlay());
+            workspaceOpenSwitcherBtn.addEventListener('click', () => {
+                openWorkspaceOverlay('selection', { allowClose: true });
+                setWorkspaceTextStatus(workspaceSelectionStatus, '');
+            });
+            workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
+            workspaceSelectionCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
+            orgSpaceSelect.addEventListener('change', async () => {
+                try {
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching organization space…');
+                    await switchWorkspaceSelection(orgSpaceSelect.value || '', '', { reloadPage: false });
+                    setWorkspaceTextStatus(
+                        workspaceSelectorStatus,
+                        authSessionState?.needs_project_selection ? 'Select a project to finish switching.' : 'Organization space updated.',
+                    );
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceSelectorStatus, error.message || 'Failed to switch organization space.', true);
+                }
+            });
+            projectSelect.addEventListener('change', async () => {
+                try {
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching project…');
+                    await switchWorkspaceSelection(orgSpaceSelect.value || '', projectSelect.value || '');
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Project updated.');
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceSelectorStatus, error.message || 'Failed to switch project.', true);
+                }
+            });
+            workspaceModalOrgSelect.addEventListener('change', async () => {
+                try {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects…');
+                    await switchWorkspaceSelection(workspaceModalOrgSelect.value || '', '', { reloadPage: false });
+                    workspaceModalOrgSelect.value = authSessionState?.tenant_id || workspaceModalOrgSelect.value;
+                    workspaceModalProjectSelect.value = authSessionState?.project_id || '';
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Select a project to continue.');
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to load projects.', true);
+                }
+            });
+            workspaceSelectionContinueBtn.addEventListener('click', async () => {
+                try {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace…');
+                    const payload = await switchWorkspaceSelection(
+                        workspaceModalOrgSelect.value || authSessionState?.tenant_id || '',
+                        workspaceModalProjectSelect.value || '',
+                    );
+                    if (payload?.project_id) {
+                        closeWorkspaceOverlay(true);
+                    }
+                    setWorkspaceTextStatus(workspaceSelectionStatus, '');
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to apply workspace.', true);
+                }
+            });
+            workspaceCreateProjectCancelBtn.addEventListener('click', () => {
+                if (isWorkspaceSelectionRequired()) {
+                    openWorkspaceOverlay('selection');
+                    return;
+                }
+                closeWorkspaceOverlay(true);
+            });
+            workspaceCreateProjectSubmitBtn.addEventListener('click', async () => {
+                const projectId = slugifyIdentifier(workspaceCreateProjectIdInput.value || workspaceCreateProjectNameInput.value);
+                if (!projectId || !workspaceCreateProjectNameInput.value.trim()) {
+                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Project name and project ID are required.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Creating project…');
+                    await apiRequest('/projects', {
+                        method: 'POST',
+                        body: {
+                            project_id: projectId,
+                            name: workspaceCreateProjectNameInput.value.trim(),
+                            description: workspaceCreateProjectDescriptionInput.value.trim(),
+                        },
+                    });
+                    await switchWorkspaceSelection(getActiveTenantId(), projectId);
+                    closeWorkspaceOverlay(true);
+                    setWorkspaceTextStatus(workspaceSelectorStatus, `Created project ${projectId}.`);
+                } catch (error) {
+                    setWorkspaceTextStatus(workspaceCreateProjectStatus, error.message || 'Failed to create project.', true);
+                }
+            });
+            onboardingBackBtn.addEventListener('click', () => {
+                setWorkspaceTextStatus(onboardingStatus, '');
+                if (onboardingStep > 1) {
+                    setOnboardingStep(onboardingStep - 1);
+                }
+            });
+            onboardingNextBtn.addEventListener('click', async () => {
+                if (onboardingStep === 1) {
+                    const organizationId = slugifyIdentifier(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
+                    if (!organizationId || !onboardingOrganizationNameInput.value.trim()) {
+                        setWorkspaceTextStatus(onboardingStatus, 'Organization space name and ID are required.', true);
+                        return;
+                    }
+                    onboardingOrganizationIdInput.value = organizationId;
+                    setWorkspaceTextStatus(onboardingStatus, '');
+                    setOnboardingStep(2);
+                    return;
+                }
+                if (onboardingStep === 2) {
+                    const organizationId = slugifyIdentifier(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
+                    const projectId = slugifyIdentifier(onboardingProjectIdInput.value || onboardingProjectNameInput.value);
+                    if (!organizationId || !projectId || !onboardingProjectNameInput.value.trim()) {
+                        setWorkspaceTextStatus(onboardingStatus, 'Project name and ID are required.', true);
+                        return;
+                    }
+                    onboardingProjectIdInput.value = projectId;
+                    try {
+                        setWorkspaceTextStatus(onboardingStatus, 'Creating organization space and first project…');
+                        onboardingResult = await apiRequest('/onboarding/organization-space', {
+                            method: 'POST',
+                            body: {
+                                organization_id: organizationId,
+                                organization_name: onboardingOrganizationNameInput.value.trim(),
+                                project_id: projectId,
+                                project_name: onboardingProjectNameInput.value.trim(),
+                                project_description: onboardingProjectDescriptionInput.value.trim(),
+                            },
+                        });
+                        persistWorkspaceSelection(
+                            onboardingResult.organization_space?.tenant_id || organizationId,
+                            onboardingResult.project?.project_id || projectId,
+                        );
+                        await hydrateAuthSession();
+                        setWorkspaceTextStatus(onboardingStatus, 'Organization space created. Invite teammates or continue.');
+                        setOnboardingStep(3);
+                    } catch (error) {
+                        setWorkspaceTextStatus(onboardingStatus, error.message || 'Failed to create organization space.', true);
+                    }
+                    return;
+                }
+                if (onboardingStep === 3) {
+                    setWorkspaceTextStatus(onboardingStatus, '');
+                    setOnboardingStep(4);
+                }
+            });
+            onboardingGenerateInviteBtn.addEventListener('click', async () => {
+                if (!authSessionState?.project_id) {
+                    setWorkspaceTextStatus(onboardingInviteStatus, 'Create the organization space first.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(onboardingInviteStatus, 'Generating invite link…');
+                    const payload = await apiRequest(`/projects/${encodeURIComponent(authSessionState.project_id)}/invites`, {
+                        method: 'POST',
+                        body: {
+                            email: onboardingInviteEmailInput.value.trim() || null,
+                            display_name: onboardingInviteDisplayNameInput.value.trim() || null,
+                            org_role: onboardingInviteOrgRoleSelect.value || 'member',
+                            project_role: onboardingInviteProjectRoleSelect.value || 'operator',
+                        },
+                    });
+                    const inviteUrl = payload.invite?.invite_url ? new URL(payload.invite.invite_url, window.location.origin).toString() : '';
+                    onboardingInviteLinkInput.value = inviteUrl;
+                    setWorkspaceTextStatus(onboardingInviteStatus, 'Invite link generated.');
+                } catch (error) {
+                    setWorkspaceTextStatus(onboardingInviteStatus, error.message || 'Failed to generate invite link.', true);
+                }
+            });
+            onboardingConnectBtn.addEventListener('click', () => {
+                closeWorkspaceOverlay(true);
+                activateModule('data-core', 'connectors');
+            });
+            onboardingSkipBtn.addEventListener('click', () => closeWorkspaceOverlay(true));
+            document.querySelectorAll('.workspace-source-chip').forEach((chip) => {
+                chip.addEventListener('click', () => {
+                    closeWorkspaceOverlay(true);
+                    activateModule('data-core', 'connectors');
+                });
             });
 
             async function fetchHealthLiveState() {
@@ -2597,7 +3221,8 @@
                     if (document.getElementById('action-history-high-risk-filter').checked) {
                         query.set('high_risk_only', 'true');
                     }
-                    query.set('tenant_id', (tenantIdInput.value || 'default').trim() || 'default');
+                    if (getActiveTenantId()) query.set('tenant_id', getActiveTenantId());
+                    if (getActiveProjectId()) query.set('project_id', getActiveProjectId());
                     const payload = await apiRequest(`/audit/actions?${query.toString()}`);
                     allActionHistoryItems = (payload.items || []).map((item) => ({
                         timestamp: item.created_at,
@@ -4239,12 +4864,18 @@
             }
 
             async function initializeAuthSession() {
+                captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
                 try {
                     await handleOidcRedirect();
                     await hydrateAuthSession();
                 } catch (error) {
                     setAuthStatus(error.message || 'OIDC session initialization failed.');
+                }
+                if (!accessToken && readPendingInvite()) {
+                    setAuthStatus('Project invite detected. Use OIDC Login to redeem it.');
+                    openWorkspaceOverlay('selection', { allowClose: true });
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Log in, then redeem the invite into the target organization space and project.');
                 }
             }
 

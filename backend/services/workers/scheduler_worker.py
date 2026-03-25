@@ -18,19 +18,24 @@ def main(argv: list[str] | None = None) -> int:
 
     init_db()
     tenant_id = str(os.getenv("BOOTSTRAP_TENANT_ID", "default"))
+    project_id = str(os.getenv("BOOTSTRAP_PROJECT_ID", "default"))
     with request_context(
         RequestContext(
             actor_id="worker:scheduler",
             actor_role="admin",
             tenant_id=tenant_id,
+            project_id=project_id,
             correlation_id="worker-scheduler",
             platform_admin=True,
+            org_role="owner",
+            project_role="admin",
             auth_mode="worker",
         )
     ):
         with session_scope() as session:
             repository = SqlAlchemyControlPlaneRepository(session)
             repository.ensure_tenant(tenant_id, os.getenv("BOOTSTRAP_TENANT_NAME", "Default Tenant"))
+            repository.ensure_project(tenant_id, project_id, os.getenv("BOOTSTRAP_PROJECT_NAME", "Default Project"))
             payload = ControlLoopService(repository, get_settings()).tick(reference_time=args.reference_time)
             print(json.dumps(payload, indent=2))
     return 0

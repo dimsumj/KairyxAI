@@ -14,6 +14,7 @@ class ConnectorCreateRequest(BaseModel):
 
 class ConnectorResponse(BaseModel):
     tenant_id: str | None = None
+    project_id: str | None = None
     connector_id: str | None = None
     name: str
     type: str
@@ -27,6 +28,7 @@ class ConnectorResponse(BaseModel):
 
 class ConnectorHealthResponse(BaseModel):
     tenant_id: str | None = None
+    project_id: str | None = None
     connector_id: str | None = None
     name: str
     type: str

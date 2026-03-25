@@ -14,6 +14,7 @@ from app.application.health_monitor import HealthMonitorService
 from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
+from app.application.projects import ProjectWorkspaceService
 from app.application.sql_workspace import SqlWorkspaceService
 from app.application.templates import ScenarioTemplateService
 from app.application.workflows import WorkflowService
@@ -119,3 +120,9 @@ def get_template_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> ScenarioTemplateService:
     return ScenarioTemplateService(repository)
+
+
+def get_project_workspace_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> ProjectWorkspaceService:
+    return ProjectWorkspaceService(repository)

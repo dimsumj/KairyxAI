@@ -9,6 +9,7 @@ from app.core.request_context import RequestContext, get_request_context
 
 
 VALID_ROLES = {"admin", "analyst", "operator"}
+ORG_ADMIN_ROLES = {"owner", "admin"}
 PII_FIELDS = {"email", "user_email", "phone", "phone_hash", "email_hash", "webhook_token"}
 
 ROLE_PERMISSIONS = {
@@ -131,8 +132,11 @@ class GovernanceContext:
     actor_role: str
     actor_id: str
     tenant_id: str | None
+    project_id: str | None
     correlation_id: str = ""
     platform_admin: bool = False
+    org_role: str | None = None
+    project_role: str | None = None
     auth_mode: str = "system"
 
 
@@ -150,8 +154,11 @@ def get_governance_context(request: Request) -> GovernanceContext:
             actor_role=actor_role,
             actor_id=request_context.actor_id,
             tenant_id=request_context.tenant_id,
+            project_id=request_context.project_id,
             correlation_id=request_context.correlation_id,
             platform_admin=bool(request_context.platform_admin),
+            org_role=request_context.org_role,
+            project_role=request_context.project_role,
             auth_mode=request_context.auth_mode,
         )
         request.state.governance_context = context
@@ -160,9 +167,18 @@ def get_governance_context(request: Request) -> GovernanceContext:
     actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower()
     actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
     tenant_id = str(request.headers.get("x-tenant-id") or "default").strip() or "default"
+    project_id = str(request.headers.get("x-project-id") or "default").strip() or "default"
     if actor_role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Unsupported actor_role '{actor_role}'.")
-    context = GovernanceContext(actor_role=actor_role, actor_id=actor_id, tenant_id=tenant_id, auth_mode="legacy_headers")
+    context = GovernanceContext(
+        actor_role=actor_role,
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        org_role="owner" if actor_role == "admin" else "member",
+        project_role=actor_role,
+        auth_mode="legacy_headers",
+    )
     request.state.governance_context = context
     return context
 
@@ -182,6 +198,15 @@ def ensure_platform_admin(context: GovernanceContext) -> None:
     raise HTTPException(status_code=403, detail="Platform admin access is required.")
 
 
+def ensure_org_admin(context: GovernanceContext) -> None:
+    if context.platform_admin:
+        return
+    normalized_role = str(context.org_role or "").strip().lower()
+    if normalized_role in ORG_ADMIN_ROLES:
+        return
+    raise HTTPException(status_code=403, detail="Organization admin access is required.")
+
+
 def record_audit(
     repository,
     context: GovernanceContext,
@@ -199,8 +224,11 @@ def record_audit(
             "actor_role": context.actor_role,
             "actor_id": context.actor_id,
             "tenant_id": context.tenant_id,
+            "project_id": context.project_id,
             "correlation_id": context.correlation_id,
             "platform_admin": context.platform_admin,
+            "org_role": context.org_role,
+            "project_role": context.project_role,
             "auth_mode": context.auth_mode,
             "payload": payload,
         },
@@ -271,6 +299,7 @@ def build_audited_response(
             **masked_payload,
             "audit_id": audit_id,
             "tenant_id": context.tenant_id,
+            "project_id": context.project_id,
             "correlation_id": context.correlation_id,
             "masked_fields": masked_fields,
         }
@@ -278,6 +307,7 @@ def build_audited_response(
         "data": masked_payload,
         "audit_id": audit_id,
         "tenant_id": context.tenant_id,
+        "project_id": context.project_id,
         "correlation_id": context.correlation_id,
         "masked_fields": masked_fields,
     }

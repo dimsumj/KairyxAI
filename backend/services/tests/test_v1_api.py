@@ -215,10 +215,11 @@ def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(mo
             for row in upgraded_connection.execute("PRAGMA table_info('connector_configs')")
         }
         assert "tenant_id" in connector_columns
+        assert "project_id" in connector_columns
 
         version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
         assert version_row is not None
-        assert version_row[0] == "20260322_0003"
+        assert version_row[0] == "20260324_0004"
     finally:
         upgraded_connection.close()
 

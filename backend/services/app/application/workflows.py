@@ -325,6 +325,7 @@ class WorkflowService:
                 "event_type": event_type,
                 "occurred_at": occurred_at,
                 "tenant_id": (delivery or {}).get("tenant_id") or callback.get("tenant_id") or (get_request_context().tenant_id if get_request_context() else None),
+                "project_id": (delivery or {}).get("project_id") or callback.get("project_id") or (get_request_context().project_id if get_request_context() else None),
             }
             self.repository.upsert_resource(
                 "provider_callback",
@@ -332,8 +333,17 @@ class WorkflowService:
                 status="ingested",
                 name=provider,
                 payload=callback_payload,
+                tenant_id=callback_payload.get("tenant_id"),
+                project_id=callback_payload.get("project_id"),
             )
-            self.repository.record_action("provider_callback_ingested", "provider_callback", callback_id, callback_payload)
+            self.repository.record_action(
+                "provider_callback_ingested",
+                "provider_callback",
+                callback_id,
+                callback_payload,
+                tenant_id=callback_payload.get("tenant_id"),
+                project_id=callback_payload.get("project_id"),
+            )
             ingested += 1
 
             if delivery is None:
@@ -360,6 +370,8 @@ class WorkflowService:
                 status=str(delivery_payload.get("delivery_status") or "delivered"),
                 name=delivery_payload.get("workflow_id"),
                 payload=delivery_payload,
+                tenant_id=delivery_payload.get("tenant_id"),
+                project_id=delivery_payload.get("project_id"),
             )
             workflow_id = str(delivery_payload.get("workflow_id") or "")
             if workflow_id:
@@ -579,6 +591,7 @@ class WorkflowService:
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
         payload.setdefault("tenant_id", record.get("tenant_id"))
+        payload.setdefault("project_id", record.get("project_id"))
         payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
         payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
@@ -992,6 +1005,7 @@ class WorkflowService:
             "policy_snapshot_id": execution_payload.get("policy_snapshot_id"),
             "channel": execution_payload.get("channel"),
             "tenant_id": execution_payload.get("tenant_id") or (request_context.tenant_id if request_context else None),
+            "project_id": execution_payload.get("project_id") or (request_context.project_id if request_context else None),
             "provider": provider_result.get("provider") or channel_config.get("provider") or execution_payload.get("channel"),
             "provider_mode": provider_result.get("provider_mode") or "live",
             "provider_backend": provider_result.get("provider_backend") or provider_result.get("provider") or execution_payload.get("channel"),
@@ -1032,6 +1046,8 @@ class WorkflowService:
             status=payload["delivery_status"],
             name=workflow_id,
             payload=payload,
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
         )
         return payload
 
@@ -1039,6 +1055,7 @@ class WorkflowService:
         request_context = get_request_context()
         parts = [
             str(callback.get("tenant_id") or (request_context.tenant_id if request_context else "") or "default"),
+            str(callback.get("project_id") or (request_context.project_id if request_context else "") or "default"),
             str(provider),
             str(callback.get("delivery_id") or callback.get("action_execution_id") or callback.get("event_id") or callback.get("message_id") or callback.get("user_id") or "unknown"),
             str(event_type),
@@ -1050,8 +1067,15 @@ class WorkflowService:
     def _find_delivery_for_callback(self, callback: Dict[str, Any]) -> Dict[str, Any] | None:
         callback_provider = str(callback.get("provider") or "").strip().lower()
         delivery_id = str(callback.get("delivery_id") or callback.get("action_execution_id") or "").strip()
+        tenant_id = str(callback.get("tenant_id") or "").strip()
+        project_id = str(callback.get("project_id") or "").strip()
         if delivery_id:
-            record = self.repository.get_resource("workflow_delivery", delivery_id)
+            record = self.repository.get_resource(
+                "workflow_delivery",
+                delivery_id,
+                tenant_id=tenant_id or None,
+                project_id=project_id or None,
+            )
             if record is not None:
                 payload = record.get("payload") or {}
                 if callback_provider and str(payload.get("provider") or "").strip().lower() not in {"", callback_provider}:
@@ -1059,7 +1083,11 @@ class WorkflowService:
                 return record
         workflow_id = str(callback.get("workflow_id") or "").strip()
         user_id = str(callback.get("user_id") or "").strip()
-        for record in self.repository.list_resources("workflow_delivery"):
+        for record in self.repository.list_resources(
+            "workflow_delivery",
+            tenant_id=tenant_id or None,
+            project_id=project_id or None,
+        ):
             payload = record.get("payload") or {}
             if callback_provider and str(payload.get("provider") or "").strip().lower() not in {"", callback_provider}:
                 continue
@@ -1305,6 +1333,8 @@ class WorkflowService:
             "execution_id": execution_id,
             "workflow_id": workflow["workflow_id"],
             "workflow_version": workflow.get("published_version") or workflow.get("current_version") or 1,
+            "tenant_id": workflow.get("tenant_id"),
+            "project_id": workflow.get("project_id"),
             "sandbox": bool(sandbox),
             "trigger_type": trigger_type or ("manual_test" if manual_test else "daily_schedule"),
             "action_date": action_date,
@@ -1376,6 +1406,8 @@ class WorkflowService:
                 "cohort_snapshot_id": snapshot_id,
                 "user_id": member.get("canonical_user_id"),
                 "channel": resolved_channel_config.get("channel", channel_config.get("channel", "push_notification")),
+                "tenant_id": workflow.get("tenant_id"),
+                "project_id": workflow.get("project_id"),
                 "execution_status": "pending",
                 "group": group,
                 "variant_id": policy_resolution.get("variant_id"),
@@ -1473,6 +1505,7 @@ class WorkflowService:
             action = self._resolve_provider_connection_config(action)
             execution_payload["channel"] = action.get("channel", execution_payload["channel"])
             execution_payload["tenant_id"] = workflow.get("tenant_id")
+            execution_payload["project_id"] = workflow.get("project_id")
             recipient = member.get("email") if str(action.get("channel") or "") == "email" else member.get("canonical_user_id")
             action_payload = {
                 "decision": "ACT",

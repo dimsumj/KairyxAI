@@ -18,6 +18,7 @@ def build_job_response(job: Dict[str, Any], *, base_path: str, extra_links: Dict
         type=job["type"],
         status=job["status"],
         tenant_id=job.get("tenant_id"),
+        project_id=job.get("project_id"),
         created_by=str(job.get("created_by") or "system"),
         updated_by=str(job.get("updated_by") or "system"),
         correlation_id=str(job.get("correlation_id") or ""),

@@ -26,15 +26,22 @@ class AuditService:
         resource_id: str | None = None,
         actor_role: str | None = None,
         tenant_id: str | None = None,
+        project_id: str | None = None,
         high_risk_only: bool = False,
         include_all_tenants: bool = False,
     ) -> Dict[str, Any]:
-        raw_items = self.repository.list_actions(limit=max(50, int(limit) * 10), include_all_tenants=include_all_tenants)
+        raw_items = self.repository.list_actions(
+            limit=max(50, int(limit) * 10),
+            tenant_id=tenant_id,
+            project_id=project_id,
+            include_all_tenants=include_all_tenants,
+        )
         items = []
         for item in raw_items:
             payload = item.get("payload") or {}
             actor = payload.get("actor_role")
             tenant = payload.get("tenant_id")
+            project = payload.get("project_id")
             is_high_risk = self._is_high_risk(item)
             if action_type and str(item.get("action_type") or "") != str(action_type):
                 continue
@@ -45,6 +52,8 @@ class AuditService:
             if actor_role and str(actor or "") != str(actor_role):
                 continue
             if tenant_id and str(tenant or "default") != str(tenant_id):
+                continue
+            if project_id and str(project or "default") != str(project_id):
                 continue
             if high_risk_only and not is_high_risk:
                 continue
@@ -62,6 +71,7 @@ class AuditService:
                     "resource_id": resource_id,
                     "actor_role": actor_role,
                     "tenant_id": tenant_id,
+                    "project_id": project_id,
                     "high_risk_only": bool(high_risk_only),
                 },
             },

@@ -41,15 +41,69 @@ class TenantMembershipModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ProjectModel(Base):
+    __tablename__ = "projects_v1"
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", name="uq_projects_v1_tenant_project"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="active", index=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
+    updated_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
+    correlation_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectMembershipModel(Base):
+    __tablename__ = "project_memberships_v1"
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "user_id", name="uq_project_membership_tenant_project_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectInviteModel(Base):
+    __tablename__ = "project_invites_v1"
+    __table_args__ = (UniqueConstraint("invite_code", name="uq_project_invites_v1_invite_code"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    invite_code: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    org_role: Mapped[str] = mapped_column(String(32), nullable=False, default="member", index=True)
+    project_role: Mapped[str] = mapped_column(String(32), nullable=False, default="operator", index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", index=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
+    redeemed_by: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    correlation_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ConnectorConfigModel(Base):
     __tablename__ = "connector_configs"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "connector_id", name="uq_connector_configs_tenant_connector_id"),
-        UniqueConstraint("tenant_id", "name", name="uq_connector_configs_tenant_name"),
+        UniqueConstraint("tenant_id", "project_id", "connector_id", name="uq_connector_configs_tenant_project_connector_id"),
+        UniqueConstraint("tenant_id", "project_id", "name", name="uq_connector_configs_tenant_project_name"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     connector_id: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
     connector_type: Mapped[str] = mapped_column(String(128), index=True)
@@ -63,10 +117,11 @@ class ConnectorConfigModel(Base):
 
 class FieldMappingModel(Base):
     __tablename__ = "field_mappings_v2"
-    __table_args__ = (UniqueConstraint("tenant_id", "connector_name", name="uq_field_mappings_tenant_connector"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "connector_name", name="uq_field_mappings_tenant_project_connector"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     connector_name: Mapped[str] = mapped_column(String(255), index=True)
     mapping_json: Mapped[str] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
@@ -81,6 +136,7 @@ class ImportJobModel(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     source_name: Mapped[str] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     spec_json: Mapped[str] = mapped_column(Text)
@@ -98,6 +154,7 @@ class PredictionJobModel(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     import_job_id: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     spec_json: Mapped[str] = mapped_column(Text)
@@ -115,6 +172,7 @@ class ExportJobModel(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     prediction_job_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     spec_json: Mapped[str] = mapped_column(Text)
@@ -129,10 +187,11 @@ class ExportJobModel(Base):
 
 class ExperimentConfigModel(Base):
     __tablename__ = "experiment_configs"
-    __table_args__ = (UniqueConstraint("tenant_id", "config_key", name="uq_experiment_configs_tenant_key"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "config_key", name="uq_experiment_configs_tenant_project_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     config_key: Mapped[str] = mapped_column(String(64), index=True)
     config_json: Mapped[str] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
@@ -147,6 +206,7 @@ class ActionHistoryModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     actor_id: Mapped[str] = mapped_column(String(128), default="system", index=True)
     correlation_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     action_type: Mapped[str] = mapped_column(String(128), index=True)
@@ -158,10 +218,11 @@ class ActionHistoryModel(Base):
 
 class IngestionCheckpointModel(Base):
     __tablename__ = "ingestion_checkpoints_v2"
-    __table_args__ = (UniqueConstraint("tenant_id", "job_id", "shard_index", name="uq_ingestion_checkpoint_tenant_job_shard"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "job_id", "shard_index", name="uq_ingestion_checkpoint_tenant_project_job_shard"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     job_id: Mapped[str] = mapped_column(String(64), index=True)
     shard_index: Mapped[int] = mapped_column(Integer, index=True)
     source_name: Mapped[str] = mapped_column(String(255), index=True)
@@ -179,10 +240,11 @@ class IngestionCheckpointModel(Base):
 
 class ControlPlaneResourceModel(Base):
     __tablename__ = "control_plane_resources_v1"
-    __table_args__ = (UniqueConstraint("tenant_id", "resource_type", "resource_id", name="uq_control_plane_resource_tenant_type_id"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "project_id", "resource_type", "resource_id", name="uq_control_plane_resource_tenant_project_type_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     resource_type: Mapped[str] = mapped_column(String(64), index=True)
     resource_id: Mapped[str] = mapped_column(String(128), index=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -198,11 +260,12 @@ class ControlPlaneResourceModel(Base):
 class ControlPlaneResourceVersionModel(Base):
     __tablename__ = "control_plane_resource_versions_v1"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "resource_type", "resource_id", "version", name="uq_control_plane_resource_tenant_version"),
+        UniqueConstraint("tenant_id", "project_id", "resource_type", "resource_id", "version", name="uq_control_plane_resource_tenant_project_version"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     resource_type: Mapped[str] = mapped_column(String(64), index=True)
     resource_id: Mapped[str] = mapped_column(String(128), index=True)
     version: Mapped[int] = mapped_column(Integer, index=True)
@@ -217,6 +280,7 @@ class ControlPlaneResourceEventModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
     resource_type: Mapped[str] = mapped_column(String(64), index=True)
     resource_id: Mapped[str] = mapped_column(String(128), index=True)
     event_type: Mapped[str] = mapped_column(String(128), index=True)

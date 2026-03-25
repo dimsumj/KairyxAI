@@ -21,6 +21,7 @@ Base = declarative_base()
 CONTROL_PLANE_REVISION = "20260307_0001"
 RESOURCE_REVISION = "20260310_0002"
 MULTITENANT_REVISION = "20260322_0003"
+PROJECT_ONBOARDING_REVISION = "20260324_0004"
 
 
 @lru_cache(maxsize=1)
@@ -83,6 +84,8 @@ def _infer_legacy_revision(engine: Engine) -> str | None:
         return None
     if "alembic_version" in table_names:
         return None
+    if "connector_configs" in table_names and _table_has_column(engine, "connector_configs", "project_id"):
+        return PROJECT_ONBOARDING_REVISION
     if "connector_configs" in table_names and _table_has_column(engine, "connector_configs", "tenant_id"):
         return MULTITENANT_REVISION
     if "control_plane_resources_v1" in table_names:

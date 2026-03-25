@@ -12,7 +12,27 @@ from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
-from app.api.routers import activation, audit, auth, cohorts, connectors, copilot, experiments, exports, health, imports, mappings, predictions, provider_connections, sql_workspace, templates, tenants, workflows
+from app.api.routers import (
+    activation,
+    audit,
+    auth,
+    cohorts,
+    connectors,
+    copilot,
+    experiments,
+    exports,
+    health,
+    imports,
+    mappings,
+    onboarding,
+    predictions,
+    projects,
+    provider_connections,
+    sql_workspace,
+    templates,
+    tenants,
+    workflows,
+)
 from app.application.imports import ImportService
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
@@ -64,8 +84,11 @@ def create_app() -> FastAPI:
                 actor_role="admin",
                 actor_id="system",
                 tenant_id=settings.bootstrap_tenant_id,
+                project_id=settings.bootstrap_project_id,
                 correlation_id=correlation_id,
                 platform_admin=True,
+                org_role="owner",
+                project_role="admin",
                 auth_mode="public",
             )
         else:
@@ -77,6 +100,7 @@ def create_app() -> FastAPI:
                     path=request.url.path,
                     method=request.method,
                     tenant_id=settings.bootstrap_tenant_id,
+                    project_id=settings.bootstrap_project_id,
                     actor_id="anonymous",
                     resource_type="http_request",
                     correlation_id=correlation_id,
@@ -93,8 +117,11 @@ def create_app() -> FastAPI:
             actor_id=context.actor_id,
             actor_role=context.actor_role,
             tenant_id=context.tenant_id,
+            project_id=context.project_id,
             correlation_id=context.correlation_id,
             platform_admin=context.platform_admin,
+            org_role=context.org_role,
+            project_role=context.project_role,
             auth_mode=context.auth_mode,
         )
         with request_context(scoped_context):
@@ -104,6 +131,7 @@ def create_app() -> FastAPI:
             path=request.url.path,
             method=request.method,
             tenant_id=context.tenant_id,
+            project_id=context.project_id,
             actor_id=context.actor_id,
             resource_type="http_request",
             correlation_id=correlation_id,
@@ -138,8 +166,11 @@ def create_app() -> FastAPI:
                 actor_id="system",
                 actor_role="admin",
                 tenant_id=settings.bootstrap_tenant_id,
+                project_id=settings.bootstrap_project_id,
                 correlation_id="startup",
                 platform_admin=True,
+                org_role="owner",
+                project_role="admin",
                 auth_mode="system",
             )
         ):
@@ -148,6 +179,7 @@ def create_app() -> FastAPI:
             try:
                 repository = SqlAlchemyControlPlaneRepository(session)
                 repository.ensure_tenant(settings.bootstrap_tenant_id, settings.bootstrap_tenant_name)
+                repository.ensure_project(settings.bootstrap_tenant_id, settings.bootstrap_project_id, settings.bootstrap_project_name)
                 bigquery_service = get_shared_bigquery_service()
                 try:
                     ImportService(repository, settings, bigquery_service=bigquery_service).reconcile_jobs_after_restart()
@@ -167,8 +199,11 @@ def create_app() -> FastAPI:
                         actor_id="system",
                         actor_role="admin",
                         tenant_id=settings.bootstrap_tenant_id,
+                        project_id=settings.bootstrap_project_id,
                         correlation_id="health-warmup",
                         platform_admin=True,
+                        org_role="owner",
+                        project_role="admin",
                         auth_mode="system",
                     )
                 ):
@@ -196,8 +231,11 @@ def create_app() -> FastAPI:
                         actor_id="system",
                         actor_role="admin",
                         tenant_id=settings.bootstrap_tenant_id,
+                        project_id=settings.bootstrap_project_id,
                         correlation_id="scheduler-loop",
                         platform_admin=True,
+                        org_role="owner",
+                        project_role="admin",
                         auth_mode="system",
                     )
                 ):
@@ -259,6 +297,8 @@ def create_app() -> FastAPI:
     app.include_router(provider_connections.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
     app.include_router(mappings.router, prefix=settings.api_v1_prefix)
+    app.include_router(onboarding.router, prefix=settings.api_v1_prefix)
+    app.include_router(projects.router, prefix=settings.api_v1_prefix)
     app.include_router(imports.router, prefix=settings.api_v1_prefix)
     app.include_router(predictions.router, prefix=settings.api_v1_prefix)
     app.include_router(exports.router, prefix=settings.api_v1_prefix)
@@ -274,6 +314,30 @@ def create_app() -> FastAPI:
     return app
 
 
+def _normalize_org_role(raw_role: str | None) -> str:
+    normalized = str(raw_role or "").strip().lower()
+    if normalized in {"owner", "admin"}:
+        return normalized
+    return "member"
+
+
+def _is_tenant_optional_path(path: str, settings) -> bool:
+    api = settings.api_v1_prefix.rstrip("/")
+    return path in {
+        f"{api}/auth/me",
+        f"{api}/project-invites/redeem",
+    } or path.startswith(f"{api}/onboarding")
+
+
+def _is_project_optional_path(path: str, settings) -> bool:
+    api = settings.api_v1_prefix.rstrip("/")
+    return path in {
+        f"{api}/auth/me",
+        f"{api}/projects",
+        f"{api}/project-invites/redeem",
+    } or path.startswith(f"{api}/onboarding") or path.endswith("/invites")
+
+
 def _build_governance_context(request: Request, settings, correlation_id: str) -> GovernanceContext:
     protected_prefix = settings.api_v1_prefix.rstrip("/")
     if not request.url.path.startswith(protected_prefix):
@@ -281,8 +345,11 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             actor_role="admin",
             actor_id="system",
             tenant_id=settings.bootstrap_tenant_id,
+            project_id=settings.bootstrap_project_id,
             correlation_id=correlation_id,
             platform_admin=True,
+            org_role="owner",
+            project_role="admin",
             auth_mode="public",
         )
 
@@ -297,38 +364,117 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             request.headers.get("x-kairyx-tenant")
             or request.headers.get("x-tenant-id")
             or principal.claims.get("tenant_id")
-            or settings.bootstrap_tenant_id
-        ).strip() or settings.bootstrap_tenant_id
+            or ""
+        ).strip()
+        requested_project = str(
+            request.headers.get("x-kairyx-project")
+            or request.headers.get("x-project-id")
+            or principal.claims.get("project_id")
+            or ""
+        ).strip()
+        requested_tenant = str(
+            requested_tenant
+        ).strip()
         session = get_session_factory()()
         try:
             repository = SqlAlchemyControlPlaneRepository(session)
             repository.ensure_tenant(settings.bootstrap_tenant_id, settings.bootstrap_tenant_name)
+            repository.ensure_project(settings.bootstrap_tenant_id, settings.bootstrap_project_id, settings.bootstrap_project_name)
             repository.upsert_platform_user(
                 principal.subject,
                 email=principal.email,
                 display_name=principal.display_name,
             )
             if principal.platform_admin:
-                repository.ensure_tenant(requested_tenant, requested_tenant)
+                effective_tenant = requested_tenant or settings.bootstrap_tenant_id
+                effective_project = requested_project or settings.bootstrap_project_id
+                repository.ensure_tenant(effective_tenant, effective_tenant)
+                repository.ensure_project(effective_tenant, effective_project, effective_project)
                 session.commit()
                 return GovernanceContext(
                     actor_role="admin",
                     actor_id=principal.subject,
-                    tenant_id=requested_tenant,
+                    tenant_id=effective_tenant,
+                    project_id=effective_project,
                     correlation_id=correlation_id,
                     platform_admin=True,
+                    org_role="owner",
+                    project_role="admin",
                     auth_mode="jwt",
                 )
-            membership = repository.get_tenant_membership(requested_tenant, principal.subject)
-            if membership is None or str(membership.get("status") or "").lower() != "active":
-                raise HTTPException(status_code=403, detail=f"Tenant membership for '{requested_tenant}' is missing or inactive.")
+
+            tenant_memberships = [
+                membership
+                for membership in repository.list_user_tenant_memberships(principal.subject)
+                if str(membership.get("status") or "").lower() == "active"
+            ]
+            memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
+            allow_missing_tenant = _is_tenant_optional_path(request.url.path, settings)
+            allow_missing_project = _is_project_optional_path(request.url.path, settings)
+
+            if not memberships_by_tenant:
+                if not allow_missing_tenant:
+                    raise HTTPException(status_code=403, detail="No organization space membership is active for this user.")
+                session.commit()
+                return GovernanceContext(
+                    actor_role="operator",
+                    actor_id=principal.subject,
+                    tenant_id=None,
+                    project_id=None,
+                    correlation_id=correlation_id,
+                    platform_admin=False,
+                    org_role=None,
+                    project_role=None,
+                    auth_mode="jwt",
+                )
+
+            selected_tenant = None
+            if requested_tenant:
+                if requested_tenant not in memberships_by_tenant:
+                    raise HTTPException(status_code=403, detail=f"Tenant membership for '{requested_tenant}' is missing or inactive.")
+                selected_tenant = requested_tenant
+            elif len(memberships_by_tenant) == 1:
+                selected_tenant = next(iter(memberships_by_tenant))
+            elif not allow_missing_tenant:
+                raise HTTPException(status_code=409, detail="Organization space selection is required.")
+
+            org_membership = memberships_by_tenant.get(selected_tenant) if selected_tenant else None
+            org_role = _normalize_org_role((org_membership or {}).get("role"))
+            selected_project = None
+            project_role = None
+
+            if selected_tenant:
+                project_memberships = [
+                    membership
+                    for membership in repository.list_project_memberships(tenant_id=selected_tenant, user_id=principal.subject)
+                    if str(membership.get("status") or "").lower() == "active"
+                ]
+                memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
+                if requested_project:
+                    membership = memberships_by_project.get(requested_project)
+                    if membership is None:
+                        raise HTTPException(status_code=403, detail=f"Project membership for '{requested_project}' is missing or inactive.")
+                    selected_project = requested_project
+                    project_role = str(membership.get("role") or "operator")
+                elif len(memberships_by_project) == 1:
+                    selected_project, membership = next(iter(memberships_by_project.items()))
+                    project_role = str(membership.get("role") or "operator")
+                elif not memberships_by_project:
+                    if not allow_missing_project:
+                        raise HTTPException(status_code=403, detail=f"Project membership is missing or inactive for organization space '{selected_tenant}'.")
+                elif not allow_missing_project:
+                    raise HTTPException(status_code=409, detail="Project selection is required.")
+
             session.commit()
             return GovernanceContext(
-                actor_role=str(membership.get("role") or "operator"),
+                actor_role=str(project_role or "operator"),
                 actor_id=principal.subject,
-                tenant_id=requested_tenant,
+                tenant_id=selected_tenant,
+                project_id=selected_project,
                 correlation_id=correlation_id,
                 platform_admin=False,
+                org_role=org_role,
+                project_role=project_role,
                 auth_mode="jwt",
             )
         finally:
@@ -342,12 +488,16 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
         actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower() or "admin"
         actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
         tenant_id = str(request.headers.get("x-tenant-id") or settings.bootstrap_tenant_id).strip() or settings.bootstrap_tenant_id
+        project_id = str(request.headers.get("x-project-id") or settings.bootstrap_project_id).strip() or settings.bootstrap_project_id
         return GovernanceContext(
             actor_role=actor_role,
             actor_id=actor_id,
             tenant_id=tenant_id,
+            project_id=project_id,
             correlation_id=correlation_id,
             platform_admin=(actor_role == "admin"),
+            org_role="owner" if actor_role == "admin" else "member",
+            project_role=actor_role,
             auth_mode="legacy_headers",
         )
     raise HTTPException(status_code=401, detail="Missing bearer token.")

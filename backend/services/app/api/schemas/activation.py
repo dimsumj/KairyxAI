@@ -10,6 +10,8 @@ class ActivationCallbackEvent(BaseModel):
     action_execution_id: str | None = None
     provider_connection_id: str | None = None
     workflow_id: str | None = None
+    tenant_id: str | None = None
+    project_id: str | None = None
     user_id: str | None = None
     event_id: str | None = None
     event_type: str = "delivered"

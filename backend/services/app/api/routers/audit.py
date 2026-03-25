@@ -19,6 +19,7 @@ def list_audit_actions(
     resource_id: str | None = Query(None),
     actor_role: str | None = Query(None),
     tenant_id: str | None = Query(None),
+    project_id: str | None = Query(None),
     high_risk_only: bool = Query(False),
     service: AuditService = Depends(get_audit_service),
 ):
@@ -31,6 +32,7 @@ def list_audit_actions(
         resource_id=resource_id,
         actor_role=actor_role,
         tenant_id=tenant_id,
+        project_id=project_id,
         high_risk_only=high_risk_only,
         include_all_tenants=context.platform_admin,
     )

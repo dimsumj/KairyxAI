@@ -17,6 +17,7 @@ class JobResponse(BaseModel):
     type: str
     status: str
     tenant_id: str | None = None
+    project_id: str | None = None
     created_by: str = "system"
     updated_by: str = "system"
     correlation_id: str = ""

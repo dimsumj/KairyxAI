@@ -1110,7 +1110,11 @@ class ImportService:
         if status not in {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}:
             raise ValueError("Only awaiting_mapping, stopped, or failed jobs can be resumed.")
 
-        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
+        connector_record = self.repository.get_connector(
+            job["spec"].get("connector_id") or job["spec"]["source_name"],
+            tenant_id=job.get("tenant_id"),
+            project_id=job.get("project_id"),
+        )
         if connector_record is None:
             raise KeyError(job["spec"].get("connector_id") or job["spec"]["source_name"])
 
@@ -1231,7 +1235,11 @@ class ImportService:
         if current_status == JobStatus.STOPPING.value:
             return self._mark_stopped(job_id)
 
-        connector_record = self.repository.get_connector(job["spec"].get("connector_id") or job["spec"]["source_name"], tenant_id=job.get("tenant_id"))
+        connector_record = self.repository.get_connector(
+            job["spec"].get("connector_id") or job["spec"]["source_name"],
+            tenant_id=job.get("tenant_id"),
+            project_id=job.get("project_id"),
+        )
         if connector_record is None:
             raise MissingDependencyError(
                 "connector",

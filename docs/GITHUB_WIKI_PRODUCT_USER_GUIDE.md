@@ -12,6 +12,7 @@ It is written against the current single-page frontend served by the backend and
 - current placeholder controls that exist in the UI but are not yet wired
 
 Unless otherwise stated, example payloads are representative. IDs, timestamps, counts, and exact status text will vary in real environments.
+Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 ---
 
@@ -21,10 +22,16 @@ Unless otherwise stated, example payloads are representative. IDs, timestamps, c
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Actor Role` | Select | Choose the effective operator role when using legacy local/demo auth. | `Admin` | Requests run with full admin permissions in local/demo mode. |
-| `Actor ID` | Text box | Enter the operator identifier recorded in audit logs. | `ops_alice` | Actions are attributed to `ops_alice`. |
-| `Tenant ID` | Text box | Enter the tenant you want to work in. In OIDC mode this is also sent as `X-Kairyx-Tenant`. | `default` | API requests scope to the selected tenant. |
-| `Auth Session` | Status text | Read-only session state. | `OIDC ops_alice @ default` | Confirms the current authenticated actor and tenant. |
+| Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
+| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in. This is sent as `X-Kairyx-Tenant`. | `northstar` | The console reloads project access for that organization space. |
+| `Project` | Select | In OIDC mode, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
+| `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
+| `Actor Role` | Select | Legacy local/demo only. Choose the effective operator role for header-based auth. | `Admin` | Requests run with full admin permissions in local/demo mode. |
+| `Actor ID` | Text box | Legacy local/demo only. Enter the operator identifier recorded in audit logs. | `ops_alice` | Actions are attributed to `ops_alice`. |
+| `Tenant ID` | Text box | Legacy local/demo only. Enter the organization-space id to send as `x-tenant-id`. | `default` | API requests scope to that organization space. |
+| `Project ID` | Text box | Legacy local/demo only. Enter the project id to send as `x-project-id`. | `default` | API requests scope to that project. |
+| `Auth Session` | Status text | Read-only session state. | `OIDC ops_alice @ northstar / liveops` | Confirms the current authenticated actor and active workspace. |
 | `OIDC Login` | Button | Starts the PKCE OIDC browser login flow. | None | Browser redirects to the identity provider and returns with a bearer token. |
 | `Logout` | Button | Clears the local bearer token and, when configured, redirects to the IdP logout URL. | None | Session returns to local/demo or logged-out state. |
 | `API Key` | Password box | Optional only for legacy local/demo auth. Leave empty in normal OIDC production use. | `local-dev-key` | Added as `x-api-key` in local/demo mode. |
@@ -33,14 +40,95 @@ Unless otherwise stated, example payloads are representative. IDs, timestamps, c
 | Sidebar module links | Navigation buttons | Open the target product module. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
 
 ### 2.2 Recommended First-Time Path
-1. Set `Actor Role`, `Actor ID`, and `Tenant ID`.
-2. Use `OIDC Login` if the backend is configured for real bearer auth.
-3. Go to `Data Core -> Connectors` and create at least one connector.
-4. Go to `Data Core -> Imports` and run an import.
-5. Go to `Audience Engine` and create or refresh a cohort.
-6. Go to `Action Orchestrator` and create a workflow.
-7. Go to `Experiment Hub` and save the linked experiment config.
-8. Go to `Insight Copilot` for query, explain, recommend, and report flows.
+1. Use `OIDC Login`.
+2. If this is your first login, complete the onboarding wizard:
+   - create the `Organization Space`
+   - create the first `Project`
+   - optionally generate an invite link
+   - choose `Connect Now` or `Skip for Now`
+3. If you already belong to more than one organization space or project, use the `Switcher` button or the sidebar selects to choose the active workspace.
+4. Go to `Data Core -> Connectors` and create at least one connector.
+5. Go to `Data Core -> Imports` and run an import.
+6. Go to `Audience Engine` and create or refresh a cohort.
+7. Go to `Action Orchestrator` and create a workflow.
+8. Go to `Experiment Hub` and save the linked experiment config.
+9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
+
+### 2.3 Onboarding And Workspace Overlays
+
+#### Organization-space onboarding wizard
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Organization Space Name` | Text box | Enter the display name for the new organization space. | `North Star Games` | The name is shown in the workspace selectors and summary card. |
+| `Organization Space ID` | Text box | Enter the immutable slug for the organization space. | `northstar` | Stored as the backend `tenant` id and used in `X-Kairyx-Tenant`. |
+| `Next` | Button | Moves from the organization-space step to the project step. | None | Keeps the entered org values and opens the first-project form. |
+| `First Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
+| `Project ID` | Text box | Enter the immutable slug for the first project. | `liveops` | Stored as the project id and used in `X-Kairyx-Project`. |
+| `Project Description` | Text area | Describe the scope of the first project. | `Primary production lifecycle execution` | Saved on the project record. |
+| `Create Space` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard advances to the invite step and the new workspace becomes active. |
+| `Teammate Email` | Text box | Optional. Email that must match the invited user during redemption. | `ops@northstar.example` | Added to the generated invite link metadata. |
+| `Display Name` | Text box | Optional display name shown in the invite payload. | `Live Ops Lead` | Included in the invite metadata. |
+| `Organization Role` | Select | Chooses the teammate’s organization-space role. | `Member` | Invite grants `member` org access on redemption. |
+| `Project Role` | Select | Chooses the teammate’s project role. | `Analyst` | Invite grants `analyst` project access on redemption. |
+| `Generate Invite Link` | Button | Creates a shareable invite link for the active project. | None | The `Invite Link` box fills with a redeemable URL. |
+| `Invite Link` | Text area | Read-only output. Copy and share it with the teammate. | `https://.../?invite_code=pinv_123...` | The recipient can log in and redeem into the target org/project. |
+| `Continue` | Button | Moves from the invite step to the connect-data step. | None | Keeps the created invite link and opens the source recommendations. |
+| `Connect Now` | Button | Closes the wizard and opens `Data Core -> Connectors`. | None | The user lands on the connectors page to configure sources. |
+| `Skip for Now` | Button | Closes the wizard without opening connectors. | None | The user lands in the main console shell with the new workspace active. |
+
+#### Sample onboarding request
+```json
+{
+  "organization_id": "northstar",
+  "organization_name": "North Star Games",
+  "project_id": "liveops",
+  "project_name": "Live Ops",
+  "project_description": "Primary production lifecycle execution"
+}
+```
+
+#### Sample onboarding response
+```json
+{
+  "organization_space": {
+    "tenant_id": "northstar",
+    "name": "North Star Games",
+    "status": "active"
+  },
+  "project": {
+    "tenant_id": "northstar",
+    "project_id": "liveops",
+    "name": "Live Ops",
+    "description": "Primary production lifecycle execution",
+    "status": "active"
+  }
+}
+```
+
+#### Workspace switcher overlay
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Organization Space` | Select | Choose the organization space to browse. | `northstar` | The project list updates for that organization space. |
+| `Project` | Select | Choose the project you want to enter. | `sandbox` | The selected project becomes the active console context after continue. |
+| `Continue` | Button | Confirms the current overlay selections. | None | The overlay closes and the console reloads data for that org/project. |
+| `Create Project` | Button | Opens the new-project overlay for the selected organization space. | None | Lets an org admin create and switch into a new project. |
+
+#### New-project overlay
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Project Name` | Text box | Enter the display name for the new project. | `Growth Sandbox` | The project is created with this name. |
+| `Project ID` | Text box | Enter the immutable project slug. | `growth-sandbox` | Stored as the new project id. |
+| `Project Description` | Text area | Describe the new project. | `Safe testing environment for experiments` | Saved on the project record. |
+| `Create Project` | Button | Creates the project in the selected organization space. | None | The project is created, the creator becomes a project admin, and the console switches into it. |
+| `Cancel` | Button | Closes the new-project overlay. | None | Returns to the prior workspace selection state. |
+
+#### Invite redemption behavior
+- If the browser opens a URL containing `invite_code`, the console stores that invite locally before OIDC login.
+- After successful OIDC login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem`.
+- On success, the active organization space and project switch to the invite target.
 
 ---
 
@@ -123,7 +211,8 @@ Prediction Engine: AI + Cloud
   "provider": "braze",
   "audience_name": "churn_push_high",
   "exported_users": 128,
-  "tenant_id": "default"
+  "tenant_id": "default",
+  "project_id": "default"
 }
 ```
 
@@ -166,7 +255,8 @@ Prediction Engine: AI + Cloud
   "progress_pct": 0,
   "start_date": "20260301",
   "end_date": "20260307",
-  "tenant_id": "default"
+  "tenant_id": "default",
+  "project_id": "default"
 }
 ```
 
@@ -214,6 +304,7 @@ Use this page to register upstream ingestion sources and downstream service cred
   "type": "amplitude",
   "details": "Configured",
   "tenant_id": "default",
+  "project_id": "default",
   "created_by": "admin"
 }
 ```

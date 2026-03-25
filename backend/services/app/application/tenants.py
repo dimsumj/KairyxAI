@@ -11,7 +11,9 @@ class TenantService:
         return self.repository.list_tenants()
 
     def create_tenant(self, tenant_id: str, name: str, status: str = "active") -> Dict[str, Any]:
-        return self.repository.ensure_tenant(tenant_id, name, status=status)
+        tenant = self.repository.ensure_tenant(tenant_id, name, status=status)
+        self.repository.ensure_project(tenant_id, "default", "Default Project", description="", status="active")
+        return tenant
 
     def list_memberships(self, tenant_id: str) -> Dict[str, Any]:
         return {"items": self.repository.list_tenant_memberships(tenant_id)}

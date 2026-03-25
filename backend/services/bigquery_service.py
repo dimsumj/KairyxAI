@@ -50,10 +50,12 @@ def _sanitize_for_storage(data: Any) -> Any:
 def _shared_service_cache_key() -> tuple[Any, ...]:
     mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
     tenant_scope = _tenant_scope_key()
+    project_scope = _project_scope_key()
     if mode == "gcp":
         return (
             mode,
             tenant_scope,
+            project_scope,
             os.getenv("BIGQUERY_PROJECT_ID", ""),
             os.getenv("BIGQUERY_DATASET_ID", "kairyx"),
             os.getenv("BIGQUERY_TABLE_NAME", "processed_events"),
@@ -66,6 +68,7 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
     return (
         mode,
         tenant_scope,
+        project_scope,
         os.getcwd(),
     )
 
@@ -73,6 +76,13 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
 def _tenant_scope_key() -> str:
     context = get_request_context()
     raw_value = context.tenant_id if context is not None else os.getenv("BOOTSTRAP_TENANT_ID", "default")
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_value or "default").strip()).strip("_").lower()
+    return normalized or "default"
+
+
+def _project_scope_key() -> str:
+    context = get_request_context()
+    raw_value = context.project_id if context is not None else os.getenv("BOOTSTRAP_PROJECT_ID", "default")
     normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_value or "default").strip()).strip("_").lower()
     return normalized or "default"
 
@@ -125,8 +135,9 @@ class BigQueryService:
             raise ValueError("BIGQUERY_PROJECT_ID must be set for DATA_BACKEND_MODE=gcp.")
 
         tenant_scope = _tenant_scope_key()
+        project_scope = _project_scope_key()
         dataset_base = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
-        dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}")
+        dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}_{project_scope}")
         table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
         self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
         self._curated_table_id = os.getenv(
@@ -150,7 +161,7 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
-        cache_root = Path(".cache") / _tenant_scope_key()
+        cache_root = Path(".cache") / _tenant_scope_key() / _project_scope_key()
         self._cache_path = str(cache_root / "bigquery_table.parquet")
         self._curated_cache_path = str(cache_root / "events_curated.parquet")
         self._player_latest_state_cache_path = str(cache_root / "player_latest_state.parquet")

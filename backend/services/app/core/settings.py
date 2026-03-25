@@ -18,6 +18,8 @@ class Settings:
     service_role: str = "operator-api"
     bootstrap_tenant_id: str = "default"
     bootstrap_tenant_name: str = "Default Tenant"
+    bootstrap_project_id: str = "default"
+    bootstrap_project_name: str = "Default Project"
     cors_allowed_origins: tuple[str, ...] = ("*",)
     oidc_issuer: str = ""
     oidc_audience: str = ""
@@ -71,6 +73,8 @@ def get_settings() -> Settings:
         service_role=str(os.getenv("SERVICE_ROLE", "operator-api")).strip().lower() or "operator-api",
         bootstrap_tenant_id=str(os.getenv("BOOTSTRAP_TENANT_ID", "default")).strip() or "default",
         bootstrap_tenant_name=str(os.getenv("BOOTSTRAP_TENANT_NAME", "Default Tenant")).strip() or "Default Tenant",
+        bootstrap_project_id=str(os.getenv("BOOTSTRAP_PROJECT_ID", "default")).strip() or "default",
+        bootstrap_project_name=str(os.getenv("BOOTSTRAP_PROJECT_NAME", "Default Project")).strip() or "Default Project",
         cors_allowed_origins=cors_allowed_origins,
         oidc_issuer=str(os.getenv("OIDC_ISSUER", "")).strip(),
         oidc_audience=str(os.getenv("OIDC_AUDIENCE", "")).strip(),

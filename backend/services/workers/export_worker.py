@@ -21,13 +21,17 @@ def main(argv: list[str] | None = None) -> int:
         repository = SqlAlchemyControlPlaneRepository(session)
         job = repository.get_export_job(args.job_id, include_all_tenants=True)
     tenant_id = str((job or {}).get("tenant_id") or os.getenv("BOOTSTRAP_TENANT_ID", "default"))
+    project_id = str((job or {}).get("project_id") or os.getenv("BOOTSTRAP_PROJECT_ID", "default"))
     with request_context(
         RequestContext(
             actor_id="worker:export",
             actor_role="admin",
             tenant_id=tenant_id,
+            project_id=project_id,
             correlation_id=f"worker-export-{args.job_id}",
             platform_admin=True,
+            org_role="owner",
+            project_role="admin",
             auth_mode="worker",
         )
     ):
