@@ -3,13 +3,15 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 import pickle
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List
 
 import pandas as pd
 
+from app.core.request_context import get_request_context
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
@@ -88,6 +90,10 @@ class ProfileScore:
     score_timestamp: str
 
 
+class TrainingInterruptedError(RuntimeError):
+    pass
+
+
 class LocalChurnModelService:
     MODEL_RESOURCE_TYPE = "churn_model_version"
     MODEL_RESOURCE_ID = "churn_rescue_local"
@@ -99,6 +105,14 @@ class LocalChurnModelService:
     def __init__(self, repository, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+
+    @staticmethod
+    def _default_tenant_id() -> str:
+        return str(os.getenv("BOOTSTRAP_TENANT_ID", "default")).strip() or "default"
+
+    def _training_scope_key(self) -> str:
+        context = get_request_context()
+        return str((context.tenant_id if context is not None else None) or self._default_tenant_id()).strip() or self._default_tenant_id()
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -130,6 +144,65 @@ class LocalChurnModelService:
         record = self.repository.get_resource(self.STATUS_RESOURCE_TYPE, self.STATUS_RESOURCE_ID)
         return dict((record or {}).get("payload") or {})
 
+    def mark_training_started(self, *, reference_time: str | None = None, min_rows: int = DEFAULT_MIN_TRAIN_ROWS) -> Dict[str, Any]:
+        resolved_time = _parse_dt(reference_time) or _utcnow()
+        payload = {
+            "reference_time": resolved_time.isoformat(),
+            "status": "running",
+            "stage": "building_dataset",
+            "started_at": resolved_time.isoformat(),
+            "trained_at": None,
+            "min_rows_required": max(6, int(min_rows)),
+            "row_count": 0,
+            "class_balance": {},
+        }
+        self._persist_training_status(payload)
+        self._commit_session()
+        return payload
+
+    def request_stop_training(self, *, reason: str = "Stopped by user.") -> Dict[str, Any]:
+        training_status = self.get_training_status() or {}
+        status = str(training_status.get("status") or "").lower()
+        if status == "stopped":
+            return training_status
+        if status == "stopping":
+            return training_status
+        if status != "running":
+            raise ValueError("Only running local model training can be stopped.")
+        training_status.update(
+            {
+                "status": "stopping",
+                "stop_requested": True,
+                "stop_requested_at": _utcnow().isoformat(),
+                "stop_reason": reason,
+            }
+        )
+        self._persist_training_status(training_status)
+        self._commit_session()
+        return training_status
+
+    def mark_training_stopped(self, *, reason: str = "Stopped by user.") -> Dict[str, Any]:
+        training_status = self.get_training_status() or {}
+        training_status.update(
+            {
+                "status": "stopped",
+                "stage": "stopped",
+                "trained_at": _utcnow().isoformat(),
+                "stop_requested": False,
+                "stop_reason": reason,
+            }
+        )
+        self._persist_training_status(training_status)
+        self._commit_session()
+        return training_status
+
+    def is_stop_requested(self) -> bool:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.expire_all()
+        training_status = self.get_training_status() or {}
+        return bool(training_status.get("stop_requested")) or str(training_status.get("status") or "").lower() in {"stopping", "stopped"}
+
     def get_model_readiness(self, *, min_rows: int | None = None) -> Dict[str, Any]:
         latest_model = self.get_latest_model_payload() or {}
         training_status = self.get_training_status() or {}
@@ -155,6 +228,8 @@ class LocalChurnModelService:
         *,
         reference_time: str | None = None,
         persist: bool = True,
+        should_stop: Callable[[], bool] | None = None,
+        progress_callback: Callable[[Dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         resolved_time = _parse_dt(reference_time) or _utcnow()
         exposures = [
@@ -181,16 +256,51 @@ class LocalChurnModelService:
         rows: List[Dict[str, Any]] = []
         historical_rows = 0
         measurement_rows = 0
-        for user_id, user_events in events_by_user.items():
+        baseline_rows = 0
+        total_users = len(events_by_user)
+        total_exposures = len(exposures)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "building_dataset",
+                    "row_count": 0,
+                    "historical_rows": 0,
+                    "measurement_rows": 0,
+                    "users_processed": 0,
+                    "users_total": total_users,
+                    "exposures_processed": 0,
+                    "exposures_total": total_exposures,
+                }
+            )
+        for index, (user_id, user_events) in enumerate(events_by_user.items(), start=1):
+            if should_stop is not None and should_stop():
+                raise TrainingInterruptedError("Stopped by user.")
             user_history = self._build_historical_training_rows(
                 user_id=user_id,
                 user_events=user_events,
                 prior_exposures=exposure_history.get(user_id, []),
                 reference_time=resolved_time,
+                should_stop=should_stop,
             )
             rows.extend(user_history)
             historical_rows += len(user_history)
-        for exposure in exposures:
+            baseline_rows += len(user_history)
+            if progress_callback is not None and (index == total_users or index % 10 == 0):
+                progress_callback(
+                    {
+                        "stage": "building_dataset",
+                        "row_count": baseline_rows,
+                        "historical_rows": historical_rows,
+                        "measurement_rows": measurement_rows,
+                        "users_processed": index,
+                        "users_total": total_users,
+                        "exposures_processed": 0,
+                        "exposures_total": total_exposures,
+                    }
+                )
+        for exposure_index, exposure in enumerate(exposures, start=1):
+            if should_stop is not None and should_stop():
+                raise TrainingInterruptedError("Stopped by user.")
             user_id = str(exposure.get("user_id") or exposure.get("canonical_user_id") or "").strip()
             exposure_time = _parse_dt(exposure.get("exposed_at") or exposure.get("recorded_at"))
             if not user_id or exposure_time is None:
@@ -235,6 +345,21 @@ class LocalChurnModelService:
             feature_row["baseline_churn_label"] = baseline_label
             rows.append(feature_row)
             measurement_rows += 1
+            if baseline_label in {0, 1}:
+                baseline_rows += 1
+            if progress_callback is not None and (exposure_index == total_exposures or exposure_index % 25 == 0):
+                progress_callback(
+                    {
+                        "stage": "building_dataset",
+                        "row_count": baseline_rows,
+                        "historical_rows": historical_rows,
+                        "measurement_rows": measurement_rows,
+                        "users_processed": total_users,
+                        "users_total": total_users,
+                        "exposures_processed": exposure_index,
+                        "exposures_total": total_exposures,
+                    }
+                )
 
         dataset_payload = {
             "dataset_id": f"train_{resolved_time.strftime('%Y%m%d%H%M%S')}",
@@ -245,7 +370,7 @@ class LocalChurnModelService:
             "row_count": len(rows),
             "historical_rows": historical_rows,
             "measurement_rows": measurement_rows,
-            "baseline_rows": len([row for row in rows if row.get("baseline_churn_label") in {0, 1}]),
+            "baseline_rows": baseline_rows,
             "treatment_rows": len([row for row in rows if str(row.get("group") or "") not in {"holdout", "excluded"}]),
         }
         if persist:
@@ -262,24 +387,36 @@ class LocalChurnModelService:
         *,
         reference_time: str | None = None,
         min_rows: int = 12,
+        should_stop: Callable[[], bool] | None = None,
+        persist_initial_status: bool = True,
     ) -> Dict[str, Any]:
         resolved_time = _parse_dt(reference_time) or _utcnow()
         min_rows_required = max(6, int(min_rows))
-        training_status = {
-            "reference_time": resolved_time.isoformat(),
-            "status": "running",
-            "stage": "building_dataset",
-            "started_at": resolved_time.isoformat(),
-            "trained_at": None,
-            "min_rows_required": min_rows_required,
-            "row_count": 0,
-            "class_balance": {},
-        }
-        self._persist_training_status(training_status)
-        self._commit_session()
+        if persist_initial_status:
+            training_status = self.mark_training_started(reference_time=resolved_time.isoformat(), min_rows=min_rows_required)
+        else:
+            training_status = self.get_training_status() or {}
+            training_status.setdefault("reference_time", resolved_time.isoformat())
+            training_status.setdefault("started_at", resolved_time.isoformat())
+            training_status.setdefault("min_rows_required", min_rows_required)
+            training_status.setdefault("row_count", 0)
+            training_status.setdefault("class_balance", {})
 
         try:
-            dataset = self.build_training_dataset(reference_time=resolved_time.isoformat(), persist=True)
+            if should_stop is not None and should_stop():
+                raise TrainingInterruptedError("Stopped by user.")
+
+            def _update_progress(update: Dict[str, Any]) -> None:
+                training_status.update(update)
+                self._persist_training_status(training_status)
+                self._commit_session()
+
+            dataset = self.build_training_dataset(
+                reference_time=resolved_time.isoformat(),
+                persist=True,
+                should_stop=should_stop,
+                progress_callback=_update_progress,
+            )
             rows = [item for item in dataset.get("rows") or [] if item.get("baseline_churn_label") in {0, 1}]
             labels = [int(item["baseline_churn_label"]) for item in rows]
             class_balance = {label: labels.count(label) for label in sorted(set(labels))}
@@ -421,6 +558,16 @@ class LocalChurnModelService:
             self._persist_training_status(training_status)
             self._commit_session()
             return payload
+        except TrainingInterruptedError as exc:
+            self._rollback_session()
+            stopped_status = self.mark_training_stopped(reason=str(exc))
+            latest_model = self.get_latest_model_payload() or {}
+            return {
+                "model_version": str(latest_model.get("model_version") or "heuristic_v1"),
+                "status": "stopped",
+                "reason": str(exc),
+                "training_status": stopped_status,
+            }
         except Exception as exc:
             self._rollback_session()
             training_status.update(
@@ -548,12 +695,15 @@ class LocalChurnModelService:
         user_events: pd.DataFrame,
         prior_exposures: List[Dict[str, Any]],
         reference_time: datetime,
+        should_stop: Callable[[], bool] | None = None,
     ) -> List[Dict[str, Any]]:
         if user_events.empty:
             return []
         event_times = sorted({_parse_dt(value) for value in user_events["event_time"].tolist() if _parse_dt(value) is not None})
         rows: List[Dict[str, Any]] = []
-        for cutoff_time in event_times:
+        for index, cutoff_time in enumerate(event_times, start=1):
+            if should_stop is not None and index % 25 == 0 and should_stop():
+                raise TrainingInterruptedError("Stopped by user.")
             if cutoff_time is None:
                 continue
             window_end = cutoff_time + timedelta(days=7)

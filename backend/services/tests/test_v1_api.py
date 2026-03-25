@@ -12,6 +12,7 @@ from alembic.config import Config
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.churn_models import LocalChurnModelService
 from app.application.imports import ImportService
 from app.core import db as db_module
 from app.core.deps import get_settings_dependency
@@ -175,6 +176,75 @@ def test_prediction_model_runs_reports_untrained_readiness(client):
     assert readiness["using_model_version"] == "heuristic_v1"
     assert readiness["baseline_rows"] == 0
     assert readiness["min_rows_required"] == 12
+
+
+def test_prediction_model_training_can_start_stop_and_report_progress(client, monkeypatch):
+    def fake_train_model(self, *, reference_time=None, min_rows=12, should_stop=None, persist_initial_status=True):
+        for index in range(1, 6):
+            training_status = self.get_training_status() or {}
+            training_status.update(
+                {
+                    "status": "running",
+                    "stage": "building_dataset",
+                    "reference_time": reference_time,
+                    "started_at": reference_time,
+                    "min_rows_required": min_rows,
+                    "row_count": index * 3,
+                    "users_processed": index,
+                    "users_total": 5,
+                    "exposures_processed": 0,
+                    "exposures_total": 0,
+                }
+            )
+            self._persist_training_status(training_status)
+            self._commit_session()
+            time.sleep(0.03)
+            if should_stop and should_stop():
+                self.mark_training_stopped(reason="Stopped by user.")
+                return {"model_version": "heuristic_v1", "status": "stopped"}
+        return {"model_version": "heuristic_v1", "status": "fallback"}
+
+    monkeypatch.setattr(LocalChurnModelService, "train_model", fake_train_model)
+
+    start = client.post(
+        "/api/v1/predictions/models/train/start",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-24T09:00:00", "min_rows": 12},
+    )
+    assert start.status_code == 200
+    assert start.json()["started"] is True
+    assert start.json()["training_status"]["status"] == "running"
+
+    progress_payload = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+        assert runs.status_code == 200
+        progress_payload = runs.json()
+        if int(progress_payload["training_status"].get("row_count") or 0) > 0:
+            break
+        time.sleep(0.03)
+
+    assert progress_payload is not None
+    assert int(progress_payload["training_status"].get("row_count") or 0) > 0
+
+    stop = client.post("/api/v1/predictions/models/train/stop", headers={"x-actor-role": "operator"})
+    assert stop.status_code == 200
+    assert stop.json()["training_status"]["status"] in {"stopping", "stopped"}
+
+    stopped_payload = None
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        runs = client.get("/api/v1/predictions/models/runs", headers={"x-actor-role": "analyst"})
+        assert runs.status_code == 200
+        stopped_payload = runs.json()
+        if str(stopped_payload["training_status"].get("status") or "").lower() == "stopped":
+            break
+        time.sleep(0.03)
+
+    assert stopped_payload is not None
+    assert stopped_payload["training_status"]["status"] == "stopped"
+    assert stopped_payload["training_status"]["stop_reason"] == "Stopped by user."
 
 
 def test_health_live_bypasses_api_key_guard(monkeypatch, tmp_path):

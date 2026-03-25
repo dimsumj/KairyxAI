@@ -787,6 +787,15 @@
                 return cachedPredictionModelTrainingStatus || buildDefaultPredictionModelTrainingStatus();
             }
 
+            function isPredictionModelTrainingActive() {
+                const status = String((getPredictionModelTrainingStatus().status || '')).toLowerCase();
+                return status === 'running' || status === 'stopping';
+            }
+
+            function isPredictionModelTrainingStopping() {
+                return String((getPredictionModelTrainingStatus().status || '')).toLowerCase() === 'stopping';
+            }
+
             function getPredictionModelBadgeLabel(state = '') {
                 switch (String(state || '').toLowerCase()) {
                     case 'ready':
@@ -852,6 +861,10 @@
                 const minRowsRequired = Number(trainingStatus.min_rows_required || readiness.min_rows_required || 12);
                 const classBalanceLabel = formatPredictionTrainingClassBalance(trainingStatus.class_balance || {});
                 const trainedAt = trainingStatus.trained_at || readiness.last_trained_at;
+                const usersProcessed = Number(trainingStatus.users_processed || 0);
+                const usersTotal = Number(trainingStatus.users_total || 0);
+                const exposuresProcessed = Number(trainingStatus.exposures_processed || 0);
+                const exposuresTotal = Number(trainingStatus.exposures_total || 0);
                 const detailParts = [];
                 const titleLines = [];
 
@@ -867,6 +880,12 @@
                     detailParts.push(stageLabel);
                 }
                 detailParts.push(`${rowCount}/${minRowsRequired} labeled rows`);
+                if (usersTotal > 0 && String(trainingStatus.status || '').toLowerCase() === 'running') {
+                    detailParts.push(`${usersProcessed}/${usersTotal} users`);
+                }
+                if (exposuresTotal > 0 && String(trainingStatus.status || '').toLowerCase() === 'running') {
+                    detailParts.push(`${exposuresProcessed}/${exposuresTotal} exposures`);
+                }
                 if (classBalanceLabel) {
                     detailParts.push(`classes ${classBalanceLabel}`);
                 }
@@ -881,6 +900,12 @@
                     titleLines.push(`Stage: ${stageLabel}`);
                 }
                 titleLines.push(`Labeled rows: ${rowCount}/${minRowsRequired}`);
+                if (usersTotal > 0) {
+                    titleLines.push(`Users processed: ${usersProcessed}/${usersTotal}`);
+                }
+                if (exposuresTotal > 0) {
+                    titleLines.push(`Exposures processed: ${exposuresProcessed}/${exposuresTotal}`);
+                }
                 if (classBalanceLabel) {
                     titleLines.push(`Class balance: ${classBalanceLabel}`);
                 }
@@ -957,6 +982,7 @@
                 }
                 renderPredictionModelTrainingStatus();
                 setPredictionModelTrainingActionState(Boolean(predictionModelTrainingRequest));
+                syncPredictionModelTrainingPolling();
             }
 
             function getSelectedPredictionMode() {
@@ -1681,6 +1707,7 @@
             let activePredictionJobId = null;
             let predictionStopRequested = false;
             let predictionModelTrainingRequest = null;
+            let predictionModelTrainingPollInterval = null;
             const ACTIVE_PREDICTION_STORAGE_KEY = 'kairyx.activePredictionJob';
 
             function getPredictionImportJobId(job) {
@@ -1834,10 +1861,43 @@
                 return job;
             }
 
+            function applyPredictionModelTrainingPayload(payload = {}) {
+                if (payload && payload.training_status) {
+                    cachedPredictionModelTrainingStatus = payload.training_status;
+                }
+                if (payload && payload.readiness) {
+                    cachedPredictionModelReadiness = payload.readiness;
+                }
+            }
+
+            function syncPredictionModelTrainingPolling() {
+                if (isPredictionModelTrainingActive()) {
+                    if (predictionModelTrainingPollInterval) {
+                        return;
+                    }
+                    predictionModelTrainingPollInterval = window.setInterval(async () => {
+                        try {
+                            await refreshPredictionModelReadinessState();
+                            renderPredictionModelReadiness();
+                        } catch (error) {
+                            console.warn('Unable to refresh local model training status while running:', error);
+                        }
+                    }, 1000);
+                    return;
+                }
+                if (predictionModelTrainingPollInterval) {
+                    window.clearInterval(predictionModelTrainingPollInterval);
+                    predictionModelTrainingPollInterval = null;
+                }
+            }
+
             function setPredictionModelTrainingActionState(isRunning = false) {
+                const trainingActive = isPredictionModelTrainingActive();
+                const stopping = isPredictionModelTrainingStopping();
                 if (trainLocalModelBtn) {
-                    trainLocalModelBtn.disabled = isRunning || Boolean(activePredictionJobId);
-                    trainLocalModelBtn.textContent = isRunning ? 'Training...' : 'Train Local Model';
+                    trainLocalModelBtn.disabled = isRunning || (Boolean(activePredictionJobId) && !trainingActive) || stopping;
+                    trainLocalModelBtn.textContent = stopping ? 'Stopping...' : (trainingActive ? 'Stop' : 'Train Local Model');
+                    trainLocalModelBtn.style.background = trainingActive ? 'var(--red)' : '#0f766e';
                 }
                 if (refreshLocalModelStatusBtn) {
                     refreshLocalModelStatusBtn.disabled = isRunning;
@@ -2163,14 +2223,13 @@
                 }
             }
 
-            async function trainLocalPredictionModel() {
+            async function startLocalPredictionModelTraining() {
                 if (predictionModelTrainingRequest) {
                     return predictionModelTrainingRequest;
                 }
 
                 const minRows = Number(getPredictionModelReadiness().min_rows_required || 12);
                 const referenceTime = new Date().toISOString();
-                let pollInterval = null;
                 setInlineStatus(
                     predictionModelTrainingStatus,
                     `Training local model with minimum ${minRows} labeled rows...`,
@@ -2182,11 +2241,13 @@
                     reference_time: referenceTime,
                     started_at: referenceTime,
                     min_rows_required: minRows,
+                    stop_requested: false,
                 };
                 renderPredictionModelReadiness();
                 setPredictionModelTrainingActionState(true);
+                syncPredictionModelTrainingPolling();
 
-                predictionModelTrainingRequest = apiRequest('/predictions/models/train', {
+                predictionModelTrainingRequest = apiRequest('/predictions/models/train/start', {
                     method: 'POST',
                     body: {
                         reference_time: referenceTime,
@@ -2195,25 +2256,13 @@
                 });
 
                 try {
-                    pollInterval = window.setInterval(async () => {
-                        try {
-                            await refreshPredictionModelReadinessState();
-                            renderPredictionModelReadiness();
-                        } catch (error) {
-                            console.warn('Unable to refresh local model training status while training:', error);
-                        }
-                    }, 1000);
-
                     const payload = await predictionModelTrainingRequest;
-                    await refreshPredictionModelReadinessState();
+                    applyPredictionModelTrainingPayload(payload);
+                    await refreshPredictionModelReadinessState().catch(() => null);
                     renderPredictionModelReadiness();
-
-                    const model = payload.model || {};
-                    const resolvedStatus = formatPredictionTrainingStatusLabel(model.status || getPredictionModelTrainingStatus().status || '');
-                    const resolvedVersion = String(model.model_version || getPredictionModelReadiness().using_model_version || 'heuristic_v1');
                     setInlineStatus(
                         predictionModelTrainingStatus,
-                        `Training finished: ${resolvedVersion} · ${resolvedStatus || 'Completed'}.`,
+                        'Local model training started.',
                     );
                     return payload;
                 } catch (error) {
@@ -2226,12 +2275,69 @@
                     );
                     throw error;
                 } finally {
-                    if (pollInterval) {
-                        window.clearInterval(pollInterval);
-                    }
                     predictionModelTrainingRequest = null;
                     setPredictionModelTrainingActionState(false);
+                    syncPredictionModelTrainingPolling();
                 }
+            }
+
+            async function stopLocalPredictionModelTraining() {
+                if (predictionModelTrainingRequest) {
+                    return predictionModelTrainingRequest;
+                }
+
+                setInlineStatus(
+                    predictionModelTrainingStatus,
+                    'Stopping local model training...',
+                );
+                cachedPredictionModelTrainingStatus = {
+                    ...getPredictionModelTrainingStatus(),
+                    status: 'stopping',
+                    stop_requested: true,
+                    stop_requested_at: new Date().toISOString(),
+                };
+                renderPredictionModelReadiness();
+                setPredictionModelTrainingActionState(true);
+                syncPredictionModelTrainingPolling();
+
+                predictionModelTrainingRequest = apiRequest('/predictions/models/train/stop', {
+                    method: 'POST',
+                });
+
+                try {
+                    const payload = await predictionModelTrainingRequest;
+                    applyPredictionModelTrainingPayload(payload);
+                    await refreshPredictionModelReadinessState().catch(() => null);
+                    renderPredictionModelReadiness();
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        'Stop requested for local model training.',
+                    );
+                    return payload;
+                } catch (error) {
+                    await refreshPredictionModelReadinessState().catch(() => null);
+                    renderPredictionModelReadiness();
+                    setInlineStatus(
+                        predictionModelTrainingStatus,
+                        error.message || 'Failed to stop local model training.',
+                        true,
+                    );
+                    throw error;
+                } finally {
+                    predictionModelTrainingRequest = null;
+                    setPredictionModelTrainingActionState(false);
+                    syncPredictionModelTrainingPolling();
+                }
+            }
+
+            async function trainLocalPredictionModel() {
+                if (isPredictionModelTrainingActive()) {
+                    if (isPredictionModelTrainingStopping()) {
+                        return null;
+                    }
+                    return stopLocalPredictionModelTraining();
+                }
+                return startLocalPredictionModelTraining();
             }
 
             async function syncPredictionRows(jobId, audienceKey = '', audienceScope = getSelectedPredictionAudienceScope()) {

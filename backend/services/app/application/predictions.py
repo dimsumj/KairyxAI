@@ -11,9 +11,12 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from app.application.churn_models import LocalChurnModelService
 from app.application.experiments import ExperimentConfigService
+from app.core.db import session_scope
 from app.core.errors import MissingDependencyError, ResourceLockedError
+from app.core.request_context import RequestContext, get_request_context, request_context
 from app.domain.jobs import JobStatus
 from app.core.runtime import is_shutdown_requested
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from cloud_churn_service import CloudChurnRequestError, CloudChurnService
 from gemini_client import GeminiClient
@@ -23,6 +26,9 @@ from pubsub_service import PubSubService
 
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_MODEL_TRAINING_THREADS: dict[str, threading.Thread] = {}
+_LOCAL_MODEL_TRAINING_THREADS_LOCK = threading.Lock()
 
 
 class PredictionInterruptedError(RuntimeError):
@@ -40,6 +46,40 @@ class PredictionService:
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
         self.local_models = LocalChurnModelService(repository, self.bigquery_service)
         self.experiments = ExperimentConfigService(repository)
+
+    def _local_model_training_scope_key(self) -> str:
+        return self.local_models._training_scope_key()
+
+    def _get_local_model_training_thread(self) -> threading.Thread | None:
+        scope_key = self._local_model_training_scope_key()
+        with _LOCAL_MODEL_TRAINING_THREADS_LOCK:
+            thread = _LOCAL_MODEL_TRAINING_THREADS.get(scope_key)
+            if thread is not None and not thread.is_alive():
+                _LOCAL_MODEL_TRAINING_THREADS.pop(scope_key, None)
+                return None
+            return thread
+
+    def _set_local_model_training_thread(self, thread: threading.Thread) -> None:
+        with _LOCAL_MODEL_TRAINING_THREADS_LOCK:
+            _LOCAL_MODEL_TRAINING_THREADS[self._local_model_training_scope_key()] = thread
+
+    def _clear_local_model_training_thread(self, thread: threading.Thread | None = None) -> None:
+        scope_key = self._local_model_training_scope_key()
+        with _LOCAL_MODEL_TRAINING_THREADS_LOCK:
+            existing = _LOCAL_MODEL_TRAINING_THREADS.get(scope_key)
+            if existing is None:
+                return
+            if thread is None or existing is thread:
+                _LOCAL_MODEL_TRAINING_THREADS.pop(scope_key, None)
+
+    def _reconcile_stale_training_status(self) -> Dict[str, Any]:
+        training_status = self.local_models.get_training_status()
+        if not training_status:
+            return {}
+        status = str(training_status.get("status") or "").lower()
+        if status in {"running", "stopping"} and self._get_local_model_training_thread() is None:
+            return self.local_models.mark_training_stopped(reason="Training stopped when the server restarted.")
+        return training_status
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -298,6 +338,74 @@ class PredictionService:
         payload = self.local_models.train_model(reference_time=reference_time, min_rows=min_rows)
         return self.local_models.sanitize_payload(payload) or {}
 
+    def start_local_model_training(self, *, reference_time: str | None = None, min_rows: int = 12) -> Dict[str, Any]:
+        current_status = self._reconcile_stale_training_status()
+        current_state = str(current_status.get("status") or "").lower()
+        active_thread = self._get_local_model_training_thread()
+        if current_state in {"running", "stopping"} and active_thread is not None:
+            return {
+                "training_status": current_status,
+                "readiness": self.local_models.get_model_readiness(min_rows=min_rows),
+                "started": False,
+            }
+
+        resolved_reference_time = reference_time or datetime.utcnow().isoformat()
+        min_rows_required = max(6, int(min_rows))
+        request_scope = get_request_context()
+        self.local_models.mark_training_started(reference_time=resolved_reference_time, min_rows=min_rows_required)
+
+        def _worker(captured_context: RequestContext | None, captured_reference_time: str, captured_min_rows: int) -> None:
+            current_thread = threading.current_thread()
+            try:
+                with request_context(captured_context):
+                    with session_scope() as session:
+                        repository = SqlAlchemyControlPlaneRepository(session)
+                        service = LocalChurnModelService(repository, get_shared_bigquery_service())
+                        service.train_model(
+                            reference_time=captured_reference_time,
+                            min_rows=captured_min_rows,
+                            should_stop=service.is_stop_requested,
+                            persist_initial_status=False,
+                        )
+            except Exception:
+                logger.exception("Background local churn model training failed.")
+            finally:
+                with _LOCAL_MODEL_TRAINING_THREADS_LOCK:
+                    scope_key = str((captured_context.tenant_id if captured_context is not None else None) or os.getenv("BOOTSTRAP_TENANT_ID", "default")).strip() or "default"
+                    existing = _LOCAL_MODEL_TRAINING_THREADS.get(scope_key)
+                    if existing is current_thread:
+                        _LOCAL_MODEL_TRAINING_THREADS.pop(scope_key, None)
+
+        worker = threading.Thread(
+            target=_worker,
+            args=(request_scope, resolved_reference_time, min_rows_required),
+            name=f"local-churn-model-training-{self._local_model_training_scope_key()}",
+            daemon=True,
+        )
+        self._set_local_model_training_thread(worker)
+        worker.start()
+        return {
+            "training_status": self.local_models.get_training_status(),
+            "readiness": self.local_models.get_model_readiness(min_rows=min_rows_required),
+            "started": True,
+        }
+
+    def stop_local_model_training(self) -> Dict[str, Any]:
+        current_status = self._reconcile_stale_training_status()
+        status = str(current_status.get("status") or "").lower()
+        active_thread = self._get_local_model_training_thread()
+        if status not in {"running", "stopping"}:
+            raise ValueError("Only running local model training can be stopped.")
+        if active_thread is None:
+            training_status = self.local_models.mark_training_stopped(reason="Stopped by user.")
+        else:
+            training_status = self.local_models.request_stop_training(reason="Stopped by user.")
+        return {
+            "training_status": training_status,
+            "readiness": self.local_models.get_model_readiness(),
+            "stopped": True,
+        }
+
     def get_latest_model(self) -> Dict[str, Any] | None:
         payload = self.local_models.get_latest_model_payload()
         return self.local_models.sanitize_payload(payload) if payload else None
@@ -306,7 +414,7 @@ class PredictionService:
         return [self.local_models.sanitize_payload(item.get("payload") or {}) or {} for item in self.local_models.list_model_versions()]
 
     def get_model_training_status(self) -> Dict[str, Any]:
-        return self.local_models.get_training_status()
+        return self._reconcile_stale_training_status()
 
     def get_model_readiness(self) -> Dict[str, Any]:
         return self.local_models.get_model_readiness()
