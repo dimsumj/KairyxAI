@@ -9,6 +9,10 @@ These instructions apply to the entire repository.
 - Prefer the smallest complete fix that satisfies the request.
 - When a change adds, removes, renames, or materially changes any user-facing product function, workflow, button, form field, or operator flow, update `README.md` and `docs/GITHUB_WIKI_PRODUCT_USER_GUIDE.md` in the same change.
 - Use the `wiki-readme-sync` skill when it is available for any user-facing function or workflow change that affects product documentation.
+- Never write personal local-environment references into tracked repository files.
+- Use repo-relative references such as `docs/...`, `backend/services/...`, or the user's repository URL when an external link is required.
+- Do not commit absolute filesystem paths, worktree paths, `.codex` paths, or machine-specific home-directory references into the repository.
+- Use the `repo-path-hygiene` skill when it is available for documentation, specs, runbooks, READMEs, wiki-source docs, or any change that introduces or rewrites repository file references.
 
 ## Validation
 

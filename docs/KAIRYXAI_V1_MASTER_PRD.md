@@ -26,31 +26,31 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 
 > Note: the master PRD only keeps goals, boundaries, milestones, and launch gates. Each core module maintains its own sub-PRD.
 >
-> Cross-module production readiness for the shared SaaS operating model is tracked in `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`.
+> Cross-module production readiness for the shared SaaS operating model is tracked in `docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`.
 
 ### 2.1 Data Core (Real-Time Event Layer)
 - Capabilities: event collection, cleaning and standardization, ID stitching, quality gates, replayability
-- Sub PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
+- Sub PRD: `docs/DATA_CORE_V1_PRD.md`
 
 ### 2.2 Insight Copilot (Intelligence Layer)
 - Capabilities: natural-language metric queries, anomaly explanation, action recommendation, automated reporting
-- Sub PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
+- Sub PRD: `docs/COPILOT_V1_PRD.md`
 
 ### 2.3 Audience Engine (Dynamic Segmentation Layer)
 - Capabilities: Rule/SQL/List cohort creation, refresh, naming and management, activation and delivery, feedback loop
-- Sub PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
+- Sub PRD: `docs/AUDIENCE_ENGINE_V1_PRD.md`
 
 ### 2.4 Action Orchestrator (Execution Layer)
 - Capabilities: triggers, action orchestration, workflow canvas, execution control
-- Sub PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
+- Sub PRD: `docs/ACTION_ORCHESTRATOR_V1_PRD.md`
 
 ### 2.5 Experiment Hub (Experiment Layer)
 - Capabilities: A/B + Holdout, metric attribution, experiment conclusions and recommendations
-- Sub PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+- Sub PRD: `docs/EXPERIMENT_HUB_V1_PRD.md`
 
 ### 2.6 Multi-Tenant Production Readiness (Cross-Module Workstream)
 - Capabilities: OIDC auth, tenant governance, secret handling, runtime isolation, observability, runbooks, and production rollout gates
-- Supporting PRD: `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
+- Supporting PRD: `docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 
 ---
 
@@ -288,13 +288,13 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 ---
 
 ## 11) Document List
-- Master PRD (this document): `KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
-- Multi-tenant production-readiness PRD: `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
-- Data Core sub-PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
-- Copilot sub-PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
-- Audience Engine sub-PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
-- Action Orchestrator sub-PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
-- Experiment Hub sub-PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
+- Master PRD (this document): `docs/KAIRYXAI_V1_MASTER_PRD.md`
+- Multi-tenant production-readiness PRD: `docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
+- Data Core sub-PRD: `docs/DATA_CORE_V1_PRD.md`
+- Copilot sub-PRD: `docs/COPILOT_V1_PRD.md`
+- Audience Engine sub-PRD: `docs/AUDIENCE_ENGINE_V1_PRD.md`
+- Action Orchestrator sub-PRD: `docs/ACTION_ORCHESTRATOR_V1_PRD.md`
+- Experiment Hub sub-PRD: `docs/EXPERIMENT_HUB_V1_PRD.md`
 
 ---
 

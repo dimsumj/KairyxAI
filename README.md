@@ -335,15 +335,15 @@ The production entrypoint is `app.main:app`. `backend/services/main_service.py` 
 
 Production deployment assets in this repository now include:
 
-- [backend/services/Dockerfile](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/Dockerfile)
-- [backend/services/.env.example](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/.env.example)
-- [backend/services/cloudrun/operator-api.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/operator-api.yaml)
-- [backend/services/cloudrun/import-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/import-worker.yaml)
-- [backend/services/cloudrun/prediction-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/prediction-worker.yaml)
-- [backend/services/cloudrun/export-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/export-worker.yaml)
-- [backend/services/cloudrun/scheduler-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/scheduler-worker.yaml)
-- [docs/RUNBOOKS_MULTITENANT_GCP.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md)
-- [docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
+- [backend/services/Dockerfile](backend/services/Dockerfile)
+- [backend/services/.env.example](backend/services/.env.example)
+- [backend/services/cloudrun/operator-api.yaml](backend/services/cloudrun/operator-api.yaml)
+- [backend/services/cloudrun/import-worker.yaml](backend/services/cloudrun/import-worker.yaml)
+- [backend/services/cloudrun/prediction-worker.yaml](backend/services/cloudrun/prediction-worker.yaml)
+- [backend/services/cloudrun/export-worker.yaml](backend/services/cloudrun/export-worker.yaml)
+- [backend/services/cloudrun/scheduler-worker.yaml](backend/services/cloudrun/scheduler-worker.yaml)
+- [docs/RUNBOOKS_MULTITENANT_GCP.md](docs/RUNBOOKS_MULTITENANT_GCP.md)
+- [docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md](docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 
 For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, and ADC credentials.
 
@@ -409,7 +409,7 @@ There is also a lightweight liveness endpoint at:
 ### Frontend/operator smoke
 
 ```bash
-BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
+PWCLI=/path/to/playwright_cli.sh BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
 ```
 
 ### Lightweight frontend checks

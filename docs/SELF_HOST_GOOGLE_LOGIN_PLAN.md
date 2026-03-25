@@ -48,10 +48,10 @@ The current repository is Google-first in UI copy and env templates, but it is n
 
 Current behavior:
 
-- the frontend starts Google login from [frontend/assets/operator-console.js](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/frontend/assets/operator-console.js)
+- the frontend starts Google login from [frontend/assets/operator-console.js](frontend/assets/operator-console.js)
 - the browser exchanges the authorization code directly against `OIDC_TOKEN_URL`
 - the frontend stores `payload.access_token` as the API bearer token
-- the backend validator in [backend/services/app/core/auth.py](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/app/core/auth.py) expects a JWT-like bearer token with `iss`, `aud`, and `sub`
+- the backend validator in [backend/services/app/core/auth.py](backend/services/app/core/auth.py) expects a JWT-like bearer token with `iss`, `aud`, and `sub`
 
 That is not a safe or reliable long-term Google production model for self-hosting:
 
@@ -98,7 +98,7 @@ This keeps the current `Authorization: Bearer ...` API shape without forcing the
 
 ### 1. Add Server-Side Google OAuth Settings
 
-Extend [backend/services/app/core/settings.py](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/app/core/settings.py) and [backend/services/.env.example](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/.env.example) with:
+Extend [backend/services/app/core/settings.py](backend/services/app/core/settings.py) and [backend/services/.env.example](backend/services/.env.example) with:
 
 - `PUBLIC_BASE_URL`
 - `OIDC_CLIENT_SECRET`
@@ -173,7 +173,7 @@ This keeps Google artifacts off the frontend API session path.
 
 ### 5. Add Kairyx Session Validation
 
-Extend [backend/services/app/core/auth.py](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/app/core/auth.py) so it can validate:
+Extend [backend/services/app/core/auth.py](backend/services/app/core/auth.py) so it can validate:
 
 - Kairyx-issued session JWTs for normal app API traffic
 - optionally Google ID tokens during the transition period, if you want a staged migration
@@ -185,7 +185,7 @@ Recommended end state:
 
 ### 6. Keep `/api/v1/auth/me` As The Workspace Router
 
-Keep [backend/services/app/api/routers/auth.py](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/app/api/routers/auth.py) as the post-login router for:
+Keep [backend/services/app/api/routers/auth.py](backend/services/app/api/routers/auth.py) as the post-login router for:
 
 - `needs_onboarding`
 - `needs_org_selection`
@@ -196,7 +196,7 @@ That preserves the current product behavior after login.
 
 ### 7. Update Frontend Login Flow
 
-Update [frontend/assets/operator-console.js](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/frontend/assets/operator-console.js):
+Update [frontend/assets/operator-console.js](frontend/assets/operator-console.js):
 
 - stop exchanging the Google authorization code in the browser
 - start login through `GET /api/v1/auth/google/start`

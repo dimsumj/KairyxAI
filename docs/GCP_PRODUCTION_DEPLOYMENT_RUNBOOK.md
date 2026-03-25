@@ -593,6 +593,6 @@ Use the same pattern for workers, changing:
 ---
 
 ## 12) Related Documents
-- `KairyxAI/docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
-- `KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md`
-- `KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
+- `docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
+- `docs/RUNBOOKS_MULTITENANT_GCP.md`
+- `docs/KAIRYXAI_V1_MASTER_PRD.md`

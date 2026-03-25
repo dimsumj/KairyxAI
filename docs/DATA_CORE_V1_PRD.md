@@ -659,7 +659,7 @@ WHERE promo_views_14d >= 1
 
 ### 4.3.10 Detailed Design Reference
 Audience Engine's detailed scope, module design, and launch gates are maintained in a dedicated document:
-- `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
+- `docs/AUDIENCE_ENGINE_V1_PRD.md`
 
 The master and Data Core PRDs keep only goals, core capabilities, and high-level acceptance criteria.
 

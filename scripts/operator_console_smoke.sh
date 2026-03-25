@@ -2,11 +2,15 @@
 set -euo pipefail
 
 BASE_URL="${1:-${BASE_URL:-http://127.0.0.1:8000}}"
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-export PWCLI="${PWCLI:-$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh}"
+PWCLI="${PWCLI:-}"
 SESSION="${PLAYWRIGHT_CLI_SESSION:-kairyx-operator-smoke}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-output/playwright}"
 LOG_FILE="$ARTIFACT_DIR/operator_console_smoke.log"
+
+if [[ -z "$PWCLI" ]]; then
+  printf '%s\n' "PWCLI is required. Set it to your Playwright CLI wrapper before running this script." >&2
+  exit 1
+fi
 
 mkdir -p "$ARTIFACT_DIR"
 : >"$LOG_FILE"

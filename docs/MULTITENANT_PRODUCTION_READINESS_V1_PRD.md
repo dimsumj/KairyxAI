@@ -211,12 +211,12 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 ---
 
 ## 10) Related Documents
-- Master PRD: `KairyxAI/docs/KAIRYXAI_V1_MASTER_PRD.md`
-- Data Core PRD: `KairyxAI/docs/DATA_CORE_V1_PRD.md`
-- Insight Copilot PRD: `KairyxAI/docs/COPILOT_V1_PRD.md`
-- Audience Engine PRD: `KairyxAI/docs/AUDIENCE_ENGINE_V1_PRD.md`
-- Action Orchestrator PRD: `KairyxAI/docs/ACTION_ORCHESTRATOR_V1_PRD.md`
-- Experiment Hub PRD: `KairyxAI/docs/EXPERIMENT_HUB_V1_PRD.md`
-- GCP production deployment runbook: `KairyxAI/docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md`
-- Multi-Tenant GCP Runbooks: `KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md`
-- Development memory and dependency-guard notes: `KairyxAI/docs/DEVELOPMENT_MEMORY.md`
+- Master PRD: `docs/KAIRYXAI_V1_MASTER_PRD.md`
+- Data Core PRD: `docs/DATA_CORE_V1_PRD.md`
+- Insight Copilot PRD: `docs/COPILOT_V1_PRD.md`
+- Audience Engine PRD: `docs/AUDIENCE_ENGINE_V1_PRD.md`
+- Action Orchestrator PRD: `docs/ACTION_ORCHESTRATOR_V1_PRD.md`
+- Experiment Hub PRD: `docs/EXPERIMENT_HUB_V1_PRD.md`
+- GCP production deployment runbook: `docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md`
+- Multi-Tenant GCP Runbooks: `docs/RUNBOOKS_MULTITENANT_GCP.md`
+- Development memory and dependency-guard notes: `docs/DEVELOPMENT_MEMORY.md`
