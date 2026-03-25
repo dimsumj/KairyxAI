@@ -28,7 +28,7 @@ It is written for the repository state as of `2026-03-22` and assumes the produc
 ### 2.2 Public Versus Private Services
 - `operator-api`
   - Public HTTPS endpoint
-  - App-level auth is handled by OIDC bearer tokens plus `X-Kairyx-Tenant`
+  - App-level auth is handled by OIDC bearer tokens on org-scoped paths such as `/{organization_id}/v1/...` plus `X-Kairyx-Project`
   - Optional but recommended later: external HTTPS load balancer, Cloud Armor, and managed certificate
 - `import-worker`, `prediction-worker`, `export-worker`, `scheduler-worker`
   - Authenticated invocation only
@@ -395,7 +395,7 @@ Recommended retry policy:
 1. Use the platform-admin API to create the initial tenant.
 2. Create at least one tenant membership.
 3. Create provider connections with `*_ref` values, not inline secrets.
-4. Run the auth smoke flow with a real bearer token and `X-Kairyx-Tenant`.
+4. Run the auth smoke flow with a real bearer token against an org-scoped URL such as `/{organization_id}/v1/auth/me` and include `X-Kairyx-Project` when project selection is required.
 
 ### 7.18 Configure Monitoring And Alerts
 Create notification channels first, then alert policies for:
@@ -416,7 +416,7 @@ Create notification channels first, then alert policies for:
 Validate the following in staging first, then production:
 1. `GET /health/live`
 2. `GET /api/v1/health`
-3. `GET /api/v1/auth/me` with a real JWT and `X-Kairyx-Tenant`
+3. `GET /{organization_id}/v1/auth/me` with a real JWT and `X-Kairyx-Project` when project selection is required
 4. create connector
 5. run import
 6. create cohort

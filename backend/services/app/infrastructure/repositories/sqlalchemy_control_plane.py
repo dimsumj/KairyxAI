@@ -1141,6 +1141,7 @@ class SqlAlchemyControlPlaneRepository:
 
     def _tenant_to_dict(self, row: TenantModel) -> Dict[str, Any]:
         return {
+            "organization_id": row.tenant_id,
             "tenant_id": row.tenant_id,
             "name": row.name,
             "status": row.status,
@@ -1160,6 +1161,7 @@ class SqlAlchemyControlPlaneRepository:
     def _tenant_membership_to_dict(self, row: TenantMembershipModel) -> Dict[str, Any]:
         return {
             "id": row.id,
+            "organization_id": row.tenant_id,
             "tenant_id": row.tenant_id,
             "user_id": row.user_id,
             "role": row.role,
@@ -1170,6 +1172,7 @@ class SqlAlchemyControlPlaneRepository:
 
     def _project_to_dict(self, row: ProjectModel) -> Dict[str, Any]:
         return {
+            "organization_id": row.tenant_id,
             "tenant_id": row.tenant_id,
             "project_id": row.project_id,
             "name": row.name,
@@ -1185,6 +1188,7 @@ class SqlAlchemyControlPlaneRepository:
     def _project_membership_to_dict(self, row: ProjectMembershipModel) -> Dict[str, Any]:
         return {
             "id": row.id,
+            "organization_id": row.tenant_id,
             "tenant_id": row.tenant_id,
             "project_id": row.project_id,
             "user_id": row.user_id,
@@ -1197,10 +1201,11 @@ class SqlAlchemyControlPlaneRepository:
     def _project_invite_to_dict(self, row: ProjectInviteModel) -> Dict[str, Any]:
         return {
             "id": row.id,
+            "organization_id": row.tenant_id,
             "tenant_id": row.tenant_id,
             "project_id": row.project_id,
             "invite_code": row.invite_code,
-            "invite_url": f"/?invite_code={row.invite_code}&tenant_id={row.tenant_id}&project_id={row.project_id}",
+            "invite_url": f"/?invite_code={row.invite_code}&organization_id={row.tenant_id}&project_id={row.project_id}",
             "email": row.email,
             "display_name": row.display_name,
             "org_role": row.org_role,

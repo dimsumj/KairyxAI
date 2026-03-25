@@ -29,19 +29,17 @@ open_and_wait() {
 }
 
 assert_auth_shell() {
-  log_step "Checking auth shell and tenant switcher"
+  log_step "Checking Google login shell"
   run_pw run-code "(() => {
     const login = document.getElementById('oidc-login-btn');
     const logout = document.getElementById('oidc-logout-btn');
-    const tenant = document.getElementById('tenant-id-input');
+    const workspaceInput = document.getElementById('workspace-org-url-input');
     const status = document.getElementById('auth-status-text');
-    if (!login || !logout || !tenant || !status) throw new Error('Missing auth controls');
-    tenant.value = 'smoke-tenant';
-    tenant.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!login || !logout || !workspaceInput || !status) throw new Error('Missing auth controls');
     return {
       loginLabel: login.textContent || '',
       logoutLabel: logout.textContent || '',
-      tenant: tenant.value || '',
+      workspacePlaceholder: workspaceInput.placeholder || '',
       status: status.textContent || '',
     };
   })()" >>"$LOG_FILE"

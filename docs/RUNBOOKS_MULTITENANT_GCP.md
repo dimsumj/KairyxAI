@@ -5,7 +5,7 @@
 1. Create the tenant through `POST /api/v1/tenants` as a platform admin.
 2. Add at least one active tenant membership through `PUT /api/v1/tenants/{tenant_id}/memberships/{user_id}`.
 3. Provision the tenant's OIDC users, `*_ref` secrets, BigQuery dataset prefix, and GCS prefix.
-4. Verify `GET /api/v1/auth/me` with a bearer token and `X-Kairyx-Tenant`.
+4. Verify `GET /{organization_id}/v1/auth/me` with a bearer token and `X-Kairyx-Project` when project selection is required.
 5. Run smoke checks for connectors, imports, SQL preview, workflow draft creation, and `/api/v1/health`.
 
 ## Secret Rotation

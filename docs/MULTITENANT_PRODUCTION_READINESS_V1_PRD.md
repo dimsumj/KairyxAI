@@ -25,7 +25,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 ## 3) Scope
 
 ### 3.1 In Scope
-- OIDC bearer-token operator auth on `/api/v1` with tenant selection through `X-Kairyx-Tenant`
+- OIDC bearer-token operator auth with organization-scoped paths like `/{organization_id}/v1/...` and project selection through `X-Kairyx-Project`
 - Control-plane tenant model with `tenant`, `platform_user`, and `tenant_membership`
 - Tenant-scoped persistence, job metadata, audit metadata, and operator context propagation
 - Secret-reference-based connector and provider configuration with Google Secret Manager compatibility
@@ -46,8 +46,8 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 ## 4) Repository Baseline As Of 2026-03-22
 
 ### 4.1 Identity And Governance Baseline
-- The backend now supports bearer-token operator traffic and tenant selection through `Authorization: Bearer <OIDC JWT>` plus `X-Kairyx-Tenant`.
-- `/api/v1/auth/me` exposes the resolved operator and tenant context for the active request.
+- The backend now supports bearer-token operator traffic on organization-scoped paths through `Authorization: Bearer <OIDC JWT>` plus `X-Kairyx-Project`.
+- `/api/v1/auth/me` exposes the resolved Google user, organization, project, and correlation context for the active request.
 - `/api/v1/tenants` and `/api/v1/tenants/{tenant_id}/memberships/{user_id}` establish the platform-admin path for tenant creation and membership management.
 - Legacy header auth remains a local/demo compatibility path and is intended to stay disabled in production.
 - Governance permissions now cover tenant admin, provider connection, callback ingestion, and module-specific operator actions.
@@ -76,7 +76,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - The documented dependency-guard direction from `DEVELOPMENT_MEMORY.md` is now part of the production-readiness baseline and no longer a purely speculative gap.
 
 ### 4.6 Frontend And Operator Baseline
-- The frontend now has a minimum production-shaped auth baseline with PKCE login support and tenant switching.
+- The frontend now has a minimum production-shaped auth baseline with Google PKCE login, organization-URL routing, and project switching.
 - Local/demo operation remains supported so operators can still run the single-page console without a live IdP during development.
 - Broader console productization and deeper end-to-end coverage remain separate workstreams.
 
@@ -105,7 +105,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Validate that credential rotation does not require reauthoring published workflows or exports.
 
 ### 5.5 End-To-End Operator Validation
-- Expand regression coverage so JWT auth, tenant selection, provider-backed execution, and callback ingestion are exercised together.
+- Expand regression coverage so JWT auth, organization-path selection, provider-backed execution, and callback ingestion are exercised together.
 - Run the console smoke flow for login, tenant switch, import, cohort, workflow, experiment, and diagnostics in a production-shaped staging environment.
 - Confirm that platform-admin cross-tenant actions are limited to the explicit routes intended for them.
 
@@ -120,7 +120,8 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ### 6.1 Auth Contract
 - Operator traffic uses `Authorization: Bearer <OIDC JWT>`.
-- Tenant selection uses `X-Kairyx-Tenant`.
+- Organization selection uses the URL path shape `/{organization_id}/v1/...`.
+- Project selection uses `X-Kairyx-Project`.
 - Effective role comes from tenant membership stored in the control plane, not from request headers.
 - Legacy `x-api-key`, `x-actor-role`, `x-actor-id`, and `x-tenant-id` are local/demo compatibility only and are not part of production traffic.
 
@@ -128,7 +129,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - `POST /api/v1/tenants` creates a tenant through a platform-admin path.
 - `GET /api/v1/tenants/{tenant_id}/memberships` lists memberships for a tenant.
 - `PUT /api/v1/tenants/{tenant_id}/memberships/{user_id}` grants or updates tenant membership.
-- `/api/v1/auth/me` returns the resolved actor, tenant, role, and correlation context for the active request.
+- `/api/v1/auth/me` returns the resolved Google user, organization, project, role, and correlation context for the active request.
 
 ### 6.3 Resource Metadata Contract
 - Control-plane resources and jobs must include `tenant_id`, `created_by`, `updated_by`, and `correlation_id`.
@@ -149,9 +150,9 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ## 7) Launch Gates
 1. `Auth and membership`
-   - Valid JWT plus tenant membership succeeds.
+   - Valid JWT plus organization membership succeeds.
    - Missing membership returns the correct denial path.
-   - Wrong tenant selection is rejected.
+   - Wrong organization selection is rejected.
    - Platform-admin override works only on explicit routes.
 2. `Tenant isolation`
    - Connectors, imports, cohorts, workflows, experiments, exports, audit records, BigQuery datasets, and GCS prefixes are isolated per tenant.

@@ -147,7 +147,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: static HTML/CSS/JS operator console served by the backend
-- Operator auth: Google login via OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with `X-Kairyx-Tenant` preserved for compatibility, plus self-serve organization-space onboarding and legacy header auth only for local/demo compatibility
+- Operator auth: Google login via OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with self-serve organization-space onboarding and legacy header auth kept only as a hidden local/demo compatibility path
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
@@ -164,7 +164,7 @@ KairyxAI currently supports two practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept as the bootstrap and compatibility path
+   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
 
 ## Workspace Model
 
@@ -183,7 +183,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
-- a legacy local/demo fallback where raw `Tenant ID` and `Project ID` headers can still be entered manually
+- a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
 
@@ -196,6 +196,13 @@ Examples:
 - `/northstar/v1/predictions`
 
 The older `/api/v1/...` routes remain available for bootstrap flows such as Google OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
+
+For normal logged-in operator traffic:
+
+- identity comes from the Google account
+- the active organization comes from the URL path
+- the active project is sent as `X-Kairyx-Project`
+- manual actor-id and tenant-id entry are no longer part of the visible operator UI
 
 ## Repository Layout
 

@@ -232,7 +232,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
   - `dataflow`: manifest-driven normalization into standardized / unified / curated tables
 - The target operating model is fixed as `shared multi-tenant SaaS + GCP-native + batch/nearline`
 - The system of record for control-plane metadata is `SQLAlchemy + Alembic`; the production default target is `Postgres`, and local development falls back to `SQLite`
-- Operator traffic uses `Authorization: Bearer <OIDC JWT>` plus `X-Kairyx-Tenant`; legacy header auth remains local/demo-only and is disabled in production
+- Operator traffic uses `Authorization: Bearer <OIDC JWT>` on `/{organization_id}/v1/...` plus `X-Kairyx-Project`; legacy header auth remains local/demo-only and is disabled in production
 - Provider credentials, webhook signing secrets, and connector secrets are persisted as secret references and resolved through the platform secret layer
 - Long-running resources must follow the standard job contract: `id / type / status / created_at / updated_at / progress / error / links`
 - Large result sets are paginated by default and cannot rely on unbounded list responses

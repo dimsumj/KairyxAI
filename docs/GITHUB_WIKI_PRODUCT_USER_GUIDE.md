@@ -27,14 +27,9 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
-| `Actor Role` | Select | Legacy local/demo only. Choose the effective operator role for header-based auth. | `Admin` | Requests run with full admin permissions in local/demo mode. |
-| `Actor ID` | Text box | Legacy local/demo only. Enter the operator identifier recorded in audit logs. | `ops_alice` | Actions are attributed to `ops_alice`. |
-| `Tenant ID` | Text box | Legacy local/demo only. Enter the organization-space id to send as `x-tenant-id`. | `default` | API requests scope to that organization space. |
-| `Project ID` | Text box | Legacy local/demo only. Enter the project id to send as `x-project-id`. | `default` | API requests scope to that project. |
-| `Auth Session` | Status text | Read-only session state. | `Google ops_alice @ northstar / liveops` | Confirms the current authenticated actor and active workspace. |
+| `Auth Session` | Status text | Read-only session state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated Google user and active workspace. |
 | `Continue with Google` | Button | Starts the PKCE Google browser login flow. | None | Browser redirects to Google and returns with a bearer token. |
 | `Logout` | Button | Clears the local bearer token and, when configured, redirects to the IdP logout URL. | None | Session returns to local/demo or logged-out state. |
-| `API Key` | Password box | Optional only for legacy local/demo auth. Leave empty in normal Google login production use. | `local-dev-key` | Added as `x-api-key` in local/demo mode. |
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
 | `Dark Mode` switch | Checkbox | Toggles the theme and stores it in local storage. | Checked | UI switches to dark theme. |
 | Sidebar module links | Navigation buttons | Open the target product module. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
@@ -76,7 +71,7 @@ Every user now passes through the Google login gate first. After successful sign
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
 | `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes and the new workspace becomes active. |
 
-The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. Those ids are what the backend stores as `tenant_id` and `project_id`, but they are not exposed as editable fields in the current onboarding UI.
+The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI.
 
 #### Sample onboarding request
 ```json
@@ -93,11 +88,13 @@ The console now asks for the org URL directly and generates the internal organiz
 ```json
 {
   "organization_space": {
+    "organization_id": "northstar",
     "tenant_id": "northstar",
     "name": "North Star Games",
     "status": "active"
   },
   "project": {
+    "organization_id": "northstar",
     "tenant_id": "northstar",
     "project_id": "liveops",
     "name": "Live Ops",

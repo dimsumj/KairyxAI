@@ -5,10 +5,6 @@
             const moduleTitle = document.getElementById('module-title');
             const moduleSubtitle = document.getElementById('module-subtitle');
             const moduleSubnav = document.getElementById('module-subnav');
-            const actorRoleSelect = document.getElementById('actor-role-select');
-            const actorIdInput = document.getElementById('actor-id-input');
-            const tenantIdInput = document.getElementById('tenant-id-input');
-            const projectIdInput = document.getElementById('project-id-input');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -79,14 +75,16 @@
             const workspaceCreateProjectStatus = document.getElementById('workspace-create-project-status');
             const workspaceCreateProjectCancelBtn = document.getElementById('workspace-create-project-cancel-btn');
             const workspaceCreateProjectSubmitBtn = document.getElementById('workspace-create-project-submit-btn');
-            const ACTOR_ROLE_STORAGE_KEY = 'kairyx.actorRole';
-            const ACTOR_ID_STORAGE_KEY = 'kairyx.actorId';
             const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
             const PROJECT_ID_STORAGE_KEY = 'kairyx.projectId';
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
             const ACCESS_TOKEN_STORAGE_KEY = 'kairyx.accessToken';
             const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
             const PENDING_INVITE_STORAGE_KEY = 'kairyx.pendingInvite';
+            const LOCAL_DEMO_ACTOR_ID = 'local-demo';
+            const LOCAL_DEMO_ACTOR_ROLE = 'admin';
+            const LOCAL_DEMO_TENANT_ID = 'default';
+            const LOCAL_DEMO_PROJECT_ID = 'default';
             let activeModuleId = 'data-core';
             let activePageId = 'operator-hub';
             let oidcConfig = null;
@@ -190,8 +188,8 @@
                 workspaceOrgSuggestions.innerHTML = '';
                 (items || []).forEach((item) => {
                     const option = document.createElement('option');
-                    option.value = item.tenant_id;
-                    option.label = item.name || item.tenant_id;
+                    option.value = item.organization_id;
+                    option.label = item.name || item.organization_id;
                     workspaceOrgSuggestions.appendChild(option);
                 });
             }
@@ -203,8 +201,8 @@
             }
 
             function syncWorkspaceSelectedOrgContext() {
-                const tenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
-                const orgUrl = tenantId ? `${window.location.origin.replace(/\/+$/, '')}/${tenantId}` : '';
+                const organizationId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
+                const orgUrl = organizationId ? `${window.location.origin.replace(/\/+$/, '')}/${organizationId}` : '';
                 if (workspaceSelectionCurrentOrg) {
                     workspaceSelectionCurrentOrg.textContent = orgUrl ? `Organization URL: ${orgUrl}` : '';
                     workspaceSelectionCurrentOrg.classList.toggle('hidden', !orgUrl);
@@ -220,8 +218,8 @@
                 if (!slug) {
                     return null;
                 }
-                const items = Array.isArray(authSessionState?.accessible_tenants) ? authSessionState.accessible_tenants : [];
-                return items.find((item) => item.tenant_id === slug || slugifyIdentifier(item.name) === slug) || null;
+                const items = Array.isArray(authSessionState?.accessible_organizations) ? authSessionState.accessible_organizations : [];
+                return items.find((item) => item.organization_id === slug || slugifyIdentifier(item.name) === slug) || null;
             }
 
             function isGoogleLoginConfigured() {
@@ -232,7 +230,7 @@
                 return Boolean(
                     accessToken
                     && authSessionState
-                    && authSessionState.tenant_id
+                    && authSessionState.organization_id
                     && authSessionState.project_id
                     && !authSessionState.needs_onboarding
                     && !authSessionState.needs_org_selection
@@ -257,23 +255,23 @@
             function readStoredActorContext() {
                 try {
                     return {
-                        role: localStorage.getItem(ACTOR_ROLE_STORAGE_KEY) || 'admin',
-                        actorId: localStorage.getItem(ACTOR_ID_STORAGE_KEY) || 'admin',
-                        tenantId: localStorage.getItem(TENANT_ID_STORAGE_KEY) || 'default',
-                        projectId: localStorage.getItem(PROJECT_ID_STORAGE_KEY) || 'default',
+                        tenantId: localStorage.getItem(TENANT_ID_STORAGE_KEY) || LOCAL_DEMO_TENANT_ID,
+                        projectId: localStorage.getItem(PROJECT_ID_STORAGE_KEY) || LOCAL_DEMO_PROJECT_ID,
                         apiKey: localStorage.getItem(API_KEY_STORAGE_KEY) || '',
                     };
                 } catch (error) {
-                    return { role: 'admin', actorId: 'admin', tenantId: 'default', projectId: 'default', apiKey: '' };
+                    return {
+                        tenantId: LOCAL_DEMO_TENANT_ID,
+                        projectId: LOCAL_DEMO_PROJECT_ID,
+                        apiKey: '',
+                    };
                 }
             }
 
             function persistActorContext() {
                 try {
-                    localStorage.setItem(ACTOR_ROLE_STORAGE_KEY, actorRoleSelect.value || 'admin');
-                    localStorage.setItem(ACTOR_ID_STORAGE_KEY, actorIdInput.value || actorRoleSelect.value || 'admin');
-                    localStorage.setItem(TENANT_ID_STORAGE_KEY, tenantIdInput.value || 'default');
-                    localStorage.setItem(PROJECT_ID_STORAGE_KEY, projectIdInput.value || 'default');
+                    localStorage.setItem(TENANT_ID_STORAGE_KEY, getActiveTenantId() || LOCAL_DEMO_TENANT_ID);
+                    localStorage.setItem(PROJECT_ID_STORAGE_KEY, getActiveProjectId() || LOCAL_DEMO_PROJECT_ID);
                     localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value || '');
                 } catch (error) {
                     console.warn('Unable to persist actor context:', error);
@@ -338,14 +336,20 @@
                 if (accessToken) {
                     return String(orgSpaceSelect.value || '').trim();
                 }
-                return (tenantIdInput.value || 'default').trim() || 'default';
+                if (isGoogleLoginConfigured()) {
+                    return readStoredActorContext().tenantId || '';
+                }
+                return LOCAL_DEMO_TENANT_ID;
             }
 
             function getActiveProjectId() {
                 if (accessToken) {
                     return String(projectSelect.value || '').trim();
                 }
-                return (projectIdInput.value || 'default').trim() || 'default';
+                if (isGoogleLoginConfigured()) {
+                    return readStoredActorContext().projectId || '';
+                }
+                return LOCAL_DEMO_PROJECT_ID;
             }
 
             function isWorkspaceSelectionRequired() {
@@ -364,23 +368,23 @@
                         workspaceRoleSummary.textContent = 'Sign in to access organizations and projects';
                         return;
                     }
-                    workspaceSummaryText.textContent = `Local demo / ${(tenantIdInput.value || 'default').trim() || 'default'} / ${(projectIdInput.value || 'default').trim() || 'default'}`;
-                    workspaceRoleSummary.textContent = `Actor ${(actorIdInput.value || actorRoleSelect.value || 'admin').trim()} • ${actorRoleSelect.value || 'admin'}`;
+                    workspaceSummaryText.textContent = `Local demo / ${getActiveTenantId()} / ${getActiveProjectId()}`;
+                    workspaceRoleSummary.textContent = 'Local demo session';
                     return;
                 }
-                const tenantItems = Array.isArray(payload?.accessible_tenants) ? payload.accessible_tenants : [];
+                const tenantItems = Array.isArray(payload?.accessible_organizations) ? payload.accessible_organizations : [];
                 const projectItems = Array.isArray(payload?.accessible_projects) ? payload.accessible_projects : [];
-                const selectedTenantId = payload?.tenant_id || getActiveTenantId();
+                const selectedTenantId = payload?.organization_id || getActiveTenantId();
                 const selectedProjectId = payload?.project_id || getActiveProjectId();
-                const tenant = tenantItems.find((item) => item.tenant_id === selectedTenantId);
+                const tenant = tenantItems.find((item) => item.organization_id === selectedTenantId);
                 const project = projectItems.find((item) => item.project_id === selectedProjectId);
                 const tenantLabel = tenant?.name || selectedTenantId || 'Select organization space';
                 const projectLabel = project?.name || selectedProjectId || 'Select project';
                 workspaceSummaryText.textContent = `${tenantLabel} / ${projectLabel}`;
                 const roleBits = [];
-                roleBits.push(payload?.display_name || payload?.actor_id || 'Authenticated user');
-                if (payload?.org_role) {
-                    roleBits.push(`org: ${payload.org_role}`);
+                roleBits.push(payload?.display_name || payload?.email || 'Authenticated user');
+                if (payload?.organization_role) {
+                    roleBits.push(`org: ${payload.organization_role}`);
                 }
                 if (payload?.project_role) {
                     roleBits.push(`project: ${payload.project_role}`);
@@ -391,8 +395,12 @@
             function syncAuthModeUi() {
                 const usingGoogleLogin = isGoogleLoginConfigured();
                 const usingOidc = Boolean(accessToken);
-                legacyAuthControls.classList.toggle('hidden', usingOidc || usingGoogleLogin);
-                legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
+                if (legacyAuthControls) {
+                    legacyAuthControls.classList.toggle('hidden', true);
+                }
+                if (legacyApiKeyGroup) {
+                    legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
+                }
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
                 oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
@@ -436,7 +444,7 @@
 
             function setWorkspaceSelectionStage(stage = 'org') {
                 let normalizedStage = stage === 'project' ? 'project' : 'org';
-                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
+                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
                 if (normalizedStage === 'project' && !selectedTenantId) {
                     normalizedStage = 'org';
                 }
@@ -465,7 +473,7 @@
             }
 
             function refreshWorkspaceSelectionCopy() {
-                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
+                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
                 const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 syncWorkspaceSelectedOrgContext();
@@ -512,7 +520,7 @@
                     setWorkspaceSelectionStage(
                         selectionStage
                         || (
-                            authSessionState?.tenant_id && !authSessionState?.needs_org_selection
+                            authSessionState?.organization_id && !authSessionState?.needs_org_selection
                                 ? 'project'
                                 : 'org'
                         )
@@ -552,21 +560,15 @@
 
             function applyAuthSessionPayload(payload) {
                 authSessionState = payload || null;
-                if (payload?.actor_id) {
-                    actorIdInput.value = payload.actor_id;
-                }
-                if (payload?.actor_role) {
-                    actorRoleSelect.value = payload.actor_role;
-                }
-                const selectedTenantId = payload?.tenant_id || getStoredWorkspaceSelection().tenantId || '';
+                const selectedTenantId = payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
                 const selectedProjectId = payload?.project_id || getStoredWorkspaceSelection().projectId || '';
-                populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
-                populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_tenants || [], selectedTenantId, 'Select an organization space', 'tenant_id');
+                populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
+                populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
                 populateWorkspaceSelect(projectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select a project', 'project_id');
                 populateWorkspaceSelect(workspaceModalProjectSelect, payload?.accessible_projects || [], selectedProjectId, 'Select an existing project', 'project_id');
-                populateWorkspaceOrgSuggestions(payload?.accessible_tenants || []);
-                if (payload?.tenant_id || payload?.project_id) {
-                    persistWorkspaceSelection(payload.tenant_id || '', payload.project_id || '');
+                populateWorkspaceOrgSuggestions(payload?.accessible_organizations || []);
+                if (payload?.organization_id || payload?.project_id) {
+                    persistWorkspaceSelection(payload.organization_id || '', payload.project_id || '');
                 }
                 syncWorkspaceSelectionOrgInput(selectedTenantId);
                 syncWorkspaceSelectedOrgContext();
@@ -576,10 +578,6 @@
             }
 
             const storedActorContext = readStoredActorContext();
-            actorRoleSelect.value = storedActorContext.role;
-            actorIdInput.value = storedActorContext.actorId;
-            tenantIdInput.value = storedActorContext.tenantId;
-            projectIdInput.value = storedActorContext.projectId;
             apiKeyInput.value = storedActorContext.apiKey;
             try {
                 accessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || '';
@@ -590,40 +588,11 @@
             setOnboardingStep(1);
             syncAuthModeUi();
             if (authStatusText) {
-                authStatusText.textContent = accessToken ? 'Validating Google session…' : 'Legacy local session';
+                authStatusText.textContent = accessToken
+                    ? 'Validating Google session…'
+                    : (isGoogleLoginConfigured() ? 'Google login required.' : 'Local demo session');
             }
 
-            actorRoleSelect.addEventListener('change', () => {
-                if (!actorIdInput.value.trim() || actorIdInput.value.trim() === readStoredActorContext().role) {
-                    actorIdInput.value = actorRoleSelect.value;
-                }
-                persistActorContext();
-                syncWorkspaceSummary();
-                if (activePageId) {
-                    activatePage(activePageId);
-                }
-            });
-            actorIdInput.addEventListener('change', () => {
-                persistActorContext();
-                syncWorkspaceSummary();
-                if (activePageId) {
-                    activatePage(activePageId);
-                }
-            });
-            tenantIdInput.addEventListener('change', () => {
-                persistActorContext();
-                syncWorkspaceSummary();
-                if (activePageId) {
-                    activatePage(activePageId);
-                }
-            });
-            projectIdInput.addEventListener('change', () => {
-                persistActorContext();
-                syncWorkspaceSummary();
-                if (activePageId) {
-                    activatePage(activePageId);
-                }
-            });
             apiKeyInput.addEventListener('change', persistActorContext);
             onboardingOrganizationNameInput.addEventListener('input', () => {
                 onboardingOrganizationIdInput.value = normalizeOrganizationUrl(onboardingOrganizationNameInput.value);
@@ -841,13 +810,13 @@
                     return;
                 }
                 closeWorkspaceOverlay(true);
-                setAuthStatus('Legacy local session');
+                setAuthStatus('Local demo session');
             }
 
             function captureWorkspaceHintsFromUrl() {
                 const params = new URLSearchParams(window.location.search);
                 const inviteCode = params.get('invite_code');
-                const tenantId = params.get('tenant_id');
+                const tenantId = params.get('organization_id') || params.get('tenant_id');
                 const projectId = params.get('project_id');
                 if (tenantId || projectId) {
                     persistWorkspaceSelection(tenantId || '', projectId || '');
@@ -968,7 +937,7 @@
                         throw new Error(payload.detail || 'Project invite redemption failed.');
                     }
                     persistWorkspaceSelection(
-                        payload.organization_space?.tenant_id || pendingInvite.tenantId || '',
+                        payload.organization_space?.organization_id || payload.organization_space?.tenant_id || pendingInvite.tenantId || '',
                         payload.project?.project_id || pendingInvite.projectId || '',
                     );
                     clearPendingInvite();
@@ -995,7 +964,7 @@
                 }
                 if (authSessionState?.needs_org_selection || authSessionState?.needs_project_selection) {
                     openWorkspaceOverlay('selection', {
-                        selectionStage: authSessionState?.needs_project_selection && authSessionState?.tenant_id ? 'project' : 'org',
+                        selectionStage: authSessionState?.needs_project_selection && authSessionState?.organization_id ? 'project' : 'org',
                     });
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
@@ -1015,7 +984,7 @@
                 if (!accessToken) {
                     authSessionState = null;
                     syncAuthModeUi();
-                    setAuthStatus(isGoogleLoginConfigured() ? 'Google login required.' : 'Legacy local session');
+                    setAuthStatus(isGoogleLoginConfigured() ? 'Google login required.' : 'Local demo session');
                     syncWorkspaceOverlayFromSession();
                     return;
                 }
@@ -1024,9 +993,6 @@
                 const headers = {
                     Authorization: `Bearer ${accessToken}`,
                 };
-                if (tenantId) {
-                    headers['X-Kairyx-Tenant'] = tenantId;
-                }
                 if (projectId) {
                     headers['X-Kairyx-Project'] = projectId;
                 }
@@ -1053,9 +1019,9 @@
                     return hydrateAuthSession(retryCount + 1);
                 }
                 applyAuthSessionPayload(payload);
-                const workspaceBits = [payload.tenant_id, payload.project_id].filter(Boolean);
+                const workspaceBits = [payload.organization_id, payload.project_id].filter(Boolean);
                 setAuthStatus(
-                    `Google ${payload.display_name || payload.actor_id || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
+                    `Google ${payload.display_name || payload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
                 );
                 syncWorkspaceOverlayFromSession();
                 return payload;
@@ -1098,17 +1064,14 @@
                 const headers = {};
                 if (accessToken) {
                     headers.Authorization = `Bearer ${accessToken}`;
-                    if (tenantId) {
-                        headers['X-Kairyx-Tenant'] = tenantId;
-                    }
                     if (projectId) {
                         headers['X-Kairyx-Project'] = projectId;
                     }
                 } else {
-                    headers['x-actor-role'] = actorRoleSelect.value || 'admin';
-                    headers['x-actor-id'] = (actorIdInput.value || actorRoleSelect.value || 'admin').trim();
-                    headers['x-tenant-id'] = tenantId || 'default';
-                    headers['x-project-id'] = projectId || 'default';
+                    headers['x-actor-role'] = LOCAL_DEMO_ACTOR_ROLE;
+                    headers['x-actor-id'] = LOCAL_DEMO_ACTOR_ID;
+                    headers['x-tenant-id'] = tenantId || LOCAL_DEMO_TENANT_ID;
+                    headers['x-project-id'] = projectId || LOCAL_DEMO_PROJECT_ID;
                 }
                 if (!accessToken && (apiKeyInput.value || '').trim()) {
                     headers['x-api-key'] = apiKeyInput.value.trim();
@@ -1229,14 +1192,14 @@
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter one of your existing organization URLs.', true);
                     return;
                 }
-                workspaceOrgUrlInput.value = tenant.tenant_id;
+                workspaceOrgUrlInput.value = tenant.organization_id;
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects…');
                     workspaceCreateProjectNameInput.value = '';
                     workspaceCreateProjectIdInput.value = '';
                     workspaceModalProjectSelect.value = '';
-                    await switchWorkspaceSelection(tenant.tenant_id, '', { reloadPage: false });
-                    workspaceModalOrgSelect.value = authSessionState?.tenant_id || tenant.tenant_id;
+                    await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false });
+                    workspaceModalOrgSelect.value = authSessionState?.organization_id || tenant.organization_id;
                     workspaceModalProjectSelect.value = authSessionState?.project_id || '';
                     setWorkspaceSelectionStage('project');
                     setWorkspaceTextStatus(
@@ -1258,7 +1221,7 @@
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace…');
                     const payload = await switchWorkspaceSelection(
-                        workspaceModalOrgSelect.value || authSessionState?.tenant_id || '',
+                        workspaceModalOrgSelect.value || authSessionState?.organization_id || '',
                         workspaceModalProjectSelect.value || '',
                     );
                     if (payload?.project_id) {
@@ -1270,7 +1233,7 @@
                 }
             });
             workspaceSelectionCreateProjectBtn.addEventListener('click', async () => {
-                const tenantId = workspaceModalOrgSelect.value || authSessionState?.tenant_id || '';
+                const tenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
                 const projectName = workspaceCreateProjectNameInput.value.trim();
                 const projectId = slugifyIdentifier(workspaceCreateProjectIdInput.value || projectName);
                 if (!tenantId) {
@@ -1369,7 +1332,7 @@
                             },
                         });
                         persistWorkspaceSelection(
-                            onboardingResult.organization_space?.tenant_id || organizationId,
+                            onboardingResult.organization_space?.organization_id || onboardingResult.organization_space?.tenant_id || organizationId,
                             onboardingResult.project?.project_id || projectId,
                         );
                         await hydrateAuthSession();

@@ -27,7 +27,7 @@
             <div class="workspace-summary-card">
                 <div class="workspace-summary-label">Workspace</div>
                 <div id="workspace-summary-text" class="workspace-summary-value">Local demo / default / default</div>
-                <div id="workspace-role-summary" class="workspace-summary-meta">Legacy local session</div>
+                <div id="workspace-role-summary" class="workspace-summary-meta">Local demo session</div>
             </div>
             <div id="oidc-workspace-controls" class="hidden">
                 <div class="form-group">
@@ -48,31 +48,9 @@
                 </div>
                 <div id="workspace-selector-status" class="workspace-inline-status"></div>
             </div>
-            <div id="legacy-auth-controls">
-                <div class="form-group">
-                    <label for="actor-role-select">Actor Role</label>
-                    <select id="actor-role-select">
-                        <option value="admin" selected>Admin</option>
-                        <option value="analyst">Analyst</option>
-                        <option value="operator">Operator</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="actor-id-input">Actor ID</label>
-                    <input type="text" id="actor-id-input" value="admin">
-                </div>
-                <div class="form-group">
-                    <label for="tenant-id-input">Tenant ID</label>
-                    <input type="text" id="tenant-id-input" value="default">
-                </div>
-                <div class="form-group">
-                    <label for="project-id-input">Project ID</label>
-                    <input type="text" id="project-id-input" value="default">
-                </div>
-            </div>
             <div class="form-group">
                 <label for="auth-status-text">Auth Session</label>
-                <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Legacy local session</div>
+                <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Google login required</div>
             </div>
             <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                 <button type="button" id="oidc-login-btn">Continue with Google</button>
@@ -1133,7 +1111,7 @@ WHERE predicted_churn_risk = 'high'
                     <li>Use <strong>Insight Copilot</strong> for query, explain, recommend, and report loops.</li>
                 </ol>
                 <div class="help-callout" style="margin-top: 1rem;">
-                    Current governance is role-aware. The sidebar actor context controls `x-actor-role` and `x-actor-id` for all requests, so results can differ between `Admin`, `Analyst`, and `Operator`.
+                    Current governance is role-aware. After Google login, the active organization comes from the org URL, the active project comes from the workspace selector, and permissions come from the user's memberships.
                 </div>
             </div>
 
