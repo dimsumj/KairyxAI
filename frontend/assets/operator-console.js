@@ -27,6 +27,7 @@
             const workspaceModalTitle = document.getElementById('workspace-modal-title');
             const workspaceModalSubtitle = document.getElementById('workspace-modal-subtitle');
             const workspaceModalEyebrow = document.getElementById('workspace-modal-eyebrow');
+            const workspaceStartupStatus = document.getElementById('workspace-startup-status');
             const workspaceModalCloseBtn = document.getElementById('workspace-modal-close-btn');
             const workspaceSelectionPanel = document.getElementById('workspace-selection-panel');
             const workspaceOnboardingPanel = document.getElementById('workspace-onboarding-panel');
@@ -4939,15 +4940,26 @@
             const healthStatusDiv = document.getElementById('health-status');
             const statusTextSpan = document.getElementById('status-text');
 
+            function setApplicationStartupStatus(message, state = 'neutral') {
+                if (statusTextSpan) {
+                    statusTextSpan.textContent = message;
+                }
+                if (workspaceStartupStatus) {
+                    workspaceStartupStatus.textContent = message;
+                    workspaceStartupStatus.classList.toggle('is-ok', state === 'ok');
+                    workspaceStartupStatus.classList.toggle('is-error', state === 'error');
+                }
+            }
+
             async function checkBackendStatus() {
                 try {
                     await ensureHealthState(true);
                     
                     healthStatusDiv.classList.add('connected');
-                    statusTextSpan.textContent = `Backend Connected (${backendMode})`;
+                    setApplicationStartupStatus(`Application start completed (${backendMode})`, 'ok');
                 } catch (error) {
                     healthStatusDiv.classList.remove('connected');
-                    statusTextSpan.textContent = 'Backend Disconnected';
+                    setApplicationStartupStatus('Application start failed', 'error');
                     console.error('Health check failed:', error);
                 }
             }

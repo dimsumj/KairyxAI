@@ -178,6 +178,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 
 - a full-screen first-login onboarding gate that asks for the organization name first and the first project name second
 - a full-screen workspace gate that lets users choose an existing project or add a new one inside the selected organization space
+- a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
 - a legacy local/demo fallback where raw `Tenant ID` and `Project ID` headers can still be entered manually

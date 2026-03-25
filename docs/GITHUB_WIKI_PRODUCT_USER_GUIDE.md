@@ -38,6 +38,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
 | `Dark Mode` switch | Checkbox | Toggles the theme and stores it in local storage. | Checked | UI switches to dark theme. |
 | Sidebar module links | Navigation buttons | Open the target product module. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
+| Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
 1. Use `OIDC Login`.

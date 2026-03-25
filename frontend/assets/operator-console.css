@@ -249,6 +249,30 @@
             color: var(--text-secondary);
         }
 
+        .workspace-startup-status {
+            margin-top: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.45rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--white) 90%, var(--bg-color) 10%);
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .workspace-startup-status.is-ok {
+            color: var(--green);
+            border-color: color-mix(in srgb, var(--green) 40%, var(--border-color) 60%);
+        }
+
+        .workspace-startup-status.is-error {
+            color: var(--red);
+            border-color: color-mix(in srgb, var(--red) 40%, var(--border-color) 60%);
+        }
+
         .workspace-modal-close {
             background: transparent;
             color: var(--main-text);
