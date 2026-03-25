@@ -852,6 +852,20 @@
                 return entries.length ? entries.join(', ') : '';
             }
 
+            function formatLabeledRowsSummary(rowCount = 0, minRowsRequired = 12) {
+                const resolvedRowCount = Math.max(0, Number(rowCount || 0));
+                const resolvedMinRows = Math.max(0, Number(minRowsRequired || 0));
+                const formattedRows = formatCount(resolvedRowCount);
+                const formattedMinimum = formatCount(resolvedMinRows);
+                if (resolvedMinRows > 0 && resolvedRowCount < resolvedMinRows) {
+                    return `${formattedRows}/${formattedMinimum} labeled rows`;
+                }
+                if (resolvedMinRows > 0) {
+                    return `${formattedRows} labeled rows (min ${formattedMinimum})`;
+                }
+                return `${formattedRows} labeled rows`;
+            }
+
             function renderPredictionModelTrainingStatus(customMessage = '') {
                 const trainingStatus = getPredictionModelTrainingStatus();
                 const readiness = getPredictionModelReadiness();
@@ -879,7 +893,7 @@
                 if (stageLabel && String(trainingStatus.status || '').toLowerCase() === 'running') {
                     detailParts.push(stageLabel);
                 }
-                detailParts.push(`${rowCount}/${minRowsRequired} labeled rows`);
+                detailParts.push(formatLabeledRowsSummary(rowCount, minRowsRequired));
                 if (usersTotal > 0 && String(trainingStatus.status || '').toLowerCase() === 'running') {
                     detailParts.push(`${usersProcessed}/${usersTotal} users`);
                 }
@@ -899,7 +913,7 @@
                 if (stageLabel) {
                     titleLines.push(`Stage: ${stageLabel}`);
                 }
-                titleLines.push(`Labeled rows: ${rowCount}/${minRowsRequired}`);
+                titleLines.push(`Labeled rows: ${formatLabeledRowsSummary(rowCount, minRowsRequired)}`);
                 if (usersTotal > 0) {
                     titleLines.push(`Users processed: ${usersProcessed}/${usersTotal}`);
                 }
@@ -940,7 +954,7 @@
                 const heuristicAccuracy = formatPredictionModelMetric(readiness.heuristic_accuracy);
                 const detailParts = [
                     usingModelVersion,
-                    `${baselineRows}/${minRowsRequired} labeled rows`,
+                    formatLabeledRowsSummary(baselineRows, minRowsRequired),
                 ];
 
                 if (validationAccuracy && heuristicAccuracy) {
@@ -953,7 +967,7 @@
                 const titleLines = [
                     String(readiness.reason || '').trim(),
                     `Using model: ${usingModelVersion}`,
-                    `Labeled rows: ${baselineRows}/${minRowsRequired}`,
+                    `Labeled rows: ${formatLabeledRowsSummary(baselineRows, minRowsRequired)}`,
                 ];
                 if (validationAccuracy && heuristicAccuracy) {
                     titleLines.push(`Validation accuracy: ${validationAccuracy}`);
