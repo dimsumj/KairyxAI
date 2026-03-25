@@ -117,6 +117,40 @@ def test_health_live_aliases_return_lightweight_payload(client):
     assert api_payload["service"] == "KairyxAI Operator API"
     assert api_payload["time"]
 
+    org_resp = client.get("/default/v1/health/live")
+    assert org_resp.status_code == 200
+    org_payload = org_resp.json()
+    assert org_payload["status"] == "ok"
+    assert org_payload["mode"] == "mock"
+
+
+def test_org_scoped_v1_import_links_use_org_prefix(client):
+    connector_resp = client.post(
+        "/studio-a/v1/connectors",
+        headers={"x-actor-role": "admin", "x-project-id": "default"},
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    import_resp = client.post(
+        "/studio-a/v1/imports",
+        headers={"x-actor-role": "admin", "x-project-id": "default"},
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-02",
+        },
+    )
+    assert import_resp.status_code == 201
+    payload = import_resp.json()
+    assert payload["tenant_id"] == "studio-a"
+    assert payload["links"]["self"].startswith("/studio-a/v1/imports/")
+    assert payload["links"]["checkpoints"].startswith("/studio-a/v1/imports/")
+
 
 def test_health_reports_local_cache_stats(client):
     health = client.get("/api/v1/health")

@@ -32,7 +32,7 @@ The first end-to-end scenario is `Churn Rescue`, with `Monetization Lift` and `O
 
 This repository is no longer just an early prototype. It now contains:
 
-- a FastAPI-based operator API under `/api/v1`
+- a FastAPI-based operator API with a backward-compatible global prefix at `/api/v1` and an organization-scoped prefix at `/{organization_id}/v1`
 - a static operator console served by the backend
 - SQLAlchemy + Alembic control-plane persistence
 - mock-first local development mode
@@ -146,7 +146,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: static HTML/CSS/JS operator console served by the backend
-- Operator auth: OIDC bearer token + `X-Kairyx-Tenant` + `X-Kairyx-Project`, with self-serve organization-space onboarding, project switching, and legacy header auth only for local/demo compatibility
+- Operator auth: OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with `X-Kairyx-Tenant` preserved for compatibility, plus self-serve organization-space onboarding and legacy header auth only for local/demo compatibility
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
@@ -163,7 +163,7 @@ KairyxAI currently supports two practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - OIDC PKCE login in the frontend, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/api/v1`
+   - OIDC PKCE login in the frontend, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept as the bootstrap and compatibility path
 
 ## Workspace Model
 
@@ -181,6 +181,18 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
 - a legacy local/demo fallback where raw `Tenant ID` and `Project ID` headers can still be entered manually
+
+For authenticated organization-aware traffic, the preferred API shape is:
+
+- `https://<base-url>/<organization_id>/v1/<resource>`
+
+Examples:
+
+- `/northstar/v1/connectors`
+- `/northstar/v1/imports`
+- `/northstar/v1/predictions`
+
+The older `/api/v1/...` routes remain available for bootstrap flows such as OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
 
 ## Repository Layout
 

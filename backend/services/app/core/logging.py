@@ -10,8 +10,8 @@ from typing import Any
 class PredictionPollingAccessFilter(logging.Filter):
     """Allow only the first repeated prediction polling access log per job."""
 
-    _prediction_status_pattern = re.compile(r"^/api/v1/predictions/([^/]+)$")
-    _prediction_results_pattern = re.compile(r"^/api/v1/predictions/([^/]+)/results$")
+    _prediction_status_pattern = re.compile(r"^/[^/]+/v1/predictions/([^/]+)$")
+    _prediction_results_pattern = re.compile(r"^/[^/]+/v1/predictions/([^/]+)/results$")
 
     def __init__(self) -> None:
         super().__init__()

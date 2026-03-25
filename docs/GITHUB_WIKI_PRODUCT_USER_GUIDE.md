@@ -23,7 +23,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
-| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in. This is sent as `X-Kairyx-Tenant`. | `northstar` | The console reloads project access for that organization space. |
+| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
 | `Project` | Select | In OIDC mode, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
@@ -117,7 +117,7 @@ As in onboarding, the current new-project UI generates the internal `project_id`
 
 #### Invite redemption behavior
 - If the browser opens a URL containing `invite_code`, the console stores that invite locally before OIDC login.
-- After successful OIDC login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem`.
+- After successful OIDC login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem` first, then switches normal authenticated traffic to the org-scoped path shape `/{organization_id}/v1/...`.
 - On success, the active organization space and project switch to the invite target.
 
 ---
@@ -399,7 +399,7 @@ Use Health to inspect system status and manually run one scheduler tick.
 | --- | --- | --- | --- | --- |
 | `Refresh` | Button | Reloads the health payload, module table, alert list, and scheduler list. | None | Health panels refresh. |
 | `Run Scheduler Tick` | Button | Triggers one scheduler tick immediately. | None | Tick output appears and health is reloaded. |
-| Health output panel | JSON output | Read-only. | None | Shows `/api/v1/health` or tick output. |
+| Health output panel | JSON output | Read-only. | None | Shows `/api/v1/health`, `/{organization_id}/v1/health`, or tick output depending on the active session context. |
 | Module status table | Read-only table | Read the current module status and metrics. | None | Modules show status and metrics. |
 | Alerts table | Read-only table | Inspect persisted alerts. | None | Alerts list with severity and message. |
 | Scheduler jobs table | Read-only table | Inspect current scheduler configuration and timing. | None | Scheduler jobs show schedule, last run, next run. |

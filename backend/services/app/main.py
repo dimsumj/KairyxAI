@@ -39,6 +39,7 @@ from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
 from app.core.auth import get_authenticator
+from app.core.api_paths import apply_org_scoped_api_alias, get_external_request_path, get_path_scoped_tenant_id
 from app.core.errors import is_database_locked_error
 from app.core.governance import GovernanceContext
 from app.core.logging import configure_access_log_filters, emit_structured_log
@@ -72,6 +73,9 @@ def create_app() -> FastAPI:
     async def _governance_context_guard(request: Request, call_next):
         correlation_id = str(request.headers.get("x-correlation-id") or f"req_{uuid.uuid4().hex[:20]}").strip()
         request.state.correlation_id = correlation_id
+        apply_org_scoped_api_alias(request, settings.api_v1_prefix)
+        request_path = str(request.scope.get("path") or request.url.path)
+        external_path = get_external_request_path(request)
         public_paths = {
             "/health",
             "/health/live",
@@ -79,7 +83,7 @@ def create_app() -> FastAPI:
             f"{settings.api_v1_prefix}/auth/oidc-config",
             "/",
         }
-        if request.url.path.startswith("/static/") or request.url.path in public_paths:
+        if request_path.startswith("/static/") or request_path in public_paths:
             context = GovernanceContext(
                 actor_role="admin",
                 actor_id="system",
@@ -97,7 +101,7 @@ def create_app() -> FastAPI:
             except HTTPException as exc:
                 emit_structured_log(
                     "request_rejected",
-                    path=request.url.path,
+                    path=external_path,
                     method=request.method,
                     tenant_id=settings.bootstrap_tenant_id,
                     project_id=settings.bootstrap_project_id,
@@ -128,7 +132,7 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         emit_structured_log(
             "http_request",
-            path=request.url.path,
+            path=external_path,
             method=request.method,
             tenant_id=context.tenant_id,
             project_id=context.project_id,
@@ -147,7 +151,7 @@ def create_app() -> FastAPI:
             return await call_next(request)
         except (SQLAlchemyOperationalError, sqlite3.OperationalError) as exc:
             if is_database_locked_error(exc):
-                logger.warning("Control plane database lock while handling %s %s", request.method, request.url.path)
+                logger.warning("Control plane database lock while handling %s %s", request.method, get_external_request_path(request))
                 return JSONResponse(
                     status_code=423,
                     headers={"Retry-After": "1"},
@@ -340,7 +344,8 @@ def _is_project_optional_path(path: str, settings) -> bool:
 
 def _build_governance_context(request: Request, settings, correlation_id: str) -> GovernanceContext:
     protected_prefix = settings.api_v1_prefix.rstrip("/")
-    if not request.url.path.startswith(protected_prefix):
+    resolved_path = str(request.scope.get("path") or request.url.path)
+    if not resolved_path.startswith(protected_prefix):
         return GovernanceContext(
             actor_role="admin",
             actor_id="system",
@@ -360,9 +365,17 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             principal = get_authenticator().authenticate_token(token)
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc))
-        requested_tenant = str(
+        path_scoped_tenant = get_path_scoped_tenant_id(request)
+        header_tenant = str(
             request.headers.get("x-kairyx-tenant")
             or request.headers.get("x-tenant-id")
+            or ""
+        ).strip()
+        if path_scoped_tenant and header_tenant and header_tenant != path_scoped_tenant:
+            raise HTTPException(status_code=409, detail="Organization space in the path does not match the request headers.")
+        requested_tenant = str(
+            path_scoped_tenant
+            or header_tenant
             or principal.claims.get("tenant_id")
             or ""
         ).strip()
@@ -409,8 +422,8 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                 if str(membership.get("status") or "").lower() == "active"
             ]
             memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
-            allow_missing_tenant = _is_tenant_optional_path(request.url.path, settings)
-            allow_missing_project = _is_project_optional_path(request.url.path, settings)
+            allow_missing_tenant = _is_tenant_optional_path(resolved_path, settings)
+            allow_missing_project = _is_project_optional_path(resolved_path, settings)
 
             if not memberships_by_tenant:
                 if not allow_missing_tenant:
@@ -487,7 +500,11 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                 raise HTTPException(status_code=401, detail="Invalid or missing API key.")
         actor_role = str(request.headers.get("x-actor-role") or "admin").strip().lower() or "admin"
         actor_id = str(request.headers.get("x-actor-id") or actor_role).strip() or actor_role
-        tenant_id = str(request.headers.get("x-tenant-id") or settings.bootstrap_tenant_id).strip() or settings.bootstrap_tenant_id
+        path_scoped_tenant = get_path_scoped_tenant_id(request)
+        header_tenant = str(request.headers.get("x-tenant-id") or "").strip()
+        if path_scoped_tenant and header_tenant and header_tenant != path_scoped_tenant:
+            raise HTTPException(status_code=409, detail="Organization space in the path does not match the request headers.")
+        tenant_id = str(path_scoped_tenant or header_tenant or settings.bootstrap_tenant_id).strip() or settings.bootstrap_tenant_id
         project_id = str(request.headers.get("x-project-id") or settings.bootstrap_project_id).strip() or settings.bootstrap_project_id
         return GovernanceContext(
             actor_role=actor_role,

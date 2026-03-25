@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.api.schemas.jobs import build_job_response
 from app.application.imports import ImportService
+from app.core.api_paths import build_request_api_path
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_import_service
@@ -31,12 +32,13 @@ router = APIRouter(prefix="/imports", tags=["imports"])
 
 
 @router.get("")
-def list_imports(service: ImportService = Depends(get_import_service)):
+def list_imports(request: Request, service: ImportService = Depends(get_import_service)):
+    base_path = build_request_api_path(request, "/imports")
     jobs = [
         build_job_response(
             job,
-            base_path="/api/v1/imports",
-            extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"},
+            base_path=base_path,
+            extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"},
         )
         for job in service.list_jobs()
     ]
@@ -44,7 +46,7 @@ def list_imports(service: ImportService = Depends(get_import_service)):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_import(request: ImportJobCreateRequest, service: ImportService = Depends(get_import_service)):
+def create_import(request: ImportJobCreateRequest, http_request: Request, service: ImportService = Depends(get_import_service)):
     source_ref = request.connector_id or request.source_name
     if not source_ref:
         raise HTTPException(status_code=409, detail="source_name or connector_id is required.")
@@ -54,7 +56,8 @@ def create_import(request: ImportJobCreateRequest, service: ImportService = Depe
         raise HTTPException(status_code=404, detail=f"Connector '{source_ref}' not found.")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+    base_path = build_request_api_path(http_request, "/imports")
+    return build_job_response(job, base_path=base_path, extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"})
 
 
 @router.get("/backfills")
@@ -141,15 +144,17 @@ def get_import_schema_contract(alias: str, request: Request, service: ImportServ
 
 
 @router.get("/{job_id}")
-def get_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def get_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
     job = service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
-    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+    base_path = build_request_api_path(request, "/imports")
+    return build_job_response(job, base_path=base_path, extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"})
 
 
 @router.post("/{job_id}/run")
-def run_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def run_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+    base_path = build_request_api_path(request, "/imports")
     try:
         job = service.run_job(job_id)
     except MissingDependencyError as exc:
@@ -169,22 +174,23 @@ def run_import(job_id: str, service: ImportService = Depends(get_import_service)
         if failed_job is not None:
             payload["job"] = build_job_response(
                 failed_job,
-                base_path="/api/v1/imports",
-                extra_links={"checkpoints": f"/api/v1/imports/{failed_job['id']}/checkpoints"},
+                base_path=base_path,
+                extra_links={"checkpoints": f"{base_path}/{failed_job['id']}/checkpoints"},
             ).model_dump(mode="json")
         return JSONResponse(status_code=500, content=payload)
-    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+    return build_job_response(job, base_path=base_path, extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"})
 
 
 @router.post("/{job_id}/stop")
-def stop_import(job_id: str, service: ImportService = Depends(get_import_service)):
+def stop_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
     try:
         job = service.stop_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"})
+    base_path = build_request_api_path(request, "/imports")
+    return build_job_response(job, base_path=base_path, extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"})
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -328,7 +334,11 @@ def resume_import(job_id: str, request: Request, service: ImportService = Depend
         action_type="imports_resume",
         resource_type="import_job",
         resource_id=job_id,
-        payload=build_job_response(job, base_path="/api/v1/imports", extra_links={"checkpoints": f"/api/v1/imports/{job['id']}/checkpoints"}).model_dump(mode="json"),
+        payload=build_job_response(
+            job,
+            base_path=build_request_api_path(request, "/imports"),
+            extra_links={"checkpoints": f"{build_request_api_path(request, '/imports')}/{job['id']}/checkpoints"},
+        ).model_dump(mode="json"),
     )
 
 

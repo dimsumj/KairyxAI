@@ -133,4 +133,6 @@ def test_prediction_polling_access_filter_logs_only_first_request_per_job():
     assert log_filter.filter(build_record("/api/v1/predictions/pred_abc123")) is True
     assert log_filter.filter(build_record("/api/v1/predictions/pred_abc123/results?page=1&page_size=500")) is False
     assert log_filter.filter(build_record("/api/v1/predictions/pred_other/results?page=1&page_size=500")) is True
+    assert log_filter.filter(build_record("/northstar/v1/predictions/pred_workspace")) is True
+    assert log_filter.filter(build_record("/northstar/v1/predictions/pred_workspace/results?page=1&page_size=500")) is False
     assert log_filter.filter(build_record("/api/v1/health")) is True

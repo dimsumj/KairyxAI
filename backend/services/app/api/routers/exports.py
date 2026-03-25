@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.api.schemas.exports import ExportJobCreateRequest
 from app.api.schemas.jobs import build_job_response
 from app.application.exports import ExportService
+from app.core.api_paths import build_request_api_path
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_export_service
@@ -14,8 +15,9 @@ router = APIRouter(prefix="/exports", tags=["exports"])
 
 
 @router.get("")
-def list_export_jobs(service: ExportService = Depends(get_export_service)):
-    return {"items": [build_job_response(job, base_path="/api/v1/exports") for job in service.list_jobs()]}
+def list_export_jobs(request: Request, service: ExportService = Depends(get_export_service)):
+    base_path = build_request_api_path(request, "/exports")
+    return {"items": [build_job_response(job, base_path=base_path) for job in service.list_jobs()]}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -32,22 +34,23 @@ def create_export_job(request: ExportJobCreateRequest, http_request: Request, se
         raise HTTPException(status_code=409, detail=str(exc))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Prediction job '{request.prediction_job_id}' not found.")
+    base_path = build_request_api_path(http_request, "/exports")
     return build_audited_response(
         service.repository,
         context,
         action_type="exports_create",
         resource_type="export_job",
         resource_id=job["id"],
-        payload=build_job_response(job, base_path="/api/v1/exports").model_dump(mode="json"),
+        payload=build_job_response(job, base_path=base_path).model_dump(mode="json"),
     )
 
 
 @router.get("/{job_id}")
-def get_export_job(job_id: str, service: ExportService = Depends(get_export_service)):
+def get_export_job(job_id: str, request: Request, service: ExportService = Depends(get_export_service)):
     job = service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Export job '{job_id}' not found.")
-    return build_job_response(job, base_path="/api/v1/exports")
+    return build_job_response(job, base_path=build_request_api_path(request, "/exports"))
 
 
 @router.post("/{job_id}/run")
@@ -68,7 +71,7 @@ def run_export_job(job_id: str, http_request: Request, service: ExportService = 
         action_type="exports_run",
         resource_type="export_job",
         resource_id=job_id,
-        payload=build_job_response(job, base_path="/api/v1/exports").model_dump(mode="json"),
+        payload=build_job_response(job, base_path=build_request_api_path(http_request, "/exports")).model_dump(mode="json"),
     )
 
 
@@ -92,7 +95,7 @@ def retry_export_job(job_id: str, http_request: Request, service: ExportService 
         action_type="exports_retry",
         resource_type="export_job",
         resource_id=job_id,
-        payload=build_job_response(job, base_path="/api/v1/exports").model_dump(mode="json"),
+        payload=build_job_response(job, base_path=build_request_api_path(http_request, "/exports")).model_dump(mode="json"),
     )
 
 

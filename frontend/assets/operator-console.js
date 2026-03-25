@@ -590,7 +590,7 @@
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
             const backendUrl = window.KAIRYX_BACKEND_URL || window.location.origin;
-            const apiBaseUrl = `${backendUrl}/api/v1`;
+            const defaultApiBaseUrl = `${backendUrl}/api/v1`;
             const HEALTH_CHECK_INTERVAL_MS = 30000;
             const HEALTH_CACHE_TTL_MS = 30000;
             const HEALTH_LIVE_TIMEOUT_MS = 3000;
@@ -614,6 +614,21 @@
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
+
+            function getApiBaseUrl(tenantIdOverride = null, { forceGlobal = false } = {}) {
+                if (forceGlobal) {
+                    return defaultApiBaseUrl;
+                }
+                const resolvedTenantId = String(
+                    tenantIdOverride !== null && tenantIdOverride !== undefined
+                        ? tenantIdOverride
+                        : getActiveTenantId()
+                ).trim();
+                if (accessToken && resolvedTenantId) {
+                    return `${backendUrl}/${encodeURIComponent(resolvedTenantId)}/v1`;
+                }
+                return defaultApiBaseUrl;
+            }
 
             function setAuthStatus(message) {
                 if (authStatusText) {
@@ -691,7 +706,7 @@
 
             async function loadOidcConfig() {
                 try {
-                    const response = await fetch(`${apiBaseUrl}/auth/oidc-config`);
+                    const response = await fetch(`${getApiBaseUrl(null, { forceGlobal: true })}/auth/oidc-config`);
                     oidcConfig = response.ok ? await response.json() : null;
                 } catch (error) {
                     oidcConfig = null;
@@ -758,7 +773,7 @@
                 inviteRedemptionInFlight = true;
                 try {
                     setAuthStatus('Redeeming project invite…');
-                    const response = await fetch(`${apiBaseUrl}/project-invites/redeem`, {
+                    const response = await fetch(`${getApiBaseUrl(pendingInvite.tenantId || '', { forceGlobal: !pendingInvite.tenantId })}/project-invites/redeem`, {
                         method: 'POST',
                         headers: {
                             Authorization: `Bearer ${accessToken}`,
@@ -825,7 +840,7 @@
                 if (projectId) {
                     headers['X-Kairyx-Project'] = projectId;
                 }
-                const response = await fetch(`${apiBaseUrl}/auth/me`, {
+                const response = await fetch(`${getApiBaseUrl(tenantId || '', { forceGlobal: !tenantId })}/auth/me`, {
                     headers,
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -914,7 +929,7 @@
             async function apiRequest(path, options = {}) {
                 const { method = 'GET', body } = options;
                 const headers = buildApiHeaders(Boolean(body));
-                const response = await fetch(`${apiBaseUrl}${path}`, {
+                const response = await fetch(`${getApiBaseUrl()}${path}`, {
                     method,
                     headers,
                     body: body ? JSON.stringify(body) : undefined,
@@ -1191,7 +1206,7 @@
                 const controller = new AbortController();
                 const timeoutId = window.setTimeout(() => controller.abort(), HEALTH_LIVE_TIMEOUT_MS);
                 try {
-                    const response = await fetch(`${apiBaseUrl}/health/live`, {
+                    const response = await fetch(`${getApiBaseUrl()}/health/live`, {
                         method: 'GET',
                         headers: buildApiHeaders(false),
                         signal: controller.signal,

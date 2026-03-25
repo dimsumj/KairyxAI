@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.api.schemas.jobs import build_job_response
 from app.api.schemas.predictions import PredictionJobCreateRequest, PredictionModelTrainRequest, PredictionResultsPage
 from app.application.predictions import PredictionService
+from app.core.api_paths import build_request_api_path
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.deps import get_prediction_service, get_settings_dependency
 from app.core.governance import ensure_permission, get_governance_context
@@ -44,13 +45,14 @@ def train_prediction_model(
 
 
 @router.get("")
-def list_prediction_jobs(service: PredictionService = Depends(get_prediction_service)):
+def list_prediction_jobs(request: Request, service: PredictionService = Depends(get_prediction_service)):
+    base_path = build_request_api_path(request, "/predictions")
     return {
         "items": [
             build_job_response(
                 job,
-                base_path="/api/v1/predictions",
-                extra_links={"results": f"/api/v1/predictions/{job['id']}/results"},
+                base_path=base_path,
+                extra_links={"results": f"{base_path}/{job['id']}/results"},
             )
             for job in service.list_jobs()
         ]
@@ -58,26 +60,29 @@ def list_prediction_jobs(service: PredictionService = Depends(get_prediction_ser
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_prediction_job(request: PredictionJobCreateRequest, service: PredictionService = Depends(get_prediction_service)):
+def create_prediction_job(request: PredictionJobCreateRequest, http_request: Request, service: PredictionService = Depends(get_prediction_service)):
     try:
         job = service.create_job(request.import_job_id, request.prediction_mode)
     except MissingDependencyError as exc:
         raise HTTPException(status_code=404, detail=exc.detail)
     except ResourceLockedError as exc:
         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
-    return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
+    base_path = build_request_api_path(http_request, "/predictions")
+    return build_job_response(job, base_path=base_path, extra_links={"results": f"{base_path}/{job['id']}/results"})
 
 
 @router.get("/{job_id}")
-def get_prediction_job(job_id: str, service: PredictionService = Depends(get_prediction_service)):
+def get_prediction_job(job_id: str, request: Request, service: PredictionService = Depends(get_prediction_service)):
     job = service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Prediction job '{job_id}' not found.")
-    return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
+    base_path = build_request_api_path(request, "/predictions")
+    return build_job_response(job, base_path=base_path, extra_links={"results": f"{base_path}/{job['id']}/results"})
 
 
 @router.post("/{job_id}/run")
-def run_prediction_job(job_id: str, service: PredictionService = Depends(get_prediction_service)):
+def run_prediction_job(job_id: str, request: Request, service: PredictionService = Depends(get_prediction_service)):
+    base_path = build_request_api_path(request, "/predictions")
     try:
         job = service.run_job(job_id)
     except MissingDependencyError as exc:
@@ -97,22 +102,23 @@ def run_prediction_job(job_id: str, service: PredictionService = Depends(get_pre
         if failed_job is not None:
             payload["job"] = build_job_response(
                 failed_job,
-                base_path="/api/v1/predictions",
-                extra_links={"results": f"/api/v1/predictions/{failed_job['id']}/results"},
+                base_path=base_path,
+                extra_links={"results": f"{base_path}/{failed_job['id']}/results"},
             ).model_dump(mode="json")
         return JSONResponse(status_code=500, content=payload)
-    return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
+    return build_job_response(job, base_path=base_path, extra_links={"results": f"{base_path}/{job['id']}/results"})
 
 
 @router.post("/{job_id}/stop")
-def stop_prediction_job(job_id: str, service: PredictionService = Depends(get_prediction_service)):
+def stop_prediction_job(job_id: str, request: Request, service: PredictionService = Depends(get_prediction_service)):
     try:
         job = service.stop_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Prediction job '{job_id}' not found.")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return build_job_response(job, base_path="/api/v1/predictions", extra_links={"results": f"/api/v1/predictions/{job['id']}/results"})
+    base_path = build_request_api_path(request, "/predictions")
+    return build_job_response(job, base_path=base_path, extra_links={"results": f"{base_path}/{job['id']}/results"})
 
 
 @router.get("/{job_id}/results", response_model=PredictionResultsPage)

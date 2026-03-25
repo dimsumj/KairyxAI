@@ -203,6 +203,40 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         assert wrong_project.status_code == 403
 
 
+def test_org_scoped_v1_path_selects_membership_without_tenant_header(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        me = client.get(
+            "/northstar/v1/auth/me",
+            headers={
+                "Authorization": f"Bearer {founder_token}",
+                "X-Kairyx-Project": "liveops",
+            },
+        )
+        assert me.status_code == 200
+        assert me.json()["tenant_id"] == "northstar"
+        assert me.json()["project_id"] == "liveops"
+
+        mismatch = client.get(
+            "/northstar/v1/auth/me",
+            headers=_auth_headers(founder_token, "other-org", "liveops"),
+        )
+        assert mismatch.status_code == 409
+
+
 def test_secret_bearing_responses_are_redacted(monkeypatch, tmp_path):
     admin_token = _make_token("platform-admin", platform_admin=True)
     headers = _auth_headers(admin_token, "default")
