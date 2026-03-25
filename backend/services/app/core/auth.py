@@ -46,42 +46,71 @@ class OIDCAuthenticator:
         )
 
     def _decode_token(self, token: str) -> dict[str, Any]:
-        issuer = self.settings.oidc_issuer or None
+        expected_issuers = self._expected_issuers()
+        primary_issuer = self.settings.oidc_issuer or None
         audience = self.settings.oidc_audience or None
         options = {
             "verify_signature": True,
             "verify_exp": True,
             "verify_aud": bool(audience),
-            "verify_iss": bool(issuer),
+            "verify_iss": False,
         }
         algorithms = ["HS256"] if self.settings.oidc_jwt_signing_secret else None
         try:
             if self.settings.oidc_jwt_signing_secret:
-                return dict(
+                payload = dict(
                     jwt.decode(
                         token,
                         self.settings.oidc_jwt_signing_secret,
                         algorithms=algorithms,
                         audience=audience,
-                        issuer=issuer,
+                        issuer=primary_issuer,
                         options=options,
                     )
                 )
-            if self._jwks_client is None:
-                raise ValueError("OIDC JWKS is not configured.")
-            signing_key = self._jwks_client.get_signing_key_from_jwt(token)
-            return dict(
-                jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
-                    audience=audience,
-                    issuer=issuer,
-                    options=options,
+            else:
+                if self._jwks_client is None:
+                    raise ValueError("OIDC JWKS is not configured.")
+                signing_key = self._jwks_client.get_signing_key_from_jwt(token)
+                payload = dict(
+                    jwt.decode(
+                        token,
+                        signing_key.key,
+                        algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+                        audience=audience,
+                        issuer=primary_issuer,
+                        options=options,
+                    )
                 )
-            )
         except jwt.PyJWTError as exc:
             raise ValueError("Invalid bearer token.") from exc
+
+        self._validate_issuer(payload, expected_issuers)
+        self._validate_google_hosted_domain(payload)
+        return payload
+
+    def _expected_issuers(self) -> set[str]:
+        configured = str(self.settings.oidc_issuer or "").strip()
+        issuers = {configured} if configured else set()
+        if self.settings.oidc_provider == "google":
+            issuers.update({"https://accounts.google.com", "accounts.google.com"})
+        return {issuer for issuer in issuers if issuer}
+
+    @staticmethod
+    def _validate_issuer(payload: dict[str, Any], expected_issuers: set[str]) -> None:
+        if not expected_issuers:
+            return
+        actual = str(payload.get("iss") or "").strip()
+        if actual not in expected_issuers:
+            raise ValueError("JWT issuer is invalid.")
+
+    def _validate_google_hosted_domain(self, payload: dict[str, Any]) -> None:
+        hosted_domain = str(self.settings.oidc_google_hosted_domain or "").strip().lower()
+        if not hosted_domain:
+            return
+        actual = str(payload.get("hd") or "").strip().lower()
+        if actual != hosted_domain:
+            raise ValueError(f"Google account must belong to hosted domain '{hosted_domain}'.")
 
     @staticmethod
     def _is_platform_admin(payload: dict[str, Any]) -> bool:
@@ -108,5 +137,7 @@ def get_authenticator() -> OIDCAuthenticator:
         settings.oidc_audience,
         settings.oidc_jwks_url,
         settings.oidc_jwt_signing_secret,
+        settings.oidc_provider,
+        settings.oidc_google_hosted_domain,
     )
     return _get_authenticator(cache_key)

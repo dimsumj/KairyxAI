@@ -61,6 +61,10 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    platform_surface = normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE")).lower()
+    if not platform_surface and normalize_env_text(os.getenv("VERCEL", "")):
+        platform_surface = "vercel_demo"
+    scheduler_default = "false" if platform_surface == "vercel_demo" else "true"
     database_url = normalize_sqlite_database_url(
         normalize_env_text(os.getenv("CONTROL_PLANE_DATABASE_URL"))
         or normalize_env_text(os.getenv("DATABASE_URL"))
@@ -81,9 +85,21 @@ def get_settings() -> Settings:
     oidc_provider = normalize_env_text(os.getenv("OIDC_PROVIDER")).lower()
     if not oidc_provider:
         oidc_provider = "google" if google_client_id else ("oidc" if oidc_client_id else "")
+    oidc_issuer = normalize_env_text(os.getenv("OIDC_ISSUER"))
+    oidc_audience = normalize_env_text(os.getenv("OIDC_AUDIENCE"))
+    oidc_jwks_url = normalize_env_text(os.getenv("OIDC_JWKS_URL"))
+    oidc_authorize_url = normalize_env_text(os.getenv("OIDC_AUTHORIZE_URL"))
+    oidc_token_url = normalize_env_text(os.getenv("OIDC_TOKEN_URL"))
+    oidc_logout_url = normalize_env_text(os.getenv("OIDC_LOGOUT_URL"))
+    if google_client_id:
+        oidc_issuer = oidc_issuer or "https://accounts.google.com"
+        oidc_audience = oidc_audience or oidc_client_id
+        oidc_jwks_url = oidc_jwks_url or "https://www.googleapis.com/oauth2/v3/certs"
+        oidc_authorize_url = oidc_authorize_url or "https://accounts.google.com/o/oauth2/v2/auth"
+        oidc_token_url = oidc_token_url or "https://oauth2.googleapis.com/token"
     return Settings(
         app_env=normalize_env_text(os.getenv("APP_ENV", "local")).lower(),
-        platform_surface=normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE")).lower(),
+        platform_surface=platform_surface,
         api_access_key=normalize_env_text(os.getenv("API_ACCESS_KEY")),
         legacy_header_auth_enabled=normalize_env_text(os.getenv("LEGACY_HEADER_AUTH_ENABLED", "true")).lower() not in {"0", "false", "no", "off"},
         control_plane_database_url=database_url,
@@ -95,13 +111,13 @@ def get_settings() -> Settings:
         bootstrap_project_id=normalize_env_text(os.getenv("BOOTSTRAP_PROJECT_ID", "default")) or "default",
         bootstrap_project_name=normalize_env_text(os.getenv("BOOTSTRAP_PROJECT_NAME", "Default Project")) or "Default Project",
         cors_allowed_origins=cors_allowed_origins,
-        oidc_issuer=normalize_env_text(os.getenv("OIDC_ISSUER")),
-        oidc_audience=normalize_env_text(os.getenv("OIDC_AUDIENCE")),
-        oidc_jwks_url=normalize_env_text(os.getenv("OIDC_JWKS_URL")),
+        oidc_issuer=oidc_issuer,
+        oidc_audience=oidc_audience,
+        oidc_jwks_url=oidc_jwks_url,
         oidc_client_id=oidc_client_id,
-        oidc_authorize_url=normalize_env_text(os.getenv("OIDC_AUTHORIZE_URL")),
-        oidc_token_url=normalize_env_text(os.getenv("OIDC_TOKEN_URL")),
-        oidc_logout_url=normalize_env_text(os.getenv("OIDC_LOGOUT_URL")),
+        oidc_authorize_url=oidc_authorize_url,
+        oidc_token_url=oidc_token_url,
+        oidc_logout_url=oidc_logout_url,
         oidc_jwt_signing_secret=normalize_env_text(os.getenv("OIDC_JWT_SIGNING_SECRET")),
         oidc_provider=oidc_provider,
         oidc_google_hosted_domain=google_hosted_domain,
@@ -119,7 +135,7 @@ def get_settings() -> Settings:
         export_batch_size=max(1, int(normalize_env_text(os.getenv("EXPORT_BATCH_SIZE", "500")))),
         export_retry_attempts=max(1, int(normalize_env_text(os.getenv("EXPORT_RETRY_ATTEMPTS", "3")))),
         job_retention_days=max(1, int(normalize_env_text(os.getenv("JOB_RETENTION_DAYS", "7")))),
-        scheduler_enabled=normalize_env_text(os.getenv("SCHEDULER_ENABLED", "true")).lower() not in {"0", "false", "no", "off"},
+        scheduler_enabled=normalize_env_text(os.getenv("SCHEDULER_ENABLED", scheduler_default)).lower() not in {"0", "false", "no", "off"},
         scheduler_interval_seconds=max(5, int(normalize_env_text(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60")))),
         scheduler_daily_optimizer_hour=min(23, max(0, int(normalize_env_text(os.getenv("SCHEDULER_DAILY_OPTIMIZER_HOUR", "8"))))),
         scheduler_daily_report_hour=min(23, max(0, int(normalize_env_text(os.getenv("SCHEDULER_DAILY_REPORT_HOUR", "9"))))),
