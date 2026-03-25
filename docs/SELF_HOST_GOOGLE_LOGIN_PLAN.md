@@ -294,6 +294,110 @@ Run all of these before production rollout:
 7. Logout clears the Kairyx session and returns to the login gate.
 8. Wrong redirect URI or wrong client ID fails with visible operator-facing error text.
 
+## Production Self-Host Deployment Plan
+
+Use a separate Google Cloud project and separate OAuth client for every customer production deployment.
+
+### Recommended Production Setup
+
+- production hostname example: `https://analytics.customer-a.com`
+- Google project owner: the customer
+- OAuth client type: `Web application`
+- authorized JavaScript origin:
+  - `https://analytics.customer-a.com`
+- authorized redirect URI:
+  - `https://analytics.customer-a.com/api/v1/auth/google/callback`
+
+Google audience choice:
+
+- `Internal` only when the customer wants login restricted to users inside their Google Workspace
+- `External` when the customer needs broader Google-account access
+
+For production, the customer should complete the normal Google consent-screen, branding, and domain-verification steps for their owned domain before go-live.
+
+### Production Environment Variables
+
+```env
+APP_ENV=prod
+LEGACY_HEADER_AUTH_ENABLED=false
+CORS_ALLOWED_ORIGINS=https://analytics.customer-a.com
+PUBLIC_BASE_URL=https://analytics.customer-a.com
+
+OIDC_ISSUER=https://accounts.google.com
+OIDC_AUDIENCE=customer-prod-client-id.apps.googleusercontent.com
+OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs
+OIDC_CLIENT_ID=customer-prod-client-id.apps.googleusercontent.com
+OIDC_CLIENT_SECRET=customer-prod-client-secret
+OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth
+OIDC_TOKEN_URL=https://oauth2.googleapis.com/token
+OIDC_LOGOUT_URL=
+
+AUTH_SESSION_ISSUER=https://analytics.customer-a.com
+AUTH_SESSION_AUDIENCE=kairyx-operator
+AUTH_SESSION_SIGNING_SECRET=replace-with-strong-random-secret
+AUTH_SESSION_TTL_SECONDS=3600
+```
+
+Secret-handling expectations:
+
+- store `OIDC_CLIENT_SECRET` and `AUTH_SESSION_SIGNING_SECRET` in a secret manager, not plain env files checked into source control
+- rotate `AUTH_SESSION_SIGNING_SECRET` with a controlled maintenance plan because it invalidates active Kairyx sessions
+- rotate the Google client secret according to the customer’s internal security policy
+
+### Production Customer Setup Checklist
+
+1. Customer creates a dedicated Google Cloud project for Kairyx production auth.
+2. Customer configures the Google Auth platform branding for the production app name, support email, privacy policy, and terms links.
+3. Customer verifies the production domain used by the Kairyx deployment.
+4. Customer creates a `Web application` OAuth client for the exact production hostname.
+5. Customer registers the exact authorized JavaScript origin and backend callback URI.
+6. Customer places the Google OAuth client values and Kairyx session-signing secret into deployment secrets.
+7. Customer deploys or restarts Kairyx with those production values.
+8. Customer verifies login, onboarding, workspace routing, and logout behavior with production-safe test accounts.
+
+### Production Go-Live Validation
+
+Run all of these before declaring production ready:
+
+1. Logged-out user sees only the Google login gate.
+2. Google login redirects to the exact customer-owned production domain with no redirect mismatch.
+3. First-time user reaches organization-space onboarding.
+4. Existing user lands directly in their expected organization and project or sees the workspace selector when appropriate.
+5. Invite redemption works end to end through Google login.
+6. Logout clears the Kairyx session and returns the browser to the login gate.
+7. Backend logs contain login success and login failure events without leaking provider tokens or client secrets.
+8. Customer can rotate the Google client secret and redeploy without schema or data changes.
+
+### Production Rollout Pattern
+
+Recommended rollout sequence:
+
+1. Enable Google login in a production-like pre-prod or pilot environment first.
+2. Validate a small allowlist of real customer operator accounts.
+3. Keep a break-glass admin path available during rollout.
+   - this may be a temporary local-only compatibility environment or a short-lived emergency admin session path
+   - it should not remain the default production access path
+4. After Google login is stable, disable any fallback user access paths for normal operations.
+5. Record the final production callback URI, client id, and operational owner in the customer runbook.
+
+### Production Ownership Split
+
+Customer-owned:
+
+- Google Cloud project
+- OAuth consent-screen branding
+- authorized origins and redirect URIs
+- domain verification
+- Google client secret lifecycle
+
+Kairyx-owned:
+
+- backend callback implementation
+- Kairyx session issuance
+- organization-space and project authorization logic
+- onboarding and workspace routing
+- documentation and upgrade path
+
 ## Production Self-Host Rules
 
 For customer-hosted production environments:
