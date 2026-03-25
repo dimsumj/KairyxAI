@@ -55,6 +55,7 @@ The source of truth for that roadmap lives in:
 - [Audience Engine v1 PRD](docs/AUDIENCE_ENGINE_V1_PRD.md)
 - [Action Orchestrator v1 PRD](docs/ACTION_ORCHESTRATOR_V1_PRD.md)
 - [Experiment Hub v1 PRD](docs/EXPERIMENT_HUB_V1_PRD.md)
+- [Self-hosted Google login plan](docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 
 ## Core Modules
 
@@ -342,6 +343,7 @@ Production deployment assets in this repository now include:
 - [backend/services/cloudrun/export-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/export-worker.yaml)
 - [backend/services/cloudrun/scheduler-worker.yaml](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/backend/services/cloudrun/scheduler-worker.yaml)
 - [docs/RUNBOOKS_MULTITENANT_GCP.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/RUNBOOKS_MULTITENANT_GCP.md)
+- [docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md](/Users/jeremyz/.codex/worktrees/aefc/KairyxAI/docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 
 For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, and ADC credentials.
 
