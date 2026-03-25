@@ -75,7 +75,7 @@
                 <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Legacy local session</div>
             </div>
             <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                <button type="button" id="oidc-login-btn">OIDC Login</button>
+                <button type="button" id="oidc-login-btn">Continue with Google</button>
                 <button type="button" id="oidc-logout-btn">Logout</button>
             </div>
             <div id="legacy-api-key-group" class="form-group">
@@ -1329,6 +1329,17 @@ dimensions: campaign,country,platform</pre>
                         <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
                     </div>
                     <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
+                </div>
+
+                <div id="workspace-login-panel" class="workspace-panel hidden">
+                    <div class="workspace-login-copy">
+                        <p>Sign in with your Google account before opening an existing organization or creating a new one.</p>
+                    </div>
+                    <div id="workspace-login-status" class="workspace-panel-status"></div>
+                    <div class="workspace-modal-actions">
+                        <button type="button" id="workspace-google-login-btn">Continue with Google</button>
+                    </div>
+                    <div class="workspace-helper-text workspace-helper-text-center">After sign-in, Kairyx either opens your existing organization or starts onboarding for a new one.</div>
                 </div>
 
                 <div id="workspace-selection-panel" class="workspace-panel hidden">

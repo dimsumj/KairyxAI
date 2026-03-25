@@ -43,7 +43,7 @@ What is still in progress is not the existence of the core APIs, but the remaini
 - production readiness
 - stronger provider-backed activation and measurement
 - deeper frontend productization
-- broader org-space/project UX polish beyond the new OIDC onboarding and workspace-switching baseline
+- broader org-space/project UX polish beyond the new Google-login onboarding and workspace-switching baseline
 - more automated optimization under manual confirmation
 
 The source of truth for that roadmap lives in:
@@ -146,7 +146,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: static HTML/CSS/JS operator console served by the backend
-- Operator auth: OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with `X-Kairyx-Tenant` preserved for compatibility, plus self-serve organization-space onboarding and legacy header auth only for local/demo compatibility
+- Operator auth: Google login via OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with `X-Kairyx-Tenant` preserved for compatibility, plus self-serve organization-space onboarding and legacy header auth only for local/demo compatibility
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
@@ -163,7 +163,7 @@ KairyxAI currently supports two practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - OIDC PKCE login in the frontend, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept as the bootstrap and compatibility path
+   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept as the bootstrap and compatibility path
 
 ## Workspace Model
 
@@ -176,6 +176,7 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
+- a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
@@ -193,7 +194,7 @@ Examples:
 - `/northstar/v1/imports`
 - `/northstar/v1/predictions`
 
-The older `/api/v1/...` routes remain available for bootstrap flows such as OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
+The older `/api/v1/...` routes remain available for bootstrap flows such as Google OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
 
 ## Repository Layout
 
@@ -307,9 +308,13 @@ The operator UI uses that contract to show a `Ready`, `Learning`, or `Fallback` 
 | `APP_ENV` | Runtime environment (`local`, `prod`) | `local` |
 | `API_ACCESS_KEY` | Optional API key for legacy local header auth | empty |
 | `LEGACY_HEADER_AUTH_ENABLED` | Enables `x-actor-*` local/demo auth headers | `true` |
-| `OIDC_ISSUER` | Expected JWT issuer for operator traffic | empty |
-| `OIDC_AUDIENCE` | Expected JWT audience for operator traffic | empty |
-| `OIDC_JWKS_URL` | JWKS endpoint for bearer-token validation | empty |
+| `OIDC_ISSUER` | Google issuer for operator traffic | empty |
+| `OIDC_AUDIENCE` | Google OAuth client id expected in JWT audience | empty |
+| `OIDC_JWKS_URL` | Google JWKS endpoint for bearer-token validation | empty |
+| `OIDC_CLIENT_ID` | Google OAuth client id used by the console | empty |
+| `OIDC_AUTHORIZE_URL` | Google authorize URL | empty |
+| `OIDC_TOKEN_URL` | Google token URL for PKCE code exchange | empty |
+| `OIDC_LOGOUT_URL` | Optional logout redirect URL; leave empty for normal Google local logout | empty |
 | `OIDC_JWT_SIGNING_SECRET` | HS256 signing secret for local/test bearer-token validation | empty |
 | `CORS_ALLOWED_ORIGINS` | Explicit browser origins allowed in production | `*` |
 | `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |

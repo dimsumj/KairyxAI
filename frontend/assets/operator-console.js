@@ -29,6 +29,9 @@
             const workspaceModalEyebrow = document.getElementById('workspace-modal-eyebrow');
             const workspaceStartupStatus = document.getElementById('workspace-startup-status');
             const workspaceModalCloseBtn = document.getElementById('workspace-modal-close-btn');
+            const workspaceLoginPanel = document.getElementById('workspace-login-panel');
+            const workspaceLoginStatus = document.getElementById('workspace-login-status');
+            const workspaceGoogleLoginBtn = document.getElementById('workspace-google-login-btn');
             const workspaceSelectionPanel = document.getElementById('workspace-selection-panel');
             const workspaceOnboardingPanel = document.getElementById('workspace-onboarding-panel');
             const workspaceCreateProjectPanel = document.getElementById('workspace-create-project-panel');
@@ -221,6 +224,36 @@
                 return items.find((item) => item.tenant_id === slug || slugifyIdentifier(item.name) === slug) || null;
             }
 
+            function isGoogleLoginConfigured() {
+                return Boolean(oidcConfig && oidcConfig.authorize_url && oidcConfig.client_id);
+            }
+
+            function isAuthenticatedWorkspaceReady() {
+                return Boolean(
+                    accessToken
+                    && authSessionState
+                    && authSessionState.tenant_id
+                    && authSessionState.project_id
+                    && !authSessionState.needs_onboarding
+                    && !authSessionState.needs_org_selection
+                    && !authSessionState.needs_project_selection
+                );
+            }
+
+            function shouldBlockProtectedAppData() {
+                return isGoogleLoginConfigured() && !isAuthenticatedWorkspaceReady();
+            }
+
+            function refreshWorkspaceLoginStatus() {
+                const invitePending = Boolean(readPendingInvite());
+                setWorkspaceTextStatus(
+                    workspaceLoginStatus,
+                    invitePending
+                        ? 'Project invite detected. Continue with Google to redeem it.'
+                        : 'Continue with Google to open your organization.',
+                );
+            }
+
             function readStoredActorContext() {
                 try {
                     return {
@@ -326,6 +359,11 @@
             function syncWorkspaceSummary(payload = authSessionState) {
                 if (!workspaceSummaryText || !workspaceRoleSummary) return;
                 if (!accessToken) {
+                    if (isGoogleLoginConfigured()) {
+                        workspaceSummaryText.textContent = 'Google login required';
+                        workspaceRoleSummary.textContent = 'Sign in to access organizations and projects';
+                        return;
+                    }
                     workspaceSummaryText.textContent = `Local demo / ${(tenantIdInput.value || 'default').trim() || 'default'} / ${(projectIdInput.value || 'default').trim() || 'default'}`;
                     workspaceRoleSummary.textContent = `Actor ${(actorIdInput.value || actorRoleSelect.value || 'admin').trim()} • ${actorRoleSelect.value || 'admin'}`;
                     return;
@@ -351,10 +389,13 @@
             }
 
             function syncAuthModeUi() {
+                const usingGoogleLogin = isGoogleLoginConfigured();
                 const usingOidc = Boolean(accessToken);
-                legacyAuthControls.classList.toggle('hidden', usingOidc);
-                legacyApiKeyGroup.classList.toggle('hidden', usingOidc);
+                legacyAuthControls.classList.toggle('hidden', usingOidc || usingGoogleLogin);
+                legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
+                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
+                oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
                 syncWorkspaceSummary();
@@ -383,7 +424,7 @@
             }
 
             function setWorkspaceOverlayPanel(panel) {
-                [workspaceSelectionPanel, workspaceOnboardingPanel, workspaceCreateProjectPanel].forEach((entry) => {
+                [workspaceLoginPanel, workspaceSelectionPanel, workspaceOnboardingPanel, workspaceCreateProjectPanel].forEach((entry) => {
                     entry.classList.toggle('hidden', entry !== panel);
                 });
             }
@@ -444,7 +485,16 @@
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
                 workspaceModalCloseBtn.classList.toggle('hidden', !allowClose);
-                if (mode === 'onboarding') {
+                if (mode === 'login') {
+                    const invitePending = Boolean(readPendingInvite());
+                    workspaceModalEyebrow.textContent = 'Google Login';
+                    workspaceModalTitle.textContent = invitePending ? 'Accept your invite with Google' : 'Continue with Google';
+                    workspaceModalSubtitle.textContent = invitePending
+                        ? 'Sign in with your Google account to redeem the invite and continue into the right organization.'
+                        : 'Sign in with your Google account before opening an existing organization or creating a new one.';
+                    setWorkspaceOverlayPanel(workspaceLoginPanel);
+                    refreshWorkspaceLoginStatus();
+                } else if (mode === 'onboarding') {
                     workspaceModalEyebrow.textContent = 'Workspace Setup';
                     workspaceModalTitle.textContent = onboardingStep === 1 ? 'Enter your organization URL' : 'Create your first project';
                     workspaceModalSubtitle.textContent = onboardingStep === 1
@@ -540,7 +590,7 @@
             setOnboardingStep(1);
             syncAuthModeUi();
             if (authStatusText) {
-                authStatusText.textContent = accessToken ? 'Validating OIDC session…' : 'Legacy local session';
+                authStatusText.textContent = accessToken ? 'Validating Google session…' : 'Legacy local session';
             }
 
             actorRoleSelect.addEventListener('change', () => {
@@ -612,6 +662,9 @@
             }
 
             function loadPageData(pageId) {
+                if (shouldBlockProtectedAppData()) {
+                    return;
+                }
                 if (pageId === 'operator-hub') {
                     loadReadyImportsForOperatorHub();
                 }
@@ -782,8 +835,13 @@
                     console.warn('Unable to clear PKCE verifier:', error);
                 }
                 syncAuthModeUi();
-                closeWorkspaceOverlay(true);
                 setWorkspaceTextStatus(workspaceSelectorStatus, '');
+                if (isGoogleLoginConfigured()) {
+                    setAuthStatus('Google login required.');
+                    syncWorkspaceOverlayFromSession();
+                    return;
+                }
+                closeWorkspaceOverlay(true);
                 setAuthStatus('Legacy local session');
             }
 
@@ -840,7 +898,7 @@
 
             async function exchangeAuthorizationCode(code, verifier) {
                 if (!oidcConfig || !oidcConfig.token_url) {
-                    throw new Error('OIDC token endpoint is not configured.');
+                    throw new Error('Google token endpoint is not configured.');
                 }
                 const form = new URLSearchParams({
                     grant_type: 'authorization_code',
@@ -859,7 +917,7 @@
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok || !payload.access_token) {
-                    throw new Error(payload.error_description || payload.detail || 'OIDC code exchange failed.');
+                    throw new Error(payload.error_description || payload.detail || 'Google code exchange failed.');
                 }
                 persistAccessToken(payload.access_token);
             }
@@ -877,7 +935,8 @@
                     verifier = '';
                 }
                 if (!verifier) {
-                    setAuthStatus('OIDC callback is missing the PKCE verifier.');
+                    setAuthStatus('Google callback is missing the PKCE verifier.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, 'Google callback is missing the PKCE verifier.', true);
                     return;
                 }
                 await exchangeAuthorizationCode(code, verifier);
@@ -923,6 +982,11 @@
             }
 
             function syncWorkspaceOverlayFromSession() {
+                if (isGoogleLoginConfigured() && !accessToken) {
+                    openWorkspaceOverlay('login');
+                    refreshWorkspaceLoginStatus();
+                    return;
+                }
                 if (authSessionState?.needs_onboarding) {
                     onboardingResult = null;
                     setOnboardingStep(1);
@@ -952,7 +1016,8 @@
                 if (!accessToken) {
                     authSessionState = null;
                     syncAuthModeUi();
-                    setAuthStatus(oidcConfig && oidcConfig.authorize_url ? 'OIDC available. Login required.' : 'Legacy local session');
+                    setAuthStatus(isGoogleLoginConfigured() ? 'Google login required.' : 'Legacy local session');
+                    syncWorkspaceOverlayFromSession();
                     return;
                 }
                 const tenantId = getActiveTenantId();
@@ -973,7 +1038,7 @@
                 if (!response.ok) {
                     if (response.status === 401) {
                         clearBearerSession();
-                        throw new Error(payload.detail || 'OIDC session validation failed.');
+                        throw new Error(payload.detail || 'Google session validation failed.');
                     }
                     if (retryCount === 0 && (tenantId || projectId) && (response.status === 403 || response.status === 409)) {
                         if (projectId) {
@@ -983,7 +1048,7 @@
                         }
                         return hydrateAuthSession(retryCount + 1);
                     }
-                    throw new Error(payload.detail || 'OIDC session validation failed.');
+                    throw new Error(payload.detail || 'Google session validation failed.');
                 }
                 if (await redeemPendingInviteIfNeeded()) {
                     return hydrateAuthSession(retryCount + 1);
@@ -991,7 +1056,7 @@
                 applyAuthSessionPayload(payload);
                 const workspaceBits = [payload.tenant_id, payload.project_id].filter(Boolean);
                 setAuthStatus(
-                    `OIDC ${payload.display_name || payload.actor_id || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
+                    `Google ${payload.display_name || payload.actor_id || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
                 );
                 syncWorkspaceOverlayFromSession();
                 return payload;
@@ -1001,9 +1066,12 @@
                 captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
-                    setAuthStatus('OIDC is not configured on the backend.');
+                    setAuthStatus('Google login is not configured on the backend.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, 'Google login is not configured on the backend.', true);
                     return;
                 }
+                setAuthStatus('Redirecting to Google…');
+                setWorkspaceTextStatus(workspaceLoginStatus, 'Redirecting to Google…');
                 const verifier = randomVerifier();
                 const challenge = await sha256Digest(verifier);
                 try {
@@ -1067,7 +1135,7 @@
                 if (!response.ok) {
                     if (response.status === 401 && accessToken) {
                         clearBearerSession();
-                        setAuthStatus('OIDC session expired.');
+                        setAuthStatus('Google session expired.');
                     }
                     const error = new Error(payload.detail || payload.message || `Request failed (${response.status})`);
                     error.status = response.status;
@@ -1104,7 +1172,16 @@
                 try {
                     await startOidcLogin();
                 } catch (error) {
-                    setAuthStatus(error.message || 'OIDC login failed.');
+                    setAuthStatus(error.message || 'Google login failed.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, error.message || 'Google login failed.', true);
+                }
+            });
+            workspaceGoogleLoginBtn.addEventListener('click', async () => {
+                try {
+                    await startOidcLogin();
+                } catch (error) {
+                    setAuthStatus(error.message || 'Google login failed.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, error.message || 'Google login failed.', true);
                 }
             });
 
@@ -1297,6 +1374,9 @@
                             onboardingResult.project?.project_id || projectId,
                         );
                         await hydrateAuthSession();
+                        if (isAuthenticatedWorkspaceReady()) {
+                            activatePage(activePageId);
+                        }
                         closeWorkspaceOverlay(true);
                         setWorkspaceTextStatus(workspaceSelectorStatus, `Created ${organizationId} / ${projectId}.`);
                     } catch (error) {
@@ -5103,17 +5183,15 @@
             async function initializeAuthSession() {
                 captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
+                syncAuthModeUi();
                 try {
                     await handleOidcRedirect();
                     await hydrateAuthSession();
                 } catch (error) {
-                    setAuthStatus(error.message || 'OIDC session initialization failed.');
+                    setAuthStatus(error.message || 'Google session initialization failed.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, error.message || 'Google session initialization failed.', true);
                 }
-                if (!accessToken && readPendingInvite()) {
-                    setAuthStatus('Project invite detected. Use OIDC Login to redeem it.');
-                    openWorkspaceOverlay('selection', { allowClose: true });
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Log in, then redeem the invite into the target organization space and project.');
-                }
+                syncWorkspaceOverlayFromSession();
             }
 
             // Check status on page load and then every 30 seconds.

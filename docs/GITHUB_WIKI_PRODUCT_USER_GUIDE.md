@@ -23,26 +23,26 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
-| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in from the sidebar after you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
-| `Project` | Select | In OIDC mode, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
+| `Organization Space` | Select | After Google login, choose which organization space to operate in from the sidebar once you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
+| `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
 | `Actor Role` | Select | Legacy local/demo only. Choose the effective operator role for header-based auth. | `Admin` | Requests run with full admin permissions in local/demo mode. |
 | `Actor ID` | Text box | Legacy local/demo only. Enter the operator identifier recorded in audit logs. | `ops_alice` | Actions are attributed to `ops_alice`. |
 | `Tenant ID` | Text box | Legacy local/demo only. Enter the organization-space id to send as `x-tenant-id`. | `default` | API requests scope to that organization space. |
 | `Project ID` | Text box | Legacy local/demo only. Enter the project id to send as `x-project-id`. | `default` | API requests scope to that project. |
-| `Auth Session` | Status text | Read-only session state. | `OIDC ops_alice @ northstar / liveops` | Confirms the current authenticated actor and active workspace. |
-| `OIDC Login` | Button | Starts the PKCE OIDC browser login flow. | None | Browser redirects to the identity provider and returns with a bearer token. |
+| `Auth Session` | Status text | Read-only session state. | `Google ops_alice @ northstar / liveops` | Confirms the current authenticated actor and active workspace. |
+| `Continue with Google` | Button | Starts the PKCE Google browser login flow. | None | Browser redirects to Google and returns with a bearer token. |
 | `Logout` | Button | Clears the local bearer token and, when configured, redirects to the IdP logout URL. | None | Session returns to local/demo or logged-out state. |
-| `API Key` | Password box | Optional only for legacy local/demo auth. Leave empty in normal OIDC production use. | `local-dev-key` | Added as `x-api-key` in local/demo mode. |
+| `API Key` | Password box | Optional only for legacy local/demo auth. Leave empty in normal Google login production use. | `local-dev-key` | Added as `x-api-key` in local/demo mode. |
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
 | `Dark Mode` switch | Checkbox | Toggles the theme and stores it in local storage. | Checked | UI switches to dark theme. |
 | Sidebar module links | Navigation buttons | Open the target product module. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
-1. Use `OIDC Login`.
-2. If this is your first login, complete the onboarding wizard:
+1. Use `Continue with Google`.
+2. If this is your first login after Google sign-in, complete the onboarding wizard:
    - enter the `Organization URL`
    - continue to the `Project Name`
    - create the first workspace
@@ -55,6 +55,17 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
 
 ### 2.3 Onboarding And Workspace Overlays
+
+#### Google login gate
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, then returns with an authenticated bearer token. |
+| Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
+
+Every user now passes through the Google login gate first. After successful sign-in, the console does one of two things automatically:
+- opens the organization-space onboarding wizard if the user has no memberships yet
+- enters the existing organization and project, or opens the workspace selector if the user has more than one choice
 
 #### Organization-space onboarding wizard
 
@@ -118,8 +129,8 @@ The console now asks for the org URL directly and generates the internal organiz
 As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
 #### Invite redemption behavior
-- If the browser opens a URL containing `invite_code`, the console stores that invite locally before OIDC login.
-- After successful OIDC login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem` first, then switches normal authenticated traffic to the org-scoped path shape `/{organization_id}/v1/...`.
+- If the browser opens a URL containing `invite_code`, the console stores that invite locally before Google login.
+- After successful Google login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem` first, then switches normal authenticated traffic to the org-scoped path shape `/{organization_id}/v1/...`.
 - On success, the active organization space and project switch to the invite target.
 
 ---

@@ -79,6 +79,8 @@ def test_root_serves_frontend_shell(client):
     assert "text/html" in resp.headers["content-type"]
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
+    assert "workspace-login-panel" in resp.text
+    assert "Continue with Google" in resp.text
     assert "workspace-org-url-input" in resp.text
     assert "workspace-selection-resolve-btn" in resp.text
 
