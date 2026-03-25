@@ -413,7 +413,7 @@ The Imports page now keeps restart-time load lighter:
 | `OIDC_TOKEN_URL` | Google token URL for PKCE code exchange | empty |
 | `OIDC_LOGOUT_URL` | Optional future IdP logout redirect URL; the current operator console logout returns to the organization URL gate without using this redirect | empty |
 | `OIDC_JWT_SIGNING_SECRET` | HS256 signing secret for local/test bearer-token validation | empty |
-| `GOOGLE_OIDC_CLIENT_ID` | Optional shortcut for Google Sign-In; auto-fills Google issuer/JWKS/authorize/token defaults | empty |
+| `GOOGLE_OIDC_CLIENT_ID` | Optional shortcut for Google Sign-In; auto-fills Google issuer/JWKS/authorize/token defaults and drives the browser ID-token login flow | empty |
 | `GOOGLE_OIDC_HOSTED_DOMAIN` | Optional Google Workspace hosted-domain restriction (`hd` claim) | empty |
 | `CORS_ALLOWED_ORIGINS` | Explicit browser origins allowed in production | `*` |
 | `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |
@@ -427,7 +427,7 @@ The Imports page now keeps restart-time load lighter:
 | `MAX_EXPORT_JOBS_PER_TENANT` | Tenant limit for active exports | `20` |
 | `MAX_COPILOT_REPORTS_PER_TENANT` | Tenant limit for stored reports | `50` |
 
-If you want Google auth specifically, the minimum backend setup is `GOOGLE_OIDC_CLIENT_ID=<your Google OAuth client id>` plus `LEGACY_HEADER_AUTH_ENABLED=false`. The app will automatically use Google OIDC defaults (`https://accounts.google.com`, Google JWKS, Google authorize URL, Google token URL). Add `GOOGLE_OIDC_HOSTED_DOMAIN=<your workspace domain>` if you want to restrict sign-in to a Google Workspace domain.
+If you want Google auth specifically, the minimum backend setup is `GOOGLE_OIDC_CLIENT_ID=<your Google OAuth client id>` plus `LEGACY_HEADER_AUTH_ENABLED=false`. The app will automatically use Google OIDC defaults (`https://accounts.google.com`, Google JWKS, Google authorize URL, Google token URL) and use Google Identity Services in the browser so a Google client secret is not required for sign-in. Add `GOOGLE_OIDC_HOSTED_DOMAIN=<your workspace domain>` if you want to restrict sign-in to a Google Workspace domain.
 
 ## Production Deployment
 
