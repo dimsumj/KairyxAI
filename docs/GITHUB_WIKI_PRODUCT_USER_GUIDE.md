@@ -23,7 +23,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
-| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
+| `Organization Space` | Select | In OIDC mode, choose which organization space to operate in from the sidebar after you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
 | `Project` | Select | In OIDC mode, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 ### 2.2 Recommended First-Time Path
 1. Use `OIDC Login`.
 2. If this is your first login, complete the onboarding wizard:
-   - enter the `Organization Name`
+   - enter the `Organization URL`
    - continue to the `Project Name`
    - create the first workspace
 3. If you already belong to more than one organization space or project, use the `Switcher` button or the sidebar selects to choose the active workspace.
@@ -60,12 +60,12 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Organization Name` | Text box | Enter the display name for the new organization space. | `North Star Games` | The name is shown in the workspace selectors and summary card. |
-| `Continue` | Button | Moves from the organization step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
+| `Organization URL` | Text box | Enter the URL slug that should appear after the base URL. | `northstar` | The console stores this as the internal `organization_id` and uses it in the org-scoped path. |
+| `Continue` | Button | Moves from the organization URL step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
 | `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes and the new workspace becomes active. |
 
-The console now generates the internal `organization_id` and `project_id` automatically from the names you type. Those ids are still what the backend stores as `tenant_id` and `project_id`, but they are not exposed as editable fields in the current onboarding UI.
+The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. Those ids are what the backend stores as `tenant_id` and `project_id`, but they are not exposed as editable fields in the current onboarding UI.
 
 #### Sample onboarding request
 ```json
@@ -100,7 +100,8 @@ The console now generates the internal `organization_id` and `project_id` automa
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Organization Space` | Select | Choose the organization space to browse. | `northstar` | The project list updates for that organization space. |
+| `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
+| `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization space. | `sandbox` | The selected project becomes the active console context after continue. |
 | `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes and the console reloads data for that org/project. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization space. | `Growth Sandbox` | The console generates the internal project id automatically. |

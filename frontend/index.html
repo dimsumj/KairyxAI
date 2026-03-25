@@ -1315,104 +1315,120 @@ dimensions: campaign,country,platform</pre>
 
     <div id="workspace-overlay" class="workspace-overlay hidden" aria-hidden="true">
         <div class="workspace-overlay-backdrop"></div>
-        <div class="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
-            <div class="workspace-modal-header">
-                <div>
-                    <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Setup</div>
-                    <h2 id="workspace-modal-title">Name your organization</h2>
-                    <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Start with an organization name. The first project comes next.</p>
-                    <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
-                </div>
-                <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
+        <div class="workspace-shell">
+            <div class="workspace-brand-lockup" aria-hidden="true">
+                <div class="workspace-brand-mark">K</div>
+                <div class="workspace-brand-wordmark">Kairyx AI</div>
             </div>
+            <div class="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
+                <div class="workspace-modal-header">
+                    <div>
+                        <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Setup</div>
+                        <h2 id="workspace-modal-title">Enter your organization URL</h2>
+                        <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Type the organization URL you want to use. The first project comes next.</p>
+                        <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
+                    </div>
+                    <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
+                </div>
 
-            <div id="workspace-selection-panel" class="workspace-panel hidden">
-                <div class="form-group">
-                    <label for="workspace-modal-org-select">Organization Space</label>
-                    <select id="workspace-modal-org-select">
+                <div id="workspace-selection-panel" class="workspace-panel hidden">
+                    <select id="workspace-modal-org-select" class="hidden" aria-hidden="true">
                         <option value="">Select an organization space</option>
                     </select>
+                    <div id="workspace-selection-org-stage" class="workspace-stage">
+                        <label class="workspace-field-label" for="workspace-org-url-input">Organization URL</label>
+                        <div class="workspace-url-row">
+                            <span id="workspace-selection-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
+                            <input type="text" id="workspace-org-url-input" class="workspace-url-input" placeholder="your-org-url" list="workspace-org-suggestions" autocomplete="off" spellcheck="false">
+                        </div>
+                        <datalist id="workspace-org-suggestions"></datalist>
+                        <div class="workspace-helper-text">Use the organization URL that appears after the base URL.</div>
+                    </div>
+                    <div id="workspace-selection-project-stage" class="workspace-stage hidden">
+                        <div id="workspace-selection-current-org" class="workspace-selected-context"></div>
+                        <div class="workspace-tip-list">
+                            <div id="workspace-selection-copy">If this organization space already has a project, use it. Otherwise add a new project to it.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="workspace-modal-project-select">Existing Project</label>
+                            <select id="workspace-modal-project-select">
+                                <option value="">Select an existing project</option>
+                            </select>
+                        </div>
+                        <div class="workspace-divider">or</div>
+                        <div class="form-group">
+                            <label for="workspace-create-project-name">New Project Name</label>
+                            <input type="text" id="workspace-create-project-name" placeholder="Live Ops">
+                        </div>
+                        <input type="text" id="workspace-create-project-id" class="hidden" aria-hidden="true">
+                        <textarea id="workspace-create-project-description" class="hidden" aria-hidden="true"></textarea>
+                    </div>
+                    <div id="workspace-selection-status" class="workspace-panel-status"></div>
+                    <div class="workspace-modal-actions">
+                        <button type="button" id="workspace-selection-back-btn" class="hidden">Back</button>
+                        <button type="button" id="workspace-selection-resolve-btn">Continue</button>
+                        <button type="button" id="workspace-selection-continue-btn" class="hidden">Use Existing Project</button>
+                        <button type="button" id="workspace-selection-create-project-btn" class="hidden">Add New Project</button>
+                    </div>
                 </div>
-                <div class="workspace-tip-list">
-                    <div id="workspace-selection-copy">If this organization space already has a project, use it. Otherwise add a new project to it.</div>
-                </div>
-                <div class="form-group">
-                    <label for="workspace-modal-project-select">Existing Project</label>
-                    <select id="workspace-modal-project-select">
-                        <option value="">Select an existing project</option>
+
+                <div id="workspace-onboarding-panel" class="workspace-panel hidden">
+                    <div id="workspace-onboarding-step-label" class="workspace-step-label">Step 1 of 2</div>
+
+                    <div class="workspace-step-panel" data-step="1">
+                        <label class="workspace-field-label" for="onboarding-organization-name">Organization URL</label>
+                        <div class="workspace-url-row">
+                            <span id="workspace-onboarding-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
+                            <input type="text" id="onboarding-organization-name" class="workspace-url-input" placeholder="your-org-url" autocomplete="off" spellcheck="false">
+                        </div>
+                        <input type="text" id="onboarding-organization-id" class="hidden" aria-hidden="true">
+                        <div class="workspace-helper-text">This becomes the organization path and API slug after the base URL.</div>
+                    </div>
+
+                    <div class="workspace-step-panel hidden" data-step="2">
+                        <div class="form-group">
+                            <label for="onboarding-project-name">Project Name</label>
+                            <input type="text" id="onboarding-project-name" placeholder="Live Ops">
+                        </div>
+                        <input type="text" id="onboarding-project-id" class="hidden" aria-hidden="true">
+                        <textarea id="onboarding-project-description" class="hidden" aria-hidden="true"></textarea>
+                        <div class="workspace-helper-text">Create the first project inside this organization space.</div>
+                    </div>
+
+                    <input type="email" id="onboarding-invite-email" class="hidden" aria-hidden="true">
+                    <input type="text" id="onboarding-invite-display-name" class="hidden" aria-hidden="true">
+                    <select id="onboarding-invite-org-role" class="hidden" aria-hidden="true">
+                        <option value="member" selected>Member</option>
                     </select>
+                    <select id="onboarding-invite-project-role" class="hidden" aria-hidden="true">
+                        <option value="operator" selected>Operator</option>
+                    </select>
+                    <textarea id="onboarding-invite-link" class="hidden" aria-hidden="true"></textarea>
+                    <div id="onboarding-invite-status" class="hidden" aria-hidden="true"></div>
+                    <div id="workspace-onboarding-status" class="workspace-panel-status"></div>
+                    <div class="workspace-modal-actions">
+                        <button type="button" id="onboarding-back-btn">Back</button>
+                        <button type="button" id="onboarding-next-btn">Continue</button>
+                        <button type="button" id="onboarding-generate-invite-btn" class="hidden">Generate Invite Link</button>
+                        <button type="button" id="onboarding-connect-btn" class="hidden">Connect Now</button>
+                        <button type="button" id="onboarding-skip-btn" class="hidden">Skip for Now</button>
+                    </div>
                 </div>
-                <div class="workspace-divider">or</div>
-                <div class="form-group">
-                    <label for="workspace-create-project-name">New Project Name</label>
-                    <input type="text" id="workspace-create-project-name" placeholder="Live Ops">
-                </div>
-                <input type="text" id="workspace-create-project-id" class="hidden" aria-hidden="true">
-                <textarea id="workspace-create-project-description" class="hidden" aria-hidden="true"></textarea>
-                <div id="workspace-selection-status" class="workspace-panel-status"></div>
-                <div class="workspace-modal-actions">
-                    <button type="button" id="workspace-selection-continue-btn">Use Existing Project</button>
-                    <button type="button" id="workspace-selection-create-project-btn">Add New Project</button>
-                </div>
-            </div>
 
-            <div id="workspace-onboarding-panel" class="workspace-panel hidden">
-                <div id="workspace-onboarding-step-label" class="workspace-step-label">Step 1 of 2</div>
-
-                <div class="workspace-step-panel" data-step="1">
+                <div id="workspace-create-project-panel" class="workspace-panel hidden">
+                    <div id="workspace-create-project-current-org" class="workspace-selected-context"></div>
                     <div class="form-group">
-                        <label for="onboarding-organization-name">Organization Name</label>
-                        <input type="text" id="onboarding-organization-name" placeholder="North Star Games">
+                        <label for="workspace-create-project-inline-name">Project Name</label>
+                        <input type="text" id="workspace-create-project-inline-name" placeholder="Growth Sandbox">
                     </div>
-                    <input type="text" id="onboarding-organization-id" class="hidden" aria-hidden="true">
-                    <div class="workspace-tip-list">
-                        <div>Enter the organization name. We generate the internal id automatically.</div>
+                    <input type="text" id="workspace-create-project-inline-id" class="hidden" aria-hidden="true">
+                    <textarea id="workspace-create-project-inline-description" class="hidden" aria-hidden="true"></textarea>
+                    <div class="workspace-helper-text">Create another project inside the selected organization space.</div>
+                    <div id="workspace-create-project-status" class="workspace-panel-status"></div>
+                    <div class="workspace-modal-actions">
+                        <button type="button" id="workspace-create-project-cancel-btn">Cancel</button>
+                        <button type="button" id="workspace-create-project-submit-btn">Create Project</button>
                     </div>
-                </div>
-
-                <div class="workspace-step-panel hidden" data-step="2">
-                    <div class="form-group">
-                        <label for="onboarding-project-name">Project Name</label>
-                        <input type="text" id="onboarding-project-name" placeholder="Live Ops">
-                    </div>
-                    <input type="text" id="onboarding-project-id" class="hidden" aria-hidden="true">
-                    <textarea id="onboarding-project-description" class="hidden" aria-hidden="true"></textarea>
-                    <div class="workspace-tip-list">
-                        <div>Create the first project inside this organization space.</div>
-                    </div>
-                </div>
-
-                <input type="email" id="onboarding-invite-email" class="hidden" aria-hidden="true">
-                <input type="text" id="onboarding-invite-display-name" class="hidden" aria-hidden="true">
-                <select id="onboarding-invite-org-role" class="hidden" aria-hidden="true">
-                    <option value="member" selected>Member</option>
-                </select>
-                <select id="onboarding-invite-project-role" class="hidden" aria-hidden="true">
-                    <option value="operator" selected>Operator</option>
-                </select>
-                <textarea id="onboarding-invite-link" class="hidden" aria-hidden="true"></textarea>
-                <div id="onboarding-invite-status" class="hidden" aria-hidden="true"></div>
-                <div id="workspace-onboarding-status" class="workspace-panel-status"></div>
-                <div class="workspace-modal-actions">
-                    <button type="button" id="onboarding-back-btn">Back</button>
-                    <button type="button" id="onboarding-next-btn">Continue</button>
-                    <button type="button" id="onboarding-generate-invite-btn" class="hidden">Generate Invite Link</button>
-                    <button type="button" id="onboarding-connect-btn" class="hidden">Connect Now</button>
-                    <button type="button" id="onboarding-skip-btn" class="hidden">Skip for Now</button>
-                </div>
-            </div>
-
-            <div id="workspace-create-project-panel" class="workspace-panel hidden">
-                <div class="form-group">
-                    <label for="workspace-create-project-inline-name">Project Name</label>
-                    <input type="text" id="workspace-create-project-inline-name" placeholder="Growth Sandbox">
-                </div>
-                <input type="text" id="workspace-create-project-inline-id" class="hidden" aria-hidden="true">
-                <textarea id="workspace-create-project-inline-description" class="hidden" aria-hidden="true"></textarea>
-                <div id="workspace-create-project-status" class="workspace-panel-status"></div>
-                <div class="workspace-modal-actions">
-                    <button type="button" id="workspace-create-project-cancel-btn">Cancel</button>
-                    <button type="button" id="workspace-create-project-submit-btn">Create Project</button>
                 </div>
             </div>
         </div>

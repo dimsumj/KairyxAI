@@ -176,8 +176,8 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
-- a full-screen first-login onboarding gate that asks for the organization name first and the first project name second
-- a full-screen workspace gate that lets users choose an existing project or add a new one inside the selected organization space
+- a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
+- a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
