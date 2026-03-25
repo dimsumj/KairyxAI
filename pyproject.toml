@@ -12,6 +12,7 @@ dependencies = [
     "httpx",
     "numpy",
     "pandas",
+    "PyJWT[crypto]>=2.10",
     "psycopg[binary]>=3.2",
     "requests",
     "sqlalchemy>=2.0",
