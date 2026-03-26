@@ -15,5 +15,5 @@ export default function App() {
     initializeOperatorConsole();
   }, []);
 
-  return <div dangerouslySetInnerHTML={{ __html: consoleMarkup }} />;
+  return <div className="react-shell-root" dangerouslySetInnerHTML={{ __html: consoleMarkup }} />;
 }

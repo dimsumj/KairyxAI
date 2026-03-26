@@ -1193,8 +1193,24 @@
             overflow: hidden;
         }
 
+        #root,
+        .react-shell-root {
+            display: flex;
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
         body.workspace-gated {
             background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+        }
+
+        body.workspace-gated #root,
+        body.workspace-gated .react-shell-root {
+            display: block;
+            min-height: 100vh;
+            overflow: visible;
         }
 
         .sidebar-backdrop {
@@ -1933,6 +1949,13 @@
                 display: block;
                 height: auto;
                 overflow: auto;
+            }
+
+            #root,
+            .react-shell-root {
+                display: block;
+                min-height: 100vh;
+                overflow: visible;
             }
 
             .sidebar {
