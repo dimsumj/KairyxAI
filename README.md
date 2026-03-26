@@ -185,6 +185,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
+- imports-page loaders that now wait for a valid organization/project workspace before loading source and import data, so deployed Google-login environments do not replace the import form with transient raw membership errors during session handoff
 - invite-link redemption support for project access after login
 - a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace and session controls while leaving appearance control in the top-right header
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured

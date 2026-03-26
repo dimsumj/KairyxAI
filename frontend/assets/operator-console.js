@@ -4405,6 +4405,7 @@ export function initializeOperatorConsole() {
 
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
+            const importSourceStatus = document.getElementById('import-source-status');
             const importListContainer = document.getElementById('import-list-container');
             const importListStatus = document.getElementById('import-list-status');
             const importDetailSelect = document.getElementById('import-detail-select');
@@ -4423,25 +4424,45 @@ export function initializeOperatorConsole() {
                 const sourceGroup = document.getElementById('cohort-source-select').parentElement;
                 const startDateGroup = document.getElementById('start-date-cohort').parentElement;
                 const endDateGroup = document.getElementById('end-date-cohort').parentElement;
+                const setImportSourceFormVisible = (visible) => {
+                    sourceGroup.style.display = visible ? 'block' : 'none';
+                    startDateGroup.style.display = visible ? 'block' : 'none';
+                    endDateGroup.style.display = visible ? 'block' : 'none';
+                    importDataBtn.style.display = visible ? 'inline-block' : 'none';
+                };
+                const ensureConfigMessage = (message = '') => {
+                    let messageEl = importCard.querySelector('.config-message');
+                    if (!message) {
+                        messageEl?.remove();
+                        return;
+                    }
+                    if (!messageEl) {
+                        messageEl = document.createElement('p');
+                        messageEl.className = 'config-message';
+                        importCard.insertBefore(messageEl, sourceGroup);
+                    }
+                    messageEl.textContent = message;
+                };
+
+                if (shouldBlockProtectedAppData()) {
+                    setImportSourceFormVisible(false);
+                    ensureConfigMessage('');
+                    setInlineStatus(
+                        importSourceStatus,
+                        accessToken ? 'Finish workspace setup to load import sources.' : '',
+                        false,
+                    );
+                    return;
+                }
 
                 try {
                     await refreshConnectorsState();
                     const sources = getConfiguredSourcesFromState();
 
                     if (!sources || sources.length === 0) {
-                        // Hide form elements and show message
-                        sourceGroup.style.display = 'none';
-                        startDateGroup.style.display = 'none';
-                        endDateGroup.style.display = 'none';
-                        importDataBtn.style.display = 'none';
-                        
-                        let messageEl = importCard.querySelector('.config-message');
-                        if (!messageEl) {
-                            messageEl = document.createElement('p');
-                            messageEl.className = 'config-message';
-                            messageEl.textContent = 'Please configure a data source in the Connectors section first.';
-                            importCard.insertBefore(messageEl, sourceGroup);
-                        }
+                        setImportSourceFormVisible(false);
+                        ensureConfigMessage('Please configure a data source in the Connectors section first.');
+                        setInlineStatus(importSourceStatus, '');
                     } else {
                         sourceSelect.innerHTML = ''; // Clear existing options
                         sources.forEach(source => {
@@ -4450,20 +4471,14 @@ export function initializeOperatorConsole() {
                             option.textContent = source.name;
                             sourceSelect.appendChild(option);
                         });
-                        // Ensure form elements are visible
-                        sourceGroup.style.display = 'block';
-                        startDateGroup.style.display = 'block';
-                        endDateGroup.style.display = 'block';
-                        importDataBtn.style.display = 'inline-block';
-
-                        let messageEl = importCard.querySelector('.config-message');
-                        if (messageEl) {
-                            messageEl.remove();
-                        }
+                        setImportSourceFormVisible(true);
+                        ensureConfigMessage('');
+                        setInlineStatus(importSourceStatus, '');
                     }
                 } catch (error) {
-                    const importCard = importDataBtn.parentElement;
-                    importCard.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                    setImportSourceFormVisible(false);
+                    ensureConfigMessage('');
+                    setInlineStatus(importSourceStatus, error.message || 'Failed to load import sources.', true);
                 }
             }
 
@@ -4590,6 +4605,14 @@ export function initializeOperatorConsole() {
             }
 
             async function loadImportedDataList() {
+                if (shouldBlockProtectedAppData()) {
+                    syncImportListPolling([]);
+                    if (!importListContainer.innerHTML.trim()) {
+                        importListContainer.innerHTML = '<p>Finish workspace setup to load imports.</p>';
+                    }
+                    setInlineStatus(importListStatus, accessToken ? 'Finish workspace setup to load imports.' : '');
+                    return;
+                }
                 // Show loading message only if the container is empty initially
                 if (!importListContainer.innerHTML.trim()) {
                     importListContainer.innerHTML = '<p>Loading...</p>';

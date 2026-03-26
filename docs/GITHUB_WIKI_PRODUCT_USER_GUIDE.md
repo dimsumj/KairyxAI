@@ -226,6 +226,8 @@ Prediction Engine: AI + Cloud
 
 ### 3.2 Import Control Plane
 
+The import source form and imported-data list now wait for a resolved organization and project workspace before they load. During Google-login session handoff or workspace switching, the page stays in a neutral waiting state instead of replacing the import form with a raw membership error.
+
 #### Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
