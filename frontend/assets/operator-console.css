@@ -563,23 +563,37 @@
         .workspace-modal input,
         .workspace-modal select,
         .workspace-modal textarea {
-            background: #ffffff;
-            color: #1f2937;
-            border: 1px solid #d9e2ec;
+            background: #ffffff !important;
+            color: #1f2937 !important;
+            border: 1px solid #c7d5e6 !important;
             border-radius: 14px;
+            -webkit-text-fill-color: #1f2937;
+            caret-color: #1f2937;
         }
 
         .workspace-modal input::placeholder,
         .workspace-modal textarea::placeholder {
-            color: #98a2b3;
+            color: #8a97ab !important;
+            opacity: 1;
+        }
+
+        .workspace-modal input:-webkit-autofill,
+        .workspace-modal input:-webkit-autofill:hover,
+        .workspace-modal input:-webkit-autofill:focus,
+        .workspace-modal textarea:-webkit-autofill,
+        .workspace-modal textarea:-webkit-autofill:hover,
+        .workspace-modal textarea:-webkit-autofill:focus {
+            -webkit-text-fill-color: #1f2937;
+            box-shadow: 0 0 0 1000px #ffffff inset;
+            transition: background-color 9999s ease-out 0s;
         }
 
         .workspace-modal input:focus,
         .workspace-modal select:focus,
         .workspace-modal textarea:focus {
             outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+            border-color: #3b6fdd;
+            box-shadow: 0 0 0 3px rgba(59, 111, 221, 0.10);
         }
 
         .workspace-connect-grid {
