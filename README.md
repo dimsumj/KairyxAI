@@ -147,7 +147,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: React/Vite operator console bundle served by the backend, with source-shell fallback for unbuilt local environments
-- Operator auth: Google login via OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with self-serve organization-space onboarding and legacy header auth kept only as a hidden local/demo compatibility path
+- Operator auth: Google login via OIDC, using the returned Google ID token as the bearer JWT for organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with self-serve organization-space onboarding and legacy header auth kept only as a hidden local/demo compatibility path
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 

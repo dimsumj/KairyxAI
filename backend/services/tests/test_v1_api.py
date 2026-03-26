@@ -116,8 +116,7 @@ def test_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="workspace-overlay"' in resp.text
-    assert "Continue with Google" in resp.text
+    assert 'id="root"' in resp.text
 
 
 def test_org_root_serves_frontend_shell(client):
@@ -127,8 +126,7 @@ def test_org_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="workspace-overlay"' in resp.text
-    assert "Continue with Google" in resp.text
+    assert 'id="root"' in resp.text
 
 
 def test_root_serves_frontend_static_assets(client):

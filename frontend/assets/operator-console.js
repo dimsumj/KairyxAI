@@ -1608,6 +1608,21 @@ export function initializeOperatorConsole() {
                 return `${window.location.origin}/`;
             }
 
+            function isLikelyJwt(value) {
+                const token = String(value || '').trim();
+                return token.split('.').length === 3;
+            }
+
+            function selectOidcBearerToken(payload = {}) {
+                if (isLikelyJwt(payload.id_token)) {
+                    return String(payload.id_token).trim();
+                }
+                if (isLikelyJwt(payload.access_token)) {
+                    return String(payload.access_token).trim();
+                }
+                throw new Error('Google login did not return a valid ID token for the Kairyx session.');
+            }
+
             function delay(ms) {
                 return new Promise((resolve) => {
                     window.setTimeout(resolve, ms);
@@ -1644,10 +1659,10 @@ export function initializeOperatorConsole() {
                     body: form.toString(),
                 });
                 const payload = await response.json().catch(() => ({}));
-                if (!response.ok || !payload.access_token) {
+                if (!response.ok) {
                     throw new Error(payload.error_description || payload.detail || 'Google code exchange failed.');
                 }
-                persistAccessToken(payload.access_token);
+                persistAccessToken(selectOidcBearerToken(payload));
             }
 
             async function handleOidcRedirect() {

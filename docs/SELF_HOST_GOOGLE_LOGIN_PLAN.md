@@ -57,7 +57,7 @@ Current behavior:
 
 - the frontend starts Google login from [frontend/assets/operator-console.js](frontend/assets/operator-console.js)
 - the browser exchanges the authorization code directly against `OIDC_TOKEN_URL`
-- the frontend stores `payload.access_token` as the API bearer token
+- the frontend stores the returned Google `id_token` as the API bearer token
 - the backend validator in [backend/services/app/core/auth.py](backend/services/app/core/auth.py) expects a JWT-like bearer token with `iss`, `aud`, and `sub`
 
 That is not a safe or reliable long-term Google production model for self-hosting:
