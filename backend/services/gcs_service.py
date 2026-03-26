@@ -43,7 +43,9 @@ class GcsService:
 
     def _init_mock_backend(self):
         self._mock_root = Path(resolve_runtime_file_path(Path(".cache") / "raw", ensure_parent=True))
-        self._legacy_bucket_path = str(resolve_runtime_file_path(Path(".gcs_bucket") / self.bucket_name, ensure_parent=True))
+        self._legacy_bucket_path = str(
+            resolve_runtime_file_path(Path(".gcs_bucket") / self.bucket_name, ensure_parent=True)
+        )
         os.makedirs(self._mock_root, exist_ok=True)
 
     def _normalize_scope_component(self, raw_value: str | None, default: str = "default") -> str:
@@ -61,10 +63,7 @@ class GcsService:
         return self._normalize_scope_component(raw_value)
 
     def _scope_prefix(self, tenant_scope: str | None = None, project_scope: str | None = None) -> str:
-        return (
-            f"tenants/{self._normalize_scope_component(tenant_scope or self._tenant_scope_key())}"
-            f"/projects/{self._normalize_scope_component(project_scope or self._project_scope_key())}"
-        )
+        return f"tenants/{self._normalize_scope_component(tenant_scope or self._tenant_scope_key())}/projects/{self._normalize_scope_component(project_scope or self._project_scope_key())}"
 
     def _tenant_blob_name(self, blob_name: str) -> str:
         normalized = str(blob_name).lstrip("/")
@@ -87,12 +86,7 @@ class GcsService:
         )
 
     def _mock_bucket_path(self, tenant_scope: str | None = None, project_scope: str | None = None) -> str:
-        bucket_path = (
-            self._mock_root
-            / self._normalize_scope_component(tenant_scope or self._tenant_scope_key())
-            / self._normalize_scope_component(project_scope or self._project_scope_key())
-            / self.bucket_name
-        )
+        bucket_path = self._mock_root / self._normalize_scope_component(tenant_scope or self._tenant_scope_key()) / self._normalize_scope_component(project_scope or self._project_scope_key()) / self.bucket_name
         os.makedirs(bucket_path, exist_ok=True)
         return str(bucket_path)
 
@@ -142,9 +136,7 @@ class GcsService:
             print(f"Uploaded {len(events)} events to GCS at: {gcs_path}")
             return gcs_path
 
-        scoped_bucket_path = self._mock_bucket_path(
-            *(self._extract_blob_scope(destination_blob_name) or (self._tenant_scope_key(), self._project_scope_key()))
-        )
+        scoped_bucket_path = self._mock_bucket_path(*(self._extract_blob_scope(destination_blob_name) or (self._tenant_scope_key(), self._project_scope_key())))
         file_path = os.path.join(scoped_bucket_path, destination_blob_name)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "w") as f:

@@ -1,5 +1,6 @@
 import sqlite3
 
+from app.core.request_context import RequestContext, request_context
 from dataflow.pipeline import DataflowNormalizationRunner
 from bigquery_service import BigQueryService
 from gcs_service import GcsService
@@ -115,3 +116,90 @@ def test_dataflow_runner_falls_back_when_local_identity_store_is_unavailable(mon
     latest = bigquery_service.get_player_latest_state("player-1")
     assert latest is not None
     assert latest["canonical_user_id"] == "uid:player-1"
+
+
+def test_gcs_service_download_resolves_explicit_blob_scope_across_contexts(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(tmp_path / "runtime"))
+
+    gcs_service = GcsService(bucket_name="test-bucket")
+    writer_scope = RequestContext(
+        actor_id="writer",
+        actor_role="admin",
+        tenant_id="default",
+        project_id="default",
+        correlation_id="ctx-write",
+    )
+    reader_scope = RequestContext(
+        actor_id="reader",
+        actor_role="admin",
+        tenant_id="torpedo",
+        project_id="default",
+        correlation_id="ctx-read",
+    )
+    raw_events = [
+        {
+            "source": "dummy",
+            "player_id": "player-1",
+            "event_name": "session_start",
+            "timestamp": "2026-03-05T00:00:00",
+        }
+    ]
+
+    with request_context(writer_scope):
+        gcs_uri = gcs_service.upload_raw_events(raw_events, "raw/source=dummy/job=job-cross-scope/part-00001.jsonl")
+
+    blob_name = gcs_uri.replace("gs://test-bucket/", "")
+    with request_context(reader_scope):
+        loaded_events = gcs_service.download_raw_events(blob_name)
+
+    assert loaded_events == raw_events
+
+
+def test_gcs_service_mock_bucket_path_tracks_request_scope_dynamically(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("KAIRYX_RUNTIME_DIR", str(tmp_path / "runtime"))
+
+    ctor_scope = RequestContext(
+        actor_id="ctor",
+        actor_role="admin",
+        tenant_id="torpedo",
+        project_id="default",
+        correlation_id="ctx-ctor",
+    )
+    write_scope = RequestContext(
+        actor_id="writer",
+        actor_role="admin",
+        tenant_id="northstar",
+        project_id="alpha",
+        correlation_id="ctx-write",
+    )
+    raw_events = [
+        {
+            "source": "dummy",
+            "player_id": "player-1",
+            "event_name": "session_start",
+            "timestamp": "2026-03-05T00:00:00",
+        }
+    ]
+
+    with request_context(ctor_scope):
+        gcs_service = GcsService(bucket_name="test-bucket")
+
+    with request_context(write_scope):
+        gcs_uri = gcs_service.upload_raw_events(raw_events, "raw/source=dummy/job=job-dynamic-scope/part-00001.jsonl")
+
+    blob_name = gcs_uri.replace("gs://test-bucket/", "")
+    expected_path = (
+        tmp_path
+        / "runtime"
+        / ".cache"
+        / "raw"
+        / "northstar"
+        / "alpha"
+        / "test-bucket"
+        / blob_name
+    )
+    assert expected_path.exists()
