@@ -117,6 +117,7 @@ export function initializeOperatorConsole() {
             let activeNavItemId = 'data-core-churn-rescue';
             let activePageId = 'operator-hub';
             let expandedSidebarModuleId = 'data-core';
+            let expandedSidebarSuppressedModuleId = null;
             let navItems = [];
             let navLinks = [];
             let navSubmenuLinks = [];
@@ -278,6 +279,15 @@ export function initializeOperatorConsole() {
                 });
             }
 
+            function syncExpandedSidebarSubmenuSuppression() {
+                const suppressedModuleId = !isSidebarMobileViewport() && !document.body.classList.contains('sidebar-is-collapsed')
+                    ? expandedSidebarSuppressedModuleId
+                    : null;
+                navItems.forEach((entry) => {
+                    entry.classList.toggle('sidebar-inline-submenu-suppressed', entry.dataset.module === suppressedModuleId);
+                });
+            }
+
             function suppressCollapsedSidebarSubmenu(moduleId = null) {
                 collapsedSidebarSuppressedModuleId = moduleId || null;
                 syncCollapsedSidebarSubmenuSuppression();
@@ -289,6 +299,19 @@ export function initializeOperatorConsole() {
                 }
                 collapsedSidebarSuppressedModuleId = null;
                 syncCollapsedSidebarSubmenuSuppression();
+            }
+
+            function suppressExpandedSidebarSubmenu(moduleId = null) {
+                expandedSidebarSuppressedModuleId = moduleId || null;
+                syncExpandedSidebarSubmenuSuppression();
+            }
+
+            function clearExpandedSidebarSubmenuSuppression(moduleId = null) {
+                if (moduleId && expandedSidebarSuppressedModuleId !== moduleId) {
+                    return;
+                }
+                expandedSidebarSuppressedModuleId = null;
+                syncExpandedSidebarSubmenuSuppression();
             }
 
             function renderSidebarNav() {
@@ -1123,6 +1146,7 @@ export function initializeOperatorConsole() {
                 if (!config) return;
                 const item = findModuleItem(moduleId, preferredItemOrPageId) || getModuleItems(moduleId)[0];
                 if (!item) return;
+                clearExpandedSidebarSubmenuSuppression();
                 activeModuleId = moduleId;
                 activeNavItemId = item.id;
                 expandedSidebarModuleId = hasSidebarSubmenu(moduleId) ? moduleId : null;
@@ -1143,10 +1167,12 @@ export function initializeOperatorConsole() {
             navItems.forEach((entry) => {
                 entry.addEventListener('pointerleave', () => {
                     clearCollapsedSidebarSubmenuSuppression(entry.dataset.module);
+                    clearExpandedSidebarSubmenuSuppression(entry.dataset.module);
                 });
                 entry.addEventListener('focusout', (event) => {
                     if (!entry.contains(event.relatedTarget) && !entry.matches(':hover')) {
                         clearCollapsedSidebarSubmenuSuppression(entry.dataset.module);
+                        clearExpandedSidebarSubmenuSuppression(entry.dataset.module);
                     }
                 });
             });
@@ -1165,7 +1191,9 @@ export function initializeOperatorConsole() {
                         && expandedSidebarModuleId === moduleId
                     ) {
                         expandedSidebarModuleId = null;
+                        suppressExpandedSidebarSubmenu(moduleId);
                         syncSidebarNavState(moduleId, activeNavItemId);
+                        link.blur();
                         return;
                     }
                     activateModule(moduleId);
@@ -1272,6 +1300,7 @@ export function initializeOperatorConsole() {
 
                 document.body.classList.toggle('sidebar-is-collapsed', isCollapsed);
                 syncCollapsedSidebarSubmenuSuppression();
+                syncExpandedSidebarSubmenuSuppression();
 
                 if (sidebarCollapseBtn) {
                     sidebarCollapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
