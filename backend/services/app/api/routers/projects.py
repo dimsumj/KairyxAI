@@ -15,6 +15,10 @@ from app.core.governance import ensure_org_admin, get_governance_context, record
 router = APIRouter(tags=["projects"])
 
 
+def _commit_workspace_mutation(repository) -> None:
+    repository.session.commit()
+
+
 @router.get("/projects", response_model=dict)
 def list_projects(
     request: Request,
@@ -57,6 +61,7 @@ def create_project(
         resource_id=project["project_id"],
         payload=project,
     )
+    _commit_workspace_mutation(repository)
     return {"project": project}
 
 
@@ -94,6 +99,7 @@ def create_project_invite(
         resource_id=invite["invite_code"],
         payload=invite,
     )
+    _commit_workspace_mutation(repository)
     return {"invite": invite}
 
 
@@ -125,4 +131,5 @@ def redeem_project_invite(
         resource_id=payload.invite_code,
         payload=result,
     )
+    _commit_workspace_mutation(repository)
     return result

@@ -1553,6 +1553,12 @@ export function initializeOperatorConsole() {
                 return `${window.location.origin}/`;
             }
 
+            function delay(ms) {
+                return new Promise((resolve) => {
+                    window.setTimeout(resolve, ms);
+                });
+            }
+
             async function loadOidcConfig() {
                 try {
                     const response = await fetch(`${getApiBaseUrl(null, { forceGlobal: true })}/auth/oidc-config`);
@@ -1700,11 +1706,16 @@ export function initializeOperatorConsole() {
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
+                    const errorDetail = payload.detail || 'Google session validation failed.';
                     if (response.status === 401) {
                         clearBearerSession();
-                        throw new Error(payload.detail || 'Google session validation failed.');
+                        throw new Error(errorDetail);
                     }
-                    if (retryCount === 0 && (tenantId || projectId) && (response.status === 403 || response.status === 409)) {
+                    if ((tenantId || projectId) && (response.status === 403 || response.status === 409)) {
+                        if (retryCount < 2) {
+                            await delay(150 * (retryCount + 1));
+                            return hydrateAuthSession(retryCount + 1);
+                        }
                         if (projectId) {
                             persistWorkspaceSelection(tenantId || '', '');
                         } else {
@@ -1712,7 +1723,7 @@ export function initializeOperatorConsole() {
                         }
                         return hydrateAuthSession(retryCount + 1);
                     }
-                    throw new Error(payload.detail || 'Google session validation failed.');
+                    throw new Error(errorDetail);
                 }
                 if (await redeemPendingInviteIfNeeded()) {
                     return hydrateAuthSession(retryCount + 1);

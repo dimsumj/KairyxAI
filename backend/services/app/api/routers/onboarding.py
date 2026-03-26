@@ -11,6 +11,10 @@ from app.core.governance import get_governance_context, record_audit
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
 
+def _commit_workspace_mutation(repository) -> None:
+    repository.session.commit()
+
+
 @router.post("/organization-space", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_organization_space(
     payload: OrganizationSpaceOnboardingRequest,
@@ -47,4 +51,5 @@ def create_organization_space(
             "project": result["project"],
         },
     )
+    _commit_workspace_mutation(repository)
     return result

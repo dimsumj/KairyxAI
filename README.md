@@ -181,6 +181,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, with the main operator app shown only after the browser is on `https://<base-url>/<organization_id>`
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second, with new organization URLs limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
+- after creating the first organization and project in the gateway, the user is placed into that new organization and project by default
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
