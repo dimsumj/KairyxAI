@@ -728,6 +728,39 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function buildPathScopedWorkspaceSession(payload = {}, requestedOrganizationId = '', errorMessage = '') {
+                const organizationId = normalizeOrganizationUrl(requestedOrganizationId);
+                const activeOrganizationId = normalizeOrganizationUrl(payload?.organization_id || '');
+                if (!organizationId || !activeOrganizationId || activeOrganizationId === organizationId) {
+                    return payload;
+                }
+                const accessibleOrganizations = Array.isArray(payload?.accessible_organizations) ? payload.accessible_organizations : [];
+                const matchedOrganization = accessibleOrganizations.find((item) => {
+                    return normalizeOrganizationUrl(item?.organization_id || '') === organizationId;
+                }) || null;
+                return {
+                    ...payload,
+                    organization_id: organizationId,
+                    project_id: null,
+                    organization_role: matchedOrganization?.role || null,
+                    project_role: null,
+                    organization: matchedOrganization
+                        ? {
+                            organization_id: matchedOrganization.organization_id,
+                            name: matchedOrganization.name,
+                            status: matchedOrganization.status,
+                            role: matchedOrganization.role,
+                        }
+                        : { organization_id: organizationId, name: organizationId },
+                    project: null,
+                    accessible_projects: [],
+                    needs_onboarding: false,
+                    needs_org_selection: true,
+                    needs_project_selection: false,
+                    workspace_resolution_error: String(errorMessage || payload?.workspace_resolution_error || '').trim() || null,
+                };
+            }
+
             function getActiveTenantId() {
                 const selectedTenantId = String(orgSpaceSelect.value || '').trim();
                 const pathTenantId = getOrganizationIdFromPathname();
@@ -1135,7 +1168,7 @@ export function initializeOperatorConsole() {
 
             function applyAuthSessionPayload(payload) {
                 authSessionState = payload || null;
-                const selectedTenantId = payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
+                const selectedTenantId = getOrganizationIdFromPathname() || payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
                 const selectedProjectId = payload?.project_id || getStoredWorkspaceSelection().projectId || '';
                 populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
                 populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
@@ -1651,13 +1684,14 @@ export function initializeOperatorConsole() {
                 return normalizeOrganizationUrl(segments[0]);
             }
 
-            function getCanonicalBrowserPath(tenantId = '') {
-                const normalizedTenantId = normalizeOrganizationUrl(tenantId);
+            function getCanonicalBrowserPath(tenantId = '', { preserveHintOnEmpty = false } = {}) {
+                const normalizedTenantId = normalizeOrganizationUrl(tenantId)
+                    || (preserveHintOnEmpty ? getWorkspaceOrganizationHint() : '');
                 return normalizedTenantId ? `/${encodeURIComponent(normalizedTenantId)}` : '/';
             }
 
-            function syncBrowserOrganizationPath(tenantId = '') {
-                const nextPath = getCanonicalBrowserPath(tenantId);
+            function syncBrowserOrganizationPath(tenantId = '', options = {}) {
+                const nextPath = getCanonicalBrowserPath(tenantId, options);
                 const currentPath = String(window.location.pathname || '/');
                 if (currentPath === nextPath && !window.location.search && !window.location.hash) {
                     return;
@@ -1878,7 +1912,16 @@ export function initializeOperatorConsole() {
                 syncWorkspaceGateClass();
             }
 
-            async function hydrateAuthSession({ retryCount = 0, syncBrowserPath = true } = {}) {
+            async function hydrateAuthSession({
+                retryCount = 0,
+                syncBrowserPath = true,
+                forceGlobalScope = false,
+                tenantIdOverride = undefined,
+                projectIdOverride = undefined,
+                preferredBrowserTenantId = undefined,
+                requestedPathTenantId = undefined,
+                workspaceResolutionError = '',
+            } = {}) {
                 if (!accessToken) {
                     authSessionState = null;
                     syncAuthModeUi();
@@ -1886,15 +1929,28 @@ export function initializeOperatorConsole() {
                     syncWorkspaceOverlayFromSession();
                     return;
                 }
-                const tenantId = getActiveTenantId();
-                const projectId = getActiveProjectId();
+                const pathTenantId = normalizeOrganizationUrl(requestedPathTenantId || getOrganizationIdFromPathname());
+                const tenantId = forceGlobalScope
+                    ? ''
+                    : String(
+                        tenantIdOverride !== undefined
+                            ? tenantIdOverride
+                            : getActiveTenantId()
+                    ).trim();
+                const projectId = forceGlobalScope
+                    ? ''
+                    : String(
+                        projectIdOverride !== undefined
+                            ? projectIdOverride
+                            : getActiveProjectId()
+                    ).trim();
                 const headers = {
                     Authorization: `Bearer ${accessToken}`,
                 };
                 if (projectId) {
                     headers['X-Kairyx-Project'] = projectId;
                 }
-                const response = await fetch(`${getApiBaseUrl(tenantId || '', { forceGlobal: !tenantId })}/auth/me`, {
+                const response = await fetch(`${getApiBaseUrl(tenantId || '', { forceGlobal: forceGlobalScope || !tenantId })}/auth/me`, {
                     headers,
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -1904,33 +1960,81 @@ export function initializeOperatorConsole() {
                         clearBearerSession();
                         throw new Error(errorDetail);
                     }
-                    if ((tenantId || projectId) && (response.status === 403 || response.status === 409)) {
+                    if (!forceGlobalScope && (tenantId || projectId) && (response.status === 403 || response.status === 409)) {
                         if (retryCount < 2) {
                             await delay(150 * (retryCount + 1));
-                            return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
+                            return hydrateAuthSession({
+                                retryCount: retryCount + 1,
+                                syncBrowserPath,
+                                forceGlobalScope: false,
+                                tenantIdOverride,
+                                projectIdOverride,
+                                preferredBrowserTenantId,
+                                requestedPathTenantId: pathTenantId,
+                                workspaceResolutionError: errorDetail,
+                            });
                         }
                         if (projectId) {
                             persistWorkspaceSelection(tenantId || '', '');
-                        } else {
-                            persistWorkspaceSelection('', '');
+                            return hydrateAuthSession({
+                                retryCount: retryCount + 1,
+                                syncBrowserPath,
+                                forceGlobalScope: false,
+                                tenantIdOverride,
+                                projectIdOverride: '',
+                                preferredBrowserTenantId,
+                                requestedPathTenantId: pathTenantId,
+                                workspaceResolutionError: errorDetail,
+                            });
                         }
-                        return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
+                        persistWorkspaceSelection('', '');
+                        return hydrateAuthSession({
+                            retryCount: retryCount + 1,
+                            syncBrowserPath,
+                            forceGlobalScope: true,
+                            preferredBrowserTenantId,
+                            requestedPathTenantId: pathTenantId,
+                            workspaceResolutionError: errorDetail,
+                        });
                     }
                     throw new Error(errorDetail);
                 }
                 if (await redeemPendingInviteIfNeeded()) {
-                    return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
+                    return hydrateAuthSession({
+                        retryCount: retryCount + 1,
+                        syncBrowserPath,
+                        forceGlobalScope: false,
+                        tenantIdOverride,
+                        projectIdOverride,
+                        preferredBrowserTenantId,
+                        requestedPathTenantId: pathTenantId,
+                        workspaceResolutionError,
+                    });
                 }
-                applyAuthSessionPayload(payload);
+                const resolvedPayload = forceGlobalScope && pathTenantId
+                    ? buildPathScopedWorkspaceSession(payload, pathTenantId, workspaceResolutionError)
+                    : payload;
+                applyAuthSessionPayload(resolvedPayload);
                 if (syncBrowserPath || !isGatewayRootPath()) {
-                    syncBrowserOrganizationPath(payload?.organization_id || '');
+                    const browserTenantId = normalizeOrganizationUrl(
+                        preferredBrowserTenantId !== undefined
+                            ? preferredBrowserTenantId
+                            : (
+                                pathTenantId
+                                && normalizeOrganizationUrl(resolvedPayload?.organization_id || '')
+                                && normalizeOrganizationUrl(resolvedPayload?.organization_id || '') !== pathTenantId
+                                    ? pathTenantId
+                                    : resolvedPayload?.organization_id || ''
+                            )
+                    );
+                    syncBrowserOrganizationPath(browserTenantId, { preserveHintOnEmpty: true });
                 }
-                const workspaceBits = [payload.organization_id, payload.project_id].filter(Boolean);
+                const workspaceBits = [resolvedPayload.organization_id, resolvedPayload.project_id].filter(Boolean);
                 setAuthStatus(
-                    `Google ${payload.display_name || payload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
+                    `Google ${resolvedPayload.display_name || resolvedPayload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
                 );
                 syncWorkspaceOverlayFromSession();
-                return payload;
+                return resolvedPayload;
             }
 
             async function startOidcLogin() {
@@ -2041,7 +2145,12 @@ export function initializeOperatorConsole() {
 
             async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true, syncBrowserPath = true } = {}) {
                 persistWorkspaceSelection(tenantId || '', projectId || '');
-                const payload = await hydrateAuthSession({ syncBrowserPath });
+                const payload = await hydrateAuthSession({
+                    syncBrowserPath,
+                    tenantIdOverride: tenantId || '',
+                    projectIdOverride: projectId || '',
+                    preferredBrowserTenantId: tenantId || '',
+                });
                 if (reloadPage && activePageId && (!accessToken || payload?.project_id)) {
                     activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                 }
