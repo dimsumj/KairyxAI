@@ -534,8 +534,118 @@ export function initializeOperatorConsole() {
                 return items.find((item) => item.organization_id === slug || slugifyIdentifier(item.name) === slug) || null;
             }
 
+            function isGoogleProvider() {
+                return Boolean(oidcConfig && oidcConfig.provider === 'google' && oidcConfig.client_id);
+            }
+
             function isGoogleLoginConfigured() {
-                return Boolean(oidcConfig && oidcConfig.authorize_url && oidcConfig.client_id);
+                return isGoogleProvider();
+            }
+
+            function ensureGoogleLoginButtonContainer(button, container, id) {
+                if (!button || !container || container.parentElement) {
+                    return container;
+                }
+                container.id = id;
+                container.classList.add('hidden');
+                container.style.alignItems = 'center';
+                container.style.minHeight = '40px';
+                button.insertAdjacentElement('afterend', container);
+                return container;
+            }
+
+            function loadGoogleIdentityScript() {
+                if (!isGoogleProvider()) {
+                    return Promise.resolve(null);
+                }
+                if (window.google && window.google.accounts && window.google.accounts.id) {
+                    return Promise.resolve(window.google);
+                }
+                if (googleIdentityScriptPromise) {
+                    return googleIdentityScriptPromise;
+                }
+                googleIdentityScriptPromise = new Promise((resolve, reject) => {
+                    const existingScript = document.querySelector('script[data-kairyx-google-identity="true"]');
+                    if (existingScript) {
+                        existingScript.addEventListener('load', () => resolve(window.google), { once: true });
+                        existingScript.addEventListener('error', () => {
+                            googleIdentityScriptPromise = null;
+                            reject(new Error('Unable to load Google Sign-In.'));
+                        }, { once: true });
+                        return;
+                    }
+                    const script = document.createElement('script');
+                    script.src = GOOGLE_IDENTITY_SCRIPT_SRC;
+                    script.async = true;
+                    script.defer = true;
+                    script.setAttribute('data-kairyx-google-identity', 'true');
+                    script.onload = () => resolve(window.google);
+                    script.onerror = () => {
+                        googleIdentityScriptPromise = null;
+                        reject(new Error('Unable to load Google Sign-In.'));
+                    };
+                    document.head.appendChild(script);
+                });
+                return googleIdentityScriptPromise;
+            }
+
+            async function handleGoogleCredentialResponse(response) {
+                const credential = response && typeof response.credential === 'string' ? response.credential : '';
+                if (!credential) {
+                    const message = 'Google login did not return an ID token.';
+                    setAuthStatus(message);
+                    setWorkspaceTextStatus(workspaceLoginStatus, message, true);
+                    return;
+                }
+                persistAccessToken(credential);
+                try {
+                    await hydrateAuthSession();
+                    if (activePageId) {
+                        activatePage(activePageId);
+                    }
+                } catch (error) {
+                    handleGoogleSessionFailure(error);
+                }
+            }
+
+            async function ensureGoogleIdentityButtons() {
+                if (!isGoogleProvider()) {
+                    return;
+                }
+                const containers = [
+                    ensureGoogleLoginButtonContainer(oidcLoginBtn, googleLoginContainer, 'google-login-container'),
+                    ensureGoogleLoginButtonContainer(workspaceGoogleLoginBtn, workspaceGoogleLoginContainer, 'workspace-google-login-container'),
+                ].filter(Boolean);
+                if (containers.length === 0) {
+                    return;
+                }
+                await loadGoogleIdentityScript();
+                if (!window.google || !window.google.accounts || !window.google.accounts.id) {
+                    throw new Error('Google Sign-In is unavailable in this browser.');
+                }
+                if (googleIdentityButtonClientId !== oidcConfig.client_id) {
+                    window.google.accounts.id.initialize({
+                        client_id: oidcConfig.client_id,
+                        callback: (response) => {
+                            handleGoogleCredentialResponse(response).catch((error) => {
+                                const message = error.message || 'Google sign-in failed.';
+                                setAuthStatus(message);
+                                setWorkspaceTextStatus(workspaceLoginStatus, message, true);
+                            });
+                        },
+                    });
+                    googleIdentityButtonClientId = oidcConfig.client_id;
+                }
+                containers.forEach((container, index) => {
+                    if (!container) return;
+                    container.innerHTML = '';
+                    window.google.accounts.id.renderButton(container, {
+                        theme: 'outline',
+                        size: index === 0 ? 'large' : 'large',
+                        text: 'signin_with',
+                        shape: 'pill',
+                    });
+                });
             }
 
             function isAuthenticatedWorkspaceReady() {
@@ -988,10 +1098,24 @@ export function initializeOperatorConsole() {
                     legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
                 }
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
-                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
+                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc || isGoogleProvider());
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
+                if (workspaceGoogleLoginBtn) {
+                    workspaceGoogleLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc || isGoogleProvider());
+                }
+                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
+                    if (!container) return;
+                    container.classList.toggle('hidden', !usingGoogleLogin || usingOidc || !isGoogleProvider());
+                });
+                if (usingGoogleLogin && !usingOidc && isGoogleProvider()) {
+                    ensureGoogleIdentityButtons().catch((error) => {
+                        const message = error.message || 'Google Sign-In is unavailable.';
+                        setAuthStatus(message);
+                        setWorkspaceTextStatus(workspaceLoginStatus, message, true);
+                    });
+                }
                 if (settingsOpenSwitcherBtn) {
                     settingsOpenSwitcherBtn.disabled = !usingOidc;
                 }
@@ -1681,7 +1805,7 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(workspaceSelectionStatus, message);
             }
 
-            function clearBearerSession({ openOrgGateway = false } = {}) {
+            function clearBearerSession({ openOrgGateway = false, openLoginGateway = !openOrgGateway } = {}) {
                 persistAccessToken('');
                 authSessionState = null;
                 try {
@@ -1695,7 +1819,12 @@ export function initializeOperatorConsole() {
                 if (isGoogleLoginConfigured()) {
                     setAuthStatus('Google login required.');
                     if (openOrgGateway) {
+                        syncBrowserOrganizationPath('');
                         openOrganizationGateway();
+                    } else if (openLoginGateway) {
+                        syncBrowserOrganizationPath('');
+                        openWorkspaceOverlay('login');
+                        refreshWorkspaceLoginStatus();
                     } else {
                         syncWorkspaceOverlayFromSession();
                     }
@@ -1703,6 +1832,31 @@ export function initializeOperatorConsole() {
                 }
                 closeWorkspaceOverlay(true);
                 setAuthStatus('Local demo session');
+            }
+
+            function handleGoogleSessionFailure(error, fallbackMessage = 'Google session validation failed.') {
+                const message = error?.message || fallbackMessage;
+                clearBearerSession();
+                setAuthStatus(message);
+                setWorkspaceTextStatus(workspaceLoginStatus, message, true);
+                return message;
+            }
+
+            async function ensureValidGoogleSession() {
+                if (!isGoogleLoginConfigured() || !accessToken) {
+                    return true;
+                }
+                try {
+                    await hydrateAuthSession({
+                        forceGlobalScope: true,
+                        syncBrowserPath: false,
+                        requestedPathTenantId: getOrganizationIdFromPathname(),
+                    });
+                    return true;
+                } catch (error) {
+                    handleGoogleSessionFailure(error);
+                    return false;
+                }
             }
 
             function handleSessionLogout() {
@@ -1841,6 +1995,17 @@ export function initializeOperatorConsole() {
             async function handleOidcRedirect() {
                 const params = new URLSearchParams(window.location.search);
                 const code = params.get('code');
+                if (isGoogleProvider()) {
+                    if (code) {
+                        try {
+                            localStorage.removeItem(OIDC_CODE_VERIFIER_STORAGE_KEY);
+                        } catch (error) {
+                            console.warn('Unable to clear PKCE verifier:', error);
+                        }
+                        window.history.replaceState({}, document.title, redirectUri());
+                    }
+                    return;
+                }
                 if (!code) {
                     return;
                 }
@@ -2103,13 +2268,17 @@ export function initializeOperatorConsole() {
             async function startOidcLogin() {
                 captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
+                if (isGoogleProvider()) {
+                    await ensureGoogleIdentityButtons();
+                    return;
+                }
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
                     setAuthStatus('Google login is not configured on the backend.');
                     setWorkspaceTextStatus(workspaceLoginStatus, 'Google login is not configured on the backend.', true);
                     return;
                 }
-                setAuthStatus('Redirecting to Google…');
-                setWorkspaceTextStatus(workspaceLoginStatus, 'Redirecting to Google…');
+                setAuthStatus('Redirecting to OIDC…');
+                setWorkspaceTextStatus(workspaceLoginStatus, 'Redirecting to OIDC…');
                 const verifier = randomVerifier();
                 const challenge = await sha256Digest(verifier);
                 try {
@@ -2327,6 +2496,9 @@ export function initializeOperatorConsole() {
                     } catch (error) {
                         setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Google login failed.', true);
                     }
+                    return;
+                }
+                if (!(await ensureValidGoogleSession())) {
                     return;
                 }
                 const tenant = findAccessibleTenant(workspaceOrgUrlInput.value);
@@ -7053,14 +7225,8 @@ export function initializeOperatorConsole() {
                     await handleOidcRedirect();
                     await hydrateAuthSession({ syncBrowserPath: !isGatewayRootPath() });
                 } catch (error) {
-                    const errorMessage = error.message || 'Google session initialization failed.';
-                    if (accessToken && !authSessionState) {
-                        applyAuthSessionPayload(buildFallbackWorkspaceSession(errorMessage));
-                        setAuthStatus('Google session ready. Finish workspace setup to continue.');
-                    } else {
-                        setAuthStatus(errorMessage);
-                        setWorkspaceTextStatus(workspaceLoginStatus, errorMessage, true);
-                    }
+                    const errorMessage = handleGoogleSessionFailure(error, 'Google session initialization failed.');
+                    setWorkspaceTextStatus(workspaceLoginStatus, errorMessage, true);
                 }
                 syncWorkspaceOverlayFromSession();
                 rootGatewayBootPending = false;
