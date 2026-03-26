@@ -733,6 +733,25 @@ export function initializeOperatorConsole() {
                 });
             }
 
+            function ensureVisibleGoogleIdentityButtons() {
+                if (!isGoogleLoginConfigured() || accessToken || !isGoogleProvider()) {
+                    return;
+                }
+                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
+                    if (!container) {
+                        return;
+                    }
+                    container.classList.remove('hidden');
+                });
+                window.requestAnimationFrame(() => {
+                    ensureGoogleIdentityButtons().catch((error) => {
+                        const message = error.message || 'Google Sign-In is unavailable.';
+                        setAuthStatus(message);
+                        setWorkspaceTextStatus(workspaceLoginStatus, message, true);
+                    });
+                });
+            }
+
             function isAuthenticatedWorkspaceReady() {
                 return Boolean(
                     accessToken
@@ -1378,6 +1397,7 @@ export function initializeOperatorConsole() {
                         : 'Sign in with your Google account before opening an existing organization or creating a new one.';
                     setWorkspaceOverlayPanel(workspaceLoginPanel);
                     refreshWorkspaceLoginStatus();
+                    ensureVisibleGoogleIdentityButtons();
                 } else if (mode === 'onboarding') {
                     workspaceModalEyebrow.textContent = 'Workspace Setup';
                     if (onboardingStep === 1 && onboardingFromWorkspaceSelection) {
