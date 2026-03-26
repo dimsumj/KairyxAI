@@ -548,6 +548,9 @@ export function initializeOperatorConsole() {
             }
 
             function shouldBlockProtectedAppData() {
+                if (accessToken) {
+                    return !isAuthenticatedWorkspaceReady();
+                }
                 return isGoogleLoginConfigured() && !isAuthenticatedWorkspaceReady();
             }
 
@@ -1795,6 +1798,29 @@ export function initializeOperatorConsole() {
 
             async function apiRequest(path, options = {}) {
                 const { method = 'GET', body } = options;
+                const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
+                const isWorkspaceBootstrapPath = normalizedPath === '/auth/me'
+                    || normalizedPath === '/projects'
+                    || normalizedPath === '/project-invites/redeem'
+                    || normalizedPath.startsWith('/onboarding/');
+                if (accessToken && !isWorkspaceBootstrapPath && shouldBlockProtectedAppData()) {
+                    const sessionPayload = await hydrateAuthSession();
+                    if (!isAuthenticatedWorkspaceReady()) {
+                        const payload = sessionPayload || authSessionState || {};
+                        let message = 'Finish workspace setup before using this part of the app.';
+                        if (payload.needs_onboarding) {
+                            message = 'Create or join an organization before using the app.';
+                        } else if (payload.needs_org_selection) {
+                            message = 'Choose an organization before using the app.';
+                        } else if (payload.needs_project_selection) {
+                            message = 'Choose a project before using the app.';
+                        }
+                        const error = new Error(message);
+                        error.status = 409;
+                        error.payload = payload;
+                        throw error;
+                    }
+                }
                 const headers = buildApiHeaders(Boolean(body));
                 const response = await fetch(`${getApiBaseUrl()}${path}`, {
                     method,
@@ -2349,12 +2375,18 @@ export function initializeOperatorConsole() {
             }
 
             async function refreshConnectorsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedConnectors;
+                }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
                 return cachedConnectors;
             }
 
             async function refreshImportsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedImports;
+                }
                 const payload = await apiRequest('/imports');
                 const items = Array.isArray(payload.items) ? payload.items : [];
                 cachedImports = items.map(normalizeImportJob);
@@ -2362,6 +2394,9 @@ export function initializeOperatorConsole() {
             }
 
             async function refreshPredictionJobsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedPredictionJobs;
+                }
                 const payload = await apiRequest('/predictions');
                 cachedPredictionJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedPredictionJobs;
@@ -2386,6 +2421,14 @@ export function initializeOperatorConsole() {
             }
 
             async function refreshPredictionModelReadinessState() {
+                if (shouldBlockProtectedAppData()) {
+                    cachedPredictionModelReadiness = cachedPredictionModelReadiness || buildDefaultPredictionModelReadiness();
+                    cachedPredictionModelTrainingStatus = cachedPredictionModelTrainingStatus || buildDefaultPredictionModelTrainingStatus();
+                    return {
+                        readiness: cachedPredictionModelReadiness,
+                        training_status: cachedPredictionModelTrainingStatus,
+                    };
+                }
                 try {
                     const payload = await apiRequest('/predictions/models/runs');
                     cachedPredictionModelReadiness = payload.readiness || buildDefaultPredictionModelReadiness();
@@ -2402,6 +2445,9 @@ export function initializeOperatorConsole() {
             }
 
             async function refreshExportJobsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedExportJobs;
+                }
                 const payload = await apiRequest('/exports');
                 cachedExportJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedExportJobs;
