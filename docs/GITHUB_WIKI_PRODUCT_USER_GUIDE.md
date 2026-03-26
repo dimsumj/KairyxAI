@@ -32,8 +32,8 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Top bar `Switcher` | Button | Opens the full-screen workspace selector overlay from the top bar. | None | Lets you switch organization space or project without opening the sidebar controls first. |
 | Top bar `New Project` | Button | Opens the create-project overlay from the top bar. | None | Creates a new project in the active organization space after confirmation. |
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
-| Sidebar module links | Navigation buttons | Hover a module to reveal its section flyout. Click the module button to open that module's first section by default. | `Audience Engine` | Module title, subtitle, active section context, and page content change. |
-| Sidebar section flyout | Flyout menu | Hover a module and click any section button in the flyout to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and the page-context text updates. |
+| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the sidebar. Click the module button to open that module's first section by default. | `Audience Engine` | Module title, subtitle, active section context, and page content change. |
+| Sidebar section list | Inline submenu | Click any section button in the expanded list under a module to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and the page-context text updates. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path

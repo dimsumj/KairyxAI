@@ -285,12 +285,16 @@ export function initializeOperatorConsole() {
                     label.textContent = config.title;
                     copy.appendChild(label);
 
-                    const hint = document.createElement('span');
-                    hint.className = 'nav-flyout-hint';
-                    hint.textContent = 'Hover for sections';
-                    copy.appendChild(hint);
+                    const caret = document.createElement('span');
+                    caret.className = 'nav-caret';
+                    caret.setAttribute('aria-hidden', 'true');
+                    caret.innerHTML = `
+                        <svg viewBox="0 0 24 24">
+                            <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+                        </svg>
+                    `.trim();
 
-                    trigger.append(icon, copy);
+                    trigger.append(icon, copy, caret);
                     listItem.appendChild(trigger);
 
                     const submenu = document.createElement('div');
