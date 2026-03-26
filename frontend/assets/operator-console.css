@@ -600,6 +600,15 @@
             opacity: 1;
         }
 
+        #workspace-org-url-input::placeholder,
+        #onboarding-organization-name::placeholder,
+        #onboarding-project-name::placeholder,
+        #workspace-create-project-name::placeholder,
+        #workspace-create-project-inline-name::placeholder {
+            color: #a0aec0 !important;
+            opacity: 1;
+        }
+
         .workspace-modal input:-webkit-autofill,
         .workspace-modal input:-webkit-autofill:hover,
         .workspace-modal input:-webkit-autofill:focus,
