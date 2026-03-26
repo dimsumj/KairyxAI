@@ -983,8 +983,12 @@ export function initializeOperatorConsole() {
 
             function renderModuleHeader(moduleId) {
                 const config = moduleConfigs[moduleId];
-                moduleTitle.textContent = config.title;
-                moduleSubtitle.textContent = config.subtitle;
+                if (moduleTitle) {
+                    moduleTitle.textContent = config.title;
+                }
+                if (moduleSubtitle) {
+                    moduleSubtitle.textContent = config.subtitle;
+                }
             }
 
             function activateModule(moduleId, preferredItemOrPageId = null, { scrollBehavior = 'smooth', closeSidebar = true, reloadPage = true } = {}) {
@@ -6110,6 +6114,6 @@ export function initializeOperatorConsole() {
             });
 }
 
-if (typeof document !== 'undefined' && document.getElementById('module-title')) {
+if (typeof document !== 'undefined' && document.getElementById('sidebar-nav')) {
     initializeOperatorConsole();
 }
