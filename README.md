@@ -179,11 +179,12 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 
 - a Figma-derived SaaS shell with a responsive sidebar, inline expanding and collapsible section lists, a bottom-left session profile chip with logout, a search-first top bar with a three-mode theme selector, a tighter icon rail when collapsed, collapsed-icon clicks that land on each module's first section and dismiss the temporary popout, hover-safe collapsed popouts that stay reachable while moving into the submenu, and a tabbed Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
-- a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, with the main operator app shown only after the browser is on `https://<base-url>/<organization_id>`
+- a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, including after Google sign-in; the main operator app is shown only after the browser is on `https://<base-url>/<organization_id>`
 - a centered full-screen first-login onboarding gate that opens immediately after Google sign-in when the user has no memberships, asks for the organization URL first and the first project name second, and preserves any organization URL the user already typed before sign-in; new organization URLs are limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
 - after creating the first organization and project in the gateway, the user is placed into that new organization and project by default
-- a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
+- a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose `Select an existing project to go` or `Add New Project` inside that organization when the org already exists
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
+- a direct organization path (`/{organization_id}`) that is authoritative for the active workspace and does not inherit another org from stale browser storage
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - module loaders that now wait for a valid organization/project workspace before loading protected data, so deployed Google-login environments do not replace page content with transient raw membership errors during session handoff or stale workspace recovery
 - mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
@@ -216,7 +217,7 @@ For normal logged-in operator traffic:
 - identity comes from the Google account
 - the active organization comes from the URL path
 - the active project is sent as `X-Kairyx-Project`
-- Google OAuth still returns to the base app URL, and the console rewrites the browser to `/{organization_id}` after session and workspace resolution
+- Google OAuth still returns to the base app URL, the gateway remains on `/` until the user finishes org/project resolution there, and the console rewrites the browser to `/{organization_id}` only after that selection or onboarding completes
 - manual actor-id and tenant-id entry are no longer part of the visible operator UI
 
 ## Repository Layout

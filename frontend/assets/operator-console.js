@@ -708,6 +708,10 @@ export function initializeOperatorConsole() {
                 );
             }
 
+            function isGatewayRootPath(pathname = window.location.pathname) {
+                return !getOrganizationIdFromPathname(pathname);
+            }
+
             function buildFallbackWorkspaceSession(errorMessage = '') {
                 const organizationId = getWorkspaceOrganizationHint();
                 return {
@@ -726,22 +730,30 @@ export function initializeOperatorConsole() {
 
             function getActiveTenantId() {
                 const selectedTenantId = String(orgSpaceSelect.value || '').trim();
+                const pathTenantId = getOrganizationIdFromPathname();
                 if (accessToken) {
-                    return selectedTenantId || getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname();
+                    return selectedTenantId || pathTenantId || getStoredWorkspaceSelection().tenantId;
                 }
                 if (isGoogleLoginConfigured()) {
-                    return getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname() || '';
+                    return pathTenantId || getStoredWorkspaceSelection().tenantId || '';
                 }
                 return LOCAL_DEMO_TENANT_ID;
             }
 
             function getActiveProjectId() {
                 const selectedProjectId = String(projectSelect.value || '').trim();
+                const pathTenantId = getOrganizationIdFromPathname();
+                const storedSelection = getStoredWorkspaceSelection();
+                const storedProjectId = pathTenantId
+                    && normalizeOrganizationUrl(storedSelection.tenantId)
+                    && normalizeOrganizationUrl(storedSelection.tenantId) !== pathTenantId
+                    ? ''
+                    : storedSelection.projectId || '';
                 if (accessToken) {
-                    return selectedProjectId || getStoredWorkspaceSelection().projectId || '';
+                    return selectedProjectId || storedProjectId || '';
                 }
                 if (isGoogleLoginConfigured()) {
-                    return getStoredWorkspaceSelection().projectId || '';
+                    return storedProjectId || '';
                 }
                 return LOCAL_DEMO_PROJECT_ID;
             }
@@ -1023,6 +1035,19 @@ export function initializeOperatorConsole() {
                 workspaceModalProjectSelect.disabled = !hasExistingProjects;
                 workspaceSelectionCreateProjectBtn.disabled = !selectedTenantId;
                 workspaceSelectionCreateProjectBtn.textContent = hasExistingProjects ? 'Add New Project' : 'Create First Project';
+            }
+
+            function resolveGatewaySelectionStage(payload = authSessionState) {
+                const requestedOrganizationId = normalizeOrganizationUrl(
+                    workspaceOrgUrlInput?.value
+                    || getStoredWorkspaceSelection().tenantId
+                    || ''
+                );
+                const activeOrganizationId = normalizeOrganizationUrl(payload?.organization_id || '');
+                if (requestedOrganizationId && activeOrganizationId && requestedOrganizationId === activeOrganizationId) {
+                    return 'project';
+                }
+                return 'org';
             }
 
             function openWorkspaceOverlay(mode, { allowClose = false, selectionStage = null } = {}) {
@@ -1784,6 +1809,31 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(onboardingStatus, 'Enter the organization URL you want to create.');
                     return;
                 }
+                if (isGatewayRootPath() && accessToken) {
+                    if (sessionView?.organization_id) {
+                        workspaceModalOrgSelect.value = sessionView.organization_id;
+                    }
+                    if (sessionView?.project_id) {
+                        workspaceModalProjectSelect.value = sessionView.project_id;
+                    }
+                    syncWorkspaceSelectionOrgInput(
+                        normalizeOrganizationUrl(
+                            workspaceOrgUrlInput?.value
+                            || getStoredWorkspaceSelection().tenantId
+                            || sessionView?.organization_id
+                            || ''
+                        )
+                    );
+                    const selectionStage = resolveGatewaySelectionStage(sessionView);
+                    openWorkspaceOverlay('selection', { selectionStage });
+                    setWorkspaceTextStatus(
+                        workspaceSelectionStatus,
+                        selectionStage === 'project'
+                            ? 'Select an existing project to go, or create a new one.'
+                            : 'Enter the organization URL you want to open.',
+                    );
+                    return;
+                }
                 if (sessionView?.needs_org_selection || sessionView?.needs_project_selection) {
                     if (!authSessionState && sessionView?.organization_id) {
                         syncWorkspaceSelectionOrgInput(sessionView.organization_id);
@@ -1805,7 +1855,7 @@ export function initializeOperatorConsole() {
                 syncWorkspaceGateClass();
             }
 
-            async function hydrateAuthSession(retryCount = 0) {
+            async function hydrateAuthSession({ retryCount = 0, syncBrowserPath = true } = {}) {
                 if (!accessToken) {
                     authSessionState = null;
                     syncAuthModeUi();
@@ -1834,22 +1884,24 @@ export function initializeOperatorConsole() {
                     if ((tenantId || projectId) && (response.status === 403 || response.status === 409)) {
                         if (retryCount < 2) {
                             await delay(150 * (retryCount + 1));
-                            return hydrateAuthSession(retryCount + 1);
+                            return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
                         }
                         if (projectId) {
                             persistWorkspaceSelection(tenantId || '', '');
                         } else {
                             persistWorkspaceSelection('', '');
                         }
-                        return hydrateAuthSession(retryCount + 1);
+                        return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
                     }
                     throw new Error(errorDetail);
                 }
                 if (await redeemPendingInviteIfNeeded()) {
-                    return hydrateAuthSession(retryCount + 1);
+                    return hydrateAuthSession({ retryCount: retryCount + 1, syncBrowserPath });
                 }
                 applyAuthSessionPayload(payload);
-                syncBrowserOrganizationPath(payload?.organization_id || '');
+                if (syncBrowserPath || !isGatewayRootPath()) {
+                    syncBrowserOrganizationPath(payload?.organization_id || '');
+                }
                 const workspaceBits = [payload.organization_id, payload.project_id].filter(Boolean);
                 setAuthStatus(
                     `Google ${payload.display_name || payload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
@@ -1964,9 +2016,9 @@ export function initializeOperatorConsole() {
                 return payload;
             }
 
-            async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true } = {}) {
+            async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true, syncBrowserPath = true } = {}) {
                 persistWorkspaceSelection(tenantId || '', projectId || '');
-                const payload = await hydrateAuthSession();
+                const payload = await hydrateAuthSession({ syncBrowserPath });
                 if (reloadPage && activePageId && (!accessToken || payload?.project_id)) {
                     activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                 }
@@ -2093,7 +2145,7 @@ export function initializeOperatorConsole() {
                     workspaceCreateProjectNameInput.value = '';
                     workspaceCreateProjectIdInput.value = '';
                     workspaceModalProjectSelect.value = '';
-                    await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false });
+                    await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false, syncBrowserPath: false });
                     workspaceModalOrgSelect.value = authSessionState?.organization_id || tenant.organization_id;
                     workspaceModalProjectSelect.value = authSessionState?.project_id || '';
                     setWorkspaceSelectionStage('project');
@@ -2141,7 +2193,7 @@ export function initializeOperatorConsole() {
                 }
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Adding project to organization space…');
-                    await switchWorkspaceSelection(tenantId, '', { reloadPage: false });
+                    await switchWorkspaceSelection(tenantId, '', { reloadPage: false, syncBrowserPath: false });
                     await apiRequest('/projects', {
                         method: 'POST',
                         body: {
@@ -6763,7 +6815,7 @@ export function initializeOperatorConsole() {
                 syncAuthModeUi();
                 try {
                     await handleOidcRedirect();
-                    await hydrateAuthSession();
+                    await hydrateAuthSession({ syncBrowserPath: !isGatewayRootPath() });
                 } catch (error) {
                     const errorMessage = error.message || 'Google session initialization failed.';
                     if (accessToken && !authSessionState) {

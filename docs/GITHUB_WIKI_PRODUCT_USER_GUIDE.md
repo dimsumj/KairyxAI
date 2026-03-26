@@ -56,16 +56,16 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, returns to the base app URL, then the console restores the active organization path after session resolution by using the returned Google ID token as the backend bearer JWT. |
 | Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
 
-Every user now passes through the Google login gate first. After successful sign-in, the console does one of two things automatically:
+Every user now passes through the Google login gate first. After successful sign-in, the console keeps the browser on the base gateway URL and then does one of these things:
 - opens the organization-space onboarding wizard if the user has no memberships yet
-- enters the existing organization and project, or opens the workspace selector if the user has more than one choice
-- rewrites the browser URL to `https://<base-url>/<organization_id>` as soon as an active organization is resolved
+- opens the organization URL gateway so the user can resolve which org they want to enter
+- rewrites the browser URL to `https://<base-url>/<organization_id>` only after an active organization and project are chosen or created
 
 If the user typed an organization URL before Google sign-in, the gateway carries that value into the next step after login. A first-time user still lands on the onboarding wizard, but the organization URL field is prefilled with the value they already entered.
 
 Across the console, protected module pages now wait for a resolved organization and project workspace before they load live data. During Google-login session handoff, stale workspace recovery, or a just-created workspace becoming active, the UI stays in a neutral waiting state instead of rendering raw backend membership errors inside module cards.
 
-In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`.
+In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`. Direct organization paths are authoritative, so opening `/<organization_id>` does not inherit a different org from stale browser storage.
 
 #### Organization-space onboarding wizard
 
@@ -119,6 +119,10 @@ The console now asks for the org URL directly and generates the internal organiz
 | `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization space. | `Growth Sandbox` | The console generates the internal project id automatically. |
 | `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization space. | None | The project is created, the creator becomes a project admin, the console switches into it, and the browser URL stays on `/<organization_id>`. |
+
+When the typed organization already exists and the signed-in Google user has access to it, the gateway now stays on `/` and explicitly offers the two choices required for that org:
+- `Use Existing Project`
+- `Add New Project`
 
 #### New-project overlay
 
