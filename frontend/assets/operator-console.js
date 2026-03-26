@@ -1618,12 +1618,13 @@ export function initializeOperatorConsole() {
 
             function scrollToModuleItem(item, behavior = 'smooth') {
                 const resolvedBehavior = behavior === 'instant' ? 'auto' : behavior;
-                if (!item?.targetId) {
+                const targetId = item?.pageId === 'settings' ? item.pageId : item?.targetId;
+                if (!targetId) {
                     contentScroll?.scrollTo({ top: 0, behavior: resolvedBehavior });
                     return;
                 }
                 window.requestAnimationFrame(() => {
-                    const target = document.getElementById(item.targetId);
+                    const target = document.getElementById(targetId);
                     if (target) {
                         target.scrollIntoView({ block: 'start', behavior: resolvedBehavior });
                     }
