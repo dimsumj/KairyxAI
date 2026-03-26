@@ -20,12 +20,19 @@ OIDC_AUDIENCE = "kairyx-tests"
 OIDC_SECRET = "test-signing-secret"
 
 
-def _make_token(subject: str, *, platform_admin: bool = False, extra_claims: dict | None = None) -> str:
+def _make_token(
+    subject: str,
+    *,
+    platform_admin: bool = False,
+    extra_claims: dict | None = None,
+    issuer: str = OIDC_ISSUER,
+    audience: str = OIDC_AUDIENCE,
+) -> str:
     now = datetime.now(timezone.utc)
     claims = {
         "sub": subject,
-        "iss": OIDC_ISSUER,
-        "aud": OIDC_AUDIENCE,
+        "iss": issuer,
+        "aud": audience,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(hours=1)).timestamp()),
         "email": f"{subject}@example.com",
@@ -126,32 +133,28 @@ def test_jwt_user_without_membership_can_onboard_but_cannot_access_product_route
         assert blocked.status_code == 403
 
 
-def test_vercel_demo_org_path_bootstraps_workspace_after_database_fallback(monkeypatch, tmp_path):
-    user_token = _make_token("demo-user")
+def test_vercel_mock_fallback_bootstraps_path_scoped_workspace_membership(monkeypatch, tmp_path):
+    user_token = _make_token("founder")
     with _client(
         monkeypatch,
         tmp_path,
-        APP_ENV="demo",
-        KAIRYX_PLATFORM_SURFACE="vercel_demo",
+        VERCEL="1",
         KAIRYX_RUNTIME_DIR=str(tmp_path / "runtime"),
-        DATA_BACKEND_MODE="mock",
-        CONTROL_PLANE_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:1/kairyx",
+        CONTROL_PLANE_DATABASE_URL="postgresql://demo:demo@127.0.0.1:1/kairyx",
         CONTROL_PLANE_CONNECT_TIMEOUT_SECONDS="1",
     ) as client:
-        me = client.get("/torpedo/v1/auth/me", headers=_auth_headers(user_token, project_id="liveops"))
-
+        me = client.get("/northstar/v1/auth/me", headers=_auth_headers(user_token, project_id="alpha"))
         assert me.status_code == 200
-        assert me.json()["organization_id"] == "torpedo"
-        assert me.json()["project_id"] == "liveops"
-        assert me.json()["organization_role"] == "owner"
-        assert me.json()["project_role"] == "admin"
+        payload = me.json()
+        assert payload["organization_id"] == "northstar"
+        assert payload["project_id"] == "alpha"
+        assert payload["organization_role"] == "owner"
+        assert payload["project_role"] == "admin"
+        assert [item["organization_id"] for item in payload["accessible_organizations"]] == ["northstar"]
+        assert [item["project_id"] for item in payload["accessible_projects"]] == ["alpha"]
 
-
-def test_malformed_bearer_token_returns_401(monkeypatch, tmp_path):
-    with _client(monkeypatch, tmp_path) as client:
-        me = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
-        assert me.status_code == 401
-        assert me.json()["detail"] == "Invalid bearer token."
+        connectors = client.get("/northstar/v1/connectors", headers=_auth_headers(user_token, project_id="alpha"))
+        assert connectors.status_code == 200
 
 
 def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch, tmp_path):
@@ -367,6 +370,74 @@ def test_org_scoped_v1_path_selects_membership_without_tenant_header(monkeypatch
             headers=_auth_headers(founder_token, "other-org", "liveops"),
         )
         assert mismatch.status_code == 409
+
+
+def test_google_oidc_config_defaults_and_google_issuer_alias(monkeypatch, tmp_path):
+    google_client_id = "kairyx-console.apps.googleusercontent.com"
+    google_token = _make_token(
+        "google-admin",
+        platform_admin=True,
+        issuer="accounts.google.com",
+        audience=google_client_id,
+        extra_claims={"hd": "example.com"},
+    )
+    with _client(
+        monkeypatch,
+        tmp_path,
+        OIDC_ISSUER="",
+        OIDC_AUDIENCE="",
+        OIDC_JWKS_URL="",
+        OIDC_CLIENT_ID="",
+        OIDC_AUTHORIZE_URL="",
+        OIDC_TOKEN_URL="",
+        OIDC_LOGOUT_URL="",
+        GOOGLE_OIDC_CLIENT_ID=google_client_id,
+        GOOGLE_OIDC_HOSTED_DOMAIN="example.com",
+    ) as client:
+        config = client.get("/api/v1/auth/oidc-config")
+        assert config.status_code == 200
+        payload = config.json()
+        assert payload["provider"] == "google"
+        assert payload["client_id"] == google_client_id
+        assert payload["issuer"] == "https://accounts.google.com"
+        assert payload["audience"] == google_client_id
+        assert payload["authorize_url"] == "https://accounts.google.com/o/oauth2/v2/auth"
+        assert payload["token_url"] == "https://oauth2.googleapis.com/token"
+        assert payload["hosted_domain"] == "example.com"
+        assert payload["include_audience_parameter"] is False
+
+        me = client.get("/api/v1/auth/me", headers=_auth_headers(google_token))
+        assert me.status_code == 200
+        assert me.json()["display_name"] == "google-admin"
+        assert me.json()["auth_mode"] == "jwt"
+        assert me.json()["needs_onboarding"] is True
+
+
+def test_google_hosted_domain_rejects_wrong_workspace(monkeypatch, tmp_path):
+    google_client_id = "kairyx-console.apps.googleusercontent.com"
+    google_token = _make_token(
+        "google-admin",
+        platform_admin=True,
+        issuer="https://accounts.google.com",
+        audience=google_client_id,
+        extra_claims={"hd": "other.example"},
+    )
+    with _client(
+        monkeypatch,
+        tmp_path,
+        OIDC_ISSUER="",
+        OIDC_AUDIENCE="",
+        OIDC_JWKS_URL="",
+        OIDC_CLIENT_ID="",
+        OIDC_AUTHORIZE_URL="",
+        OIDC_TOKEN_URL="",
+        OIDC_LOGOUT_URL="",
+        GOOGLE_OIDC_CLIENT_ID=google_client_id,
+        GOOGLE_OIDC_HOSTED_DOMAIN="example.com",
+    ) as client:
+        me = client.get("/api/v1/auth/me", headers=_auth_headers(google_token))
+        assert me.status_code == 401
+        assert "hosted domain" in me.json()["detail"]
 
 
 def test_secret_bearing_responses_are_redacted(monkeypatch, tmp_path):

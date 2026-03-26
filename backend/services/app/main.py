@@ -463,11 +463,7 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
             allow_missing_tenant = _is_tenant_optional_path(resolved_path, settings)
             allow_missing_project = _is_project_optional_path(resolved_path, settings)
-            mock_workspace_fallback_active = (
-                settings.platform_surface == "vercel_demo"
-                and settings.data_backend_mode == "mock"
-                and is_runtime_database_fallback_active()
-            )
+            mock_workspace_fallback_active = is_runtime_database_fallback_active() and settings.data_backend_mode == "mock"
 
             if mock_workspace_fallback_active and requested_tenant and requested_tenant not in memberships_by_tenant:
                 _bootstrap_mock_fallback_workspace(

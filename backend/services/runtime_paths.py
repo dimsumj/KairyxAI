@@ -48,7 +48,7 @@ def _runtime_storage_root() -> Path | None:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    if normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE", "")).lower() == "vercel_demo":
+    if normalize_env_text(os.getenv("VERCEL", "")):
         path = (Path(tempfile.gettempdir()) / "kairyxai-runtime").resolve()
         path.mkdir(parents=True, exist_ok=True)
         return path
