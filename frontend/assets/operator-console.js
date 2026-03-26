@@ -859,13 +859,18 @@ export function initializeOperatorConsole() {
                 );
             }
 
-            function refreshWorkspaceLoginStatus() {
+            function refreshWorkspaceLoginStatus(organizationId = '') {
                 const invitePending = Boolean(readPendingInvite());
+                const resolvedOrganizationId = normalizeOrganizationUrl(organizationId);
                 setWorkspaceTextStatus(
                     workspaceLoginStatus,
                     invitePending
                         ? 'Project invite detected. Continue with Google to redeem it.'
-                        : 'Continue with Google to open your organization.',
+                        : (
+                            resolvedOrganizationId
+                                ? `Continue with Google to open "${resolvedOrganizationId}".`
+                                : 'Continue with Google to open your organization.'
+                        ),
                 );
             }
 
@@ -2493,10 +2498,23 @@ export function initializeOperatorConsole() {
                 return resolvedPayload;
             }
 
-            async function startOidcLogin() {
+            async function startOidcLogin({ organizationId = '', openLoginOverlay = false } = {}) {
                 captureWorkspaceHintsFromUrl();
                 await loadOidcConfig();
+                const resolvedOrganizationId = normalizeOrganizationUrl(
+                    organizationId
+                    || getStoredWorkspaceSelection().tenantId
+                    || getOrganizationIdFromPathname()
+                    || '',
+                );
+                if (resolvedOrganizationId) {
+                    persistWorkspaceSelection(resolvedOrganizationId, '');
+                }
                 if (isGoogleProvider()) {
+                    if (openLoginOverlay) {
+                        openWorkspaceOverlay('login');
+                        refreshWorkspaceLoginStatus(resolvedOrganizationId);
+                    }
                     await ensureGoogleIdentityButtons();
                     return;
                 }
@@ -3517,8 +3535,7 @@ export function initializeOperatorConsole() {
                     workspaceOrgUrlInput.value = organizationId;
                     persistWorkspaceSelection(organizationId, '');
                     try {
-                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Redirecting to Google...');
-                        await startOidcLogin();
+                        await startOidcLogin({ organizationId, openLoginOverlay: true });
                     } catch (error) {
                         setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Google login failed.', true);
                     }
