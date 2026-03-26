@@ -38,6 +38,28 @@
         <div class="sidebar-body">
             <ul id="sidebar-nav" class="sidebar-nav"></ul>
         </div>
+        <div class="sidebar-footer">
+            <div class="sidebar-session">
+                <button type="button" id="sidebar-session-button" class="sidebar-session-button" aria-haspopup="true" aria-expanded="false">
+                    <span id="sidebar-session-avatar" class="sidebar-session-avatar" aria-hidden="true">
+                        <img id="sidebar-session-avatar-image" class="sidebar-session-avatar-image hidden" alt="">
+                        <span id="sidebar-session-avatar-fallback" class="sidebar-session-avatar-fallback">K</span>
+                    </span>
+                    <span class="sidebar-session-copy">
+                        <span id="sidebar-session-name" class="sidebar-session-name">KairyxAI Operator</span>
+                        <span id="sidebar-session-meta" class="sidebar-session-meta">Local demo session</span>
+                    </span>
+                    <span class="sidebar-session-caret" aria-hidden="true">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+                        </svg>
+                    </span>
+                </button>
+                <div id="sidebar-session-menu" class="sidebar-session-menu hidden" role="menu" aria-hidden="true">
+                    <button type="button" id="sidebar-session-logout-btn" class="sidebar-session-menu-item" role="menuitem">Log out</button>
+                </div>
+            </div>
+        </div>
     </nav>
 
     <div class="hidden" aria-hidden="true">
