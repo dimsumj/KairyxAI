@@ -6073,28 +6073,71 @@ export function initializeOperatorConsole() {
                 activateModule('data-core');
             });
 
-            // Theme Toggle Logic
-            const themeToggle = document.getElementById('theme-switch-checkbox');
-            const themeLabel = document.getElementById('theme-label');
-            const currentTheme = localStorage.getItem('theme');
+            // Theme mode logic
+            const themeModeButtons = Array.from(document.querySelectorAll('.theme-mode-button'));
+            const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+            const storedThemeMode = localStorage.getItem('theme');
 
-            function setTheme(isDark) {
-                document.body.classList.toggle('dark-theme', isDark);
-                themeToggle.checked = isDark;
-                themeLabel.textContent = isDark ? 'Dark mode active' : 'Light mode active';
-                localStorage.setItem('theme', isDark ? 'dark-theme' : 'light-theme');
+            function normalizeThemeMode(themeMode) {
+                if (themeMode === 'dark-theme') {
+                    return 'dark';
+                }
+                if (themeMode === 'light-theme') {
+                    return 'light';
+                }
+                if (themeMode === 'light' || themeMode === 'dark' || themeMode === 'system') {
+                    return themeMode;
+                }
+                return 'system';
             }
 
-            // Set initial theme based on localStorage
-            if (currentTheme === 'dark-theme') {
-                setTheme(true);
-            } else {
-                setTheme(false);
+            function updateThemeModeButtons(themeMode) {
+                themeModeButtons.forEach((button) => {
+                    const isActive = button.dataset.themeMode === themeMode;
+                    button.classList.toggle('active', isActive);
+                    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                });
             }
 
-            themeToggle.addEventListener('change', function() {
-                setTheme(this.checked);
+            function resolveEffectiveDarkMode(themeMode) {
+                if (themeMode === 'dark') {
+                    return true;
+                }
+                if (themeMode === 'light') {
+                    return false;
+                }
+                return Boolean(systemThemeQuery && systemThemeQuery.matches);
+            }
+
+            function applyThemeMode(themeMode) {
+                const normalizedThemeMode = normalizeThemeMode(themeMode);
+                document.body.classList.toggle('dark-theme', resolveEffectiveDarkMode(normalizedThemeMode));
+                document.body.dataset.themeMode = normalizedThemeMode;
+                updateThemeModeButtons(normalizedThemeMode);
+                localStorage.setItem('theme', normalizedThemeMode);
+            }
+
+            applyThemeMode(storedThemeMode);
+
+            themeModeButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    applyThemeMode(button.dataset.themeMode);
+                });
             });
+
+            if (systemThemeQuery) {
+                const handleSystemThemeChange = () => {
+                    if (normalizeThemeMode(localStorage.getItem('theme')) === 'system') {
+                        applyThemeMode('system');
+                    }
+                };
+
+                if (typeof systemThemeQuery.addEventListener === 'function') {
+                    systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+                } else if (typeof systemThemeQuery.addListener === 'function') {
+                    systemThemeQuery.addListener(handleSystemThemeChange);
+                }
+            }
 }
 
 if (typeof document !== 'undefined' && document.getElementById('sidebar-nav')) {

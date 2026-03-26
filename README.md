@@ -177,13 +177,13 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
-- a Figma-derived SaaS shell with a responsive sidebar, inline expanding section lists, a search-only top bar, and a tabbed Settings page
+- a Figma-derived SaaS shell with a responsive sidebar, inline expanding section lists, a search-first top bar with a three-mode theme selector, and a tabbed Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
-- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace, session, and appearance controls
+- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace and session controls while leaving appearance control in the top-right header
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
@@ -478,7 +478,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts, a search-only top bar, and a tabbed Settings surface for workspace, session, appearance, and placeholder account-management layouts
+- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, session, and placeholder account-management layouts
 
 ## Current Limitations
 

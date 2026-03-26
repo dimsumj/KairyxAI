@@ -25,7 +25,8 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. In collapsed mode the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay from `Settings -> Organization`. | None | Creates a new project and switches into it after success. |
-| Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar now contains only this search control. | `settings` | The matching module or section opens and the matching page becomes active. |
+| Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar keeps the search field on the left and the theme selector on the right. | `settings` | The matching module or section opens and the matching page becomes active. |
+| Theme mode selector | Three-button segmented control | Use the header buttons to follow the system theme or force light or dark mode. The preference is stored in local storage for the current browser. | `Dark` | The shell and module pages immediately switch to the selected theme mode. |
 | Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout. The `Settings` module is the exception: it opens directly into the Settings page without a sidebar submenu. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
 | Sidebar section list | Inline submenu or collapsed popout | Click any section button in the expanded list under a module, or in the collapsed right-side popout, to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
@@ -896,7 +897,7 @@ The `Settings` module is now a tabbed page. The left sidebar opens `Settings` di
 | `Organization` | Tab button | Opens the organization workspace tab. | None | Live workspace and session controls become visible. |
 | `Projects` | Tab button | Opens the projects placeholder layout. | None | Project placeholder rows become visible. |
 | `Teams` | Tab button | Opens the teams placeholder layout. | None | Team placeholder rows become visible. |
-| `Notifications` | Tab button | Opens the notifications tab. | None | The live theme switch plus notification placeholder rows become visible. |
+| `Notifications` | Tab button | Opens the notifications tab. | None | Notification placeholder rows become visible. |
 | `Billing` | Tab button | Opens the billing placeholder layout. | None | Billing placeholder rows become visible. |
 
 ### 8.2 Profile
@@ -939,10 +940,10 @@ The `Projects`, `Teams`, and `Billing` tabs are placeholder layouts only. Their 
 
 ### 8.5 Notifications
 
+The `Notifications` tab is currently a placeholder layout only. Theme mode now lives in the top-right header selector instead of inside Settings.
+
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Light mode / Dark mode` switch | Checkbox | Toggle the console theme. The choice is stored in local storage for the current browser. | Checked | The shell and module pages switch to dark mode. |
-| Theme state label | Read-only text | Shows the currently active appearance mode. | `Dark mode active` | Confirms which theme is active after a toggle. |
 | Notification rows | Placeholder rows | Visible for layout only. | None | No backend action occurs yet. |
 
 ---

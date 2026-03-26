@@ -79,6 +79,27 @@
                         <input type="search" id="topbar-search-input" placeholder="Search modules and pages">
                     </form>
                 </div>
+                <div class="topbar-right">
+                    <div class="theme-mode-toggle" role="group" aria-label="Theme mode">
+                        <button type="button" id="theme-mode-system" class="theme-mode-button active" data-theme-mode="system" aria-label="Follow system theme" aria-pressed="true" title="Follow system theme">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="4.5" y="5.5" width="15" height="11" rx="2.2" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.8"></rect>
+                                <path d="M8 18.5h8M10 20.5h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                            </svg>
+                        </button>
+                        <button type="button" id="theme-mode-light" class="theme-mode-button" data-theme-mode="light" aria-label="Use light theme" aria-pressed="false" title="Use light theme">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+                                <path d="M12 3.5v2.3M12 18.2v2.3M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M3.5 12h2.3M18.2 12h2.3M5.8 18.2l1.6-1.6M16.6 7.4l1.6-1.6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                            </svg>
+                        </button>
+                        <button type="button" id="theme-mode-dark" class="theme-mode-button" data-theme-mode="dark" aria-label="Use dark theme" aria-pressed="false" title="Use dark theme">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M15.5 4.5a7.7 7.7 0 1 0 4 14.3 8.3 8.3 0 0 1-4.6 1.2A8.5 8.5 0 0 1 6.4 8.5 8.3 8.3 0 0 1 15.5 4.5Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </div>
             <div id="topbar-search-status" class="topbar-search-status hidden"></div>
         </header>
@@ -1491,20 +1512,9 @@ dimensions: campaign,country,platform</pre>
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Notifications</h2>
-                        <p>Placeholder notification preferences with the live theme switch kept inside Settings.</p>
+                        <p>Placeholder notification preferences. Theme mode now lives in the top-right header control.</p>
                     </div>
-                    <div class="settings-row settings-row-top">
-                        <div class="settings-copy">
-                            <h3>Light mode / Dark mode</h3>
-                            <p>Switch the operator console theme. The selection is saved in this browser and applies across the current workspace.</p>
-                        </div>
-                        <label class="theme-switch settings-theme-switch">
-                            <input type="checkbox" id="theme-switch-checkbox" />
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div id="theme-label" class="settings-inline-note">Light mode active</div>
-                    <div class="settings-placeholder-list" style="margin-top: 1.1rem;">
+                    <div class="settings-placeholder-list">
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Email Digest</span>
                             <span class="pill">Placeholder</span>
