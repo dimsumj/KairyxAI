@@ -26,14 +26,11 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. When collapsed, hovering or focusing the rail peeks it back open so module sections still expand downward inline. | None | Navigation stays visible with less horizontal space used without switching to a side popout. |
 | `Organization Space` | Select | After Google login, choose which organization space to operate in from the sidebar once you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
 | `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
-| `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
-| Top bar search | Search box | Enter a module title or section label to jump directly to it. | `settings` | The matching module or section opens and the page-context text updates. |
-| Top bar `Switcher` | Button | Opens the full-screen workspace selector overlay from the top bar. | None | Lets you switch organization space or project without opening the sidebar controls first. |
-| Top bar `New Project` | Button | Opens the create-project overlay from the top bar. | None | Creates a new project in the active organization space after confirmation. |
-| Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
-| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the sidebar. Click the module button to open that module's first section by default. | `Audience Engine` | Module title, subtitle, active section context, and page content change. |
-| Sidebar section list | Inline submenu | Click any section button in the expanded list under a module to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and the page-context text updates. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from the sidebar workspace controls or from `Settings -> Workspace Tools`. | None | Lets you choose an organization space and project before entering the app. |
+| `New Project` | Button | Opens the new-project overlay from the sidebar workspace controls or from `Settings -> Workspace Tools`. | None | Creates a new project and switches into it after success. |
+| Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar now contains only this search control. | `settings` | The matching module or section opens and the matching page becomes active. |
+| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the sidebar. Click the module button to open that module's first section by default. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
+| Sidebar section list | Inline submenu | Click any section button in the expanded list under a module to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
@@ -42,14 +39,14 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
    - enter the `Organization URL`
    - continue to the `Project Name`
    - create the first workspace
-3. If you already belong to more than one organization space or project, use the `Switcher` button or the sidebar selects to choose the active workspace.
+3. If you already belong to more than one organization space or project, use the `Switcher` button from the sidebar or `Settings`, or use the sidebar selects to choose the active workspace.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
-10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, or use the shell-level workspace shortcuts.
+10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, or use the shell-level `Switcher` and `New Project` shortcuts.
 
 ### 2.3 Onboarding And Workspace Overlays
 
@@ -905,8 +902,8 @@ The `Settings` module is the shell-level control page for appearance, workspace 
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Open Switcher` | Button | Opens the full-screen workspace selector overlay from inside Settings. | None | Lets you switch organization space or project. |
-| `Create Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization space after success. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from inside Settings. | None | Lets you switch organization space or project. |
+| `New Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization space after success. |
 | Current workspace card | Read-only summary | Shows the active organization space and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
 | Session state card | Read-only summary | Shows the current login or demo state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session. |
 
