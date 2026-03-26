@@ -120,6 +120,12 @@ export function initializeOperatorConsole() {
             const LOCAL_DEMO_ACTOR_ROLE = 'admin';
             const LOCAL_DEMO_TENANT_ID = 'default';
             const LOCAL_DEMO_PROJECT_ID = 'default';
+            const MOCK_STORAGE_KEY_PREFIX = 'kairyx.mockState.v1';
+            const preferLocalMockState = (
+                window.KAIRYX_LOCAL_MOCK_STATE === true
+                || new URLSearchParams(window.location.search).get('mock_state') === 'local'
+                || window.location.hostname.endsWith('vercel.app')
+            );
             let activeModuleId = 'data-core';
             let activeNavItemId = 'data-core-churn-rescue';
             let activePageId = 'operator-hub';
@@ -1774,6 +1780,7 @@ export function initializeOperatorConsole() {
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
+            let mockStorageEnabled = false;
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
 
@@ -2435,8 +2442,407 @@ export function initializeOperatorConsole() {
                 return headers;
             }
 
-            async function apiRequest(path, options = {}) {
-                const { method = 'GET', body, _workspaceRetryAttempted = false } = options;
+            function canUseBrowserStorage(storage) {
+                try {
+                    const probeKey = '__kairyx_probe__';
+                    storage.setItem(probeKey, '1');
+                    storage.removeItem(probeKey);
+                    return true;
+                } catch (error) {
+                    return false;
+                }
+            }
+
+            const canUseLocalMockState = canUseBrowserStorage(window.localStorage);
+
+            function createMockRequestError(message, status = 400, payload = null) {
+                const error = new Error(message);
+                error.status = status;
+                error.payload = payload || { detail: message };
+                return error;
+            }
+
+            function getMockStorageScope() {
+                return {
+                    tenantId: String(getActiveTenantId() || LOCAL_DEMO_TENANT_ID).trim() || LOCAL_DEMO_TENANT_ID,
+                    projectId: String(getActiveProjectId() || LOCAL_DEMO_PROJECT_ID).trim() || LOCAL_DEMO_PROJECT_ID,
+                };
+            }
+
+            function getMockStorageKey(tenantId = null, projectId = null) {
+                const scope = getMockStorageScope();
+                const normalizedTenant = String(tenantId || scope.tenantId || LOCAL_DEMO_TENANT_ID).trim() || LOCAL_DEMO_TENANT_ID;
+                const normalizedProject = String(projectId || scope.projectId || LOCAL_DEMO_PROJECT_ID).trim() || LOCAL_DEMO_PROJECT_ID;
+                return `${MOCK_STORAGE_KEY_PREFIX}:${normalizedTenant}:${normalizedProject}`;
+            }
+
+            function createDefaultMockState() {
+                return {
+                    version: 1,
+                    counters: {
+                        connector: 0,
+                        import: 0,
+                        prediction: 0,
+                        export: 0,
+                    },
+                    connectors: [],
+                    imports: [],
+                    predictions: [],
+                    prediction_results: {},
+                    exports: [],
+                    export_diagnostics: {},
+                };
+            }
+
+            function normalizeMockStateShape(candidate = {}) {
+                const defaults = createDefaultMockState();
+                return {
+                    ...defaults,
+                    ...candidate,
+                    counters: {
+                        ...defaults.counters,
+                        ...(candidate.counters || {}),
+                    },
+                    connectors: Array.isArray(candidate.connectors) ? candidate.connectors : [],
+                    imports: Array.isArray(candidate.imports) ? candidate.imports : [],
+                    predictions: Array.isArray(candidate.predictions) ? candidate.predictions : [],
+                    prediction_results: candidate.prediction_results && typeof candidate.prediction_results === 'object'
+                        ? candidate.prediction_results
+                        : {},
+                    exports: Array.isArray(candidate.exports) ? candidate.exports : [],
+                    export_diagnostics: candidate.export_diagnostics && typeof candidate.export_diagnostics === 'object'
+                        ? candidate.export_diagnostics
+                        : {},
+                };
+            }
+
+            function readMockState(tenantId = null, projectId = null) {
+                if (!canUseLocalMockState) {
+                    return createDefaultMockState();
+                }
+                try {
+                    const raw = window.localStorage.getItem(getMockStorageKey(tenantId, projectId));
+                    if (!raw) {
+                        return createDefaultMockState();
+                    }
+                    return normalizeMockStateShape(JSON.parse(raw));
+                } catch (error) {
+                    console.warn('Unable to read local mock state:', error);
+                    return createDefaultMockState();
+                }
+            }
+
+            function writeMockState(state, tenantId = null, projectId = null) {
+                if (!canUseLocalMockState) {
+                    return;
+                }
+                try {
+                    window.localStorage.setItem(
+                        getMockStorageKey(tenantId, projectId),
+                        JSON.stringify(normalizeMockStateShape(state)),
+                    );
+                } catch (error) {
+                    console.warn('Unable to persist local mock state:', error);
+                }
+            }
+
+            function updateMockState(updater, tenantId = null, projectId = null) {
+                const current = readMockState(tenantId, projectId);
+                const next = normalizeMockStateShape(updater(current) || current);
+                writeMockState(next, tenantId, projectId);
+                return next;
+            }
+
+            function nextMockId(state, kind) {
+                state.counters[kind] = Number(state.counters[kind] || 0) + 1;
+                return `${kind}_${Date.now()}_${state.counters[kind]}`;
+            }
+
+            function parseApiPath(path) {
+                const url = new URL(path, backendUrl);
+                let pathname = url.pathname;
+                if (pathname.startsWith('/api/v1')) {
+                    pathname = pathname.slice('/api/v1'.length) || '/';
+                } else {
+                    const scopedMatch = pathname.match(/^\/[^/]+\/v1(\/.*)?$/);
+                    if (scopedMatch) {
+                        pathname = scopedMatch[1] || '/';
+                    }
+                }
+                return {
+                    pathname,
+                    segments: pathname.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment)),
+                    searchParams: url.searchParams,
+                };
+            }
+
+            function isMockStateResourcePath(path) {
+                const { segments } = parseApiPath(path);
+                return ['connectors', 'imports', 'predictions', 'exports'].includes(String(segments[0] || ''));
+            }
+
+            function shouldHandleWithLocalMockState(path) {
+                return mockStorageEnabled && isMockStateResourcePath(path);
+            }
+
+            function hashText(value) {
+                let hash = 0;
+                const text = String(value || '');
+                for (let index = 0; index < text.length; index += 1) {
+                    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+                    hash |= 0;
+                }
+                return Math.abs(hash);
+            }
+
+            function parseCompactDate(value) {
+                const text = String(value || '').trim();
+                if (/^\d{8}$/.test(text)) {
+                    return new Date(`${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}T00:00:00Z`);
+                }
+                return parseIsoDate(text || new Date().toISOString());
+            }
+
+            function calculateMockImportVolume(job) {
+                const start = parseCompactDate((job.spec || {}).start_date);
+                const end = parseCompactDate((job.spec || {}).end_date);
+                const msPerDay = 24 * 60 * 60 * 1000;
+                const daySpan = Math.max(1, Math.round((end.getTime() - start.getTime()) / msPerDay) + 1);
+                return Math.max(240, daySpan * 420);
+            }
+
+            function buildMockCompletedImportJob(job) {
+                const total = calculateMockImportVolume(job);
+                const shardCount = Math.max(1, Math.ceil(total / 500));
+                const sourceName = String((((job || {}).spec || {}).source_name) || '').trim();
+                return {
+                    ...job,
+                    status: 'completed',
+                    updated_at: new Date().toISOString(),
+                    spec: {
+                        ...((job || {}).spec || {}),
+                        display_name: String((((job || {}).spec || {}).display_name) || '').trim()
+                            || formatImportDisplayName(sourceName || 'Import', job.created_at || new Date().toISOString()),
+                    },
+                    progress: {
+                        current: total,
+                        total,
+                        pct: 100,
+                        details: {
+                            source: sourceName,
+                            phase: 'completed',
+                            events_staged: total,
+                            page_size: 500,
+                            processed_manifests: shardCount,
+                            total_manifests: shardCount,
+                            processing: {
+                                normalized_records: total,
+                                canonical_users: Math.max(60, Math.round(total * 0.42)),
+                                rows_curated: total,
+                            },
+                        },
+                    },
+                };
+            }
+
+            function getMockExecutionLabel(connectors = [], predictionMode = 'local') {
+                const normalizedMode = String(predictionMode || 'local').toLowerCase();
+                if (normalizedMode === 'ai') return 'AI';
+                if (normalizedMode === 'cloud') return 'Cloud';
+                if (normalizedMode === 'parallel') return 'AI + Cloud';
+                return connectors.some((connector) => (
+                    String(connector.type || '').toLowerCase() === 'google'
+                    && Boolean((connector.config || {}).api_key)
+                )) ? 'AI' : 'Local Model';
+            }
+
+            function buildMockPredictionRows(predictionJob, importJob) {
+                const seed = hashText(
+                    `${predictionJob.id}:${importJob.id}:${(importJob.spec || {}).source_name}:${(importJob.spec || {}).start_date}:${(importJob.spec || {}).end_date}`,
+                );
+                const rows = [];
+                const riskReasons = {
+                    high: ['7-day inactivity spike', 'LTV drop after campaign exit', 'Session collapse after ad exposure'],
+                    medium: ['Engagement slowing over 3 days', 'Shorter sessions vs baseline', 'Offer response cooled off'],
+                    low: ['Recently active', 'Stable spend pattern', 'Frequent reward claims'],
+                };
+                const actions = {
+                    high: 'Launch win-back push with credit offer',
+                    medium: 'Send reminder with personalized bundle',
+                    low: 'Hold out from intervention and monitor',
+                };
+                for (let index = 0; index < 36; index += 1) {
+                    const basis = seed + (index * 97);
+                    const userNumber = (basis % 90000) + 10000;
+                    const risk = index < 12 ? 'high' : (index < 24 ? 'medium' : 'low');
+                    const sessions = risk === 'high' ? (basis % 3) + 1 : risk === 'medium' ? (basis % 5) + 3 : (basis % 7) + 7;
+                    const events = sessions * ((basis % 11) + 8);
+                    const ltvBase = risk === 'high' ? 14 : risk === 'medium' ? 42 : 88;
+                    rows.push({
+                        user_id: `user_${userNumber}`,
+                        ltv: Number((ltvBase + (basis % 25) + (index * 0.37)).toFixed(2)),
+                        session_count: sessions,
+                        event_count: events,
+                        predicted_churn_risk: risk,
+                        churn_reason: riskReasons[risk][basis % riskReasons[risk].length],
+                        suggested_action: actions[risk],
+                        effective_local_model_version: 'heuristic_v1',
+                        effective_local_model_state: 'untrained',
+                        completed_at: new Date().toISOString(),
+                    });
+                }
+                return rows;
+            }
+
+            function buildMockCompletedPredictionJob(job, importJob, connectors = []) {
+                const rows = buildMockPredictionRows(job, importJob);
+                const predictionMode = String(((job.spec || {}).prediction_mode) || 'local').toLowerCase();
+                return {
+                    job: {
+                        ...job,
+                        status: 'completed',
+                        updated_at: new Date().toISOString(),
+                        progress: {
+                            current: rows.length,
+                            total: rows.length,
+                            pct: 100,
+                            details: {
+                                execution_label: getMockExecutionLabel(connectors, predictionMode),
+                                rows_written: rows.length,
+                                prediction_mode: predictionMode,
+                                effective_local_model_version: 'heuristic_v1',
+                                effective_local_model_state: 'untrained',
+                            },
+                        },
+                    },
+                    rows,
+                };
+            }
+
+            function filterMockExportRows(rows = [], includeRisks = []) {
+                const normalizedRisks = includeRisks.map((risk) => String(risk || '').toLowerCase()).filter(Boolean);
+                if (!normalizedRisks.length) {
+                    return rows;
+                }
+                return rows.filter((row) => normalizedRisks.includes(String(row.predicted_churn_risk || '').toLowerCase()));
+            }
+
+            function buildMockExportDiagnostics(job, rows = [], priorAttempts = 0) {
+                const details = (job.progress || {}).details || {};
+                return {
+                    export_job_id: job.id,
+                    provider: details.provider || (job.spec || {}).provider || 'webhook',
+                    channel: (job.spec || {}).channel || 'push_notification',
+                    audience_name: (job.spec || {}).audience_name || details.audience_name || null,
+                    delivered_count: rows.length,
+                    preview_user_ids: rows.slice(0, 5).map((row) => row.user_id),
+                    attempts: Math.max(1, priorAttempts),
+                    last_status: job.status,
+                    updated_at: job.updated_at,
+                };
+            }
+
+            function buildMockImportOperationsPayload(job) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const eventsStaged = Number(details.events_staged || progress.total || 0);
+                const manifestsProcessed = Number(details.processed_manifests || details.total_manifests || 0);
+                return {
+                    import_job_id: job.id,
+                    status: job.status,
+                    current_step: mapImportStatus(job.status),
+                    progress,
+                    items: [
+                        {
+                            operation_id: `${job.id}:stage`,
+                            name: 'stage_raw_events',
+                            status: 'completed',
+                            recorded_at: job.updated_at || job.created_at,
+                            summary: {
+                                events_staged: eventsStaged,
+                            },
+                        },
+                        {
+                            operation_id: `${job.id}:normalize`,
+                            name: 'normalize_manifests',
+                            status: 'completed',
+                            recorded_at: job.updated_at || job.created_at,
+                            summary: {
+                                manifests_processed: manifestsProcessed,
+                            },
+                        },
+                    ],
+                };
+            }
+
+            function buildMockImportQualityPayload(job) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                return {
+                    import_job_id: job.id,
+                    mapping_coverage: 100.0,
+                    checkpoint_state: {
+                        processed: Number(progress.current || 0),
+                        total: Number(progress.total || 0),
+                    },
+                    audit_id: `audit_${job.id}`,
+                    quality_report: {
+                        required_mapping_coverage: 100.0,
+                        canonical_user_id_coverage: 100.0,
+                        top20_field_coverage: {
+                            fields: {
+                                canonical_user_id: { coverage: 100.0 },
+                                event_name: { coverage: 100.0 },
+                                event_time: { coverage: 100.0 },
+                            },
+                        },
+                    },
+                    identity_summary: {
+                        source_of_truth_matrix: {
+                            canonical_user_id: 'mock',
+                        },
+                    },
+                    source_of_truth: {
+                        canonical_user_id: 'mock',
+                    },
+                    conflict_summary: {
+                        count: 0,
+                    },
+                    processing_stats: details.processing || null,
+                };
+            }
+
+            function buildMockImportManifestsPayload(job, tenantId, projectId) {
+                const details = (job.progress || {}).details || {};
+                const totalManifests = Math.max(1, Number(details.total_manifests || 1));
+                const totalEvents = Number(details.events_staged || (job.progress || {}).total || 0);
+                const manifestEvents = Math.max(1, Math.ceil(totalEvents / totalManifests));
+                const basePath = `mock://raw/${tenantId}/${projectId}/${job.id}`;
+                return {
+                    items: Array.from({ length: totalManifests }, (_, index) => ({
+                        manifest_id: `${job.id}:${index}`,
+                        shard_index: index,
+                        status: 'completed',
+                        event_count: manifestEvents,
+                        schema_version: 'v1',
+                        gcs_uri: `${basePath}/part-${String(index).padStart(5, '0')}.jsonl`,
+                    })),
+                };
+            }
+
+            async function primeMockStorageMode(path = '') {
+                if (backendMode !== 'unknown' || !preferLocalMockState || !isMockStateResourcePath(path)) {
+                    return;
+                }
+                try {
+                    await ensureHealthState();
+                } catch (error) {
+                    // Keep the network path if health cannot be determined.
+                }
+            }
+
+            async function networkRequest(path, options = {}) {
+                const { method = 'GET', body, headers = buildApiHeaders(Boolean(body)), _workspaceRetryAttempted = false } = options;
                 const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
                 const isWorkspaceBootstrapPath = normalizedPath === '/auth/me'
                     || normalizedPath === '/projects'
@@ -2448,8 +2854,7 @@ export function initializeOperatorConsole() {
                         throw buildWorkspaceContextError(sessionPayload || authSessionState || {}, 409);
                     }
                 }
-                const headers = buildApiHeaders(Boolean(body));
-                const response = await fetch(`${getApiBaseUrl()}${path}`, {
+                const response = await fetch(`${getApiBaseUrl()}${normalizedPath}`, {
                     method,
                     headers,
                     body: body ? JSON.stringify(body) : undefined,
@@ -2471,8 +2876,9 @@ export function initializeOperatorConsole() {
                     ) {
                         const sessionPayload = await hydrateAuthSession();
                         if (isAuthenticatedWorkspaceReady()) {
-                            return apiRequest(path, {
+                            return networkRequest(normalizedPath, {
                                 ...options,
+                                headers: buildApiHeaders(Boolean(body)),
                                 _workspaceRetryAttempted: true,
                             });
                         }
@@ -2484,6 +2890,398 @@ export function initializeOperatorConsole() {
                     throw error;
                 }
                 return payload;
+            }
+
+            async function mockStorageRequest(path, options = {}) {
+                const { method = 'GET', body } = options;
+                const normalizedMethod = String(method || 'GET').toUpperCase();
+                const { segments, searchParams } = parseApiPath(path);
+                const primary = String(segments[0] || '');
+                const { tenantId, projectId } = getMockStorageScope();
+
+                if (primary === 'connectors') {
+                    if (segments.length === 1 && normalizedMethod === 'GET') {
+                        return readMockState(tenantId, projectId).connectors;
+                    }
+                    if (segments.length === 1 && normalizedMethod === 'POST') {
+                        let created = null;
+                        updateMockState((state) => {
+                            const connectorName = String((body || {}).name || '').trim();
+                            if (!connectorName) {
+                                throw createMockRequestError('Connector name is required.');
+                            }
+                            if (state.connectors.some((connector) => connector.name === connectorName)) {
+                                throw createMockRequestError(`Connector '${connectorName}' already exists.`, 409);
+                            }
+                            const now = new Date().toISOString();
+                            created = {
+                                name: connectorName,
+                                type: (body || {}).type,
+                                config: (body || {}).config || {},
+                                created_at: now,
+                                updated_at: now,
+                            };
+                            state.connectors = latestByCreatedAt([created, ...state.connectors]);
+                            return state;
+                        }, tenantId, projectId);
+                        return created;
+                    }
+                    if (segments.length === 2 && normalizedMethod === 'DELETE') {
+                        const connectorName = segments[1];
+                        let deleted = false;
+                        updateMockState((state) => {
+                            const nextConnectors = state.connectors.filter((connector) => connector.name !== connectorName);
+                            deleted = nextConnectors.length !== state.connectors.length;
+                            state.connectors = nextConnectors;
+                            return state;
+                        }, tenantId, projectId);
+                        if (!deleted) {
+                            throw createMockRequestError(`Connector '${connectorName}' not found.`, 404);
+                        }
+                        return null;
+                    }
+                }
+
+                if (primary === 'imports') {
+                    if (segments.length === 1 && normalizedMethod === 'GET') {
+                        return { items: readMockState(tenantId, projectId).imports };
+                    }
+                    if (segments.length === 1 && normalizedMethod === 'POST') {
+                        let created = null;
+                        updateMockState((state) => {
+                            const sourceName = String((body || {}).source_name || '').trim();
+                            const connector = state.connectors.find((item) => item.name === sourceName);
+                            if (!connector) {
+                                throw createMockRequestError(`Connector '${sourceName}' not found.`, 404);
+                            }
+                            const now = new Date().toISOString();
+                            const baseJob = {
+                                id: nextMockId(state, 'import'),
+                                status: 'queued',
+                                created_at: now,
+                                updated_at: now,
+                                spec: {
+                                    source_name: sourceName,
+                                    start_date: String((body || {}).start_date || ''),
+                                    end_date: String((body || {}).end_date || ''),
+                                    connector_type: connector.type,
+                                    display_name: formatImportDisplayName(sourceName, now),
+                                },
+                                progress: {
+                                    current: 0,
+                                    total: 0,
+                                    pct: 0,
+                                    details: {
+                                        source: sourceName,
+                                        phase: 'queued',
+                                    },
+                                },
+                            };
+                            created = buildMockCompletedImportJob(baseJob);
+                            state.imports = latestByCreatedAt([created, ...state.imports]);
+                            return state;
+                        }, tenantId, projectId);
+                        return created;
+                    }
+                    if (segments.length >= 2) {
+                        const jobId = segments[1];
+                        if (segments.length === 2 && normalizedMethod === 'DELETE') {
+                            let deleted = false;
+                            updateMockState((state) => {
+                                const predictionIds = state.predictions
+                                    .filter((job) => String(((job.spec || {}).import_job_id || '')) === String(jobId))
+                                    .map((job) => job.id);
+                                const exportIds = state.exports
+                                    .filter((job) => predictionIds.includes(String((job.spec || {}).prediction_job_id || '')))
+                                    .map((job) => job.id);
+                                const nextPredictionResults = { ...state.prediction_results };
+                                predictionIds.forEach((predictionId) => {
+                                    delete nextPredictionResults[predictionId];
+                                });
+                                const nextExportDiagnostics = { ...state.export_diagnostics };
+                                exportIds.forEach((exportId) => {
+                                    delete nextExportDiagnostics[exportId];
+                                });
+                                const nextImports = state.imports.filter((job) => job.id !== jobId);
+                                deleted = nextImports.length !== state.imports.length;
+                                state.imports = nextImports;
+                                state.predictions = state.predictions.filter((job) => !predictionIds.includes(job.id));
+                                state.prediction_results = nextPredictionResults;
+                                state.exports = state.exports.filter((job) => !exportIds.includes(job.id));
+                                state.export_diagnostics = nextExportDiagnostics;
+                                return state;
+                            }, tenantId, projectId);
+                            if (!deleted) {
+                                throw createMockRequestError(`Import job '${jobId}' not found.`, 404);
+                            }
+                            return null;
+                        }
+                        if (segments[2] === 'run' && normalizedMethod === 'POST') {
+                            const job = readMockState(tenantId, projectId).imports.find((item) => item.id === jobId);
+                            if (!job) {
+                                throw createMockRequestError(`Import job '${jobId}' not found.`, 404);
+                            }
+                            return {
+                                ...normalizeImportJob(job),
+                                started: searchParams.get('background') !== 'false',
+                            };
+                        }
+                        if (segments[2] === 'stop' && normalizedMethod === 'POST') {
+                            let job = null;
+                            updateMockState((state) => {
+                                const target = state.imports.find((item) => item.id === jobId);
+                                if (!target) {
+                                    throw createMockRequestError(`Import job '${jobId}' not found.`, 404);
+                                }
+                                job = {
+                                    ...target,
+                                    status: 'stopped',
+                                    updated_at: new Date().toISOString(),
+                                    progress: {
+                                        ...(target.progress || {}),
+                                        details: {
+                                            ...((target.progress || {}).details || {}),
+                                            stop_reason: 'Stopped by user.',
+                                        },
+                                    },
+                                };
+                                state.imports = latestByCreatedAt([job, ...state.imports.filter((item) => item.id !== jobId)]);
+                                return state;
+                            }, tenantId, projectId);
+                            return job;
+                        }
+                        const job = readMockState(tenantId, projectId).imports.find((item) => item.id === jobId);
+                        if (!job) {
+                            throw createMockRequestError(`Import job '${jobId}' not found.`, 404);
+                        }
+                        if (segments[2] === 'operations' && normalizedMethod === 'GET') {
+                            return buildMockImportOperationsPayload(job);
+                        }
+                        if (segments[2] === 'quality' && normalizedMethod === 'GET') {
+                            return buildMockImportQualityPayload(job);
+                        }
+                        if (segments[2] === 'manifests' && normalizedMethod === 'GET') {
+                            return buildMockImportManifestsPayload(job, tenantId, projectId);
+                        }
+                    }
+                }
+
+                if (primary === 'predictions') {
+                    if (segments.length === 1 && normalizedMethod === 'GET') {
+                        return { items: readMockState(tenantId, projectId).predictions };
+                    }
+                    if (segments.length === 1 && normalizedMethod === 'POST') {
+                        let created = null;
+                        updateMockState((state) => {
+                            const audienceScope = String((body || {}).audience_scope || '').trim().toLowerCase()
+                                || (String((body || {}).import_job_id || '').trim() ? 'import' : 'source');
+                            let importJob = null;
+                            let sourceName = String((body || {}).source_name || '').trim();
+                            if (audienceScope === 'import') {
+                                const importJobId = String((body || {}).import_job_id || '').trim();
+                                importJob = state.imports.find((item) => item.id === importJobId) || null;
+                                sourceName = sourceName || String((((importJob || {}).spec || {}).source_name) || '').trim();
+                            } else {
+                                const matchingImports = latestByCreatedAt(state.imports.filter((item) => (
+                                    String((((item || {}).spec || {}).source_name) || '').trim() === sourceName
+                                    && String(item.status || '').toLowerCase() === 'completed'
+                                )));
+                                importJob = matchingImports[0] || null;
+                            }
+                            if (!importJob) {
+                                throw createMockRequestError('Imported data not found.', 404);
+                            }
+                            if (String(importJob.status || '').toLowerCase() !== 'completed') {
+                                throw createMockRequestError('Imported data is not ready yet.', 409);
+                            }
+                            const now = new Date().toISOString();
+                            const baseJob = {
+                                id: nextMockId(state, 'prediction'),
+                                status: 'queued',
+                                created_at: now,
+                                updated_at: now,
+                                spec: {
+                                    import_job_id: importJob.id,
+                                    source_name: sourceName || String((((importJob || {}).spec || {}).source_name) || '').trim(),
+                                    audience_scope: audienceScope,
+                                    prediction_mode: (body || {}).prediction_mode || 'local',
+                                },
+                                progress: {
+                                    current: 0,
+                                    total: 0,
+                                    pct: 0,
+                                    details: {
+                                        execution_label: getMockExecutionLabel(state.connectors, (body || {}).prediction_mode || 'local'),
+                                        rows_written: 0,
+                                    },
+                                },
+                            };
+                            const completed = buildMockCompletedPredictionJob(baseJob, importJob, state.connectors);
+                            created = completed.job;
+                            state.predictions = latestByCreatedAt([created, ...state.predictions]);
+                            state.prediction_results[created.id] = completed.rows;
+                            return state;
+                        }, tenantId, projectId);
+                        return created;
+                    }
+                    if (segments.length >= 2) {
+                        const jobId = segments[1];
+                        if (segments.length === 2 && normalizedMethod === 'GET') {
+                            const job = readMockState(tenantId, projectId).predictions.find((item) => item.id === jobId);
+                            if (!job) {
+                                throw createMockRequestError(`Prediction job '${jobId}' not found.`, 404);
+                            }
+                            return job;
+                        }
+                        if (segments[2] === 'run' && normalizedMethod === 'POST') {
+                            const job = readMockState(tenantId, projectId).predictions.find((item) => item.id === jobId);
+                            if (!job) {
+                                throw createMockRequestError(`Prediction job '${jobId}' not found.`, 404);
+                            }
+                            return job;
+                        }
+                        if (segments[2] === 'stop' && normalizedMethod === 'POST') {
+                            let job = null;
+                            updateMockState((state) => {
+                                const target = state.predictions.find((item) => item.id === jobId);
+                                if (!target) {
+                                    throw createMockRequestError(`Prediction job '${jobId}' not found.`, 404);
+                                }
+                                job = {
+                                    ...target,
+                                    status: 'stopped',
+                                    updated_at: new Date().toISOString(),
+                                };
+                                state.predictions = latestByCreatedAt([job, ...state.predictions.filter((item) => item.id !== jobId)]);
+                                return state;
+                            }, tenantId, projectId);
+                            return job;
+                        }
+                        if (segments[2] === 'results' && normalizedMethod === 'GET') {
+                            const state = readMockState(tenantId, projectId);
+                            const rows = Array.isArray(state.prediction_results[jobId]) ? state.prediction_results[jobId] : [];
+                            const page = Math.max(1, Number(searchParams.get('page') || 1));
+                            const pageSize = Math.max(1, Number(searchParams.get('page_size') || 100));
+                            const startIndex = (page - 1) * pageSize;
+                            return {
+                                items: rows.slice(startIndex, startIndex + pageSize),
+                                total: rows.length,
+                                page,
+                                page_size: pageSize,
+                            };
+                        }
+                    }
+                }
+
+                if (primary === 'exports') {
+                    if (segments.length === 1 && normalizedMethod === 'GET') {
+                        return { items: readMockState(tenantId, projectId).exports };
+                    }
+                    if (segments.length === 1 && normalizedMethod === 'POST') {
+                        let created = null;
+                        updateMockState((state) => {
+                            const predictionJobId = String((body || {}).prediction_job_id || '').trim();
+                            const predictionJob = state.predictions.find((item) => item.id === predictionJobId);
+                            if (!predictionJob) {
+                                throw createMockRequestError(`Prediction job '${predictionJobId}' not found.`, 404);
+                            }
+                            const predictionRows = Array.isArray(state.prediction_results[predictionJobId])
+                                ? state.prediction_results[predictionJobId]
+                                : [];
+                            const selectedRows = filterMockExportRows(
+                                predictionRows,
+                                Array.isArray((body || {}).include_risks) ? body.include_risks : [],
+                            );
+                            const now = new Date().toISOString();
+                            const details = {
+                                provider: (body || {}).provider || 'webhook',
+                                channel: (body || {}).channel || 'push_notification',
+                                count: selectedRows.length,
+                                audience_name: (body || {}).audience_name || null,
+                            };
+                            created = {
+                                id: nextMockId(state, 'export'),
+                                status: 'completed',
+                                created_at: now,
+                                updated_at: now,
+                                spec: {
+                                    prediction_job_id: predictionJobId,
+                                    provider: details.provider,
+                                    channel: details.channel,
+                                    include_churned: Boolean((body || {}).include_churned),
+                                    include_risks: Array.isArray((body || {}).include_risks) ? body.include_risks : [],
+                                    audience_name: details.audience_name,
+                                    webhook_url: (body || {}).webhook_url || null,
+                                    webhook_token: (body || {}).webhook_token || null,
+                                },
+                                progress: {
+                                    current: selectedRows.length,
+                                    total: selectedRows.length,
+                                    pct: 100,
+                                    details,
+                                },
+                            };
+                            state.exports = latestByCreatedAt([created, ...state.exports]);
+                            state.export_diagnostics[created.id] = buildMockExportDiagnostics(created, selectedRows, 1);
+                            return state;
+                        }, tenantId, projectId);
+                        return created;
+                    }
+                    if (segments.length >= 2) {
+                        const jobId = segments[1];
+                        if (segments[2] === 'run' && normalizedMethod === 'POST') {
+                            const job = readMockState(tenantId, projectId).exports.find((item) => item.id === jobId);
+                            if (!job) {
+                                throw createMockRequestError(`Export job '${jobId}' not found.`, 404);
+                            }
+                            return job;
+                        }
+                        if (segments[2] === 'diagnostics' && normalizedMethod === 'GET') {
+                            const state = readMockState(tenantId, projectId);
+                            const diagnostics = state.export_diagnostics[jobId];
+                            if (!diagnostics) {
+                                throw createMockRequestError(`Export job '${jobId}' diagnostics not found.`, 404);
+                            }
+                            return diagnostics;
+                        }
+                        if (segments[2] === 'retry' && normalizedMethod === 'POST') {
+                            let diagnostics = null;
+                            updateMockState((state) => {
+                                const job = state.exports.find((item) => item.id === jobId);
+                                if (!job) {
+                                    throw createMockRequestError(`Export job '${jobId}' not found.`, 404);
+                                }
+                                const prior = state.export_diagnostics[jobId] || buildMockExportDiagnostics(job, [], 0);
+                                diagnostics = {
+                                    ...prior,
+                                    attempts: Number(prior.attempts || 0) + 1,
+                                    updated_at: new Date().toISOString(),
+                                };
+                                state.export_diagnostics[jobId] = diagnostics;
+                                state.exports = latestByCreatedAt([
+                                    {
+                                        ...job,
+                                        updated_at: diagnostics.updated_at,
+                                    },
+                                    ...state.exports.filter((item) => item.id !== jobId),
+                                ]);
+                                return state;
+                            }, tenantId, projectId);
+                            return diagnostics;
+                        }
+                    }
+                }
+
+                return networkRequest(path, options);
+            }
+
+            async function apiRequest(path, options = {}) {
+                const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
+                await primeMockStorageMode(normalizedPath);
+                if (shouldHandleWithLocalMockState(normalizedPath)) {
+                    return mockStorageRequest(normalizedPath, options);
+                }
+                return networkRequest(normalizedPath, options);
             }
 
             async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true, syncBrowserPath = true } = {}) {
@@ -3444,11 +4242,18 @@ export function initializeOperatorConsole() {
                 healthStateRequest = fetchHealthLiveState()
                     .then((payload) => {
                         backendMode = payload?.mode || backendMode;
+                        mockStorageEnabled = Boolean(
+                            preferLocalMockState
+                            && canUseLocalMockState
+                            && String(payload?.mode || '').toLowerCase() === 'mock'
+                            && !Boolean(payload?.mock_state_persistent)
+                        );
                         cachedHealthState = payload;
                         cachedHealthStateFetchedAt = Date.now();
                         return payload;
                     })
                     .catch((error) => {
+                        mockStorageEnabled = false;
                         if (forceRefresh) {
                             cachedHealthState = null;
                             cachedHealthStateFetchedAt = 0;
@@ -5601,6 +6406,24 @@ export function initializeOperatorConsole() {
                     actionHistoryPaginationControls.innerHTML = '';
                 }
                 try {
+                    if (mockStorageEnabled && backendMode === 'mock') {
+                        await Promise.all([
+                            refreshConnectorsState(),
+                            refreshImportsState(),
+                            refreshPredictionJobsState(),
+                            refreshExportJobsState(),
+                        ]);
+                        allActionHistoryItems = buildActionHistoryItems();
+                        actionHistoryCurrentPage = 1;
+                        renderActionHistoryTable();
+                        setInlineStatus(
+                            actionHistoryStatus,
+                            allActionHistoryItems.length
+                                ? `Loaded ${allActionHistoryItems.length} local mock action(s).`
+                                : 'No recorded actions yet.',
+                        );
+                        return;
+                    }
                     setInlineStatus(actionHistoryStatus, 'Loading audit log...');
                     const query = new URLSearchParams();
                     query.set('limit', String(Number(actionHistoryItemsPerPageSelect.value || 25)));
