@@ -5186,6 +5186,7 @@ export function initializeOperatorConsole() {
                 try {
                     await refreshConnectorsState();
                     const sources = getConfiguredSourcesFromState();
+                    const previousSelection = sourceSelect.value;
 
                     if (!sources || sources.length === 0) {
                         setImportSourceFormVisible(false);
@@ -5199,6 +5200,9 @@ export function initializeOperatorConsole() {
                             option.textContent = source.name;
                             sourceSelect.appendChild(option);
                         });
+                        if (sources.some((source) => source.id === previousSelection)) {
+                            sourceSelect.value = previousSelection;
+                        }
                         setImportSourceFormVisible(true);
                         ensureConfigMessage('');
                         setInlineStatus(importSourceStatus, '');
