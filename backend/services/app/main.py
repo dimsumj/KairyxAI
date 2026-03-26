@@ -56,8 +56,9 @@ def create_app() -> FastAPI:
     settings = get_settings()
     validate_runtime_settings(settings)
     frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
-    frontend_index = frontend_dir / "index.html"
-    frontend_static_dir = frontend_dir / "assets"
+    frontend_dist_dir = frontend_dir / "dist"
+    frontend_index = frontend_dist_dir / "index.html" if (frontend_dist_dir / "index.html").exists() else frontend_dir / "index.html"
+    frontend_static_dir = frontend_dist_dir if frontend_dist_dir.exists() else frontend_dir / "assets"
     configure_access_log_filters()
     app = FastAPI(title=settings.app_name)
     app.add_middleware(

@@ -10,25 +10,38 @@
 
 </head>
 <body>
+    <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-    <nav class="sidebar">
+    <nav class="sidebar" aria-label="Primary">
         <div class="sidebar-header">
-            Kairyx AI
+            <div class="sidebar-brand">
+                <div class="brand-mark">K</div>
+                <div class="brand-copy">
+                    <div class="brand-title">KairyxAI</div>
+                    <div class="brand-subtitle">Lifecycle OS</div>
+                </div>
+            </div>
+            <div class="sidebar-header-actions">
+                <button type="button" id="mobile-nav-close-btn" class="sidebar-icon-btn sidebar-mobile-close" aria-label="Close navigation">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                    </svg>
+                </button>
+                <button type="button" id="sidebar-collapse-btn" class="sidebar-icon-btn sidebar-collapse-btn" aria-label="Collapse sidebar">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+                    </svg>
+                </button>
+            </div>
         </div>
-        <ul class="sidebar-nav">
-            <li><a href="#" class="nav-link active" data-module="data-core"><span>Data Core</span><small>Connectors, imports, mappings, health</small></a></li>
-            <li><a href="#" class="nav-link" data-module="audience-engine"><span>Audience Engine</span><small>Cohorts, SQL workspace, metrics</small></a></li>
-            <li><a href="#" class="nav-link" data-module="action-orchestrator"><span>Action Orchestrator</span><small>Workflows, delivery, policy runtime</small></a></li>
-            <li><a href="#" class="nav-link" data-module="experiment-hub"><span>Experiment Hub</span><small>Configs, exposures, outcomes, decisions</small></a></li>
-            <li><a href="#" class="nav-link" data-module="insight-copilot"><span>Insight Copilot</span><small>Query, explain, recommend, report</small></a></li>
-            <li><a href="#" class="nav-link" data-module="help"><span>Help</span><small>Manual, walkthroughs, payload samples</small></a></li>
-        </ul>
-        <div class="sidebar-footer">
+
+        <div class="sidebar-body">
             <div class="workspace-summary-card">
                 <div class="workspace-summary-label">Workspace</div>
                 <div id="workspace-summary-text" class="workspace-summary-value">Local demo / default / default</div>
                 <div id="workspace-role-summary" class="workspace-summary-meta">Local demo session</div>
             </div>
+
             <div id="oidc-workspace-controls" class="hidden">
                 <div class="form-group">
                     <label for="org-space-select">Organization Space</label>
@@ -48,13 +61,119 @@
                 </div>
                 <div id="workspace-selector-status" class="workspace-inline-status"></div>
             </div>
+
+            <ul class="sidebar-nav">
+                <li>
+                    <a href="#" class="nav-link active" data-module="data-core">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <rect x="4" y="4" width="6" height="6" rx="1.5"></rect>
+                                <rect x="14" y="4" width="6" height="6" rx="1.5"></rect>
+                                <rect x="4" y="14" width="6" height="6" rx="1.5"></rect>
+                                <rect x="14" y="14" width="6" height="6" rx="1.5"></rect>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Data Core</span>
+                            <small>Connectors, imports, mappings, health</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="audience-engine">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M7 18c0-2.21 2.24-4 5-4s5 1.79 5 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
+                                <circle cx="12" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Audience Engine</span>
+                            <small>Cohorts, SQL workspace, metrics</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="action-orchestrator">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                                <circle cx="17" cy="12" r="2" fill="currentColor"></circle>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Action Orchestrator</span>
+                            <small>Workflows, delivery, policy runtime</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="experiment-hub">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M8 4h8M10 4v5l-4.5 7.5A2 2 0 0 0 7.2 20h9.6a2 2 0 0 0 1.7-3.5L14 9V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"></path>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Experiment Hub</span>
+                            <small>Configs, exposures, outcomes, decisions</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="insight-copilot">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M8 15h8M8 11h8M10 19h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                                <path d="M7 5h10a2 2 0 0 1 2 2v7.5a2 2 0 0 1-.8 1.6l-3.5 2.6a2 2 0 0 1-1.2.4h-3a2 2 0 0 1-1.2-.4l-3.5-2.6a2 2 0 0 1-.8-1.6V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"></path>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Insight Copilot</span>
+                            <small>Query, explain, recommend, report</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="help">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+                                <path d="M9.5 9.5a2.5 2.5 0 1 1 4.28 1.77c-.76.75-1.78 1.32-1.78 2.73" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
+                                <circle cx="12" cy="17" r="1" fill="currentColor"></circle>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Help</span>
+                            <small>Manual, walkthroughs, payload samples</small>
+                        </span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" class="nav-link" data-module="settings">
+                        <span class="nav-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" fill="none" stroke="currentColor" stroke-width="1.7"></path>
+                                <path d="M4.8 13.3a1.5 1.5 0 0 1 0-2.6l1.2-.7a6.9 6.9 0 0 1 .7-1.7L6.3 7a1.5 1.5 0 0 1 0-2.1l1.6-1.6a1.5 1.5 0 0 1 2.1 0l1 .4c.55-.25 1.12-.46 1.72-.58l.7-1.2a1.5 1.5 0 0 1 2.6 0l.7 1.2c.6.12 1.17.33 1.72.58l1-.4a1.5 1.5 0 0 1 2.1 0l1.6 1.6a1.5 1.5 0 0 1 0 2.1l-.4 1c.25.55.46 1.12.58 1.72l1.2.7a1.5 1.5 0 0 1 0 2.6l-1.2.7a6.92 6.92 0 0 1-.58 1.72l.4 1a1.5 1.5 0 0 1 0 2.1l-1.6 1.6a1.5 1.5 0 0 1-2.1 0l-1-.4c-.55.25-1.12.46-1.72.58l-.7 1.2a1.5 1.5 0 0 1-2.6 0l-.7-1.2a6.9 6.9 0 0 1-1.72-.58l-1 .4a1.5 1.5 0 0 1-2.1 0l-1.6-1.6a1.5 1.5 0 0 1 0-2.1l.4-1a6.9 6.9 0 0 1-.58-1.72Z" fill="none" stroke="currentColor" stroke-width="1.5"></path>
+                            </svg>
+                        </span>
+                        <span class="nav-copy">
+                            <span>Settings</span>
+                            <small>Appearance, session, workspace tools</small>
+                        </span>
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <div class="sidebar-footer">
             <div class="form-group">
                 <label for="auth-status-text">Auth Session</label>
-                <div id="auth-status-text" style="font-size: 0.85rem; color: var(--text-secondary);">Google login required</div>
+                <div id="auth-status-text" class="auth-status-copy">Google login required</div>
             </div>
-            <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <div class="form-group sidebar-footer-actions">
                 <button type="button" id="oidc-login-btn">Continue with Google</button>
-                <button type="button" id="oidc-logout-btn">Logout</button>
+                <button type="button" id="oidc-logout-btn" class="secondary-action">Logout</button>
             </div>
             <div id="legacy-api-key-group" class="form-group">
                 <label for="api-key-input">API Key</label>
@@ -68,16 +187,51 @@
     </nav>
 
     <main class="content">
-        <div class="theme-switch-wrapper">
-            <span id="theme-label">Dark Mode</span>
-            <label class="theme-switch">
-                <input type="checkbox" id="theme-switch-checkbox" />
-                <span class="slider"></span>
-            </label>
-        </div>
+        <header class="topbar">
+            <div class="topbar-row">
+                <div class="topbar-left">
+                    <button type="button" id="mobile-nav-open-btn" class="topbar-icon-btn mobile-nav-open" aria-label="Open navigation">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                        </svg>
+                    </button>
+                    <form id="topbar-search-form" class="topbar-search" role="search">
+                        <span class="topbar-search-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+                                <path d="M20 20l-4.2-4.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                            </svg>
+                        </span>
+                        <input type="search" id="topbar-search-input" placeholder="Search modules and pages">
+                    </form>
+                </div>
+                <div class="topbar-right">
+                    <button type="button" id="topbar-switcher-btn" class="topbar-action-btn">Switcher</button>
+                    <button type="button" id="topbar-new-project-btn" class="topbar-action-btn">New Project</button>
+                    <div id="topbar-health" class="topbar-status-chip">
+                        <span class="status-dot"></span>
+                        <span id="topbar-health-text">Connecting...</span>
+                    </div>
+                    <div class="topbar-account">
+                        <div id="topbar-account-avatar" class="topbar-avatar">K</div>
+                        <div class="topbar-account-copy">
+                            <span id="topbar-account-title">KairyxAI Operator</span>
+                            <small id="topbar-account-subtitle">Google login required</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="topbar-meta">
+                <div id="topbar-workspace-pill" class="topbar-pill">Local demo / default / default</div>
+                <div id="topbar-page-context" class="topbar-meta-text">Data Core / Churn Rescue</div>
+            </div>
+            <div id="topbar-search-status" class="topbar-search-status hidden"></div>
+        </header>
 
+        <div class="content-scroll">
         <div class="card module-shell">
-            <div>
+            <div class="module-shell-copy">
+                <div class="module-eyebrow">KairyxAI Control Plane</div>
                 <div id="module-title" class="module-title">Data Core</div>
                 <p id="module-subtitle" class="module-subtitle">Manage connectors, imports, mapping governance, and health signals that power the closed-loop lifecycle.</p>
             </div>
@@ -1304,6 +1458,96 @@ dimensions: campaign,country,platform</pre>
                 </ul>
             </div>
         </section>
+
+        <section id="settings" class="page">
+            <h1>Settings</h1>
+            <div class="settings-grid settings-grid-primary">
+                <div class="card">
+                    <div class="module-section-header">
+                        <h2>Appearance</h2>
+                        <span class="pill">Theme</span>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-copy">
+                            <h3>Light mode / Dark mode</h3>
+                            <p>Switch the operator console theme. The selection is saved in this browser and applies across the current workspace.</p>
+                        </div>
+                        <label class="theme-switch settings-theme-switch">
+                            <input type="checkbox" id="theme-switch-checkbox" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div id="theme-label" class="settings-inline-note">Light mode active</div>
+                </div>
+
+                <div class="card">
+                    <div class="module-section-header">
+                        <h2>Workspace Tools</h2>
+                        <span class="pill">Context</span>
+                    </div>
+                    <p class="subtle">Open the workspace switcher or create a new project without leaving the console shell.</p>
+                    <div class="settings-stats">
+                        <div class="stat-card">
+                            <div class="label">Current workspace</div>
+                            <div id="settings-workspace-summary" class="value">Local demo / default / default</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="label">Session state</div>
+                            <div id="settings-session-summary" class="value">Google login required</div>
+                        </div>
+                    </div>
+                    <div class="inline-actions" style="margin-top: 1rem;">
+                        <button type="button" id="settings-open-switcher-btn">Open Switcher</button>
+                        <button type="button" id="settings-create-project-btn">Create Project</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="module-section-header">
+                        <h2>Session</h2>
+                        <span class="pill">Access</span>
+                    </div>
+                    <p id="settings-auth-copy" class="subtle">Sign in with Google for organization-aware access, or keep using local demo mode where configured.</p>
+                    <div class="inline-actions">
+                        <button type="button" id="settings-login-btn">Continue with Google</button>
+                        <button type="button" id="settings-logout-btn" class="secondary-action">Logout</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="module-section-header">
+                        <h2>Shell Behavior</h2>
+                        <span class="pill">Responsive</span>
+                    </div>
+                    <div class="settings-checklist">
+                        <div class="settings-checklist-item">
+                            <div>
+                                <strong>Collapsible sidebar</strong>
+                                <p>Desktop navigation can be reduced to an icon rail while keeping the active module visible.</p>
+                            </div>
+                            <span class="pill">Enabled</span>
+                        </div>
+                        <div class="settings-checklist-item">
+                            <div>
+                                <strong>Mobile drawer</strong>
+                                <p>On small screens the navigation becomes an overlay drawer with backdrop dismissal.</p>
+                            </div>
+                            <span class="pill">Enabled</span>
+                        </div>
+                        <div class="settings-checklist-item">
+                            <div>
+                                <strong>Quick search</strong>
+                                <p>Use the top bar search to jump directly to a module or subpage label.</p>
+                            </div>
+                            <span class="pill">Enabled</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        </div>
     </main>
 
     <div id="workspace-overlay" class="workspace-overlay hidden" aria-hidden="true">
@@ -1438,7 +1682,7 @@ dimensions: campaign,country,platform</pre>
         </div>
     </div>
 
-    <script src="/static/operator-console.js"></script>
+    <script type="module" src="/static/operator-console.js"></script>
 
 
 </body>

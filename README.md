@@ -33,7 +33,7 @@ The first end-to-end scenario is `Churn Rescue`, with `Monetization Lift` and `O
 This repository is no longer just an early prototype. It now contains:
 
 - a FastAPI-based operator API with a backward-compatible global prefix at `/api/v1` and an organization-scoped prefix at `/{organization_id}/v1`
-- a static operator console served by the backend
+- a React/Vite operator console with a Figma-inspired SaaS shell, served by the backend bundle
 - SQLAlchemy + Alembic control-plane persistence
 - mock-first local development mode
 - a growing set of production-shaped contracts for imports, workflows, experiments, copilot, audit, and health
@@ -146,7 +146,7 @@ Primary backend surface:
 - Control-plane persistence: SQLAlchemy + Alembic
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
-- Frontend: static HTML/CSS/JS operator console served by the backend
+- Frontend: React/Vite operator console bundle served by the backend, with source-shell fallback for unbuilt local environments
 - Operator auth: Google login via OIDC bearer token + organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with self-serve organization-space onboarding and legacy header auth kept only as a hidden local/demo compatibility path
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
@@ -177,6 +177,7 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
+- a Figma-derived SaaS shell with a responsive sidebar, top search bar, workspace summary card, and Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
@@ -219,7 +220,10 @@ KairyxAI/
 │   ├── main_service.py     # backend entrypoint shim for local demo
 │   └── requirements.txt
 ├── frontend/
-│   ├── index.html
+│   ├── app/                # React/Vite app entry and source files
+│   ├── dist/               # built frontend bundle served by the backend
+│   ├── index.html          # source console template used by the React shell + fallback
+│   ├── package.json
 │   └── assets/
 │       ├── operator-console.css
 │       ├── operator-console.js
@@ -236,6 +240,7 @@ KairyxAI/
 
 - Python `3.14`
 - `bash`
+- `npm`
 - optional: Playwright CLI support if you want to run the operator-console smoke flow
 
 ### Recommended local start
@@ -260,10 +265,14 @@ Default local behavior:
 ```bash
 python3.14 -m venv .venv
 source .venv/bin/activate
+cd frontend
+npm install
+npm run build
+cd ..
 cd backend/services
 pip install -r requirements.txt
 export DATA_BACKEND_MODE=mock
-uvicorn main_service:app --host 0.0.0.0 --port 8000 --reload --reload-dir ../../frontend
+uvicorn main_service:app --host 0.0.0.0 --port 8000 --reload --reload-dir ../../frontend --reload-dir ../../frontend/dist
 ```
 
 Then open:
@@ -443,7 +452,7 @@ There is also a lightweight liveness endpoint at:
 ### Backend tests
 
 ```bash
-.venv/bin/pytest backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
+.venv/bin/pytest backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
 ```
 
 ### Frontend/operator smoke
@@ -455,6 +464,7 @@ PWCLI=/path/to/playwright_cli.sh BASE_URL=http://127.0.0.1:8000 ./scripts/operat
 ### Lightweight frontend checks
 
 ```bash
+npm --prefix frontend run build
 node --check frontend/assets/operator-console.js
 git diff --check
 ```
@@ -468,7 +478,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- frontend served directly by the backend with no build pipeline required
+- backend-served React shell with a Figma-based SaaS layout and responsive Settings-driven appearance control
 
 ## Current Limitations
 
@@ -476,7 +486,7 @@ The remaining v1 work is mostly hardening and productionization:
 
 - production-grade auth, tenant isolation, and secret management are not complete
 - provider-backed activation and outcome measurement still need deeper stabilization
-- the operator console is improving, but is not yet a fully productized multi-surface app
+- the React shell is in place, but much of the detailed operator behavior is still migrating from legacy DOM-driven runtime code into React-native components
 - automated optimization remains intentionally limited and should remain human-confirmed by default
 
 ## Roadmap Direction

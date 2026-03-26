@@ -1,10 +1,38 @@
-// KairyxAI operator console runtime. Extracted from index.html for frontend hardening.
-        document.addEventListener('DOMContentLoaded', function () {
+// KairyxAI operator console runtime. Mounted by the React shell.
+export function initializeOperatorConsole() {
+    if (typeof window !== 'undefined' && window.__KAIRYX_OPERATOR_CONSOLE_INITIALIZED) {
+        return;
+    }
+    if (typeof window !== 'undefined') {
+        window.__KAIRYX_OPERATOR_CONSOLE_INITIALIZED = true;
+    }
             const navLinks = document.querySelectorAll('.nav-link');
             const pages = document.querySelectorAll('.page');
             const moduleTitle = document.getElementById('module-title');
             const moduleSubtitle = document.getElementById('module-subtitle');
             const moduleSubnav = document.getElementById('module-subnav');
+            const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+            const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
+            const mobileNavOpenBtn = document.getElementById('mobile-nav-open-btn');
+            const mobileNavCloseBtn = document.getElementById('mobile-nav-close-btn');
+            const topbarSwitcherBtn = document.getElementById('topbar-switcher-btn');
+            const topbarNewProjectBtn = document.getElementById('topbar-new-project-btn');
+            const topbarSearchForm = document.getElementById('topbar-search-form');
+            const topbarSearchInput = document.getElementById('topbar-search-input');
+            const topbarSearchStatus = document.getElementById('topbar-search-status');
+            const topbarHealth = document.getElementById('topbar-health');
+            const topbarHealthText = document.getElementById('topbar-health-text');
+            const topbarWorkspacePill = document.getElementById('topbar-workspace-pill');
+            const topbarPageContext = document.getElementById('topbar-page-context');
+            const topbarAccountTitle = document.getElementById('topbar-account-title');
+            const topbarAccountSubtitle = document.getElementById('topbar-account-subtitle');
+            const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
+            const settingsSessionSummary = document.getElementById('settings-session-summary');
+            const settingsAuthCopy = document.getElementById('settings-auth-copy');
+            const settingsOpenSwitcherBtn = document.getElementById('settings-open-switcher-btn');
+            const settingsCreateProjectBtn = document.getElementById('settings-create-project-btn');
+            const settingsLoginBtn = document.getElementById('settings-login-btn');
+            const settingsLogoutBtn = document.getElementById('settings-logout-btn');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -133,6 +161,11 @@
                     title: 'Help',
                     subtitle: 'Read the current v1 manual, follow the end-to-end operator path, and copy sample SQL or JSON payloads that match the live UI.',
                     pages: [{ id: 'help', label: 'Manual & Samples' }],
+                },
+                'settings': {
+                    title: 'Settings',
+                    subtitle: 'Manage appearance, workspace tools, shell preferences, and session controls without leaving the operator console.',
+                    pages: [{ id: 'settings', label: 'Workspace Settings' }],
                 },
             };
 
@@ -366,10 +399,25 @@
                     if (isGoogleLoginConfigured()) {
                         workspaceSummaryText.textContent = 'Google login required';
                         workspaceRoleSummary.textContent = 'Sign in to access organizations and projects';
+                        if (topbarWorkspacePill) {
+                            topbarWorkspacePill.textContent = 'Google login required';
+                        }
+                        if (settingsWorkspaceSummary) {
+                            settingsWorkspaceSummary.textContent = 'Google login required';
+                        }
+                        syncShellAccount(payload);
                         return;
                     }
-                    workspaceSummaryText.textContent = `Local demo / ${getActiveTenantId()} / ${getActiveProjectId()}`;
+                    const localSummary = `Local demo / ${getActiveTenantId()} / ${getActiveProjectId()}`;
+                    workspaceSummaryText.textContent = localSummary;
                     workspaceRoleSummary.textContent = 'Local demo session';
+                    if (topbarWorkspacePill) {
+                        topbarWorkspacePill.textContent = localSummary;
+                    }
+                    if (settingsWorkspaceSummary) {
+                        settingsWorkspaceSummary.textContent = localSummary;
+                    }
+                    syncShellAccount(payload);
                     return;
                 }
                 const tenantItems = Array.isArray(payload?.accessible_organizations) ? payload.accessible_organizations : [];
@@ -380,7 +428,14 @@
                 const project = projectItems.find((item) => item.project_id === selectedProjectId);
                 const tenantLabel = tenant?.name || selectedTenantId || 'Select organization space';
                 const projectLabel = project?.name || selectedProjectId || 'Select project';
-                workspaceSummaryText.textContent = `${tenantLabel} / ${projectLabel}`;
+                const summaryText = `${tenantLabel} / ${projectLabel}`;
+                workspaceSummaryText.textContent = summaryText;
+                if (topbarWorkspacePill) {
+                    topbarWorkspacePill.textContent = summaryText;
+                }
+                if (settingsWorkspaceSummary) {
+                    settingsWorkspaceSummary.textContent = summaryText;
+                }
                 const roleBits = [];
                 roleBits.push(payload?.display_name || payload?.email || 'Authenticated user');
                 if (payload?.organization_role) {
@@ -390,6 +445,20 @@
                     roleBits.push(`project: ${payload.project_role}`);
                 }
                 workspaceRoleSummary.textContent = roleBits.join(' • ');
+                syncShellAccount(payload);
+            }
+
+            function syncShellAccount(payload = authSessionState) {
+                const accountTitle = payload?.display_name || payload?.email || 'KairyxAI Operator';
+                const accountSubtitle = accessToken
+                    ? `${payload?.organization_id || getActiveTenantId() || 'workspace'} / ${payload?.project_id || getActiveProjectId() || 'project'}`
+                    : (isGoogleLoginConfigured() ? 'Google login required' : 'Local demo session');
+                if (topbarAccountTitle) {
+                    topbarAccountTitle.textContent = accountTitle;
+                }
+                if (topbarAccountSubtitle) {
+                    topbarAccountSubtitle.textContent = accountSubtitle;
+                }
             }
 
             function syncAuthModeUi() {
@@ -406,6 +475,24 @@
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
+                if (topbarSwitcherBtn) {
+                    topbarSwitcherBtn.disabled = !usingOidc;
+                }
+                if (topbarNewProjectBtn) {
+                    topbarNewProjectBtn.disabled = !usingOidc;
+                }
+                if (settingsOpenSwitcherBtn) {
+                    settingsOpenSwitcherBtn.disabled = !usingOidc;
+                }
+                if (settingsCreateProjectBtn) {
+                    settingsCreateProjectBtn.disabled = !usingOidc;
+                }
+                if (settingsLoginBtn) {
+                    settingsLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
+                }
+                if (settingsLogoutBtn) {
+                    settingsLogoutBtn.classList.toggle('hidden', !usingOidc);
+                }
                 syncWorkspaceSummary();
             }
 
@@ -630,6 +717,19 @@
                 }
             }
 
+            function setSidebarMobileOpen(isOpen) {
+                document.body.classList.toggle('sidebar-mobile-open', Boolean(isOpen));
+            }
+
+            function updatePageContext(moduleId = activeModuleId, pageId = activePageId) {
+                const moduleConfig = moduleConfigs[moduleId];
+                if (!topbarPageContext || !moduleConfig) {
+                    return;
+                }
+                const pageConfig = (moduleConfig.pages || []).find((entry) => entry.id === pageId);
+                topbarPageContext.textContent = `${moduleConfig.title} / ${pageConfig?.label || moduleConfig.title}`;
+            }
+
             function loadPageData(pageId) {
                 if (shouldBlockProtectedAppData()) {
                     return;
@@ -683,6 +783,7 @@
                 Array.from(moduleSubnav.querySelectorAll('button')).forEach((button) => {
                     button.classList.toggle('active', button.dataset.page === pageId);
                 });
+                updatePageContext(activeModuleId, pageId);
             }
 
             function renderModuleSubnav(moduleId, preferredPageId = null) {
@@ -711,6 +812,7 @@
                 const nextPageId = preferredPageId || config.pages[0].id;
                 renderModuleSubnav(moduleId, nextPageId);
                 activatePage(nextPageId);
+                setSidebarMobileOpen(false);
             }
 
             navLinks.forEach((link) => {
@@ -718,6 +820,64 @@
                     event.preventDefault();
                     activateModule(link.dataset.module);
                 });
+            });
+
+            function focusSearchResult(query) {
+                const normalized = String(query || '').trim().toLowerCase();
+                if (!normalized) {
+                    if (topbarSearchStatus) {
+                        topbarSearchStatus.classList.add('hidden');
+                        topbarSearchStatus.textContent = '';
+                    }
+                    return;
+                }
+                for (const [moduleId, config] of Object.entries(moduleConfigs)) {
+                    if (config.title.toLowerCase().includes(normalized)) {
+                        activateModule(moduleId);
+                        if (topbarSearchStatus) {
+                            topbarSearchStatus.textContent = `Opened ${config.title}.`;
+                            topbarSearchStatus.classList.remove('hidden');
+                        }
+                        return;
+                    }
+                    const pageMatch = (config.pages || []).find((entry) => entry.label.toLowerCase().includes(normalized));
+                    if (pageMatch) {
+                        activateModule(moduleId, pageMatch.id);
+                        if (topbarSearchStatus) {
+                            topbarSearchStatus.textContent = `Opened ${config.title} / ${pageMatch.label}.`;
+                            topbarSearchStatus.classList.remove('hidden');
+                        }
+                        return;
+                    }
+                }
+                if (topbarSearchStatus) {
+                    topbarSearchStatus.textContent = `No module or page matched "${query}".`;
+                    topbarSearchStatus.classList.remove('hidden');
+                }
+            }
+
+            sidebarCollapseBtn?.addEventListener('click', () => {
+                document.body.classList.toggle('sidebar-collapsed');
+            });
+            mobileNavOpenBtn?.addEventListener('click', () => setSidebarMobileOpen(true));
+            mobileNavCloseBtn?.addEventListener('click', () => setSidebarMobileOpen(false));
+            sidebarBackdrop?.addEventListener('click', () => setSidebarMobileOpen(false));
+            topbarSwitcherBtn?.addEventListener('click', () => workspaceOpenSwitcherBtn.click());
+            topbarNewProjectBtn?.addEventListener('click', () => workspaceCreateProjectBtn.click());
+            settingsOpenSwitcherBtn?.addEventListener('click', () => workspaceOpenSwitcherBtn.click());
+            settingsCreateProjectBtn?.addEventListener('click', () => workspaceCreateProjectBtn.click());
+            settingsLoginBtn?.addEventListener('click', () => oidcLoginBtn.click());
+            settingsLogoutBtn?.addEventListener('click', () => oidcLogoutBtn.click());
+            topbarSearchForm?.addEventListener('submit', (event) => {
+                event.preventDefault();
+                focusSearchResult(topbarSearchInput?.value || '');
+            });
+            topbarSearchInput?.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && topbarSearchStatus) {
+                    topbarSearchStatus.classList.add('hidden');
+                    topbarSearchStatus.textContent = '';
+                    topbarSearchInput.value = '';
+                }
             });
 
 
@@ -778,6 +938,15 @@
             function setAuthStatus(message) {
                 if (authStatusText) {
                     authStatusText.textContent = message;
+                }
+                if (settingsSessionSummary) {
+                    settingsSessionSummary.textContent = message;
+                }
+                if (settingsAuthCopy) {
+                    settingsAuthCopy.textContent = message;
+                }
+                if (topbarAccountSubtitle && (!accessToken || !authSessionState)) {
+                    topbarAccountSubtitle.textContent = message;
                 }
             }
 
@@ -5668,6 +5837,9 @@
                 if (statusTextSpan) {
                     statusTextSpan.textContent = message;
                 }
+                if (topbarHealthText) {
+                    topbarHealthText.textContent = message;
+                }
                 if (workspaceStartupStatus) {
                     workspaceStartupStatus.textContent = message;
                     workspaceStartupStatus.classList.toggle('is-ok', state === 'ok');
@@ -5680,9 +5852,11 @@
                     await ensureHealthState(true);
                     
                     healthStatusDiv.classList.add('connected');
+                    topbarHealth?.classList.add('connected');
                     setApplicationStartupStatus(`Application start completed (${backendMode})`, 'ok');
                 } catch (error) {
                     healthStatusDiv.classList.remove('connected');
+                    topbarHealth?.classList.remove('connected');
                     setApplicationStartupStatus('Application start failed', 'error');
                     console.error('Health check failed:', error);
                 }
@@ -5717,7 +5891,7 @@
             function setTheme(isDark) {
                 document.body.classList.toggle('dark-theme', isDark);
                 themeToggle.checked = isDark;
-                themeLabel.textContent = isDark ? 'Light Mode' : 'Dark Mode';
+                themeLabel.textContent = isDark ? 'Dark mode active' : 'Light mode active';
                 localStorage.setItem('theme', isDark ? 'dark-theme' : 'light-theme');
             }
 
@@ -5731,4 +5905,8 @@
             themeToggle.addEventListener('change', function() {
                 setTheme(this.checked);
             });
-        });
+}
+
+if (typeof document !== 'undefined' && document.getElementById('module-title')) {
+    initializeOperatorConsole();
+}

@@ -5,7 +5,7 @@
 ## 1) What This Guide Covers
 This guide explains how to use the current KairyxAI operator console module by module.
 
-It is written against the current single-page frontend served by the backend and covers:
+It is written against the current backend-served React operator shell and covers:
 - every primary module in the sidebar
 - every wired button and text box in the console
 - representative sample input and output for the main workflows
@@ -18,21 +18,24 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 ## 2) Before You Start
 
-### 2.1 Global Sidebar Controls
+### 2.1 Global Shell Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
+| Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. | None | Navigation stays visible with less horizontal space used. |
 | `Organization Space` | Select | After Google login, choose which organization space to operate in from the sidebar once you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
 | `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
+| Top bar search | Search box | Enter a module title or subpage label to jump directly to it. | `settings` | The matching module or subpage opens and the page-context text updates. |
+| Top bar `Switcher` | Button | Opens the full-screen workspace selector overlay from the top bar. | None | Lets you switch organization space or project without opening the sidebar controls first. |
+| Top bar `New Project` | Button | Opens the create-project overlay from the top bar. | None | Creates a new project in the active organization space after confirmation. |
 | `Auth Session` | Status text | Read-only session state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated Google user and active workspace. |
 | `Continue with Google` | Button | Starts the PKCE Google browser login flow. | None | Browser redirects to Google and returns with a bearer token. |
 | `Logout` | Button | Clears the local bearer token and, when configured, redirects to the IdP logout URL. | None | Session returns to local/demo or logged-out state. |
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
-| `Dark Mode` switch | Checkbox | Toggles the theme and stores it in local storage. | Checked | UI switches to dark theme. |
-| Sidebar module links | Navigation buttons | Open the target product module. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
+| Sidebar module links | Navigation buttons | Open the target product module, including `Settings`. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
@@ -48,6 +51,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
+10. Go to `Settings` if you want to switch between light mode and dark mode or use the shell-level workspace shortcuts.
 
 ### 2.3 Onboarding And Workspace Overlays
 
@@ -889,7 +893,35 @@ WHERE predicted_churn_risk = 'high'
 
 ---
 
-## 8) Help Page
+## 8) Settings
+The `Settings` module is the shell-level control page for appearance, session shortcuts, and workspace actions.
+
+### 8.1 Appearance
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Light mode / Dark mode` switch | Checkbox | Toggle the console theme. The choice is stored in local storage for the current browser. | Checked | The shell and module pages switch to dark mode. |
+| Theme state label | Read-only text | Shows the currently active appearance mode. | `Dark mode active` | Confirms which theme is active after a toggle. |
+
+### 8.2 Workspace Tools
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Open Switcher` | Button | Opens the full-screen workspace selector overlay from inside Settings. | None | Lets you switch organization space or project. |
+| `Create Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization space after success. |
+| Current workspace card | Read-only summary | Shows the active organization space and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
+| Session state card | Read-only summary | Shows the current login or demo state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session. |
+
+### 8.3 Session
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a bearer token. |
+| `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to logged-out or local/demo state. |
+
+---
+
+## 9) Help Page
 The `Help` module is a built-in quick reference. It does not contain action buttons that mutate backend state. Use it for:
 - recommended end-to-end operator order
 - role guide
@@ -905,7 +937,7 @@ Recommended use:
 
 ---
 
-## 9) Representative End-To-End Example
+## 10) Representative End-To-End Example
 
 ### Goal
 Create a high-risk churn cohort, bind it to a workflow, measure it with an experiment, and review the result in Copilot.
@@ -943,7 +975,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 
 ---
 
-## 10) Current Known UI Caveats
+## 11) Current Known UI Caveats
 - `Data Core -> Governance -> Save Limits` is currently a placeholder and is not wired in the frontend JavaScript.
 - `Webhook URL` and `Webhook Token` on the churn export panel are mainly relevant when the provider is `webhook`.
 - Some lists and selectors require prior data. Examples:
@@ -954,7 +986,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 
 ---
 
-## 11) Documentation Maintenance Rule
+## 12) Documentation Maintenance Rule
 When any user-facing function, button label, form field, workflow, or sample payload changes:
 1. Update this file.
 2. Update `README.md`.

@@ -115,10 +115,8 @@ def test_root_serves_frontend_shell(client):
     assert "text/html" in resp.headers["content-type"]
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
-    assert "workspace-login-panel" in resp.text
-    assert "Continue with Google" in resp.text
-    assert "workspace-org-url-input" in resp.text
-    assert "workspace-selection-resolve-btn" in resp.text
+    assert 'id="root"' in resp.text
+    assert "Player Engagement Platform" in resp.text
 
 
 def test_root_serves_frontend_static_assets(client):
@@ -130,7 +128,8 @@ def test_root_serves_frontend_static_assets(client):
     js_resp = client.get("/static/operator-console.js")
     assert js_resp.status_code == 200
     assert "javascript" in js_resp.headers["content-type"]
-    assert "document.addEventListener('DOMContentLoaded'" in js_resp.text
+    assert "initializeOperatorConsole" in js_resp.text
+    assert "createRoot" in js_resp.text
     assert "/api/v1" in js_resp.text
 
 def test_root_health_alias(client):

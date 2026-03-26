@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend/services"
+FRONTEND_DIR="$ROOT_DIR/frontend"
 VENV_DIR="$ROOT_DIR/.venv"
 APP_HOST="${KAIRYX_HOST:-0.0.0.0}"
 APP_PORT="${KAIRYX_PORT:-8000}"
@@ -52,8 +53,17 @@ echo "[KairyxAI] Starting local demo in DATA_BACKEND_MODE=$DATA_BACKEND_MODE usi
 echo "[KairyxAI] Control plane DB: $CONTROL_PLANE_DATABASE_URL"
 echo "[KairyxAI] Local identity/checkpoint DB: $KAIRYX_LOCAL_DB_PATH"
 
+if ! command -v npm >/dev/null 2>&1; then
+  echo "[KairyxAI] npm is required to build the React frontend."
+  echo "[KairyxAI] Install Node.js with npm and retry."
+  exit 1
+fi
+
 action_cleanup() {
   echo "[KairyxAI] Stopping local demo..."
+  if [[ -n "${FRONTEND_PID:-}" ]] && kill -0 "$FRONTEND_PID" >/dev/null 2>&1; then
+    kill "$FRONTEND_PID" >/dev/null 2>&1 || true
+  fi
   if [[ -n "${BACKEND_PID:-}" ]] && kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
     pkill -TERM -P "$BACKEND_PID" >/dev/null 2>&1 || true
     kill "$BACKEND_PID" >/dev/null 2>&1 || true
@@ -64,9 +74,17 @@ action_cleanup() {
 }
 trap action_cleanup EXIT INT TERM
 
+echo "[KairyxAI] Installing frontend dependencies"
+(cd "$FRONTEND_DIR" && npm install >/dev/null)
+echo "[KairyxAI] Building frontend bundle"
+(cd "$FRONTEND_DIR" && npm run build >/dev/null)
+echo "[KairyxAI] Watching frontend bundle for changes"
+(cd "$FRONTEND_DIR" && npm run build:watch >/dev/null) &
+FRONTEND_PID=$!
+
 cd "$BACKEND_DIR"
 "$VENV_PYTHON" -m pip install -r requirements.txt >/dev/null
-"$VENV_UVICORN" main_service:app --host "$APP_HOST" --port "$APP_PORT" --reload --reload-dir ../../frontend &
+"$VENV_UVICORN" main_service:app --host "$APP_HOST" --port "$APP_PORT" --reload --reload-dir ../../frontend --reload-dir ../../frontend/dist &
 BACKEND_PID=$!
 
 echo "[KairyxAI] Backend: http://$DISPLAY_HOST:$APP_PORT"
