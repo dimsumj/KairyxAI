@@ -65,12 +65,12 @@ Every user now passes through the Google login gate first. After successful sign
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Organization URL` | Text box | Enter the URL slug that should appear after the base URL. | `northstar` | The console stores this as the internal `organization_id` and uses it in the org-scoped path. |
+| `Organization URL` | Text box | Enter the URL slug that should appear after the base URL. New organization URLs must use lowercase letters and numbers only and can be at most 16 characters long. | `northstar` | The console stores this as the internal `organization_id` and uses it in the org-scoped path. |
 | `Continue` | Button | Moves from the organization URL step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
 | `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes, the new workspace becomes active, and the browser URL becomes `/<organization_id>`. |
 
-The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; once the session is validated, the console rewrites the page URL to the active organization path.
+The console now asks for the org URL directly and generates the internal organization display name from that slug. New organization URLs are limited to lowercase letters and numbers only, with a maximum length of 16 characters. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; once the session is validated, the console rewrites the page URL to the active organization path.
 
 #### Sample onboarding request
 ```json

@@ -206,6 +206,24 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         assert wrong_project.status_code == 403
 
 
+def test_org_space_onboarding_rejects_invalid_organization_id(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "north-star-2026",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 422
+        assert "lowercase letters and numbers" in json.dumps(onboard.json())
+
+
 def test_org_scoped_v1_path_selects_membership_without_tenant_header(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     with _client(monkeypatch, tmp_path) as client:

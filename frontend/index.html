@@ -1656,7 +1656,7 @@ dimensions: campaign,country,platform</pre>
                         <label class="workspace-field-label" for="onboarding-organization-name">Organization URL</label>
                         <div class="workspace-url-row">
                             <span id="workspace-onboarding-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
-                            <input type="text" id="onboarding-organization-name" class="workspace-url-input" placeholder="your-org-url" autocomplete="off" spellcheck="false">
+                            <input type="text" id="onboarding-organization-name" class="workspace-url-input" placeholder="your-org-url" autocomplete="off" spellcheck="false" maxlength="16" pattern="[a-z0-9]{1,16}">
                         </div>
                         <input type="text" id="onboarding-organization-id" class="hidden" aria-hidden="true">
                         <div class="workspace-helper-text">This becomes the organization path and API slug after the base URL.</div>

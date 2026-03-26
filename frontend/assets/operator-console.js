@@ -429,6 +429,9 @@ export function initializeOperatorConsole() {
                 element.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
             }
 
+            const NEW_ORGANIZATION_ID_MAX_LENGTH = 16;
+            const NEW_ORGANIZATION_ID_PATTERN = /^[a-z0-9]{1,16}$/;
+
             function slugifyIdentifier(value) {
                 return String(value || '')
                     .trim()
@@ -438,15 +441,33 @@ export function initializeOperatorConsole() {
                     .slice(0, 64);
             }
 
-            function normalizeOrganizationUrl(value) {
+            function extractOrganizationUrlValue(value) {
                 let raw = String(value || '').trim();
                 if (!raw) {
                     return '';
                 }
                 raw = raw.replace(/^https?:\/\/[^/]+\//i, '');
                 raw = raw.replace(/^\/+/, '');
-                raw = raw.split(/[/?#]/, 1)[0] || '';
+                return raw.split(/[/?#]/, 1)[0] || '';
+            }
+
+            function normalizeOrganizationUrl(value) {
+                const raw = extractOrganizationUrlValue(value);
+                if (!raw) {
+                    return '';
+                }
                 return slugifyIdentifier(raw);
+            }
+
+            function normalizeNewOrganizationId(value) {
+                return extractOrganizationUrlValue(value)
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]/g, '')
+                    .slice(0, NEW_ORGANIZATION_ID_MAX_LENGTH);
+            }
+
+            function isValidNewOrganizationId(value) {
+                return NEW_ORGANIZATION_ID_PATTERN.test(String(value || '').trim());
             }
 
             function humanizeIdentifier(value) {
@@ -1004,11 +1025,12 @@ export function initializeOperatorConsole() {
 
             apiKeyInput.addEventListener('change', persistActorContext);
             onboardingOrganizationNameInput.addEventListener('input', () => {
-                onboardingOrganizationIdInput.value = normalizeOrganizationUrl(onboardingOrganizationNameInput.value);
+                onboardingOrganizationNameInput.value = normalizeNewOrganizationId(onboardingOrganizationNameInput.value);
+                onboardingOrganizationIdInput.value = onboardingOrganizationNameInput.value;
             });
             onboardingOrganizationNameInput.addEventListener('blur', () => {
-                onboardingOrganizationNameInput.value = normalizeOrganizationUrl(onboardingOrganizationNameInput.value);
-                onboardingOrganizationIdInput.value = normalizeOrganizationUrl(onboardingOrganizationNameInput.value);
+                onboardingOrganizationNameInput.value = normalizeNewOrganizationId(onboardingOrganizationNameInput.value);
+                onboardingOrganizationIdInput.value = onboardingOrganizationNameInput.value;
             });
             onboardingProjectNameInput.addEventListener('input', () => {
                 onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
@@ -2006,9 +2028,17 @@ export function initializeOperatorConsole() {
             });
             onboardingNextBtn.addEventListener('click', async () => {
                 if (onboardingStep === 1) {
-                    const organizationId = normalizeOrganizationUrl(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
-                    if (!organizationId || !onboardingOrganizationNameInput.value.trim()) {
+                    const organizationId = normalizeNewOrganizationId(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
+                    if (!organizationId) {
                         setWorkspaceTextStatus(onboardingStatus, 'Enter an organization URL to continue.', true);
+                        return;
+                    }
+                    if (!isValidNewOrganizationId(organizationId)) {
+                        setWorkspaceTextStatus(
+                            onboardingStatus,
+                            'Organization URL must use only lowercase letters and numbers and be 16 characters or fewer.',
+                            true,
+                        );
                         return;
                     }
                     onboardingOrganizationNameInput.value = organizationId;
@@ -2018,9 +2048,17 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (onboardingStep === 2) {
-                    const organizationId = normalizeOrganizationUrl(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
+                    const organizationId = normalizeNewOrganizationId(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value);
                     const projectId = slugifyIdentifier(onboardingProjectIdInput.value || onboardingProjectNameInput.value);
-                    if (!organizationId || !projectId || !onboardingProjectNameInput.value.trim()) {
+                    if (!organizationId) {
+                        setWorkspaceTextStatus(
+                            onboardingStatus,
+                            'Organization URL must use only lowercase letters and numbers and be 16 characters or fewer.',
+                            true,
+                        );
+                        return;
+                    }
+                    if (!projectId || !onboardingProjectNameInput.value.trim()) {
                         setWorkspaceTextStatus(onboardingStatus, 'Enter a project name to continue.', true);
                         return;
                     }
