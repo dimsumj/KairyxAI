@@ -1621,9 +1621,9 @@ export function initializeOperatorConsole() {
                 });
             }
 
-            function scrollToModuleItem(item, behavior = 'smooth') {
+            function scrollToModuleItem(item, behavior = 'smooth', { forcePageTop = false } = {}) {
                 const resolvedBehavior = behavior === 'instant' ? 'auto' : behavior;
-                if (!item?.targetId || item?.pageId === 'settings') {
+                if (forcePageTop || !item?.targetId || item?.pageId === 'settings') {
                     contentScroll?.scrollTo({ top: 0, behavior: resolvedBehavior });
                     return;
                 }
@@ -1666,6 +1666,7 @@ export function initializeOperatorConsole() {
                 if (!config) return;
                 const item = findModuleItem(moduleId, preferredItemOrPageId) || getModuleItems(moduleId)[0];
                 if (!item) return;
+                const forcePageTop = preferredItemOrPageId === null || preferredItemOrPageId === undefined;
                 clearExpandedSidebarSubmenuSuppression();
                 activeModuleId = moduleId;
                 activeNavItemId = item.id;
@@ -1676,7 +1677,7 @@ export function initializeOperatorConsole() {
                     syncSettingsTabState(item.id);
                 }
                 activatePage(item.pageId, { reload: reloadPage });
-                scrollToModuleItem(item, scrollBehavior);
+                scrollToModuleItem(item, scrollBehavior, { forcePageTop });
                 if (closeSidebar) {
                     setSidebarMobileOpen(false);
                 }
