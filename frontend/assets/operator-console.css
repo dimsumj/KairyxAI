@@ -99,8 +99,19 @@
             padding-left: calc(1.5rem - 3px);
         }
 
-        .sidebar-nav li a span {
+        .sidebar-nav li a .nav-copy span {
             display: block;
+        }
+
+        .sidebar-nav li a .nav-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-nav li a .nav-icon svg {
+            display: block;
+            margin: auto;
         }
 
         .sidebar-nav li a small {
