@@ -2871,8 +2871,16 @@ export function initializeOperatorConsole() {
 
             async function queueMockImportRun(jobId) {
                 try {
-                    const job = await apiRequest(`/imports/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
-                    setInlineStatus(importListStatus, `Import ${job.name || jobId} completed.`);
+                    const job = await apiRequest(`/imports/${encodeURIComponent(jobId)}/run?background=true`, { method: 'POST' });
+                    setInlineStatus(
+                        importListStatus,
+                        job.started === false
+                            ? `Import ${job.name || jobId} is already running. Status will update below.`
+                            : `Import ${job.name || jobId} started in the background. Status will update below.`,
+                    );
+                    loadImportedDataList().catch((error) => {
+                        console.error('Unable to refresh import jobs after starting background import:', error);
+                    });
                 } catch (error) {
                     const failedJob = error && error.payload && error.payload.job ? normalizeImportJob(error.payload.job) : null;
                     const failureReason = (failedJob && getImportFailureReason(failedJob)) || error.message || 'Import failed.';

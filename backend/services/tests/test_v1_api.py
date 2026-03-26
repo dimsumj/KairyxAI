@@ -1969,6 +1969,61 @@ def test_prediction_requires_completed_import_and_locks_import_deletion(client):
     assert "locked by prediction jobs" in delete_import.json()["detail"]
 
 
+def test_run_import_background_returns_accepted_without_waiting_for_completion(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    started = threading.Event()
+    release = threading.Event()
+
+    original_run_job = ImportService.run_job
+
+    def fake_run_job(self, job_id):
+        started.set()
+        release.wait(timeout=5)
+        return original_run_job(self, job_id)
+
+    monkeypatch.setattr("app.application.imports.ImportService.run_job", fake_run_job)
+
+    run_import = client.post(import_job["links"]["self"] + "/run?background=true")
+    assert run_import.status_code == 202
+    payload = run_import.json()
+    assert payload["accepted"] is True
+    assert payload["background"] is True
+    assert payload["id"] == import_job["id"]
+    assert started.wait(timeout=2)
+
+    release.set()
+
+    completed = None
+    for _ in range(50):
+        completed = client.get(import_job["links"]["self"])
+        assert completed.status_code == 200
+        if completed.json()["status"] == "completed":
+            break
+        time.sleep(0.05)
+    assert completed is not None
+    assert completed.json()["status"] == "completed"
+
+
 def test_export_requires_completed_prediction(client):
     with db_module.get_session_factory()() as session:
         repository = SqlAlchemyControlPlaneRepository(session)

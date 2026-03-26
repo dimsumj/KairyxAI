@@ -9,6 +9,7 @@ from app.application.imports import ImportService
 from app.core.api_paths import build_request_api_path
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
+from app.core.request_context import get_request_context
 from app.core.deps import get_import_service
 
 
@@ -153,8 +154,25 @@ def get_import(job_id: str, request: Request, service: ImportService = Depends(g
 
 
 @router.post("/{job_id}/run")
-def run_import(job_id: str, request: Request, service: ImportService = Depends(get_import_service)):
+def run_import(job_id: str, request: Request, background: bool = False, service: ImportService = Depends(get_import_service)):
     base_path = build_request_api_path(request, "/imports")
+    if background:
+        try:
+            result = service.start_job_background(job_id, request_scope=get_request_context())
+        except MissingDependencyError as exc:
+            raise HTTPException(status_code=404, detail=exc.detail)
+        except ResourceLockedError as exc:
+            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(exc))
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+        job = result["job"]
+        payload = build_job_response(
+            job,
+            base_path=base_path,
+            extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"},
+        ).model_dump(mode="json")
+        payload.update({"accepted": True, "started": bool(result.get("started")), "background": True})
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=payload)
     try:
         job = service.run_job(job_id)
     except MissingDependencyError as exc:

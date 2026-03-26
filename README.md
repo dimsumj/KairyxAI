@@ -186,6 +186,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - module loaders that now wait for a valid organization/project workspace before loading protected data, so deployed Google-login environments do not replace page content with transient raw membership errors during session handoff or stale workspace recovery
+- mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
 - invite-link redemption support for project access after login
 - a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace and session controls while leaving appearance control in the top-right header
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured

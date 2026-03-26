@@ -9,10 +9,13 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.application.mappings import MappingService
+from app.core.db import session_scope
 from app.application.secret_refs import materialize_secret_refs
 from app.core.errors import MissingDependencyError, ResourceLockedError
+from app.core.request_context import RequestContext, get_request_context, request_context
 from app.core.runtime import is_shutdown_requested
 from app.domain.jobs import CheckpointStatus, JobStatus
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from dataflow.pipeline import DataflowNormalizationRunner
 from gcs_service import GcsService
 from ingestion_service import IngestionService
@@ -21,6 +24,8 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
 logger = logging.getLogger(__name__)
+_IMPORT_RUN_THREADS: dict[str, threading.Thread] = {}
+_IMPORT_RUN_THREADS_LOCK = threading.Lock()
 
 
 class ImportInterruptedError(RuntimeError):
@@ -50,6 +55,66 @@ class ImportService:
         session = getattr(self.repository, "session", None)
         if session is not None:
             session.rollback()
+
+    def _get_import_run_thread(self, job_id: str) -> threading.Thread | None:
+        with _IMPORT_RUN_THREADS_LOCK:
+            thread = _IMPORT_RUN_THREADS.get(job_id)
+            if thread is not None and not thread.is_alive():
+                _IMPORT_RUN_THREADS.pop(job_id, None)
+                return None
+            return thread
+
+    def _set_import_run_thread(self, job_id: str, thread: threading.Thread) -> None:
+        with _IMPORT_RUN_THREADS_LOCK:
+            _IMPORT_RUN_THREADS[job_id] = thread
+
+    def _clear_import_run_thread(self, job_id: str, thread: threading.Thread | None = None) -> None:
+        with _IMPORT_RUN_THREADS_LOCK:
+            existing = _IMPORT_RUN_THREADS.get(job_id)
+            if existing is None:
+                return
+            if thread is None or existing is thread:
+                _IMPORT_RUN_THREADS.pop(job_id, None)
+
+    def start_job_background(
+        self,
+        job_id: str,
+        *,
+        request_scope: RequestContext | None = None,
+    ) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+
+        active_thread = self._get_import_run_thread(job_id)
+        if active_thread is not None:
+            return {"job": job, "started": False}
+
+        captured_context = request_scope or get_request_context()
+
+        def _worker(captured_job_id: str, captured_request_scope: RequestContext | None) -> None:
+            current_thread = threading.current_thread()
+            try:
+                with request_context(captured_request_scope):
+                    with session_scope() as session:
+                        repository = SqlAlchemyControlPlaneRepository(session)
+                        service = ImportService(repository, self.settings, get_shared_bigquery_service())
+                        service.run_job(captured_job_id)
+            except Exception:
+                logger.exception("Background import execution failed for job %s.", captured_job_id)
+            finally:
+                self._clear_import_run_thread(captured_job_id, current_thread)
+
+        worker = threading.Thread(
+            target=_worker,
+            args=(job_id, captured_context),
+            name=f"import-job-{job_id}",
+            daemon=True,
+        )
+        self._set_import_run_thread(job_id, worker)
+        worker.start()
+        refreshed_job = self.repository.get_import_job(job_id) or job
+        return {"job": refreshed_job, "started": True}
 
     @staticmethod
     def _canonical_aliases() -> Dict[str, str]:

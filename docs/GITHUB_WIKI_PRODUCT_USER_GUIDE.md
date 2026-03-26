@@ -237,7 +237,7 @@ The import source form and imported-data list now wait for a resolved organizati
 | `Import Source` | Select | Choose the configured ingestion source. | `amplitude` | Import request uses that connector/source. |
 | `Start Date` | Date | Beginning of the import window. | `2026-03-01` | Request converts to `20260301`. |
 | `End Date` | Date | End of the import window. | `2026-03-07` | Request converts to `20260307`. |
-| `Import Data` | Button | Creates a new import job. | None | Import job appears in the imported data list. |
+| `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation. |
 | `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
@@ -288,6 +288,7 @@ The import source form and imported-data list now wait for a resolved organizati
 - The Imports page no longer auto-loads heavy diagnostics on first render.
 - Operations, quality, manifests, and schema-contract detail load only when you request them.
 - Import polling continues automatically only while at least one import job is still active.
+- In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
 ### 3.3 Connectors
