@@ -1328,10 +1328,16 @@
 
         .sidebar-icon-btn svg,
         .topbar-icon-btn svg,
-        .nav-icon svg,
         .topbar-search-icon svg {
             width: 1.05rem;
             height: 1.05rem;
+            stroke: currentColor;
+            fill: none;
+        }
+
+        .nav-icon svg {
+            width: 1.22rem;
+            height: 1.22rem;
             stroke: currentColor;
             fill: none;
         }
@@ -1414,9 +1420,9 @@
         }
 
         .nav-icon {
-            width: 2.4rem;
-            height: 2.4rem;
-            border-radius: 0.9rem;
+            width: 2.72rem;
+            height: 2.72rem;
+            border-radius: 1rem;
             border: 1px solid var(--border-color);
             display: inline-flex;
             align-items: center;
