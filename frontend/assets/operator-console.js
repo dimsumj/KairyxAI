@@ -66,6 +66,8 @@ export function initializeOperatorConsole() {
             const workspaceOnboardingUrlPrefix = document.getElementById('workspace-onboarding-url-prefix');
             const workspaceSelectionCurrentOrg = document.getElementById('workspace-selection-current-org');
             const workspaceModalProjectSelect = document.getElementById('workspace-modal-project-select');
+            const workspaceExistingProjectGroup = document.getElementById('workspace-existing-project-group');
+            const workspaceSelectionDivider = document.getElementById('workspace-selection-divider');
             const workspaceSelectionCopy = document.getElementById('workspace-selection-copy');
             const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
             const workspaceSelectionBackBtn = document.getElementById('workspace-selection-back-btn');
@@ -1060,6 +1062,8 @@ export function initializeOperatorConsole() {
                 const pathTenantId = getOrganizationIdFromPathname();
                 const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || pathTenantId || '';
                 const isStandaloneOrgPath = Boolean(pathTenantId);
+                const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
+                const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 if (normalizedStage === 'project' && !selectedTenantId) {
                     normalizedStage = 'org';
                 }
@@ -1071,7 +1075,7 @@ export function initializeOperatorConsole() {
                 }
                 workspaceSelectionBackBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 workspaceSelectionResolveBtn.classList.toggle('hidden', normalizedStage !== 'org');
-                workspaceSelectionContinueBtn.classList.toggle('hidden', normalizedStage !== 'project');
+                workspaceSelectionContinueBtn.classList.toggle('hidden', normalizedStage !== 'project' || !hasExistingProjects);
                 workspaceSelectionCreateProjectBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 if (normalizedStage === 'org') {
                     workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
@@ -1093,11 +1097,16 @@ export function initializeOperatorConsole() {
                     syncWorkspaceSelectionOrgInput(selectedTenantId || '');
                 } else {
                     workspaceModalEyebrow.textContent = 'Workspace';
-                    workspaceModalTitle.textContent = 'Choose a project';
-                    workspaceModalSubtitle.textContent = 'Use an existing project or create a new one inside this organization.';
+                    workspaceModalTitle.textContent = hasExistingProjects ? 'Choose a project' : 'Create your first project';
+                    workspaceModalSubtitle.textContent = hasExistingProjects
+                        ? 'Use an existing project or create a new one inside this organization.'
+                        : 'This organization does not have a project yet. Create the first one to continue.';
                 }
                 syncWorkspaceSelectedOrgContext();
                 refreshWorkspaceSelectionCopy();
+                if (normalizedStage === 'project' && !hasExistingProjects && workspaceCreateProjectNameInput) {
+                    window.requestAnimationFrame(() => workspaceCreateProjectNameInput.focus());
+                }
             }
 
             function refreshWorkspaceSelectionCopy() {
@@ -1105,6 +1114,12 @@ export function initializeOperatorConsole() {
                 const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 syncWorkspaceSelectedOrgContext();
+                if (workspaceExistingProjectGroup) {
+                    workspaceExistingProjectGroup.classList.toggle('hidden', !hasExistingProjects);
+                }
+                if (workspaceSelectionDivider) {
+                    workspaceSelectionDivider.classList.toggle('hidden', !hasExistingProjects);
+                }
                 if (workspaceSelectionCopy) {
                     workspaceSelectionCopy.textContent = hasExistingProjects
                         ? 'This organization already has projects. Use one below, or type a new project name to add another project.'
@@ -1930,7 +1945,9 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
                         selectionStage === 'project'
-                            ? 'Select an existing project to go, or create a new one.'
+                            ? ((sessionView?.accessible_projects || []).length
+                                ? 'Select an existing project to go, or create a new one.'
+                                : 'Create the first project in this organization to continue.')
                             : 'Enter the organization URL you want to open.',
                     );
                     return;
@@ -1946,7 +1963,9 @@ export function initializeOperatorConsole() {
                         workspaceSelectionStatus,
                         sessionView.needs_org_selection
                             ? 'Enter the organization URL you want to open.'
-                            : 'Select a project to continue.',
+                            : ((sessionView?.accessible_projects || []).length
+                                ? 'Select a project to continue.'
+                                : 'Create the first project in this organization to continue.'),
                     );
                     return;
                 }
@@ -2360,7 +2379,7 @@ export function initializeOperatorConsole() {
                         workspaceSelectionStatus,
                         (authSessionState?.accessible_projects || []).length
                             ? 'Use an existing project or type a new project name.'
-                            : 'Type a project name to create the first project.',
+                            : 'Create the first project in this organization to continue.',
                     );
                 } catch (error) {
                     setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to load organization projects.', true);
