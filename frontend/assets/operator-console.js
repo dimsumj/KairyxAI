@@ -689,10 +689,38 @@ export function initializeOperatorConsole() {
             }
 
             function getStoredWorkspaceSelection() {
-                const stored = readStoredActorContext();
+                try {
+                    return {
+                        tenantId: localStorage.getItem(TENANT_ID_STORAGE_KEY) || '',
+                        projectId: localStorage.getItem(PROJECT_ID_STORAGE_KEY) || '',
+                    };
+                } catch (error) {
+                    return {
+                        tenantId: '',
+                        projectId: '',
+                    };
+                }
+            }
+
+            function getWorkspaceOrganizationHint() {
+                return normalizeOrganizationUrl(
+                    getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname()
+                );
+            }
+
+            function buildFallbackWorkspaceSession(errorMessage = '') {
+                const organizationId = getWorkspaceOrganizationHint();
                 return {
-                    tenantId: stored.tenantId || '',
-                    projectId: stored.projectId || '',
+                    organization_id: organizationId || null,
+                    project_id: null,
+                    organization: organizationId ? { organization_id: organizationId, name: organizationId } : null,
+                    project: null,
+                    accessible_organizations: [],
+                    accessible_projects: [],
+                    needs_onboarding: !organizationId,
+                    needs_org_selection: Boolean(organizationId),
+                    needs_project_selection: false,
+                    workspace_resolution_error: String(errorMessage || '').trim() || null,
                 };
             }
 
@@ -702,7 +730,7 @@ export function initializeOperatorConsole() {
                     return selectedTenantId || getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname();
                 }
                 if (isGoogleLoginConfigured()) {
-                    return readStoredActorContext().tenantId || getOrganizationIdFromPathname() || '';
+                    return getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname() || '';
                 }
                 return LOCAL_DEMO_TENANT_ID;
             }
@@ -713,7 +741,7 @@ export function initializeOperatorConsole() {
                     return selectedProjectId || getStoredWorkspaceSelection().projectId || '';
                 }
                 if (isGoogleLoginConfigured()) {
-                    return readStoredActorContext().projectId || '';
+                    return getStoredWorkspaceSelection().projectId || '';
                 }
                 return LOCAL_DEMO_PROJECT_ID;
             }
@@ -918,6 +946,21 @@ export function initializeOperatorConsole() {
                 });
             }
 
+            function prefillOnboardingOrganizationHint() {
+                if (!onboardingOrganizationNameInput || !onboardingOrganizationIdInput) {
+                    return;
+                }
+                if (String(onboardingOrganizationNameInput.value || '').trim()) {
+                    return;
+                }
+                const organizationId = normalizeNewOrganizationId(getWorkspaceOrganizationHint());
+                if (!organizationId) {
+                    return;
+                }
+                onboardingOrganizationNameInput.value = organizationId;
+                onboardingOrganizationIdInput.value = organizationId;
+            }
+
             function syncWorkspaceGateClass() {
                 const gated = Boolean(workspaceOverlayMode) || isWorkspaceSelectionRequired();
                 syncWorkspaceBootClass();
@@ -1047,6 +1090,9 @@ export function initializeOperatorConsole() {
                 onboardingSkipBtn.classList.add('hidden');
                 onboardingNextBtn.classList.remove('hidden');
                 onboardingNextBtn.textContent = onboardingStep === 1 ? 'Continue' : 'Create Project';
+                if (onboardingStep === 1) {
+                    prefillOnboardingOrganizationHint();
+                }
                 if (workspaceOverlayMode === 'onboarding') {
                     openWorkspaceOverlay('onboarding');
                 }
@@ -1725,25 +1771,29 @@ export function initializeOperatorConsole() {
             }
 
             function syncWorkspaceOverlayFromSession() {
+                const sessionView = authSessionState || (accessToken ? buildFallbackWorkspaceSession() : null);
                 if (isGoogleLoginConfigured() && !accessToken) {
                     openWorkspaceOverlay('login');
                     refreshWorkspaceLoginStatus();
                     return;
                 }
-                if (authSessionState?.needs_onboarding) {
+                if (sessionView?.needs_onboarding) {
                     onboardingResult = null;
                     setOnboardingStep(1);
                     openWorkspaceOverlay('onboarding');
                     setWorkspaceTextStatus(onboardingStatus, 'Enter the organization URL you want to create.');
                     return;
                 }
-                if (authSessionState?.needs_org_selection || authSessionState?.needs_project_selection) {
+                if (sessionView?.needs_org_selection || sessionView?.needs_project_selection) {
+                    if (!authSessionState && sessionView?.organization_id) {
+                        syncWorkspaceSelectionOrgInput(sessionView.organization_id);
+                    }
                     openWorkspaceOverlay('selection', {
-                        selectionStage: authSessionState?.needs_project_selection && authSessionState?.organization_id ? 'project' : 'org',
+                        selectionStage: sessionView?.needs_project_selection && sessionView?.organization_id ? 'project' : 'org',
                     });
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
-                        authSessionState.needs_org_selection
+                        sessionView.needs_org_selection
                             ? 'Enter the organization URL you want to open.'
                             : 'Select a project to continue.',
                     );
@@ -6715,8 +6765,14 @@ export function initializeOperatorConsole() {
                     await handleOidcRedirect();
                     await hydrateAuthSession();
                 } catch (error) {
-                    setAuthStatus(error.message || 'Google session initialization failed.');
-                    setWorkspaceTextStatus(workspaceLoginStatus, error.message || 'Google session initialization failed.', true);
+                    const errorMessage = error.message || 'Google session initialization failed.';
+                    if (accessToken && !authSessionState) {
+                        applyAuthSessionPayload(buildFallbackWorkspaceSession(errorMessage));
+                        setAuthStatus('Google session ready. Finish workspace setup to continue.');
+                    } else {
+                        setAuthStatus(errorMessage);
+                        setWorkspaceTextStatus(workspaceLoginStatus, errorMessage, true);
+                    }
                 }
                 syncWorkspaceOverlayFromSession();
                 rootGatewayBootPending = false;

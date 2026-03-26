@@ -61,6 +61,8 @@ Every user now passes through the Google login gate first. After successful sign
 - enters the existing organization and project, or opens the workspace selector if the user has more than one choice
 - rewrites the browser URL to `https://<base-url>/<organization_id>` as soon as an active organization is resolved
 
+If the user typed an organization URL before Google sign-in, the gateway carries that value into the next step after login. A first-time user still lands on the onboarding wizard, but the organization URL field is prefilled with the value they already entered.
+
 Across the console, protected module pages now wait for a resolved organization and project workspace before they load live data. During Google-login session handoff, stale workspace recovery, or a just-created workspace becoming active, the UI stays in a neutral waiting state instead of rendering raw backend membership errors inside module cards.
 
 In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`.
@@ -74,7 +76,7 @@ In deployed Google-login environments, the base URL itself is only the gateway p
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
 | `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes, the new workspace becomes active by default, and the browser URL becomes `/<organization_id>`. |
 
-The console now asks for the org URL directly and generates the internal organization display name from that slug. New organization URLs are limited to lowercase letters and numbers only, with a maximum length of 16 characters, and the chosen URL must not already exist anywhere in the product. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; once the session is validated, the console rewrites the page URL to the active organization path, and the creator is placed into the newly created organization and project automatically.
+The console now asks for the org URL directly and generates the internal organization display name from that slug. New organization URLs are limited to lowercase letters and numbers only, with a maximum length of 16 characters, and the chosen URL must not already exist anywhere in the product. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; if the user has no memberships, the gateway advances directly into the organization URL onboarding step, reusing any org URL the user already entered before sign-in. Once the session is validated and a workspace exists, the console rewrites the page URL to the active organization path, and the creator is placed into the newly created organization and project automatically.
 
 #### Sample onboarding request
 ```json
