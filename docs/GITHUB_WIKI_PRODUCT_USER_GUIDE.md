@@ -61,6 +61,8 @@ Every user now passes through the Google login gate first. After successful sign
 - enters the existing organization and project, or opens the workspace selector if the user has more than one choice
 - rewrites the browser URL to `https://<base-url>/<organization_id>` as soon as an active organization is resolved
 
+Across the console, protected module pages now wait for a resolved organization and project workspace before they load live data. During Google-login session handoff, stale workspace recovery, or a just-created workspace becoming active, the UI stays in a neutral waiting state instead of rendering raw backend membership errors inside module cards.
+
 In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`.
 
 #### Organization-space onboarding wizard

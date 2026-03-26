@@ -554,6 +554,58 @@ export function initializeOperatorConsole() {
                 return isGoogleLoginConfigured() && !isAuthenticatedWorkspaceReady();
             }
 
+            function getWorkspaceResolutionMessage(payload = authSessionState) {
+                const source = payload || {};
+                if (source.needs_onboarding) {
+                    return 'Create or join an organization before using the app.';
+                }
+                if (source.needs_org_selection) {
+                    return 'Choose an organization before using the app.';
+                }
+                if (source.needs_project_selection) {
+                    return 'Choose a project before using the app.';
+                }
+                return 'Finish workspace setup before using this part of the app.';
+            }
+
+            function isWorkspaceContextResponse(status, detail = '') {
+                if (![403, 409].includes(Number(status))) {
+                    return false;
+                }
+                const message = String(detail || '').trim().toLowerCase();
+                if (!message) {
+                    return false;
+                }
+                return message.includes('no organization space membership is active for this user')
+                    || message.includes('tenant membership for')
+                    || message.includes('project membership for')
+                    || message.includes('project membership is missing or inactive')
+                    || message.includes('organization space selection is required')
+                    || message.includes('project selection is required')
+                    || message.includes('organization space in the path does not match');
+            }
+
+            function buildWorkspaceContextError(payload = authSessionState, status = 409) {
+                const error = new Error(getWorkspaceResolutionMessage(payload));
+                error.status = status;
+                error.payload = payload || {};
+                error.workspaceContextRequired = true;
+                return error;
+            }
+
+            function isWorkspaceContextError(error) {
+                if (!error) {
+                    return false;
+                }
+                if (error.workspaceContextRequired) {
+                    return true;
+                }
+                return isWorkspaceContextResponse(
+                    error.status,
+                    error?.payload?.detail || error?.message || '',
+                );
+            }
+
             function refreshWorkspaceLoginStatus() {
                 const invitePending = Boolean(readPendingInvite());
                 setWorkspaceTextStatus(
@@ -1797,7 +1849,7 @@ export function initializeOperatorConsole() {
             }
 
             async function apiRequest(path, options = {}) {
-                const { method = 'GET', body } = options;
+                const { method = 'GET', body, _workspaceRetryAttempted = false } = options;
                 const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
                 const isWorkspaceBootstrapPath = normalizedPath === '/auth/me'
                     || normalizedPath === '/projects'
@@ -1806,19 +1858,7 @@ export function initializeOperatorConsole() {
                 if (accessToken && !isWorkspaceBootstrapPath && shouldBlockProtectedAppData()) {
                     const sessionPayload = await hydrateAuthSession();
                     if (!isAuthenticatedWorkspaceReady()) {
-                        const payload = sessionPayload || authSessionState || {};
-                        let message = 'Finish workspace setup before using this part of the app.';
-                        if (payload.needs_onboarding) {
-                            message = 'Create or join an organization before using the app.';
-                        } else if (payload.needs_org_selection) {
-                            message = 'Choose an organization before using the app.';
-                        } else if (payload.needs_project_selection) {
-                            message = 'Choose a project before using the app.';
-                        }
-                        const error = new Error(message);
-                        error.status = 409;
-                        error.payload = payload;
-                        throw error;
+                        throw buildWorkspaceContextError(sessionPayload || authSessionState || {}, 409);
                     }
                 }
                 const headers = buildApiHeaders(Boolean(body));
@@ -1836,7 +1876,22 @@ export function initializeOperatorConsole() {
                         clearBearerSession();
                         setAuthStatus('Google session expired.');
                     }
-                    const error = new Error(payload.detail || payload.message || `Request failed (${response.status})`);
+                    const errorDetail = payload.detail || payload.message || `Request failed (${response.status})`;
+                    if (
+                        accessToken
+                        && !_workspaceRetryAttempted
+                        && isWorkspaceContextResponse(response.status, errorDetail)
+                    ) {
+                        const sessionPayload = await hydrateAuthSession();
+                        if (isAuthenticatedWorkspaceReady()) {
+                            return apiRequest(path, {
+                                ...options,
+                                _workspaceRetryAttempted: true,
+                            });
+                        }
+                        throw buildWorkspaceContextError(sessionPayload || authSessionState || payload, response.status);
+                    }
+                    const error = new Error(errorDetail);
                     error.status = response.status;
                     error.payload = payload;
                     throw error;
@@ -3239,6 +3294,10 @@ export function initializeOperatorConsole() {
                     }
                 } catch (error) {
                     console.error('Error loading saved connectors:', error);
+                    if (isWorkspaceContextError(error)) {
+                        connectorListDiv.innerHTML = '<p>Finish workspace setup to load connectors.</p>';
+                        return;
+                    }
                     connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 }
             }
@@ -3911,6 +3970,21 @@ export function initializeOperatorConsole() {
                         setCampaignExportStatus('');
                     }
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        clearBaselinePredictionRows();
+                        datasetSelect.innerHTML = '<option>Finish workspace setup first</option>';
+                        renderPredictionModelReadiness();
+                        renderChurnTable('Finish workspace setup to load prediction audiences.');
+                        renderPredictionProgress({});
+                        setPredictionActionState('idle');
+                        predictChurnBtn.disabled = true;
+                        datasetSelect.disabled = true;
+                        predictionAudienceScopeSelect.disabled = false;
+                        predictionModeSelect.disabled = true;
+                        pushAudienceBtn.disabled = true;
+                        setCampaignExportStatus(getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     clearBaselinePredictionRows();
                     datasetSelect.innerHTML = `<option>Error loading prediction audiences</option>`;
                     renderPredictionModelReadiness();
@@ -4478,6 +4552,10 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     setImportSourceFormVisible(false);
                     ensureConfigMessage('');
+                    if (isWorkspaceContextError(error)) {
+                        setInlineStatus(importSourceStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     setInlineStatus(importSourceStatus, error.message || 'Failed to load import sources.', true);
                 }
             }
@@ -4726,6 +4804,12 @@ export function initializeOperatorConsole() {
                     );
 
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        syncImportListPolling([]);
+                        importListContainer.innerHTML = '<p>Finish workspace setup to load imports.</p>';
+                        setInlineStatus(importListStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     syncImportListPolling([]);
                     importListContainer.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                     setInlineStatus(importListStatus, error.message || 'Failed to load imports.', true);
@@ -4883,6 +4967,14 @@ export function initializeOperatorConsole() {
                     setInlineStatus(actionHistoryStatus, `Loaded ${payload.summary?.returned || 0} audit record(s).`);
                 } catch (error) {
                     allActionHistoryItems = [];
+                    if (isWorkspaceContextError(error)) {
+                        actionHistoryResults.innerHTML = '<tr><td colspan="4" style="text-align: center;">Finish workspace setup to load audit history.</td></tr>';
+                        if (actionHistoryPaginationControls) {
+                            actionHistoryPaginationControls.innerHTML = '';
+                        }
+                        setInlineStatus(actionHistoryStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     actionHistoryResults.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--red);">${error.message}</td></tr>`;
                     if (actionHistoryPaginationControls) {
                         actionHistoryPaginationControls.innerHTML = '';
@@ -5079,6 +5171,14 @@ export function initializeOperatorConsole() {
                     );
                     setInlineStatus(serviceHealthStatus, `Loaded ${modulesPayload.items?.length || 0} module(s), ${alertsPayload.items?.length || 0} alert(s), and ${schedulerPayload.items?.length || 0} scheduler job(s).`);
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        serviceStatusListDiv.innerHTML = '<p>Finish workspace setup to load health state.</p>';
+                        renderJsonOutput(serviceHealthOutput, null, 'Finish workspace setup to load health payload.');
+                        renderSimpleTable(serviceAlertsList, [], [], 'Finish workspace setup to load health alerts.');
+                        renderSimpleTable(serviceSchedulerList, [], [], 'Finish workspace setup to load scheduler state.');
+                        setInlineStatus(serviceHealthStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     serviceStatusListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                     renderJsonOutput(serviceHealthOutput, { error: error.message }, 'Health payload unavailable.');
                     renderSimpleTable(serviceAlertsList, [], [], 'Health alerts unavailable.');
@@ -5136,6 +5236,12 @@ export function initializeOperatorConsole() {
                     templatesSelectedLabel.textContent = selectedTemplateId;
                     renderJsonOutput(templateDetailOutput, detail, 'No template detail found.');
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        templatesList.innerHTML = '<div class="list-empty">Finish workspace setup to load templates.</div>';
+                        templatesSelectedLabel.textContent = 'No template selected';
+                        renderJsonOutput(templateDetailOutput, null, 'Finish workspace setup to load template detail.');
+                        return;
+                    }
                     templatesList.innerHTML = `<div class="list-empty" style="color: var(--red);">${escapeHtml(error.message)}</div>`;
                     renderJsonOutput(templateDetailOutput, { error: error.message }, 'Failed to load templates.');
                 }
@@ -5239,6 +5345,17 @@ export function initializeOperatorConsole() {
             }
 
             async function loadDataSandboxMappingControls() {
+                if (shouldBlockProtectedAppData()) {
+                    dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                    dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                    dataSandboxLoadMappingBtn.disabled = true;
+                    dataSandboxSaveMappingBtn.disabled = true;
+                    dataSandboxPreviewMappingBtn.disabled = true;
+                    dataSandboxCoverageBtn.disabled = true;
+                    dataSandboxProcessMappingBtn.disabled = true;
+                    setDataSandboxMappingStatus(accessToken ? 'Finish workspace setup to load field mapping controls.' : '');
+                    return;
+                }
                 try {
                     const [connectors, imports] = await Promise.all([
                         refreshConnectorsState(),
@@ -5315,6 +5432,17 @@ export function initializeOperatorConsole() {
                         setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings locally.');
                     }
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                        dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                        dataSandboxLoadMappingBtn.disabled = true;
+                        dataSandboxSaveMappingBtn.disabled = true;
+                        dataSandboxPreviewMappingBtn.disabled = true;
+                        dataSandboxCoverageBtn.disabled = true;
+                        dataSandboxProcessMappingBtn.disabled = true;
+                        setDataSandboxMappingStatus(getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
                 }
             }
@@ -5482,6 +5610,10 @@ export function initializeOperatorConsole() {
                         }
                     });
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        dataSandboxContentDiv.innerHTML = '<p>Finish workspace setup to load the data glance.</p>';
+                        return;
+                    }
                     dataSandboxContentDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
                 }
             }
@@ -5916,6 +6048,13 @@ export function initializeOperatorConsole() {
                         await loadAudienceCohortDetails(null);
                     }
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        setInlineStatus(audienceCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        renderAudienceCohorts([]);
+                        renderSavedQueries([]);
+                        await loadAudienceCohortDetails(null);
+                        return;
+                    }
                     setInlineStatus(audienceCreateStatus, error.message || 'Failed to load audience engine.', true);
                 }
             }
@@ -6224,6 +6363,14 @@ export function initializeOperatorConsole() {
                         await loadWorkflowDetail(null);
                     }
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        renderWorkflowList([]);
+                        populateWorkflowCohortSelect([]);
+                        populateExportJobSelect([]);
+                        await loadWorkflowDetail(null);
+                        return;
+                    }
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
                 }
             }
@@ -6276,6 +6423,15 @@ export function initializeOperatorConsole() {
                     );
                     setInlineStatus(experimentStatus, `Loaded experiment ${experimentId}.`);
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        fillExperimentForm({});
+                        renderJsonOutput(experimentSummaryOutput, null, 'Finish workspace setup to load experiment summary.');
+                        renderJsonOutput(experimentIntegrityOutput, null, 'Finish workspace setup to load experiment integrity.');
+                        renderSimpleTable(experimentExposuresList, [], [], 'Finish workspace setup to load experiment exposures.');
+                        renderSimpleTable(experimentOutcomesList, [], [], 'Finish workspace setup to load experiment outcomes.');
+                        setInlineStatus(experimentStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
                     setInlineStatus(experimentStatus, error.message || 'Failed to load experiment workspace.', true);
                 }
             }
@@ -6386,6 +6542,12 @@ export function initializeOperatorConsole() {
                     renderCopilotMetaList(copilotAnomaliesList, anomaliesPayload.items || [], 'Anomaly');
                     renderCopilotMetaList(copilotReportsList, reportsPayload.items || [], 'Report');
                 } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        renderCopilotMetaList(copilotAnomaliesList, [], 'Anomaly');
+                        renderCopilotMetaList(copilotReportsList, [], 'Report');
+                        renderJsonOutput(copilotQueryLogOutput, null, 'Finish workspace setup to load Copilot metadata.');
+                        return;
+                    }
                     renderJsonOutput(copilotQueryLogOutput, { error: error.message }, 'Failed to load copilot metadata.');
                 }
             }
