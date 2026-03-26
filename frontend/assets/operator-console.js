@@ -128,6 +128,7 @@ export function initializeOperatorConsole() {
             let workspaceOverlayMode = null;
             let onboardingStep = 1;
             let onboardingResult = null;
+            let onboardingFromWorkspaceSelection = false;
             let inviteRedemptionInFlight = false;
             let rootGatewayBootPending = !getOrganizationIdFromPathname();
             const moduleConfigs = {
@@ -566,6 +567,41 @@ export function initializeOperatorConsole() {
                     return 'Choose a project before using the app.';
                 }
                 return 'Finish workspace setup before using this part of the app.';
+            }
+
+            function canSelfServeOrganizationCreation() {
+                if (!accessToken) {
+                    return false;
+                }
+                if (backendMode === 'mock') {
+                    return true;
+                }
+                if (authSessionState?.platform_admin) {
+                    return true;
+                }
+                const orgCount = Array.isArray(authSessionState?.accessible_organizations)
+                    ? authSessionState.accessible_organizations.length
+                    : 0;
+                return orgCount === 0;
+            }
+
+            function primeOnboardingForNewOrganization(organizationId) {
+                const normalizedOrganizationId = normalizeNewOrganizationId(organizationId);
+                onboardingFromWorkspaceSelection = true;
+                workspaceOrgUrlInput.value = normalizedOrganizationId;
+                onboardingOrganizationNameInput.value = normalizedOrganizationId;
+                onboardingOrganizationIdInput.value = normalizedOrganizationId;
+                if (!onboardingProjectNameInput.value.trim()) {
+                    onboardingProjectNameInput.value = 'Main Project';
+                    onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
+                }
+                onboardingResult = null;
+                setOnboardingStep(1);
+                openWorkspaceOverlay('onboarding');
+                setWorkspaceTextStatus(
+                    onboardingStatus,
+                    `"${normalizedOrganizationId}" does not exist yet. Confirm this URL to create a new organization, or go back to enter an existing one.`,
+                );
             }
 
             function isWorkspaceContextResponse(status, detail = '') {
@@ -1109,10 +1145,15 @@ export function initializeOperatorConsole() {
                     refreshWorkspaceLoginStatus();
                 } else if (mode === 'onboarding') {
                     workspaceModalEyebrow.textContent = 'Workspace Setup';
-                    workspaceModalTitle.textContent = onboardingStep === 1 ? 'Enter your organization URL' : 'Create your first project';
-                    workspaceModalSubtitle.textContent = onboardingStep === 1
-                        ? 'Type the organization URL you want to use. The first project comes next.'
-                        : 'Enter the project name you want to create inside this organization space.';
+                    if (onboardingStep === 1 && onboardingFromWorkspaceSelection) {
+                        workspaceModalTitle.textContent = 'Create this organization?';
+                        workspaceModalSubtitle.textContent = 'Confirm the organization URL below to create it, or go back to re-enter an existing organization.';
+                    } else {
+                        workspaceModalTitle.textContent = onboardingStep === 1 ? 'Enter your organization URL' : 'Create your first project';
+                        workspaceModalSubtitle.textContent = onboardingStep === 1
+                            ? 'Type the organization URL you want to use. The first project comes next.'
+                            : 'Enter the project name you want to create inside this organization space.';
+                    }
                     setWorkspaceOverlayPanel(workspaceOnboardingPanel);
                 } else if (mode === 'create-project') {
                     workspaceModalEyebrow.textContent = 'Project';
@@ -1152,12 +1193,14 @@ export function initializeOperatorConsole() {
                 if (workspaceOnboardingStepLabel) {
                     workspaceOnboardingStepLabel.textContent = `Step ${onboardingStep} of 2`;
                 }
-                onboardingBackBtn.classList.toggle('hidden', onboardingStep === 1);
+                onboardingBackBtn.classList.toggle('hidden', onboardingStep === 1 && !onboardingFromWorkspaceSelection);
                 onboardingGenerateInviteBtn.classList.add('hidden');
                 onboardingConnectBtn.classList.add('hidden');
                 onboardingSkipBtn.classList.add('hidden');
                 onboardingNextBtn.classList.remove('hidden');
-                onboardingNextBtn.textContent = onboardingStep === 1 ? 'Continue' : 'Create Project';
+                onboardingNextBtn.textContent = onboardingStep === 1
+                    ? (onboardingFromWorkspaceSelection ? 'Create Organization' : 'Continue')
+                    : 'Create Project';
                 if (onboardingStep === 1) {
                     prefillOnboardingOrganizationHint();
                 }
@@ -1860,6 +1903,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (sessionView?.needs_onboarding) {
+                    onboardingFromWorkspaceSelection = false;
                     onboardingResult = null;
                     setOnboardingStep(1);
                     openWorkspaceOverlay('onboarding');
@@ -2268,9 +2312,31 @@ export function initializeOperatorConsole() {
                 }
                 const tenant = findAccessibleTenant(workspaceOrgUrlInput.value);
                 if (!tenant) {
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter one of your existing organization URLs.', true);
+                    const organizationId = normalizeNewOrganizationId(workspaceOrgUrlInput.value);
+                    if (!organizationId) {
+                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter an organization URL to continue.', true);
+                        return;
+                    }
+                    if (!isValidNewOrganizationId(organizationId)) {
+                        setWorkspaceTextStatus(
+                            workspaceSelectionStatus,
+                            'Organization URL must use only lowercase letters and numbers and be 16 characters or fewer.',
+                            true,
+                        );
+                        return;
+                    }
+                    if (!canSelfServeOrganizationCreation()) {
+                        setWorkspaceTextStatus(
+                            workspaceSelectionStatus,
+                            `"${organizationId}" is not one of your existing organization URLs. Re-enter an existing organization, or ask an admin to create it.`,
+                            true,
+                        );
+                        return;
+                    }
+                    primeOnboardingForNewOrganization(organizationId);
                     return;
                 }
+                onboardingFromWorkspaceSelection = false;
                 workspaceOrgUrlInput.value = tenant.organization_id;
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects…');
@@ -2382,6 +2448,15 @@ export function initializeOperatorConsole() {
             });
             onboardingBackBtn.addEventListener('click', () => {
                 setWorkspaceTextStatus(onboardingStatus, '');
+                if (onboardingStep === 1 && onboardingFromWorkspaceSelection) {
+                    openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                    syncWorkspaceSelectionOrgInput(onboardingOrganizationIdInput.value || onboardingOrganizationNameInput.value || workspaceOrgUrlInput.value || '');
+                    setWorkspaceTextStatus(
+                        workspaceSelectionStatus,
+                        'Enter an existing organization URL, or continue with this new one to create it.',
+                    );
+                    return;
+                }
                 if (onboardingStep > 1) {
                     setOnboardingStep(onboardingStep - 1);
                 }
@@ -2439,6 +2514,7 @@ export function initializeOperatorConsole() {
                             onboardingResult.organization_space?.organization_id || onboardingResult.organization_space?.tenant_id || organizationId,
                             onboardingResult.project?.project_id || projectId,
                         );
+                        onboardingFromWorkspaceSelection = false;
                         await hydrateAuthSession();
                         if (isAuthenticatedWorkspaceReady()) {
                             activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });

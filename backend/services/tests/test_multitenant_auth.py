@@ -206,6 +206,38 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         assert wrong_project.status_code == 403
 
 
+def test_mock_mode_allows_existing_member_to_create_another_organization(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        first = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "firstworkspace",
+                "organization_name": "First Workspace",
+                "project_id": "alpha",
+                "project_name": "Alpha",
+                "project_description": "Primary production project",
+            },
+        )
+        assert first.status_code == 201
+
+        second = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "secondworkspace",
+                "organization_name": "Second Workspace",
+                "project_id": "main",
+                "project_name": "Main",
+                "project_description": "Demo workspace",
+            },
+        )
+        assert second.status_code == 201
+        assert second.json()["organization_space"]["tenant_id"] == "secondworkspace"
+        assert second.json()["project"]["project_id"] == "main"
+
+
 def test_org_space_onboarding_rejects_invalid_organization_id(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     with _client(monkeypatch, tmp_path) as client:

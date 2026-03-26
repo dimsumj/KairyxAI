@@ -6,6 +6,7 @@ from app.api.schemas.onboarding import OrganizationSpaceOnboardingRequest
 from app.application.projects import ProjectWorkspaceService
 from app.core.deps import get_project_workspace_service, get_repository
 from app.core.governance import get_governance_context, record_audit
+from app.core.settings import get_settings
 
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
@@ -24,7 +25,7 @@ def create_organization_space(
 ):
     context = get_governance_context(request)
     current_orgs = service.list_accessible_organization_spaces(context.actor_id)
-    if current_orgs and not context.platform_admin:
+    if current_orgs and not context.platform_admin and get_settings().data_backend_mode != "mock":
         raise HTTPException(status_code=403, detail="Self-serve organization-space onboarding is only available before you join an organization space.")
     actor = repository.get_platform_user(context.actor_id) or {}
     try:
