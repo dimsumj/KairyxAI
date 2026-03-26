@@ -479,7 +479,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout, inline section expansion, and Settings-driven appearance/session control
+- backend-served React shell with a Figma-based SaaS layout, inline section expansion, hover-to-peek collapsed navigation, and Settings-driven appearance/session control
 
 ## Current Limitations
 
