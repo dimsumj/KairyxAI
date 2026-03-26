@@ -126,6 +126,13 @@ def test_jwt_user_without_membership_can_onboard_but_cannot_access_product_route
         assert blocked.status_code == 403
 
 
+def test_malformed_bearer_token_returns_401(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        me = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
+        assert me.status_code == 401
+        assert me.json()["detail"] == "Invalid bearer token."
+
+
 def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     teammate_token = _make_token(

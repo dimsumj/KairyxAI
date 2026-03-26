@@ -55,30 +55,33 @@ class OIDCAuthenticator:
             "verify_iss": bool(issuer),
         }
         algorithms = ["HS256"] if self.settings.oidc_jwt_signing_secret else None
-        if self.settings.oidc_jwt_signing_secret:
+        try:
+            if self.settings.oidc_jwt_signing_secret:
+                return dict(
+                    jwt.decode(
+                        token,
+                        self.settings.oidc_jwt_signing_secret,
+                        algorithms=algorithms,
+                        audience=audience,
+                        issuer=issuer,
+                        options=options,
+                    )
+                )
+            if self._jwks_client is None:
+                raise ValueError("OIDC JWKS is not configured.")
+            signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             return dict(
                 jwt.decode(
                     token,
-                    self.settings.oidc_jwt_signing_secret,
-                    algorithms=algorithms,
+                    signing_key.key,
+                    algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
                     audience=audience,
                     issuer=issuer,
                     options=options,
                 )
             )
-        if self._jwks_client is None:
-            raise ValueError("OIDC JWKS is not configured.")
-        signing_key = self._jwks_client.get_signing_key_from_jwt(token)
-        return dict(
-            jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
-                audience=audience,
-                issuer=issuer,
-                options=options,
-            )
-        )
+        except jwt.PyJWTError as exc:
+            raise ValueError("Invalid bearer token.") from exc
 
     @staticmethod
     def _is_platform_admin(payload: dict[str, Any]) -> bool:

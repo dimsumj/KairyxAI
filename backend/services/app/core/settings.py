@@ -29,6 +29,8 @@ class Settings:
     oidc_token_url: str = ""
     oidc_logout_url: str = ""
     oidc_jwt_signing_secret: str = ""
+    oidc_provider: str = ""
+    oidc_google_hosted_domain: str = ""
     max_sql_preview_rows_per_tenant: int = 1000
     max_import_jobs_per_tenant: int = 10
     max_export_jobs_per_tenant: int = 20
@@ -64,6 +66,12 @@ def get_settings() -> Settings:
     )
     raw_origins = str(os.getenv("CORS_ALLOWED_ORIGINS", "*")).strip()
     cors_allowed_origins = tuple(origin.strip() for origin in raw_origins.split(",") if origin.strip()) or ("*",)
+    google_client_id = str(os.getenv("GOOGLE_CLIENT_ID", "")).strip()
+    google_hosted_domain = str(os.getenv("OIDC_GOOGLE_HOSTED_DOMAIN", "")).strip() or str(os.getenv("GOOGLE_HOSTED_DOMAIN", "")).strip()
+    oidc_client_id = str(os.getenv("OIDC_CLIENT_ID", "")).strip() or google_client_id
+    oidc_provider = str(os.getenv("OIDC_PROVIDER", "")).strip().lower()
+    if not oidc_provider:
+        oidc_provider = "google" if google_client_id else ("oidc" if oidc_client_id else "")
     return Settings(
         app_env=str(os.getenv("APP_ENV", "local")).strip().lower(),
         api_access_key=os.getenv("API_ACCESS_KEY", "").strip(),
@@ -79,11 +87,13 @@ def get_settings() -> Settings:
         oidc_issuer=str(os.getenv("OIDC_ISSUER", "")).strip(),
         oidc_audience=str(os.getenv("OIDC_AUDIENCE", "")).strip(),
         oidc_jwks_url=str(os.getenv("OIDC_JWKS_URL", "")).strip(),
-        oidc_client_id=str(os.getenv("OIDC_CLIENT_ID", "")).strip(),
+        oidc_client_id=oidc_client_id,
         oidc_authorize_url=str(os.getenv("OIDC_AUTHORIZE_URL", "")).strip(),
         oidc_token_url=str(os.getenv("OIDC_TOKEN_URL", "")).strip(),
         oidc_logout_url=str(os.getenv("OIDC_LOGOUT_URL", "")).strip(),
         oidc_jwt_signing_secret=str(os.getenv("OIDC_JWT_SIGNING_SECRET", "")).strip(),
+        oidc_provider=oidc_provider,
+        oidc_google_hosted_domain=google_hosted_domain,
         max_sql_preview_rows_per_tenant=max(1, int(os.getenv("MAX_SQL_PREVIEW_ROWS_PER_TENANT", "1000"))),
         max_import_jobs_per_tenant=max(1, int(os.getenv("MAX_IMPORT_JOBS_PER_TENANT", "10"))),
         max_export_jobs_per_tenant=max(1, int(os.getenv("MAX_EXPORT_JOBS_PER_TENANT", "20"))),

@@ -54,6 +54,8 @@ export function initializeOperatorConsole() {
             const workspaceLoginPanel = document.getElementById('workspace-login-panel');
             const workspaceLoginStatus = document.getElementById('workspace-login-status');
             const workspaceGoogleLoginBtn = document.getElementById('workspace-google-login-btn');
+            const googleLoginContainer = oidcLoginBtn ? document.createElement('div') : null;
+            const workspaceGoogleLoginContainer = workspaceGoogleLoginBtn ? document.createElement('div') : null;
             const workspaceSelectionPanel = document.getElementById('workspace-selection-panel');
             const workspaceOnboardingPanel = document.getElementById('workspace-onboarding-panel');
             const workspaceCreateProjectPanel = document.getElementById('workspace-create-project-panel');
@@ -110,6 +112,7 @@ export function initializeOperatorConsole() {
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
             const ACCESS_TOKEN_STORAGE_KEY = 'kairyx.accessToken';
             const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
+            const GOOGLE_IDENTITY_SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
             const PENDING_INVITE_STORAGE_KEY = 'kairyx.pendingInvite';
             const LOCAL_DEMO_ACTOR_ID = 'local-demo';
             const LOCAL_DEMO_ACTOR_ROLE = 'admin';
@@ -132,6 +135,8 @@ export function initializeOperatorConsole() {
             let onboardingResult = null;
             let onboardingFromWorkspaceSelection = false;
             let inviteRedemptionInFlight = false;
+            let googleIdentityScriptPromise = null;
+            let googleIdentityButtonClientId = '';
             let rootGatewayBootPending = !getOrganizationIdFromPathname();
             const moduleConfigs = {
                 'data-core': {
@@ -1202,6 +1207,7 @@ export function initializeOperatorConsole() {
                 workspaceSelectionContinueBtn.classList.toggle('hidden', normalizedStage !== 'project' || !hasExistingProjects);
                 workspaceSelectionCreateProjectBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 if (normalizedStage === 'org') {
+                    const currentOrgInput = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
                     workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
                     workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Log in to your organization';
                     workspaceModalSubtitle.textContent = isStandaloneOrgPath
@@ -1218,7 +1224,7 @@ export function initializeOperatorConsole() {
                     workspaceSelectionResolveBtn.textContent = !accessToken && isGoogleLoginConfigured()
                         ? 'Continue with Google'
                         : 'Continue';
-                    syncWorkspaceSelectionOrgInput(selectedTenantId || '');
+                    syncWorkspaceSelectionOrgInput(currentOrgInput || selectedTenantId || '');
                 } else {
                     workspaceModalEyebrow.textContent = 'Workspace';
                     workspaceModalTitle.textContent = hasExistingProjects ? 'Choose a project' : 'Create your first project';
@@ -1977,7 +1983,7 @@ export function initializeOperatorConsole() {
                     code_verifier: verifier,
                     redirect_uri: redirectUri(),
                 });
-                if (oidcConfig.audience) {
+                if (oidcConfig.audience && oidcConfig.include_audience_parameter !== false) {
                     form.set('audience', oidcConfig.audience);
                 }
                 const response = await fetch(oidcConfig.token_url, {
@@ -2294,8 +2300,11 @@ export function initializeOperatorConsole() {
                     code_challenge_method: 'S256',
                     scope: 'openid profile email',
                 });
-                if (oidcConfig.audience) {
+                if (oidcConfig.audience && oidcConfig.include_audience_parameter !== false) {
                     params.set('audience', oidcConfig.audience);
+                }
+                if (oidcConfig.provider === 'google' && oidcConfig.hosted_domain) {
+                    params.set('hd', oidcConfig.hosted_domain);
                 }
                 window.location.assign(`${oidcConfig.authorize_url}?${params.toString()}`);
             }
@@ -2482,8 +2491,9 @@ export function initializeOperatorConsole() {
                 setWorkspaceSelectionStage('org');
             });
             workspaceSelectionResolveBtn.addEventListener('click', async () => {
+                const requestedOrganizationInput = workspaceOrgUrlInput.value;
                 if (!accessToken && isGoogleLoginConfigured()) {
-                    const organizationId = normalizeOrganizationUrl(workspaceOrgUrlInput.value);
+                    const organizationId = normalizeOrganizationUrl(requestedOrganizationInput);
                     if (!organizationId) {
                         setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter an organization URL to continue.', true);
                         return;
@@ -2501,9 +2511,9 @@ export function initializeOperatorConsole() {
                 if (!(await ensureValidGoogleSession())) {
                     return;
                 }
-                const tenant = findAccessibleTenant(workspaceOrgUrlInput.value);
+                const tenant = findAccessibleTenant(requestedOrganizationInput);
                 if (!tenant) {
-                    const organizationId = normalizeNewOrganizationId(workspaceOrgUrlInput.value);
+                    const organizationId = normalizeNewOrganizationId(requestedOrganizationInput);
                     if (!organizationId) {
                         setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter an organization URL to continue.', true);
                         return;
@@ -2701,12 +2711,16 @@ export function initializeOperatorConsole() {
                                 project_description: onboardingProjectDescriptionInput.value.trim(),
                             },
                         });
+                        const createdOrganizationId = onboardingResult.organization_space?.organization_id
+                            || onboardingResult.organization_space?.tenant_id
+                            || organizationId;
+                        const createdProjectId = onboardingResult.project?.project_id || projectId;
                         persistWorkspaceSelection(
-                            onboardingResult.organization_space?.organization_id || onboardingResult.organization_space?.tenant_id || organizationId,
-                            onboardingResult.project?.project_id || projectId,
+                            createdOrganizationId,
+                            createdProjectId,
                         );
                         onboardingFromWorkspaceSelection = false;
-                        await hydrateAuthSession();
+                        await switchWorkspaceSelection(createdOrganizationId, createdProjectId, { reloadPage: false });
                         if (isAuthenticatedWorkspaceReady()) {
                             activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                         }

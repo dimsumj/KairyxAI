@@ -90,10 +90,13 @@ def get_authenticated_actor(
 def get_oidc_config():
     settings = get_settings()
     return {
+        "provider": settings.oidc_provider or "oidc",
         "client_id": settings.oidc_client_id,
         "issuer": settings.oidc_issuer,
         "authorize_url": settings.oidc_authorize_url,
         "token_url": settings.oidc_token_url,
         "logout_url": settings.oidc_logout_url,
         "audience": settings.oidc_audience,
+        "hosted_domain": settings.oidc_google_hosted_domain,
+        "include_audience_parameter": settings.oidc_provider != "google",
     }

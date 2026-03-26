@@ -124,6 +124,8 @@ When the typed organization already exists and the signed-in Google user has acc
 - `Use Existing Project`
 - `Add New Project`
 
+If the same signed-in user wants a different organization instead, they can use `Back`, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
+
 #### New-project overlay
 
 | Control | Type | How to use it | Sample input | Expected result |
