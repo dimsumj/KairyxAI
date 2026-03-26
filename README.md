@@ -153,14 +153,24 @@ Primary backend surface:
 
 ### Runtime modes
 
-KairyxAI currently supports two practical shapes:
+KairyxAI currently supports three practical shapes:
 
 1. `Local demo mode`
    - mock-backed
    - fastest way to explore the operator flows
    - best for development, UI checks, and API iteration
+   - default mock persistence remains filesystem-backed via local parquet/cache files
 
-2. `Production-shaped SaaS mode`
+2. `Vercel demo mode`
+   - isolated write-capable demo surface
+   - enabled only through the thin adapter entrypoint at `api/index.py` plus `vercel.json`
+   - adapter sets `KAIRYX_PLATFORM_SURFACE=vercel_demo`
+   - mock warehouse persistence switches to database-backed mode only on that adapter via `KAIRYX_MOCK_STORAGE_BACKEND=database`
+   - control-plane DB fallback to runtime SQLite is fenced to `KAIRYX_PLATFORM_SURFACE=vercel_demo` + `DATA_BACKEND_MODE=mock`
+   - root `/` remains a gateway page, while the main app stays on `/{organization_id}`
+   - intended for public demo or preview hosting, not for the long-term production control plane
+
+3. `Production-shaped SaaS mode`
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
@@ -218,6 +228,27 @@ For normal logged-in operator traffic:
 - identity comes from the Google account
 - the active organization comes from the URL path
 - the active project is sent as `X-Kairyx-Project`
+
+## Deployment Boundary
+
+The repo now keeps the Vercel demo path isolated from local mock and GCP production:
+
+- `vercel.json` and `api/index.py` are the only Vercel adapter files.
+- The shared runtime does not rely on raw `VERCEL` host detection.
+- Vercel-only behavior is fenced behind `KAIRYX_PLATFORM_SURFACE=vercel_demo`.
+- Local mock keeps `KAIRYX_MOCK_STORAGE_BACKEND=local_files` by default.
+- Cloud Run / GCP production should leave `KAIRYX_PLATFORM_SURFACE` unset and must not rely on runtime SQLite fallback.
+- Health payloads now expose:
+  - `control_plane_database_backend`
+  - `control_plane_database_persistent`
+  - `control_plane_database_fallback_active`
+  - `mock_state_backend`
+  - `mock_state_persistent`
+
+Google-friendly env aliases are also supported for deployment templates:
+
+- `GOOGLE_OIDC_CLIENT_ID`
+- `GOOGLE_OIDC_HOSTED_DOMAIN`
 - Google OAuth still returns to the base app URL, the gateway remains on `/` until the user finishes org/project resolution there, and the console rewrites the browser to `/{organization_id}` only after that selection or onboarding completes
 - manual actor-id and tenant-id entry are no longer part of the visible operator UI
 
@@ -225,29 +256,29 @@ For normal logged-in operator traffic:
 
 ```text
 KairyxAI/
-├── backend/services/
-│   ├── app/
-│   │   ├── api/            # FastAPI routers and schemas
-│   │   ├── application/    # Service-layer module logic
-│   │   ├── core/           # settings, db, governance, errors, runtime
-│   │   └── infrastructure/ # SQLAlchemy repositories and db models
-│   ├── tests/              # backend test coverage
-│   ├── cloudrun/           # Cloud Run service manifests
-│   ├── main_service.py     # backend entrypoint shim for local demo
-│   └── requirements.txt
-├── frontend/
-│   ├── app/                # React/Vite app entry and source files
-│   ├── dist/               # built frontend bundle served by the backend
-│   ├── index.html          # source console template used by the React shell + fallback
-│   ├── package.json
-│   └── assets/
-│       ├── operator-console.css
-│       ├── operator-console.js
-│       └── favicon.svg
-├── docs/                   # master PRD + module PRDs + development memory
-├── scripts/
-│   └── operator_console_smoke.sh
-└── run_local_demo.sh
+|-- backend/services/
+|   |-- app/
+|   |   |-- api/            # FastAPI routers and schemas
+|   |   |-- application/    # Service-layer module logic
+|   |   |-- core/           # settings, db, governance, errors, runtime
+|   |   `-- infrastructure/ # SQLAlchemy repositories and db models
+|   |-- tests/              # backend test coverage
+|   |-- cloudrun/           # Cloud Run service manifests
+|   |-- main_service.py     # backend entrypoint shim for local demo
+|   `-- requirements.txt
+|-- frontend/
+|   |-- app/                # React/Vite app entry and source files
+|   |-- dist/               # built frontend bundle served by the backend
+|   |-- index.html          # source console template used by the React shell + fallback
+|   |-- package.json
+|   `-- assets/
+|       |-- operator-console.css
+|       |-- operator-console.js
+|       `-- favicon.svg
+|-- docs/                   # master PRD + module PRDs + development memory
+|-- scripts/
+|   `-- operator_console_smoke.sh
+`-- run_local_demo.sh
 ```
 
 ## Quick Start

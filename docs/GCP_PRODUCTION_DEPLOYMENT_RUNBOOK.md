@@ -116,15 +116,20 @@ The following runtime settings are required by the current code in production:
 | `SERVICE_ROLE` | One of `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, `scheduler-worker` |
 | `CONTROL_PLANE_DATABASE_URL` | Postgres URL, not SQLite |
 | `DATA_BACKEND_MODE` | `gcp` |
+| `KAIRYX_PLATFORM_SURFACE` | Unset |
+| `KAIRYX_MOCK_STORAGE_BACKEND` | Unset or `local_files`, never `database` |
+| `KAIRYX_RUNTIME_DIR` | Unset unless you have a separate non-demo operational need |
 | `LEGACY_HEADER_AUTH_ENABLED` | `false` |
 | `CORS_ALLOWED_ORIGINS` | Explicit production origins, never `*` |
 | `OIDC_ISSUER` | Real production issuer |
 | `OIDC_AUDIENCE` | Real production audience |
 | `OIDC_JWKS_URL` | Real JWKS URL unless you intentionally use local signing secret mode |
 | `OIDC_CLIENT_ID` | Real console client ID |
+| `GOOGLE_OIDC_CLIENT_ID` | Optional alias for `OIDC_CLIENT_ID` if you prefer Google-named env templates |
 | `OIDC_AUTHORIZE_URL` | Real IdP authorize URL |
 | `OIDC_TOKEN_URL` | Real IdP token URL |
 | `OIDC_LOGOUT_URL` | Real IdP logout URL |
+| `GOOGLE_OIDC_HOSTED_DOMAIN` | Optional Google hosted-domain hint |
 | `GCP_PROJECT_ID` | Production project ID |
 | `GCP_SECRET_PROJECT_ID` | Production secret project ID |
 | `IMPORT_COMMAND_TOPIC` | Production import command topic |
@@ -142,6 +147,11 @@ The app already rejects the following in `APP_ENV=prod`:
 - wildcard CORS
 - missing OIDC issuer, audience, and JWKS/signing settings
 - `operator-api` running the in-process scheduler
+
+The production Cloud Run path must also stay off the Vercel demo adapter:
+- do not set `KAIRYX_PLATFORM_SURFACE=vercel_demo`
+- do not rely on runtime SQLite fallback
+- do not use database-backed mock storage
 
 ---
 

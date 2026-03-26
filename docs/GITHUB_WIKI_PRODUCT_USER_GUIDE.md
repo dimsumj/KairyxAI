@@ -47,7 +47,19 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
 10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, use the shell-level `Switcher` and `New Project` shortcuts, or view the placeholder account-management layouts.
 
-### 2.3 Onboarding And Workspace Overlays
+### 2.3 Deployment Surface Notes
+
+- `Local demo mode` keeps mock state in local filesystem cache files by default.
+- `Vercel demo mode` is an isolated demo adapter. It keeps `/` as the gateway page, keeps the main app on `/{organization_id}`, and uses database-backed mock persistence only on that adapter.
+- `Cloud Run / GCP production` remains the real production deployment path. It should not use the Vercel demo adapter, runtime SQLite fallback, or database-backed mock demo storage.
+- Health payloads now expose deployment-safe runtime diagnostics:
+  - `control_plane_database_backend`
+  - `control_plane_database_persistent`
+  - `control_plane_database_fallback_active`
+  - `mock_state_backend`
+  - `mock_state_persistent`
+
+### 2.4 Onboarding And Workspace Overlays
 
 #### Google login gate
 
@@ -158,7 +170,7 @@ This page is the quickest end-to-end operator view for running prediction and ex
 | Local model status badge | Badge | Read the current readiness of the `Local Model` path before running prediction. | `Learning` | Shows whether local prediction is `Ready`, `Learning`, or `Fallback`. |
 | `Train Local Model` | Button | Manually trigger a local batch retrain from the workbench. | None | Starts a local training run and updates the inline training status when complete. |
 | `Refresh Model Status` | Button | Reload the latest local-model readiness and training status without starting a run. | None | Refreshes the badge, readiness details, and inline training status. |
-| Local model training status | Inline status text | Read the latest training state, labeled-row count, class balance, and last update time. | `Fallback · 42/12 labeled rows` | Shows the most recent local model training outcome and supporting detail. |
+| Local model training status | Inline status text | Read the latest training state, labeled-row count, class balance, and last update time. | `Fallback - 42/12 labeled rows` | Shows the most recent local model training outcome and supporting detail. |
 | `Predict Churn` | Button | Starts prediction for the selected source or import. | None | A prediction job is created and results populate the table when complete. |
 | `Provider` | Select | Choose the audience export target. | `Braze` | Export request uses Braze provider settings. |
 | `Channel` | Select | Choose the downstream delivery channel. | `Push Notification` | Export metadata is tagged with the selected channel. |

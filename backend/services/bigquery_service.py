@@ -13,6 +13,7 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 
 from app.core.request_context import get_request_context
+from runtime_paths import normalize_env_text, resolve_runtime_file_path
 
 INT64_MAX = 2**63 - 1
 INT64_MIN = -(2**63)
@@ -47,8 +48,25 @@ def _sanitize_for_storage(data: Any) -> Any:
     return data
 
 
+def _normalize_mock_storage_backend(raw_value: Any) -> str:
+    value = normalize_env_text(raw_value).lower()
+    if value in {"", "files", "file", "local", "local_files", "parquet"}:
+        return "local_files"
+    if value in {"database", "db", "sql", "postgres", "postgresql"}:
+        return "database"
+    raise ValueError("KAIRYX_MOCK_STORAGE_BACKEND must be 'local_files' or 'database'.")
+
+
+def _resolved_mock_storage_backend(raw_value: Any) -> str:
+    requested = _normalize_mock_storage_backend(raw_value)
+    platform_surface = normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE", "")).lower()
+    if requested == "database" and platform_surface != "vercel_demo":
+        return "local_files"
+    return requested
+
+
 def _shared_service_cache_key() -> tuple[Any, ...]:
-    mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+    mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
     tenant_scope = _tenant_scope_key()
     project_scope = _project_scope_key()
     if mode == "gcp":
@@ -56,19 +74,24 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
             mode,
             tenant_scope,
             project_scope,
-            os.getenv("BIGQUERY_PROJECT_ID", ""),
-            os.getenv("BIGQUERY_DATASET_ID", "kairyx"),
-            os.getenv("BIGQUERY_TABLE_NAME", "processed_events"),
-            os.getenv("BIGQUERY_TABLE_ID", ""),
-            os.getenv("BIGQUERY_EVENTS_CURATED_TABLE_ID", ""),
-            os.getenv("BIGQUERY_PLAYER_LATEST_STATE_TABLE_ID", ""),
-            os.getenv("BIGQUERY_PIPELINE_DEAD_LETTERS_TABLE_ID", ""),
-            os.getenv("BIGQUERY_PREDICTION_RESULTS_TABLE_ID", ""),
+            normalize_env_text(os.getenv("BIGQUERY_PROJECT_ID", "")),
+            normalize_env_text(os.getenv("BIGQUERY_DATASET_ID", "kairyx")),
+            normalize_env_text(os.getenv("BIGQUERY_TABLE_NAME", "processed_events")),
+            normalize_env_text(os.getenv("BIGQUERY_TABLE_ID", "")),
+            normalize_env_text(os.getenv("BIGQUERY_EVENTS_CURATED_TABLE_ID", "")),
+            normalize_env_text(os.getenv("BIGQUERY_PLAYER_LATEST_STATE_TABLE_ID", "")),
+            normalize_env_text(os.getenv("BIGQUERY_PIPELINE_DEAD_LETTERS_TABLE_ID", "")),
+            normalize_env_text(os.getenv("BIGQUERY_PREDICTION_RESULTS_TABLE_ID", "")),
         )
     return (
         mode,
         tenant_scope,
         project_scope,
+        _resolved_mock_storage_backend(os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")),
+        normalize_env_text(os.getenv("CONTROL_PLANE_DATABASE_URL", "")),
+        normalize_env_text(os.getenv("DATABASE_URL", "")),
+        normalize_env_text(os.getenv("KAIRYX_PLATFORM_SURFACE", "")),
+        normalize_env_text(os.getenv("KAIRYX_RUNTIME_DIR", "")),
         os.getcwd(),
     )
 
@@ -111,7 +134,8 @@ class BigQueryService:
         self._lock = threading.RLock()
         self._query_state_lock = threading.RLock()
         self._active_queries = 0
-        self.mode = os.getenv("DATA_BACKEND_MODE", "mock").strip().lower()
+        self.mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
+        self._mock_storage_backend = "gcp"
         if self.mode not in {"mock", "gcp"}:
             raise ValueError("DATA_BACKEND_MODE must be 'mock' or 'gcp'.")
 
@@ -120,7 +144,10 @@ class BigQueryService:
             print(f"BigQueryService initialized in GCP mode (table: {self._table_id}).")
         else:
             self._init_mock_backend()
-            print("BigQueryService initialized in MOCK mode (local parquet cache).")
+            if self._mock_storage_backend == "database":
+                print("BigQueryService initialized in MOCK mode (database-backed cache).")
+            else:
+                print("BigQueryService initialized in MOCK mode (local parquet cache).")
 
     def _init_gcp_backend(self):
         try:
@@ -161,18 +188,125 @@ class BigQueryService:
         self._client = bigquery.Client(project=project_id)
 
     def _init_mock_backend(self):
+        self._mock_storage_backend = _resolved_mock_storage_backend(
+            os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")
+        )
         cache_root = Path(".cache") / _tenant_scope_key() / _project_scope_key()
-        self._cache_path = str(cache_root / "bigquery_table.parquet")
-        self._curated_cache_path = str(cache_root / "events_curated.parquet")
-        self._player_latest_state_cache_path = str(cache_root / "player_latest_state.parquet")
-        self._dead_letter_cache_path = str(cache_root / "pipeline_dead_letters.parquet")
-        self._prediction_results_cache_path = str(cache_root / "prediction_results.parquet")
+        self._cache_path = str(resolve_runtime_file_path(cache_root / "bigquery_table.parquet", ensure_parent=True))
+        self._curated_cache_path = str(resolve_runtime_file_path(cache_root / "events_curated.parquet", ensure_parent=True))
+        self._player_latest_state_cache_path = str(resolve_runtime_file_path(cache_root / "player_latest_state.parquet", ensure_parent=True))
+        self._dead_letter_cache_path = str(resolve_runtime_file_path(cache_root / "pipeline_dead_letters.parquet", ensure_parent=True))
+        self._prediction_results_cache_path = str(resolve_runtime_file_path(cache_root / "prediction_results.parquet", ensure_parent=True))
+        if self._mock_storage_backend == "database":
+            from app.core.db import init_db
+
+            init_db()
+            self._table = pd.DataFrame()
+            self._curated_table = pd.DataFrame()
+            self._player_latest_state_table = pd.DataFrame()
+            self._dead_letter_table = pd.DataFrame()
+            self._prediction_results_table = pd.DataFrame()
+            return
         self._table = self._load_mock_table(self._cache_path)
         self._curated_table = self._load_mock_table(self._curated_cache_path)
         self._player_latest_state_table = self._load_mock_table(self._player_latest_state_cache_path)
         self._dead_letter_table = self._load_mock_table(self._dead_letter_cache_path)
         self._prediction_results_table = self._load_mock_table(self._prediction_results_cache_path)
         os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
+
+    def get_mock_state_backend(self) -> str:
+        if self.mode == "gcp":
+            return "gcp"
+        return self._mock_storage_backend
+
+    def is_mock_state_persistent(self) -> bool:
+        if self.mode == "gcp":
+            return True
+        if self._mock_storage_backend != "database":
+            return False
+
+        from app.core.db import is_control_plane_database_persistent
+
+        return is_control_plane_database_persistent()
+
+    def _uses_database_mock_storage(self) -> bool:
+        return self.mode == "mock" and self._mock_storage_backend == "database"
+
+    @staticmethod
+    def _mock_storage_model():
+        from app.infrastructure.db_models import MockWarehouseRowModel
+
+        return MockWarehouseRowModel
+
+    def _load_mock_rows_from_database(self, target: str) -> List[Dict[str, Any]]:
+        from app.core.db import session_scope
+
+        model = self._mock_storage_model()
+        with session_scope() as session:
+            rows = (
+                session.query(model)
+                .filter(model.target_name == target)
+                .order_by(model.id.asc())
+                .all()
+            )
+
+        parsed_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row.payload_json)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                parsed_rows.append(payload)
+        return parsed_rows
+
+    def _append_mock_rows_to_database(self, target: str, rows: List[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+
+        from app.core.db import session_scope
+
+        model = self._mock_storage_model()
+        with session_scope() as session:
+            session.add_all(
+                [
+                    model(
+                        target_name=target,
+                        payload_json=json.dumps(_sanitize_for_storage(dict(row)), default=str),
+                    )
+                    for row in rows
+                ]
+            )
+
+    def _replace_mock_rows_in_database(self, target: str, rows: List[Dict[str, Any]]) -> None:
+        from app.core.db import session_scope
+
+        model = self._mock_storage_model()
+        with session_scope() as session:
+            session.query(model).filter(model.target_name == target).delete(synchronize_session=False)
+            if rows:
+                session.add_all(
+                    [
+                        model(
+                            target_name=target,
+                            payload_json=json.dumps(_sanitize_for_storage(dict(row)), default=str),
+                        )
+                        for row in rows
+                    ]
+                )
+
+    def _get_mock_table(self, target: str) -> pd.DataFrame:
+        if self.mode != "mock":
+            raise RuntimeError("Mock table access is only available in mock mode.")
+
+        if self._uses_database_mock_storage():
+            return pd.DataFrame(self._load_mock_rows_from_database(target))
+
+        with self._lock:
+            table = getattr(self, self._target_meta(target)["table_attr"])
+            if table is None or table.empty:
+                return pd.DataFrame()
+            return table.copy()
 
     def _load_mock_table(self, cache_path: str) -> pd.DataFrame:
         if os.path.exists(cache_path):
@@ -409,6 +543,11 @@ class BigQueryService:
             print(f"Wrote {len(prepared_events)} rows to BigQuery table {meta['table_id']}.")
             return
 
+        if self._uses_database_mock_storage():
+            self._append_mock_rows_to_database(target, prepared_events)
+            print(f"Wrote {len(prepared_events)} rows to database-backed mock target '{target}'.")
+            return
+
         table_attr = meta["table_attr"]
         cache_path = meta["cache_path"]
         current_table = getattr(self, table_attr)
@@ -445,6 +584,10 @@ class BigQueryService:
             )
             return
 
+        if self._uses_database_mock_storage():
+            self._replace_mock_rows_in_database(target, prepared_rows)
+            return
+
         table = pd.DataFrame(prepared_rows)
         if not table.empty:
             if hasattr(table, "map"):
@@ -457,6 +600,8 @@ class BigQueryService:
 
     def _get_local_rows(self, target: str) -> List[Dict[str, Any]]:
         with self._lock:
+            if self._uses_database_mock_storage():
+                return self._load_mock_rows_from_database(target)
             table = getattr(self, self._target_meta(target)["table_attr"])
             if table.empty:
                 return []
@@ -486,8 +631,12 @@ class BigQueryService:
         player_id: Any,
         table: Optional[pd.DataFrame] = None,
         job_id: Optional[str] = None,
+        target: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
-        current_table = table if table is not None else self._table
+        if target:
+            current_table = self._get_mock_table(target)
+        else:
+            current_table = table if table is not None else self._get_mock_table("events_staging")
         if current_table.empty:
             return None
         current_table = self._filter_table_by_job(current_table, job_id=job_id)
@@ -854,7 +1003,8 @@ class BigQueryService:
                 rows = []
         else:
             rows = []
-            for table in (self._curated_table, self._table):
+            for target in ("events_curated", "events_staging"):
+                table = self._get_mock_table(target)
                 filtered_table = self._filter_table_by_job(table, job_id=normalized_job_id)
                 if filtered_table.empty:
                     continue
@@ -1334,7 +1484,7 @@ class BigQueryService:
             )
             return rows
 
-        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table, job_id=job_id)
+        player_df = self._get_local_events_for_identity(player_id, job_id=job_id, target="events_curated")
         if player_df is None or player_df.empty:
             return []
         return player_df.head(max(1, int(limit))).to_dict(orient="records")
@@ -1349,10 +1499,10 @@ class BigQueryService:
                 return pd.DataFrame(staging_rows)
             return None
 
-        player_df = self._get_local_events_for_identity(player_id, table=self._curated_table, job_id=job_id)
+        player_df = self._get_local_events_for_identity(player_id, job_id=job_id, target="events_curated")
         if player_df is not None and not player_df.empty:
             return player_df
-        return self._get_local_events_for_identity(player_id, table=self._table, job_id=job_id)
+        return self._get_local_events_for_identity(player_id, job_id=job_id, target="events_staging")
 
     def get_all_player_ids(self, job_id: Optional[str] = None) -> List[Any]:
         if job_id:
@@ -1389,8 +1539,8 @@ class BigQueryService:
                     continue
             return []
 
-        for table in (self._player_latest_state_table, self._curated_table, self._table):
-            filtered_table = table
+        for target in ("player_latest_state", "events_curated", "events_staging"):
+            filtered_table = self._get_mock_table(target)
             if filtered_table.empty:
                 continue
             ids: List[str] = []
@@ -1438,15 +1588,14 @@ class BigQueryService:
             }
 
     def get_player_latest_state(self, player_id: Any, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        if not job_id:
-            if self.mode == "gcp":
-                rows = self._query_rows_by_identity_gcp(self._player_latest_state_table_id, player_id, limit=1, job_id=None)
-                if rows:
-                    return rows[0]
-            else:
-                latest_state_df = self._get_local_events_for_identity(player_id, table=self._player_latest_state_table, job_id=None)
-                if latest_state_df is not None and not latest_state_df.empty:
-                    return latest_state_df.iloc[0].to_dict()
+        if self.mode == "gcp":
+            rows = self._query_rows_by_identity_gcp(self._player_latest_state_table_id, player_id, limit=1, job_id=job_id)
+            if rows:
+                return rows[0]
+        else:
+            latest_state_df = self._get_local_events_for_identity(player_id, job_id=job_id, target="player_latest_state")
+            if latest_state_df is not None and not latest_state_df.empty:
+                return latest_state_df.iloc[0].to_dict()
 
         player_df = self.get_events_for_player(player_id, job_id=job_id)
         if player_df is None or player_df.empty:
@@ -1470,10 +1619,9 @@ class BigQueryService:
             rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
             return rows
 
-        if self._dead_letter_table.empty:
+        table = self._get_mock_table("pipeline_dead_letters")
+        if table.empty:
             return []
-
-        table = self._dead_letter_table.copy()
         if job_id:
             match_value = str(job_id)
             job_id_mask = table["job_id"].map(lambda value: str(value) == match_value if pd.notna(value) else False) if "job_id" in table.columns else False
@@ -1658,7 +1806,7 @@ class BigQueryService:
             return
 
         with self._lock:
-            table = self._prediction_results_table.copy()
+            table = self._get_mock_table("prediction_results")
             if not table.empty and "prediction_job_id" in table.columns:
                 table = table[
                     table["prediction_job_id"].map(
@@ -1671,8 +1819,7 @@ class BigQueryService:
                     table = new_rows
                 else:
                     table = pd.concat([table, new_rows], ignore_index=True)
-            self._prediction_results_table = table
-            self._persist_mock_table(table, self._prediction_results_cache_path)
+            self._replace_rows_unlocked(table.to_dict(orient="records"), target="prediction_results")
 
     def append_prediction_results(self, job_id: str, rows: List[Dict[str, Any]]):
         resolved_job_id = str(job_id)
@@ -1700,9 +1847,26 @@ class BigQueryService:
                 "size_bytes": int(path.stat().st_size) if path.exists() else 0,
             }
 
+        if self._uses_database_mock_storage():
+            persistent = self.is_mock_state_persistent()
+            return {
+                "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
+                "storage_backend": "database",
+                "persistent": persistent,
+                "tables": {
+                    "events_staging": {"rows": len(self._get_local_rows("events_staging")), "cache_path": "", "size_bytes": 0},
+                    "events_curated": {"rows": len(self._get_local_rows("events_curated")), "cache_path": "", "size_bytes": 0},
+                    "player_latest_state": {"rows": len(self._get_local_rows("player_latest_state")), "cache_path": "", "size_bytes": 0},
+                    "pipeline_dead_letters": {"rows": len(self._get_local_rows("pipeline_dead_letters")), "cache_path": "", "size_bytes": 0},
+                    "prediction_results": {"rows": len(self._get_local_rows("prediction_results")), "cache_path": "", "size_bytes": 0},
+                },
+            }
+
         with self._lock:
             return {
                 "retention_days": max(1, int(os.getenv("JOB_RETENTION_DAYS", "7"))),
+                "storage_backend": "local_files",
+                "persistent": False,
                 "tables": {
                     "events_staging": _table_stats(self._table, self._cache_path),
                     "events_curated": _table_stats(self._curated_table, self._curated_cache_path),
@@ -1748,9 +1912,9 @@ class BigQueryService:
             return {"page": page, "page_size": page_size, "total": total, "items": items}
 
         with self._lock:
-            if self._prediction_results_table.empty:
+            table = self._get_mock_table("prediction_results")
+            if table.empty:
                 return {"page": page, "page_size": page_size, "total": 0, "items": []}
-            table = self._prediction_results_table.copy()
             if "prediction_job_id" not in table.columns:
                 return {"page": page, "page_size": page_size, "total": 0, "items": []}
             table = table[
@@ -1810,12 +1974,8 @@ class BigQueryService:
             return
 
         with self._lock:
-            target_tables = [
-                ("_table", self._cache_path, "events_staging"),
-                ("_dead_letter_table", self._dead_letter_cache_path, "pipeline_dead_letters"),
-            ]
-            for table_attr, cache_path, target_name in target_tables:
-                table = getattr(self, table_attr)
+            for target_name in ("events_staging", "pipeline_dead_letters"):
+                table = self._get_mock_table(target_name)
                 if table.empty:
                     continue
 
@@ -1835,9 +1995,8 @@ class BigQueryService:
                 filtered = table[~combined_mask].copy()
                 rows_deleted = initial_rows - len(filtered)
                 if rows_deleted > 0:
-                    setattr(self, table_attr, filtered)
-                    print(f"Deleted {rows_deleted} rows from local BigQuery mock target '{target_name}' for job '{job_identifier}'.")
-                    self._persist_mock_table(filtered, cache_path)
+                    print(f"Deleted {rows_deleted} rows from mock target '{target_name}' for job '{job_identifier}'.")
+                    self._replace_rows_unlocked(filtered.to_dict(orient='records'), target=target_name)
 
             self.run_events_curation()
             self.refresh_player_latest_state()

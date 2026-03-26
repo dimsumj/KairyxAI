@@ -126,6 +126,27 @@ def test_jwt_user_without_membership_can_onboard_but_cannot_access_product_route
         assert blocked.status_code == 403
 
 
+def test_vercel_demo_org_path_bootstraps_workspace_after_database_fallback(monkeypatch, tmp_path):
+    user_token = _make_token("demo-user")
+    with _client(
+        monkeypatch,
+        tmp_path,
+        APP_ENV="demo",
+        KAIRYX_PLATFORM_SURFACE="vercel_demo",
+        KAIRYX_RUNTIME_DIR=str(tmp_path / "runtime"),
+        DATA_BACKEND_MODE="mock",
+        CONTROL_PLANE_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:1/kairyx",
+        CONTROL_PLANE_CONNECT_TIMEOUT_SECONDS="1",
+    ) as client:
+        me = client.get("/torpedo/v1/auth/me", headers=_auth_headers(user_token, project_id="liveops"))
+
+        assert me.status_code == 200
+        assert me.json()["organization_id"] == "torpedo"
+        assert me.json()["project_id"] == "liveops"
+        assert me.json()["organization_role"] == "owner"
+        assert me.json()["project_role"] == "admin"
+
+
 def test_malformed_bearer_token_returns_401(monkeypatch, tmp_path):
     with _client(monkeypatch, tmp_path) as client:
         me = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-jwt"})

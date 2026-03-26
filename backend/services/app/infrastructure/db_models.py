@@ -288,3 +288,12 @@ class ControlPlaneResourceEventModel(Base):
     created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
     correlation_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class MockWarehouseRowModel(Base):
+    __tablename__ = "mock_warehouse_rows_v1"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_name: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

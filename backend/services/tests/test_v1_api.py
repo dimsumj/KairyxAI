@@ -156,6 +156,11 @@ def test_health_live_aliases_return_lightweight_payload(client):
     root_payload = root_resp.json()
     assert root_payload["status"] == "ok"
     assert root_payload["mode"] == "mock"
+    assert root_payload["control_plane_database_backend"] == "sqlite"
+    assert root_payload["control_plane_database_persistent"] is True
+    assert root_payload["control_plane_database_fallback_active"] is False
+    assert root_payload["mock_state_backend"] == "local_files"
+    assert root_payload["mock_state_persistent"] is False
     assert "data_aliases" not in root_payload
 
     api_resp = client.get("/api/v1/health/live")
@@ -163,6 +168,11 @@ def test_health_live_aliases_return_lightweight_payload(client):
     api_payload = api_resp.json()
     assert api_payload["status"] == "ok"
     assert api_payload["mode"] == "mock"
+    assert api_payload["control_plane_database_backend"] == "sqlite"
+    assert api_payload["control_plane_database_persistent"] is True
+    assert api_payload["control_plane_database_fallback_active"] is False
+    assert api_payload["mock_state_backend"] == "local_files"
+    assert api_payload["mock_state_persistent"] is False
     assert "data_aliases" not in api_payload
     assert api_payload["service"] == "KairyxAI Operator API"
     assert api_payload["time"]
@@ -172,6 +182,8 @@ def test_health_live_aliases_return_lightweight_payload(client):
     org_payload = org_resp.json()
     assert org_payload["status"] == "ok"
     assert org_payload["mode"] == "mock"
+    assert org_payload["mock_state_backend"] == "local_files"
+    assert org_payload["mock_state_persistent"] is False
 
 
 def test_org_scoped_v1_import_links_use_org_prefix(client):
@@ -207,7 +219,14 @@ def test_health_reports_local_cache_stats(client):
     assert health.status_code == 200
     payload = health.json()
     assert payload["mode"] == "mock"
+    assert payload["control_plane_database_backend"] == "sqlite"
+    assert payload["control_plane_database_persistent"] is True
+    assert payload["control_plane_database_fallback_active"] is False
+    assert payload["mock_state_backend"] == "local_files"
+    assert payload["mock_state_persistent"] is False
     assert payload["local_cache"]["retention_days"] == 7
+    assert payload["local_cache"]["storage_backend"] == "local_files"
+    assert payload["local_cache"]["persistent"] is False
     assert payload["local_cache"]["tables"]["events_staging"]["rows"] >= 0
     assert payload["local_cache"]["tables"]["prediction_results"]["rows"] >= 0
 

@@ -111,6 +111,8 @@ export function initializeOperatorConsole() {
             const PROJECT_ID_STORAGE_KEY = 'kairyx.projectId';
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
             const ACCESS_TOKEN_STORAGE_KEY = 'kairyx.accessToken';
+            const CONNECTORS_VERSION_STORAGE_KEY = 'kairyx.connectorsVersion';
+            const IMPORTS_VERSION_STORAGE_KEY = 'kairyx.importsVersion';
             const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
             const GOOGLE_IDENTITY_SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
             const PENDING_INVITE_STORAGE_KEY = 'kairyx.pendingInvite';
@@ -994,7 +996,7 @@ export function initializeOperatorConsole() {
                 if (payload?.project_role) {
                     roleBits.push(`project: ${payload.project_role}`);
                 }
-                workspaceRoleSummary.textContent = roleBits.join(' • ');
+                workspaceRoleSummary.textContent = roleBits.join(' | ');
                 syncSidebarSessionUi(payload);
             }
 
@@ -1386,11 +1388,18 @@ export function initializeOperatorConsole() {
             syncAuthModeUi();
             if (authStatusText) {
                 authStatusText.textContent = accessToken
-                    ? 'Validating Google session…'
+                    ? 'Validating Google session...'
                     : (isGoogleLoginConfigured() ? 'Google login required.' : 'Local demo session');
             }
 
             apiKeyInput.addEventListener('change', persistActorContext);
+            window.addEventListener('storage', handleExternalDataVersionEvent);
+            window.addEventListener('focus', syncExternalDataVersions);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    syncExternalDataVersions();
+                }
+            });
             onboardingOrganizationNameInput.addEventListener('input', () => {
                 onboardingOrganizationNameInput.value = normalizeNewOrganizationId(onboardingOrganizationNameInput.value);
                 onboardingOrganizationIdInput.value = onboardingOrganizationNameInput.value;
@@ -1765,6 +1774,99 @@ export function initializeOperatorConsole() {
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
+            let lastSeenConnectorsVersion = '';
+            let lastSeenImportsVersion = '';
+
+            function readStoredVersion(key) {
+                try {
+                    return localStorage.getItem(key) || '';
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            function syncSeenDataVersions() {
+                lastSeenConnectorsVersion = readStoredVersion(CONNECTORS_VERSION_STORAGE_KEY);
+                lastSeenImportsVersion = readStoredVersion(IMPORTS_VERSION_STORAGE_KEY);
+            }
+
+            function publishDataVersion(key) {
+                const value = `${Date.now()}:${Math.random().toString(16).slice(2)}`;
+                try {
+                    localStorage.setItem(key, value);
+                } catch (error) {
+                    console.warn('Unable to persist cross-tab data version:', error);
+                }
+                if (key === CONNECTORS_VERSION_STORAGE_KEY) {
+                    lastSeenConnectorsVersion = value;
+                } else if (key === IMPORTS_VERSION_STORAGE_KEY) {
+                    lastSeenImportsVersion = value;
+                }
+            }
+
+            function refreshForExternalDataChange(kind) {
+                if (shouldBlockProtectedAppData()) {
+                    return;
+                }
+                if (kind === 'connectors') {
+                    cachedConnectors = [];
+                    if (activePageId === 'connectors') {
+                        loadSavedConnectors();
+                    } else if (activePageId === 'player-cohorts') {
+                        loadConfiguredSources();
+                    } else if (activePageId === 'data-sandbox') {
+                        loadDataSandboxGlance();
+                        loadDataSandboxMappingControls();
+                    } else if (activePageId === 'operator-hub') {
+                        loadReadyImportsForOperatorHub();
+                    } else if (activePageId === 'action-history') {
+                        loadActionHistory();
+                    }
+                    return;
+                }
+                if (kind === 'imports') {
+                    cachedImports = [];
+                    if (activePageId === 'player-cohorts') {
+                        loadImportedDataList();
+                    } else if (activePageId === 'data-sandbox') {
+                        loadDataSandboxGlance();
+                    } else if (activePageId === 'operator-hub') {
+                        loadReadyImportsForOperatorHub();
+                    } else if (activePageId === 'action-history') {
+                        loadActionHistory();
+                    }
+                }
+            }
+
+            function syncExternalDataVersions() {
+                const connectorsVersion = readStoredVersion(CONNECTORS_VERSION_STORAGE_KEY);
+                if (connectorsVersion && connectorsVersion !== lastSeenConnectorsVersion) {
+                    lastSeenConnectorsVersion = connectorsVersion;
+                    refreshForExternalDataChange('connectors');
+                }
+                const importsVersion = readStoredVersion(IMPORTS_VERSION_STORAGE_KEY);
+                if (importsVersion && importsVersion !== lastSeenImportsVersion) {
+                    lastSeenImportsVersion = importsVersion;
+                    refreshForExternalDataChange('imports');
+                }
+            }
+
+            function handleExternalDataVersionEvent(event) {
+                if (event.storageArea !== localStorage) {
+                    return;
+                }
+                if (event.key === CONNECTORS_VERSION_STORAGE_KEY && event.newValue && event.newValue !== lastSeenConnectorsVersion) {
+                    lastSeenConnectorsVersion = event.newValue;
+                    refreshForExternalDataChange('connectors');
+                    return;
+                }
+                if (event.key === IMPORTS_VERSION_STORAGE_KEY && event.newValue && event.newValue !== lastSeenImportsVersion) {
+                    lastSeenImportsVersion = event.newValue;
+                    refreshForExternalDataChange('imports');
+                }
+            }
+
+            syncSeenDataVersions();
 
             function getApiBaseUrl(tenantIdOverride = null, { forceGlobal = false } = {}) {
                 if (forceGlobal) {
@@ -2042,7 +2144,7 @@ export function initializeOperatorConsole() {
                 }
                 inviteRedemptionInFlight = true;
                 try {
-                    setAuthStatus('Redeeming project invite…');
+                    setAuthStatus('Redeeming project invite...');
                     const response = await fetch(`${getApiBaseUrl(pendingInvite.tenantId || '', { forceGlobal: !pendingInvite.tenantId })}/project-invites/redeem`, {
                         method: 'POST',
                         headers: {
@@ -2283,8 +2385,8 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(workspaceLoginStatus, 'Google login is not configured on the backend.', true);
                     return;
                 }
-                setAuthStatus('Redirecting to OIDC…');
-                setWorkspaceTextStatus(workspaceLoginStatus, 'Redirecting to OIDC…');
+                setAuthStatus('Redirecting to OIDC...');
+                setWorkspaceTextStatus(workspaceLoginStatus, 'Redirecting to OIDC...');
                 const verifier = randomVerifier();
                 const challenge = await sha256Digest(verifier);
                 try {
@@ -2467,7 +2569,7 @@ export function initializeOperatorConsole() {
             workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
             orgSpaceSelect.addEventListener('change', async () => {
                 try {
-                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching organization space…');
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching organization space...');
                     await switchWorkspaceSelection(orgSpaceSelect.value || '', '', { reloadPage: false });
                     setWorkspaceTextStatus(
                         workspaceSelectorStatus,
@@ -2479,7 +2581,7 @@ export function initializeOperatorConsole() {
             });
             projectSelect.addEventListener('change', async () => {
                 try {
-                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching project…');
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching project...');
                     await switchWorkspaceSelection(orgSpaceSelect.value || '', projectSelect.value || '');
                     setWorkspaceTextStatus(workspaceSelectorStatus, 'Project updated.');
                 } catch (error) {
@@ -2501,7 +2603,7 @@ export function initializeOperatorConsole() {
                     workspaceOrgUrlInput.value = organizationId;
                     persistWorkspaceSelection(organizationId, '');
                     try {
-                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Redirecting to Google…');
+                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Redirecting to Google...');
                         await startOidcLogin();
                     } catch (error) {
                         setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Google login failed.', true);
@@ -2540,7 +2642,7 @@ export function initializeOperatorConsole() {
                 onboardingFromWorkspaceSelection = false;
                 workspaceOrgUrlInput.value = tenant.organization_id;
                 try {
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects…');
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Loading projects...');
                     workspaceCreateProjectNameInput.value = '';
                     workspaceCreateProjectIdInput.value = '';
                     workspaceModalProjectSelect.value = '';
@@ -2574,7 +2676,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 try {
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace…');
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace...');
                     const payload = await switchWorkspaceSelection(
                         workspaceModalOrgSelect.value || authSessionState?.organization_id || '',
                         workspaceModalProjectSelect.value || '',
@@ -2600,7 +2702,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 try {
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Adding project to organization space…');
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Adding project to organization space...');
                     await switchWorkspaceSelection(tenantId, '', { reloadPage: false, syncBrowserPath: false });
                     await apiRequest('/projects', {
                         method: 'POST',
@@ -2631,7 +2733,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 try {
-                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Creating project…');
+                    setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Creating project...');
                     await apiRequest('/projects', {
                         method: 'POST',
                         body: {
@@ -2700,7 +2802,7 @@ export function initializeOperatorConsole() {
                     }
                     onboardingProjectIdInput.value = projectId;
                     try {
-                        setWorkspaceTextStatus(onboardingStatus, 'Creating organization space and first project…');
+                        setWorkspaceTextStatus(onboardingStatus, 'Creating organization space and first project...');
                         onboardingResult = await apiRequest('/onboarding/organization-space', {
                             method: 'POST',
                             body: {
@@ -2737,7 +2839,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 try {
-                    setWorkspaceTextStatus(onboardingInviteStatus, 'Generating invite link…');
+                    setWorkspaceTextStatus(onboardingInviteStatus, 'Generating invite link...');
                     const payload = await apiRequest(`/projects/${encodeURIComponent(authSessionState.project_id)}/invites`, {
                         method: 'POST',
                         body: {
@@ -3236,7 +3338,7 @@ export function initializeOperatorConsole() {
                     predictionModelTrainingStatus.style.color = normalizedTrainingStatus === 'failed'
                         ? 'var(--red)'
                         : (normalizedTrainingStatus === 'running' ? 'var(--primary-color)' : 'var(--text-secondary)');
-                    predictionModelTrainingStatus.textContent = detailParts.filter(Boolean).join(' · ');
+                    predictionModelTrainingStatus.textContent = detailParts.filter(Boolean).join(' - ');
                     predictionModelTrainingStatus.title = titleLines.filter(Boolean).join('\n');
                 }
             }
@@ -3282,7 +3384,7 @@ export function initializeOperatorConsole() {
                     predictionModelReadinessBadge.title = titleLines.filter(Boolean).join('\n');
                 }
                 if (predictionModelReadinessDetails) {
-                    predictionModelReadinessDetails.textContent = detailParts.filter(Boolean).join(' · ');
+                    predictionModelReadinessDetails.textContent = detailParts.filter(Boolean).join(' - ');
                     predictionModelReadinessDetails.title = titleLines.filter(Boolean).join('\n');
                 }
                 if (predictionLocalWarning) {
@@ -3370,6 +3472,7 @@ export function initializeOperatorConsole() {
                     },
                 });
                 await refreshConnectorsState();
+                publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
                 return connector;
             }
 
@@ -3390,6 +3493,7 @@ export function initializeOperatorConsole() {
                 refreshImportsState().catch((error) => {
                     console.error('Unable to refresh import jobs after create:', error);
                 });
+                publishDataVersion(IMPORTS_VERSION_STORAGE_KEY);
                 return normalizeImportJob(created);
             }
 
@@ -3422,12 +3526,14 @@ export function initializeOperatorConsole() {
             async function stopImportRecord(jobId) {
                 const job = await apiRequest(`/imports/${encodeURIComponent(jobId)}/stop`, { method: 'POST' });
                 await refreshImportsState();
+                publishDataVersion(IMPORTS_VERSION_STORAGE_KEY);
                 return cachedImports.find((item) => item.id === jobId) || normalizeImportJob(job);
             }
 
             async function deleteImportRecord(jobId) {
                 await apiRequest(`/imports/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
                 await refreshImportsState();
+                publishDataVersion(IMPORTS_VERSION_STORAGE_KEY);
             }
 
             function getLatestPredictionJob(audienceKey, completedOnly = false, audienceScope = getSelectedPredictionAudienceScope()) {
@@ -3830,6 +3936,7 @@ export function initializeOperatorConsole() {
                                 }
                                 try {
                                     await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
+                                    publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
                                     loadSavedConnectors(); // Refresh the list
                                 } catch (error) {
                                     alert(`Error: ${error.message}`);
@@ -4312,7 +4419,7 @@ export function initializeOperatorConsole() {
                 const audienceScope = String(details.audience_scope || '').trim().toLowerCase();
                 const sourceName = String(details.source_name || '').trim();
                 if (audienceScope === 'source' && sourceName) {
-                    return ` · Source ${sourceName}`;
+                    return ` - Source ${sourceName}`;
                 }
                 return '';
             }
@@ -4343,16 +4450,16 @@ export function initializeOperatorConsole() {
                 if (normalizedStatus === 'stopped') {
                     const stopReason = String(details.stop_reason || '').trim();
                     return stopReason
-                        ? `Prediction job: ${rawStatus} · ${stopReason}`
+                        ? `Prediction job: ${rawStatus} - ${stopReason}`
                         : `Prediction job: ${rawStatus}`;
                 }
                 const executionLabel = getPredictionExecutionLabel(details)
                     .replace(/\b\w/g, (c) => c.toUpperCase());
                 const localModelLabel = getPredictionEffectiveLocalModelLabel(details, normalizedStatus);
-                const modelSuffix = localModelLabel ? ` · Model ${localModelLabel}` : '';
+                const modelSuffix = localModelLabel ? ` - Model ${localModelLabel}` : '';
                 const audienceSuffix = getPredictionAudienceProgressLabel(details);
-                const staleSuffix = isPredictionJobStale(job) ? ' · Stale' : '';
-                return `Prediction job: ${rawStatus} · ${executionLabel}${audienceSuffix} · ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}${staleSuffix}`;
+                const staleSuffix = isPredictionJobStale(job) ? ' - Stale' : '';
+                return `Prediction job: ${rawStatus} - ${executionLabel}${audienceSuffix} - ${processed}/${total} users (${Math.round(Number(pct || 0))}%)${modelSuffix}${staleSuffix}`;
             }
 
             function formatCount(value) {
@@ -4384,7 +4491,7 @@ export function initializeOperatorConsole() {
                         ? `${formatCount(current)}/${formatCount(total)} events`
                         : `${formatCount(current)} events`;
                     if (totalManifests > 0) {
-                        label += ` · ${formatCount(processedManifests)}/${formatCount(totalManifests)} shards`;
+                        label += ` - ${formatCount(processedManifests)}/${formatCount(totalManifests)} shards`;
                     }
                     return label;
                 }
@@ -4396,10 +4503,10 @@ export function initializeOperatorConsole() {
                     if (total <= 0 && pageSize > 0) {
                         label = current <= pageSize
                             ? `${formatCount(current)}/${formatCount(pageSize)} events`
-                            : `${formatCount(current)} events · pages of ${formatCount(pageSize)}`;
+                            : `${formatCount(current)} events - pages of ${formatCount(pageSize)}`;
                     }
                     if (totalManifests > 0) {
-                        label += ` · ${formatCount(totalManifests)} shard${totalManifests === 1 ? '' : 's'}`;
+                        label += ` - ${formatCount(totalManifests)} shard${totalManifests === 1 ? '' : 's'}`;
                     }
                     return `${label} staged`;
                 }
@@ -5505,7 +5612,7 @@ export function initializeOperatorConsole() {
                     const payload = await apiRequest(`/audit/actions?${query.toString()}`);
                     allActionHistoryItems = (payload.items || []).map((item) => ({
                         timestamp: item.created_at,
-                        summary: `${item.action_type} · ${item.resource_type}${item.resource_id ? `:${item.resource_id}` : ''}`,
+                        summary: `${item.action_type} - ${item.resource_type}${item.resource_id ? `:${item.resource_id}` : ''}`,
                         status: item.high_risk ? 'high_risk' : 'recorded',
                         details: JSON.stringify(item.payload || {}),
                     }));

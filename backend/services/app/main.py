@@ -36,7 +36,7 @@ from app.application.imports import ImportService
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
-from app.core.db import get_session_factory, init_db
+from app.core.db import get_session_factory, init_db, is_runtime_database_fallback_active
 from app.core.auth import get_authenticator
 from app.core.api_paths import apply_org_scoped_api_alias, get_external_request_path, get_path_scoped_tenant_id, is_org_slug
 from app.core.errors import is_database_locked_error
@@ -364,6 +364,23 @@ def _is_project_optional_path(path: str, settings) -> bool:
     } or path.startswith(f"{api}/onboarding") or path.endswith("/invites")
 
 
+def _bootstrap_mock_fallback_workspace(
+    repository: SqlAlchemyControlPlaneRepository,
+    settings,
+    *,
+    user_id: str,
+    email: str | None,
+    display_name: str | None,
+    tenant_id: str,
+    project_id: str,
+) -> None:
+    repository.ensure_tenant(tenant_id, tenant_id)
+    repository.ensure_project(tenant_id, project_id, project_id)
+    repository.upsert_platform_user(user_id, email=email, display_name=display_name)
+    repository.upsert_tenant_membership(tenant_id, user_id, role="owner", status="active")
+    repository.upsert_project_membership(tenant_id, project_id, user_id, role="admin", status="active")
+
+
 def _build_governance_context(request: Request, settings, correlation_id: str) -> GovernanceContext:
     protected_prefix = settings.api_v1_prefix.rstrip("/")
     resolved_path = str(request.scope.get("path") or request.url.path)
@@ -446,6 +463,28 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
             allow_missing_tenant = _is_tenant_optional_path(resolved_path, settings)
             allow_missing_project = _is_project_optional_path(resolved_path, settings)
+            mock_workspace_fallback_active = (
+                settings.platform_surface == "vercel_demo"
+                and settings.data_backend_mode == "mock"
+                and is_runtime_database_fallback_active()
+            )
+
+            if mock_workspace_fallback_active and requested_tenant and requested_tenant not in memberships_by_tenant:
+                _bootstrap_mock_fallback_workspace(
+                    repository,
+                    settings,
+                    user_id=principal.subject,
+                    email=principal.email,
+                    display_name=principal.display_name,
+                    tenant_id=requested_tenant,
+                    project_id=requested_project or settings.bootstrap_project_id,
+                )
+                tenant_memberships = [
+                    membership
+                    for membership in repository.list_user_tenant_memberships(principal.subject)
+                    if str(membership.get("status") or "").lower() == "active"
+                ]
+                memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
 
             if not memberships_by_tenant:
                 if not allow_missing_tenant:
@@ -485,6 +524,22 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                     if str(membership.get("status") or "").lower() == "active"
                 ]
                 memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
+                if mock_workspace_fallback_active and requested_project and requested_project not in memberships_by_project:
+                    _bootstrap_mock_fallback_workspace(
+                        repository,
+                        settings,
+                        user_id=principal.subject,
+                        email=principal.email,
+                        display_name=principal.display_name,
+                        tenant_id=selected_tenant,
+                        project_id=requested_project,
+                    )
+                    project_memberships = [
+                        membership
+                        for membership in repository.list_project_memberships(tenant_id=selected_tenant, user_id=principal.subject)
+                        if str(membership.get("status") or "").lower() == "active"
+                    ]
+                    memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
                 if requested_project:
                     membership = memberships_by_project.get(requested_project)
                     if membership is None:

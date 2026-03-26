@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -10,13 +11,17 @@ from alembic.config import Config
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .settings import get_settings
-from runtime_paths import normalize_sqlite_database_url
+from runtime_paths import default_control_plane_database_url, normalize_env_text, normalize_sqlite_database_url
 
 
 Base = declarative_base()
+logger = logging.getLogger(__name__)
+_runtime_database_url_override: str | None = None
+_runtime_database_fallback_reason: str = ""
 
 CONTROL_PLANE_REVISION = "20260307_0001"
 RESOURCE_REVISION = "20260310_0002"
@@ -24,15 +29,98 @@ MULTITENANT_REVISION = "20260322_0003"
 PROJECT_ONBOARDING_REVISION = "20260324_0004"
 
 
+def normalize_database_url(raw_url: str) -> str:
+    database_url = normalize_sqlite_database_url(normalize_env_text(raw_url))
+    scheme, separator, remainder = database_url.partition("://")
+    if not separator:
+        return database_url
+    if scheme in {"postgres", "postgresql"}:
+        return f"postgresql+psycopg://{remainder}"
+    return database_url
+
+
+def _configured_database_url() -> str:
+    return normalize_database_url(get_settings().control_plane_database_url)
+
+
+def get_effective_database_url() -> str:
+    if _runtime_database_url_override:
+        return normalize_database_url(_runtime_database_url_override)
+    return _configured_database_url()
+
+
+def clear_runtime_database_fallback() -> None:
+    global _runtime_database_url_override, _runtime_database_fallback_reason
+
+    _runtime_database_url_override = None
+    _runtime_database_fallback_reason = ""
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
+
+
+def is_runtime_database_fallback_active() -> bool:
+    return bool(_runtime_database_url_override)
+
+
+def is_control_plane_database_persistent() -> bool:
+    settings = get_settings()
+    effective_url = get_effective_database_url()
+    if effective_url.startswith("sqlite"):
+        return settings.platform_surface != "vercel_demo"
+    return True
+
+
+def get_runtime_database_status() -> dict[str, str | bool]:
+    effective_url = get_effective_database_url()
+    scheme, separator, _ = effective_url.partition("://")
+    return {
+        "configured_url": _configured_database_url(),
+        "effective_url": effective_url,
+        "backend": scheme if separator else effective_url,
+        "persistent": is_control_plane_database_persistent(),
+        "fallback_active": is_runtime_database_fallback_active(),
+        "fallback_reason": _runtime_database_fallback_reason,
+    }
+
+
+def _should_fallback_to_local_sqlite(database_url: str) -> bool:
+    settings = get_settings()
+    if is_runtime_database_fallback_active():
+        return False
+    if database_url.startswith("sqlite"):
+        return False
+    if settings.platform_surface != "vercel_demo":
+        return False
+    return settings.data_backend_mode == "mock"
+
+
+def _activate_runtime_database_fallback(database_url: str, exc: SQLAlchemyError) -> None:
+    global _runtime_database_url_override, _runtime_database_fallback_reason
+
+    fallback_url = normalize_database_url(default_control_plane_database_url())
+    if database_url == fallback_url:
+        raise exc
+
+    _runtime_database_url_override = fallback_url
+    _runtime_database_fallback_reason = str(exc)
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
+    logger.exception("Control plane database unavailable; falling back to local runtime SQLite database.")
+
+
 @lru_cache(maxsize=1)
 def get_engine():
     settings = get_settings()
-    database_url = normalize_sqlite_database_url(settings.control_plane_database_url)
+    database_url = get_effective_database_url()
     connect_args = {}
     if database_url.startswith("sqlite"):
         connect_args = {
             "check_same_thread": False,
             "timeout": settings.sqlite_busy_timeout_seconds,
+        }
+    elif database_url.startswith("postgresql+psycopg://"):
+        connect_args = {
+            "connect_timeout": settings.control_plane_connect_timeout_seconds,
         }
     engine = create_engine(database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
     if database_url.startswith("sqlite"):
@@ -106,8 +194,7 @@ def _infer_legacy_revision(engine: Engine) -> str | None:
 
 
 def _run_control_plane_migrations() -> None:
-    settings = get_settings()
-    database_url = normalize_sqlite_database_url(settings.control_plane_database_url)
+    database_url = get_effective_database_url()
     engine = get_engine()
     legacy_revision = _infer_legacy_revision(engine)
     alembic_config = _build_alembic_config(database_url)
@@ -116,11 +203,22 @@ def _run_control_plane_migrations() -> None:
     command.upgrade(alembic_config, "head")
 
 
+def _initialize_schema() -> None:
+    _run_control_plane_migrations()
+    Base.metadata.create_all(bind=get_engine())
+
+
 def init_db() -> None:
     from app.infrastructure import db_models  # noqa: F401
 
-    _run_control_plane_migrations()
-    Base.metadata.create_all(bind=get_engine())
+    try:
+        _initialize_schema()
+    except SQLAlchemyError as exc:
+        database_url = get_effective_database_url()
+        if not _should_fallback_to_local_sqlite(database_url):
+            raise
+        _activate_runtime_database_fallback(database_url, exc)
+        _initialize_schema()
 
 
 def get_db_session() -> Generator[Session, None, None]:

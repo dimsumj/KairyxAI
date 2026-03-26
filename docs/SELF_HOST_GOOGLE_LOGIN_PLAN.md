@@ -35,6 +35,10 @@ The recommended model is:
 - KairyxAI remains the authorization system
   - Google proves identity
   - KairyxAI stores organization-space membership, project membership, org role, and project role
+- the Vercel adapter remains a separate demo surface only
+  - `api/index.py` sets `KAIRYX_PLATFORM_SURFACE=vercel_demo`
+  - runtime SQLite fallback and database-backed mock state are fenced to that demo adapter
+  - self-hosted production should not depend on those demo-only fallbacks
 
 KairyxAI should not rely on a single shared Google OAuth client across customer-hosted domains.
 
@@ -59,6 +63,9 @@ Current behavior:
 - the browser exchanges the authorization code directly against `OIDC_TOKEN_URL`
 - the frontend stores the returned Google `id_token` as the API bearer token
 - the backend validator in [backend/services/app/core/auth.py](backend/services/app/core/auth.py) expects a JWT-like bearer token with `iss`, `aud`, and `sub`
+- Google-friendly env aliases are also accepted in the repo today:
+  - `GOOGLE_OIDC_CLIENT_ID`
+  - `GOOGLE_OIDC_HOSTED_DOMAIN`
 
 That is not a safe or reliable long-term Google production model for self-hosting:
 
@@ -115,6 +122,11 @@ Extend [backend/services/app/core/settings.py](backend/services/app/core/setting
 - `AUTH_SESSION_ISSUER`
 - `AUTH_SESSION_AUDIENCE`
 - `AUTH_SESSION_TTL_SECONDS`
+
+Keep the existing Google-friendly aliases supported too:
+
+- `GOOGLE_OIDC_CLIENT_ID`
+- `GOOGLE_OIDC_HOSTED_DOMAIN`
 
 Purpose:
 
@@ -361,7 +373,7 @@ Secret-handling expectations:
 
 - store `OIDC_CLIENT_SECRET` and `AUTH_SESSION_SIGNING_SECRET` in a secret manager, not plain env files checked into source control
 - rotate `AUTH_SESSION_SIGNING_SECRET` with a controlled maintenance plan because it invalidates active Kairyx sessions
-- rotate the Google client secret according to the customer’s internal security policy
+- rotate the Google client secret according to the customer's internal security policy
 
 ### Production Customer Setup Checklist
 
