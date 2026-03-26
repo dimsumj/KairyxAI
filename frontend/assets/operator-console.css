@@ -1856,10 +1856,12 @@
         .theme-mode-button svg {
             width: 1.58rem;
             height: 1.58rem;
+            display: block;
+            overflow: visible;
         }
 
         .theme-mode-button svg * {
-            vector-effect: non-scaling-stroke;
+            vector-effect: none;
         }
 
         .card {
