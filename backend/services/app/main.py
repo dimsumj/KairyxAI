@@ -38,7 +38,7 @@ from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db
 from app.core.auth import get_authenticator
-from app.core.api_paths import apply_org_scoped_api_alias, get_external_request_path, get_path_scoped_tenant_id
+from app.core.api_paths import apply_org_scoped_api_alias, get_external_request_path, get_path_scoped_tenant_id, is_org_slug
 from app.core.errors import is_database_locked_error
 from app.core.governance import GovernanceContext
 from app.core.logging import configure_access_log_filters, emit_structured_log
@@ -50,6 +50,7 @@ from bigquery_service import clear_shared_bigquery_service_cache, get_shared_big
 
 
 logger = logging.getLogger(__name__)
+_FRONTEND_SHELL_RESERVED_PATHS = frozenset({"api", "health", "static"})
 
 
 def create_app() -> FastAPI:
@@ -273,11 +274,13 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def root():
-        response = FileResponse(frontend_index)
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
+        return _frontend_shell_response(frontend_index)
+
+    @app.get("/{organization_id}")
+    def organization_root(organization_id: str):
+        if not _is_public_frontend_shell_path(f"/{organization_id}"):
+            raise HTTPException(status_code=404, detail="Not found")
+        return _frontend_shell_response(frontend_index)
 
     @app.get("/health")
     def root_health():
@@ -316,6 +319,25 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix=settings.api_v1_prefix)
     app.include_router(templates.router, prefix=settings.api_v1_prefix)
     return app
+
+
+def _frontend_shell_response(frontend_index: Path) -> FileResponse:
+    response = FileResponse(frontend_index)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+def _is_public_frontend_shell_path(path: str) -> bool:
+    normalized_path = str(path or "/").strip() or "/"
+    if normalized_path == "/":
+        return True
+    segments = [segment for segment in normalized_path.split("/") if segment]
+    if len(segments) != 1:
+        return False
+    organization_id = str(segments[0]).strip().lower()
+    return is_org_slug(organization_id) and organization_id not in _FRONTEND_SHELL_RESERVED_PATHS
 
 
 def _normalize_org_role(raw_role: str | None) -> str:

@@ -164,7 +164,7 @@ KairyxAI currently supports two practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
+   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, browser URLs that become `https://<base-url>/<organization_id>` after organization resolution, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
 
 ## Workspace Model
 
@@ -181,6 +181,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
+- a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
 - a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace and session controls while leaving appearance control in the top-right header
@@ -196,6 +197,10 @@ Examples:
 - `/northstar/v1/imports`
 - `/northstar/v1/predictions`
 
+For the browser shell itself, the canonical workspace URL is:
+
+- `https://<base-url>/<organization_id>`
+
 The older `/api/v1/...` routes remain available for bootstrap flows such as Google OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
 
 For normal logged-in operator traffic:
@@ -203,6 +208,7 @@ For normal logged-in operator traffic:
 - identity comes from the Google account
 - the active organization comes from the URL path
 - the active project is sent as `X-Kairyx-Project`
+- Google OAuth still returns to the base app URL, and the console rewrites the browser to `/{organization_id}` after session and workspace resolution
 - manual actor-id and tenant-id entry are no longer part of the visible operator UI
 
 ## Repository Layout

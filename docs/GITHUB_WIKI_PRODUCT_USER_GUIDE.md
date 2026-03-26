@@ -53,12 +53,13 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, then returns with an authenticated bearer token. |
+| `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, returns to the base app URL, then the console restores the active organization path after session resolution. |
 | Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
 
 Every user now passes through the Google login gate first. After successful sign-in, the console does one of two things automatically:
 - opens the organization-space onboarding wizard if the user has no memberships yet
 - enters the existing organization and project, or opens the workspace selector if the user has more than one choice
+- rewrites the browser URL to `https://<base-url>/<organization_id>` as soon as an active organization is resolved
 
 #### Organization-space onboarding wizard
 
@@ -67,9 +68,9 @@ Every user now passes through the Google login gate first. After successful sign
 | `Organization URL` | Text box | Enter the URL slug that should appear after the base URL. | `northstar` | The console stores this as the internal `organization_id` and uses it in the org-scoped path. |
 | `Continue` | Button | Moves from the organization URL step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
-| `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes and the new workspace becomes active. |
+| `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes, the new workspace becomes active, and the browser URL becomes `/<organization_id>`. |
 
-The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI.
+The console now asks for the org URL directly and generates the internal organization display name from that slug. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; once the session is validated, the console rewrites the page URL to the active organization path.
 
 #### Sample onboarding request
 ```json
@@ -109,9 +110,9 @@ The console now asks for the org URL directly and generates the internal organiz
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization space. | `sandbox` | The selected project becomes the active console context after continue. |
-| `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes and the console reloads data for that org/project. |
+| `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization space. | `Growth Sandbox` | The console generates the internal project id automatically. |
-| `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization space. | None | The project is created, the creator becomes a project admin, and the console switches into it. |
+| `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization space. | None | The project is created, the creator becomes a project admin, the console switches into it, and the browser URL stays on `/<organization_id>`. |
 
 #### New-project overlay
 
@@ -126,7 +127,7 @@ As in onboarding, the current new-project UI generates the internal `project_id`
 #### Invite redemption behavior
 - If the browser opens a URL containing `invite_code`, the console stores that invite locally before Google login.
 - After successful Google login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem` first, then switches normal authenticated traffic to the org-scoped path shape `/{organization_id}/v1/...`.
-- On success, the active organization space and project switch to the invite target.
+- On success, the active organization space and project switch to the invite target, and the browser URL becomes `/<organization_id>`.
 
 ---
 

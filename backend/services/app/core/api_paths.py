@@ -8,6 +8,11 @@ from fastapi import Request
 _ORG_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
+def is_org_slug(value: str | None) -> bool:
+    normalized = str(value or "").strip()
+    return bool(normalized) and _ORG_SLUG_PATTERN.fullmatch(normalized) is not None
+
+
 def apply_org_scoped_api_alias(request: Request, api_v1_prefix: str) -> None:
     original_path = str(request.scope.get("path") or "/")
     request.state.external_request_path = original_path
@@ -23,7 +28,7 @@ def apply_org_scoped_api_alias(request: Request, api_v1_prefix: str) -> None:
         return
 
     tenant_id = str(segments[0]).strip()
-    if not tenant_id or _ORG_SLUG_PATTERN.fullmatch(tenant_id) is None:
+    if not is_org_slug(tenant_id):
         return
 
     suffix = ""

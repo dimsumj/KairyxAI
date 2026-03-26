@@ -620,18 +620,20 @@ export function initializeOperatorConsole() {
             }
 
             function getActiveTenantId() {
+                const selectedTenantId = String(orgSpaceSelect.value || '').trim();
                 if (accessToken) {
-                    return String(orgSpaceSelect.value || '').trim();
+                    return selectedTenantId || getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname();
                 }
                 if (isGoogleLoginConfigured()) {
-                    return readStoredActorContext().tenantId || '';
+                    return readStoredActorContext().tenantId || getOrganizationIdFromPathname() || '';
                 }
                 return LOCAL_DEMO_TENANT_ID;
             }
 
             function getActiveProjectId() {
+                const selectedProjectId = String(projectSelect.value || '').trim();
                 if (accessToken) {
-                    return String(projectSelect.value || '').trim();
+                    return selectedProjectId || getStoredWorkspaceSelection().projectId || '';
                 }
                 if (isGoogleLoginConfigured()) {
                     return readStoredActorContext().projectId || '';
@@ -1458,7 +1460,7 @@ export function initializeOperatorConsole() {
             function captureWorkspaceHintsFromUrl() {
                 const params = new URLSearchParams(window.location.search);
                 const inviteCode = params.get('invite_code');
-                const tenantId = params.get('organization_id') || params.get('tenant_id');
+                const tenantId = params.get('organization_id') || params.get('tenant_id') || getOrganizationIdFromPathname();
                 const projectId = params.get('project_id');
                 if (tenantId || projectId) {
                     persistWorkspaceSelection(tenantId || '', projectId || '');
@@ -1470,6 +1472,29 @@ export function initializeOperatorConsole() {
                         projectId: projectId || '',
                     });
                 }
+            }
+
+            function getOrganizationIdFromPathname(pathname = window.location.pathname) {
+                const normalizedPath = String(pathname || '/').trim() || '/';
+                const segments = normalizedPath.split('/').filter(Boolean);
+                if (segments.length !== 1) {
+                    return '';
+                }
+                return normalizeOrganizationUrl(segments[0]);
+            }
+
+            function getCanonicalBrowserPath(tenantId = '') {
+                const normalizedTenantId = normalizeOrganizationUrl(tenantId);
+                return normalizedTenantId ? `/${encodeURIComponent(normalizedTenantId)}` : '/';
+            }
+
+            function syncBrowserOrganizationPath(tenantId = '') {
+                const nextPath = getCanonicalBrowserPath(tenantId);
+                const currentPath = String(window.location.pathname || '/');
+                if (currentPath === nextPath && !window.location.search && !window.location.hash) {
+                    return;
+                }
+                window.history.replaceState({}, document.title, nextPath);
             }
 
             function base64UrlEncode(buffer) {
@@ -1493,7 +1518,7 @@ export function initializeOperatorConsole() {
             }
 
             function redirectUri() {
-                return `${window.location.origin}${window.location.pathname}`;
+                return `${window.location.origin}/`;
             }
 
             async function loadOidcConfig() {
@@ -1661,6 +1686,7 @@ export function initializeOperatorConsole() {
                     return hydrateAuthSession(retryCount + 1);
                 }
                 applyAuthSessionPayload(payload);
+                syncBrowserOrganizationPath(payload?.organization_id || '');
                 const workspaceBits = [payload.organization_id, payload.project_id].filter(Boolean);
                 setAuthStatus(
                     `Google ${payload.display_name || payload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`

@@ -14,6 +14,12 @@ The intent is to keep the current user-facing product flow:
 
 while making the auth model safe for customer-managed domains and production Google OAuth rules.
 
+The intended browser result after login remains:
+
+- the Google callback uses one fixed application callback URL
+- once Kairyx resolves the active organization, the browser URL becomes `https://<host>/<organization_id>`
+- Kairyx API traffic continues on `https://<host>/<organization_id>/v1/...`
+
 ## Decision Summary
 
 KairyxAI should support self-hosted Google login with a customer-managed OAuth client per deployment.
@@ -82,6 +88,7 @@ KairyxAI issues or manages the application session used against Kairyx APIs.
     - onboarding if no memberships exist
     - direct workspace entry if exactly one org and project are active
     - workspace selection if more than one org or project is available
+12. After the organization is resolved, the frontend rewrites the browser URL to `https://<host>/<organization_id>` while keeping the Google callback URL fixed.
 
 ### Session Ownership
 
@@ -110,7 +117,7 @@ Extend [backend/services/app/core/settings.py](backend/services/app/core/setting
 
 Purpose:
 
-- `PUBLIC_BASE_URL` builds the canonical Google callback URL
+- `PUBLIC_BASE_URL` builds the canonical Google callback URL at the base app hostname, not at an org-scoped browser path
 - `OIDC_CLIENT_SECRET` is required for the backend code exchange
 - `AUTH_SESSION_*` separates Kairyx session tokens from Google provider tokens
 
@@ -155,6 +162,7 @@ Recommended redirect target:
 - `https://<host>/?auth_bootstrap_code=<one_time_code>`
 
 The bootstrap code should be one-time and short-lived. It should not be the final API bearer.
+After the frontend redeems that bootstrap code and resolves workspace access, it should rewrite the browser URL to `https://<host>/<organization_id>`.
 
 ### 4. Add Session Redeem Endpoint
 
@@ -248,6 +256,11 @@ Use a separate Google Cloud project and separate OAuth client for the internal t
 - authorized redirect URI:
   - `https://staging.kairyx.ai/api/v1/auth/google/callback`
 
+Browser behavior after successful login:
+
+- Kairyx callback lands on the fixed backend callback URL above
+- after session bootstrap and workspace resolution, the browser URL should become `https://staging.kairyx.ai/<organization_id>`
+
 If only company Google Workspace accounts need access:
 
 - use `Internal` audience
@@ -307,6 +320,11 @@ Use a separate Google Cloud project and separate OAuth client for every customer
   - `https://analytics.customer-a.com`
 - authorized redirect URI:
   - `https://analytics.customer-a.com/api/v1/auth/google/callback`
+
+Browser behavior after successful login:
+
+- Kairyx callback lands on the fixed backend callback URL above
+- after session bootstrap and workspace resolution, the browser URL should become `https://analytics.customer-a.com/<organization_id>`
 
 Google audience choice:
 
