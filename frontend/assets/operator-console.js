@@ -2277,7 +2277,16 @@ export function initializeOperatorConsole() {
                     workspaceCreateProjectNameInput.value = '';
                     workspaceCreateProjectIdInput.value = '';
                     workspaceModalProjectSelect.value = '';
-                    await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false, syncBrowserPath: false });
+                    const payload = await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false, syncBrowserPath: false });
+                    if (payload?.project_id && !payload?.needs_project_selection) {
+                        syncBrowserOrganizationPath(payload.organization_id || tenant.organization_id, { preserveHintOnEmpty: true });
+                        closeWorkspaceOverlay(true);
+                        setWorkspaceTextStatus(workspaceSelectionStatus, '');
+                        if (activePageId) {
+                            activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
+                        }
+                        return;
+                    }
                     workspaceModalOrgSelect.value = authSessionState?.organization_id || tenant.organization_id;
                     workspaceModalProjectSelect.value = authSessionState?.project_id || '';
                     setWorkspaceSelectionStage('project');
