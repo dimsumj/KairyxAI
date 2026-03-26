@@ -1621,10 +1621,14 @@ dimensions: campaign,country,platform</pre>
                 </div>
 
                 <div id="workspace-selection-panel" class="workspace-panel hidden">
-                    <select id="workspace-modal-org-select" class="hidden" aria-hidden="true">
-                        <option value="">Select an organization space</option>
-                    </select>
                     <div id="workspace-selection-org-stage" class="workspace-stage">
+                        <div id="workspace-org-chooser-group" class="workspace-org-select-group hidden" aria-hidden="true">
+                            <label class="workspace-field-label" for="workspace-modal-org-select">Your organizations</label>
+                            <select id="workspace-modal-org-select" class="workspace-organization-select">
+                                <option value="">Select an organization space</option>
+                            </select>
+                            <div class="workspace-helper-text">Choose one of the organizations already linked to this Google account, or type another URL below.</div>
+                        </div>
                         <label class="workspace-field-label" for="workspace-org-url-input">Organization URL</label>
                         <div class="workspace-url-row">
                             <span id="workspace-selection-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
@@ -1656,6 +1660,7 @@ dimensions: campaign,country,platform</pre>
                     <div class="workspace-modal-actions">
                         <button type="button" id="workspace-selection-back-btn" class="hidden">Back</button>
                         <button type="button" id="workspace-selection-resolve-btn">Continue</button>
+                        <button type="button" id="workspace-selection-switch-account-btn" class="secondary-action hidden">Use Different Google Account</button>
                         <button type="button" id="workspace-selection-continue-btn" class="hidden">Use Existing Project</button>
                         <button type="button" id="workspace-selection-create-project-btn" class="hidden">Add New Project</button>
                     </div>

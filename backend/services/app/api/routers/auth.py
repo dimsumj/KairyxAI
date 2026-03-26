@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.application.projects import ProjectWorkspaceService
 from app.core.deps import get_project_workspace_service, get_repository
@@ -83,6 +83,27 @@ def get_authenticated_actor(
         "needs_onboarding": len(accessible_tenants) == 0,
         "needs_org_selection": len(accessible_tenants) > 1 and not context.tenant_id,
         "needs_project_selection": bool(context.tenant_id) and len(accessible_projects) > 1 and not context.project_id,
+    }
+
+
+@router.get("/organization-space/{organization_id}", response_model=dict)
+def inspect_organization_space_access(
+    organization_id: str,
+    request: Request,
+    service: ProjectWorkspaceService = Depends(get_project_workspace_service),
+):
+    context = get_governance_context(request)
+    try:
+        payload = service.inspect_organization_space_access(organization_id, context.actor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {
+        "organization_id": payload["organization_id"],
+        "exists": payload["exists"],
+        "accessible": payload["accessible"],
+        "role": payload["role"],
+        "membership_status": payload["membership_status"],
+        "organization": _organization_to_public(payload["organization"]),
     }
 
 

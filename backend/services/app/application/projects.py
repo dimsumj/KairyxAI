@@ -61,6 +61,24 @@ class ProjectWorkspaceService:
         tenant_key = self._validate_identifier(tenant_id, label="organization_id")
         return self.repository.list_projects(tenant_key, user_id=user_id)
 
+    def inspect_organization_space_access(self, organization_id: str, user_id: str) -> Dict[str, Any]:
+        tenant_key = self._validate_identifier(organization_id, label="organization_id")
+        tenant = self.repository.get_tenant(tenant_key)
+        membership = self.repository.get_tenant_membership(tenant_key, user_id) if tenant else None
+        membership_status = str(membership.get("status") or "").strip().lower() if membership else ""
+        membership_active = membership_status == "active"
+        return {
+            "organization_id": tenant_key,
+            "exists": tenant is not None,
+            "accessible": bool(tenant and membership_active),
+            "role": normalize_org_role(membership.get("role")) if membership_active else None,
+            "membership_status": membership_status or None,
+            "organization": ({
+                **tenant,
+                "role": normalize_org_role(membership.get("role")) if membership_active else None,
+            } if tenant else None),
+        }
+
     def create_organization_space_and_first_project(
         self,
         *,

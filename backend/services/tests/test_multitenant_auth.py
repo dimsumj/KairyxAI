@@ -319,6 +319,68 @@ def test_org_space_onboarding_rejects_duplicate_organization_id(monkeypatch, tmp
         assert "already exists" in json.dumps(duplicate.json())
 
 
+def test_auth_organization_space_access_distinguishes_existing_vs_inaccessible(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    outsider_token = _make_token("outsider")
+    organization_id = "orglookup"
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": organization_id,
+                "organization_name": "Org Lookup Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        accessible = client.get(f"/api/v1/auth/organization-space/{organization_id}", headers=_auth_headers(founder_token))
+        assert accessible.status_code == 200
+        assert accessible.json() == {
+            "organization_id": organization_id,
+            "exists": True,
+            "accessible": True,
+            "role": "owner",
+            "membership_status": "active",
+            "organization": {
+                "organization_id": organization_id,
+                "name": "Org Lookup Games",
+                "status": "active",
+                "role": "owner",
+            },
+        }
+
+        inaccessible = client.get(f"/api/v1/auth/organization-space/{organization_id}", headers=_auth_headers(outsider_token))
+        assert inaccessible.status_code == 200
+        assert inaccessible.json() == {
+            "organization_id": organization_id,
+            "exists": True,
+            "accessible": False,
+            "role": None,
+            "membership_status": None,
+            "organization": {
+                "organization_id": organization_id,
+                "name": "Org Lookup Games",
+                "status": "active",
+                "role": None,
+            },
+        }
+
+        missing = client.get("/api/v1/auth/organization-space/torpedo", headers=_auth_headers(founder_token))
+        assert missing.status_code == 200
+        assert missing.json() == {
+            "organization_id": "torpedo",
+            "exists": False,
+            "accessible": False,
+            "role": None,
+            "membership_status": None,
+            "organization": None,
+        }
+
+
 def test_platform_admin_tenant_creation_rejects_duplicate_organization_id(monkeypatch, tmp_path):
     admin_token = _make_token("platform-admin", platform_admin=True)
     with _client(monkeypatch, tmp_path) as client:

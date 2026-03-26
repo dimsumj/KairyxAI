@@ -61,6 +61,7 @@ export function initializeOperatorConsole() {
             const workspaceCreateProjectPanel = document.getElementById('workspace-create-project-panel');
             const workspaceSelectionOrgStage = document.getElementById('workspace-selection-org-stage');
             const workspaceSelectionProjectStage = document.getElementById('workspace-selection-project-stage');
+            const workspaceOrgChooserGroup = document.getElementById('workspace-org-chooser-group');
             const workspaceModalOrgSelect = document.getElementById('workspace-modal-org-select');
             const workspaceOrgUrlInput = document.getElementById('workspace-org-url-input');
             const workspaceOrgSuggestions = document.getElementById('workspace-org-suggestions');
@@ -74,6 +75,7 @@ export function initializeOperatorConsole() {
             const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
             const workspaceSelectionBackBtn = document.getElementById('workspace-selection-back-btn');
             const workspaceSelectionResolveBtn = document.getElementById('workspace-selection-resolve-btn');
+            const workspaceSelectionSwitchAccountBtn = document.getElementById('workspace-selection-switch-account-btn');
             const workspaceSelectionContinueBtn = document.getElementById('workspace-selection-continue-btn');
             const workspaceSelectionCreateProjectBtn = document.getElementById('workspace-selection-create-project-btn');
             const workspaceOnboardingStepLabel = document.getElementById('workspace-onboarding-step-label');
@@ -519,10 +521,47 @@ export function initializeOperatorConsole() {
                 });
             }
 
-            function syncWorkspaceSelectionOrgInput(tenantId = '') {
-                if (workspaceOrgUrlInput) {
-                    workspaceOrgUrlInput.value = tenantId || '';
+            function getAccessibleTenantItems() {
+                return Array.isArray(authSessionState?.accessible_organizations) ? authSessionState.accessible_organizations : [];
+            }
+
+            function setWorkspaceSelectionSwitchAccountVisible(visible = false, organizationId = '') {
+                if (!workspaceSelectionSwitchAccountBtn) {
+                    return;
                 }
+                workspaceSelectionSwitchAccountBtn.classList.toggle('hidden', !visible);
+                workspaceSelectionSwitchAccountBtn.dataset.organizationId = visible ? normalizeOrganizationUrl(organizationId) : '';
+            }
+
+            function refreshWorkspaceOrganizationChooser() {
+                if (!workspaceOrgChooserGroup || !workspaceModalOrgSelect) {
+                    return;
+                }
+                const items = getAccessibleTenantItems();
+                const showChooser = Boolean(accessToken && items.length > 1);
+                workspaceOrgChooserGroup.classList.toggle('hidden', !showChooser);
+                workspaceOrgChooserGroup.setAttribute('aria-hidden', showChooser ? 'false' : 'true');
+                if (!showChooser) {
+                    return;
+                }
+                const normalizedInputTenantId = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
+                const normalizedSelectedTenantId = normalizeOrganizationUrl(workspaceModalOrgSelect.value || authSessionState?.organization_id || '');
+                const resolvedTenantId = normalizedInputTenantId || normalizedSelectedTenantId || '';
+                if (resolvedTenantId && items.some((item) => item.organization_id === resolvedTenantId)) {
+                    workspaceModalOrgSelect.value = resolvedTenantId;
+                }
+            }
+
+            function syncWorkspaceSelectionOrgInput(tenantId = '') {
+                const normalizedTenantId = normalizeOrganizationUrl(tenantId);
+                if (workspaceOrgUrlInput) {
+                    workspaceOrgUrlInput.value = normalizedTenantId || '';
+                }
+                if (workspaceModalOrgSelect) {
+                    const hasMatchingOption = Array.from(workspaceModalOrgSelect.options || []).some((option) => option.value === normalizedTenantId);
+                    workspaceModalOrgSelect.value = hasMatchingOption ? normalizedTenantId : '';
+                }
+                refreshWorkspaceOrganizationChooser();
             }
 
             function syncWorkspaceSelectedOrgContext() {
@@ -543,8 +582,41 @@ export function initializeOperatorConsole() {
                 if (!slug) {
                     return null;
                 }
-                const items = Array.isArray(authSessionState?.accessible_organizations) ? authSessionState.accessible_organizations : [];
+                const items = getAccessibleTenantItems();
                 return items.find((item) => item.organization_id === slug || slugifyIdentifier(item.name) === slug) || null;
+            }
+
+            async function inspectOrganizationSpaceAccess(organizationId) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                if (!normalizedOrganizationId || !accessToken) {
+                    return null;
+                }
+                const response = await fetch(
+                    `${getApiBaseUrl(null, { forceGlobal: true })}/auth/organization-space/${encodeURIComponent(normalizedOrganizationId)}`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    },
+                );
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearBearerSession({ openLoginGateway: true });
+                    }
+                    throw new Error(payload.detail || 'Failed to inspect organization access.');
+                }
+                return payload;
+            }
+
+            function disableGoogleAutoSelect() {
+                try {
+                    if (window.google && window.google.accounts && window.google.accounts.id) {
+                        window.google.accounts.id.disableAutoSelect();
+                    }
+                } catch (error) {
+                    console.warn('Unable to disable Google auto select:', error);
+                }
             }
 
             function isGoogleProvider() {
@@ -713,6 +785,7 @@ export function initializeOperatorConsole() {
             function primeOnboardingForNewOrganization(organizationId) {
                 const normalizedOrganizationId = normalizeNewOrganizationId(organizationId);
                 onboardingFromWorkspaceSelection = true;
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 workspaceOrgUrlInput.value = normalizedOrganizationId;
                 onboardingOrganizationNameInput.value = normalizedOrganizationId;
                 onboardingOrganizationIdInput.value = normalizedOrganizationId;
@@ -1199,6 +1272,7 @@ export function initializeOperatorConsole() {
                 const pathTenantId = getOrganizationIdFromPathname();
                 const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || pathTenantId || '';
                 const isStandaloneOrgPath = Boolean(pathTenantId);
+                const accessibleOrgCount = getAccessibleTenantItems().length;
                 const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 if (normalizedStage === 'project' && !selectedTenantId) {
@@ -1212,22 +1286,29 @@ export function initializeOperatorConsole() {
                 }
                 workspaceSelectionBackBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 workspaceSelectionResolveBtn.classList.toggle('hidden', normalizedStage !== 'org');
+                if (workspaceSelectionSwitchAccountBtn) {
+                    workspaceSelectionSwitchAccountBtn.classList.toggle('hidden', normalizedStage !== 'org' || !workspaceSelectionSwitchAccountBtn.dataset.organizationId);
+                }
                 workspaceSelectionContinueBtn.classList.toggle('hidden', normalizedStage !== 'project' || !hasExistingProjects);
                 workspaceSelectionCreateProjectBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 if (normalizedStage === 'org') {
                     const currentOrgInput = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
                     workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
                     workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Log in to your organization';
-                    workspaceModalSubtitle.textContent = isStandaloneOrgPath
-                        ? (
-                            !accessToken && isGoogleLoginConfigured()
-                                ? 'Continue with Google to open this organization path.'
-                                : 'Confirm the organization URL to continue into this organization path.'
-                        )
+                    workspaceModalSubtitle.textContent = accessibleOrgCount > 1 && accessToken
+                        ? 'Choose one of your organizations below, or type another organization URL to open.'
                         : (
-                            !accessToken && isGoogleLoginConfigured()
-                                ? 'Type the organization URL you want to open, then continue with Google.'
-                                : 'Type the organization URL you want to open.'
+                            isStandaloneOrgPath
+                                ? (
+                                    !accessToken && isGoogleLoginConfigured()
+                                        ? 'Continue with Google to open this organization path.'
+                                        : 'Confirm the organization URL to continue into this organization path.'
+                                )
+                                : (
+                                    !accessToken && isGoogleLoginConfigured()
+                                        ? 'Type the organization URL you want to open, then continue with Google.'
+                                        : 'Type the organization URL you want to open.'
+                                )
                         );
                     workspaceSelectionResolveBtn.textContent = !accessToken && isGoogleLoginConfigured()
                         ? 'Continue with Google'
@@ -1251,6 +1332,7 @@ export function initializeOperatorConsole() {
                 const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
                 const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
+                refreshWorkspaceOrganizationChooser();
                 syncWorkspaceSelectedOrgContext();
                 if (workspaceExistingProjectGroup) {
                     workspaceExistingProjectGroup.classList.toggle('hidden', !hasExistingProjects);
@@ -1374,6 +1456,7 @@ export function initializeOperatorConsole() {
                 if (payload?.organization_id || payload?.project_id) {
                     persistWorkspaceSelection(payload.organization_id || '', payload.project_id || '');
                 }
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 syncWorkspaceSelectionOrgInput(selectedTenantId);
                 syncWorkspaceSelectedOrgContext();
                 refreshWorkspaceSelectionCopy();
@@ -1418,10 +1501,16 @@ export function initializeOperatorConsole() {
                 onboardingProjectIdInput.value = slugifyIdentifier(onboardingProjectNameInput.value);
             });
             workspaceOrgUrlInput.addEventListener('input', () => {
+                setWorkspaceSelectionSwitchAccountVisible(false);
+                if (workspaceModalOrgSelect) {
+                    const normalizedTenantId = normalizeOrganizationUrl(workspaceOrgUrlInput.value);
+                    const hasMatchingOption = Array.from(workspaceModalOrgSelect.options || []).some((option) => option.value === normalizedTenantId);
+                    workspaceModalOrgSelect.value = hasMatchingOption ? normalizedTenantId : '';
+                }
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
             });
             workspaceOrgUrlInput.addEventListener('blur', () => {
-                workspaceOrgUrlInput.value = normalizeOrganizationUrl(workspaceOrgUrlInput.value);
+                syncWorkspaceSelectionOrgInput(workspaceOrgUrlInput.value);
             });
             workspaceOrgUrlInput.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter') {
@@ -1917,6 +2006,7 @@ export function initializeOperatorConsole() {
 
             function openOrganizationGateway(message = 'Enter the organization URL you want to open.') {
                 openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 setWorkspaceTextStatus(workspaceSelectionStatus, message);
             }
 
@@ -1931,6 +2021,7 @@ export function initializeOperatorConsole() {
                 setSidebarSessionMenuOpen(false);
                 syncAuthModeUi();
                 setWorkspaceTextStatus(workspaceSelectorStatus, '');
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 if (isGoogleLoginConfigured()) {
                     setAuthStatus('Google login required.');
                     if (openOrgGateway) {
@@ -1975,6 +2066,7 @@ export function initializeOperatorConsole() {
             }
 
             function handleSessionLogout() {
+                disableGoogleAutoSelect();
                 persistWorkspaceSelection('', '');
                 clearPendingInvite();
                 orgSpaceSelect.value = '';
@@ -1982,7 +2074,7 @@ export function initializeOperatorConsole() {
                 workspaceModalOrgSelect.value = '';
                 workspaceModalProjectSelect.value = '';
                 syncWorkspaceSelectionOrgInput('');
-                clearBearerSession({ openOrgGateway: true });
+                clearBearerSession({ openLoginGateway: true });
             }
 
             function captureWorkspaceHintsFromUrl() {
@@ -3361,6 +3453,7 @@ export function initializeOperatorConsole() {
 
             workspaceModalCloseBtn.addEventListener('click', () => closeWorkspaceOverlay());
             workspaceOpenSwitcherBtn.addEventListener('click', () => {
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 openWorkspaceOverlay('selection', { allowClose: true, selectionStage: 'org' });
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
             });
@@ -3387,11 +3480,13 @@ export function initializeOperatorConsole() {
                 }
             });
             workspaceSelectionBackBtn.addEventListener('click', () => {
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
                 setWorkspaceSelectionStage('org');
             });
             workspaceSelectionResolveBtn.addEventListener('click', async () => {
-                const requestedOrganizationInput = workspaceOrgUrlInput.value;
+                const requestedOrganizationInput = workspaceOrgUrlInput.value || workspaceModalOrgSelect.value;
+                setWorkspaceSelectionSwitchAccountVisible(false);
                 if (!accessToken && isGoogleLoginConfigured()) {
                     const organizationId = normalizeOrganizationUrl(requestedOrganizationInput);
                     if (!organizationId) {
@@ -3411,25 +3506,55 @@ export function initializeOperatorConsole() {
                 if (!(await ensureValidGoogleSession())) {
                     return;
                 }
-                const tenant = findAccessibleTenant(requestedOrganizationInput);
+                const organizationId = normalizeNewOrganizationId(requestedOrganizationInput);
+                if (!organizationId) {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter an organization URL to continue.', true);
+                    return;
+                }
+                if (!isValidNewOrganizationId(organizationId)) {
+                    setWorkspaceTextStatus(
+                        workspaceSelectionStatus,
+                        'Organization URL must use only lowercase letters and numbers and be 16 characters or fewer.',
+                        true,
+                    );
+                    return;
+                }
+                let tenant = findAccessibleTenant(organizationId);
                 if (!tenant) {
-                    const organizationId = normalizeNewOrganizationId(requestedOrganizationInput);
-                    if (!organizationId) {
-                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Enter an organization URL to continue.', true);
+                    let accessState = null;
+                    try {
+                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Checking organization access...');
+                        accessState = await inspectOrganizationSpaceAccess(organizationId);
+                    } catch (error) {
+                        setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to inspect organization access.', true);
                         return;
                     }
-                    if (!isValidNewOrganizationId(organizationId)) {
+                    if (accessState?.exists && !accessState?.accessible) {
+                        workspaceOrgUrlInput.value = organizationId;
+                        persistWorkspaceSelection(organizationId, '');
+                        setWorkspaceSelectionSwitchAccountVisible(true, organizationId);
                         setWorkspaceTextStatus(
                             workspaceSelectionStatus,
-                            'Organization URL must use only lowercase letters and numbers and be 16 characters or fewer.',
+                            `"${organizationId}" already exists, but it is not linked to this Google account. Sign in with a different Google account or pick one of your own organizations.`,
                             true,
                         );
                         return;
                     }
+                    if (accessState?.accessible) {
+                        tenant = accessState.organization || {
+                            organization_id: organizationId,
+                            name: accessState.organization?.name || organizationId,
+                            role: accessState.role || null,
+                        };
+                    }
+                }
+                if (!tenant) {
                     if (!canSelfServeOrganizationCreation()) {
                         setWorkspaceTextStatus(
                             workspaceSelectionStatus,
-                            `"${organizationId}" is not one of your existing organization URLs. Re-enter an existing organization, or ask an admin to create it.`,
+                            accessState?.exists
+                                ? `"${organizationId}" already exists, but it is not linked to this Google account. Enter one of your existing organization URLs, or sign in as another account.`
+                                : `"${organizationId}" does not exist yet. Enter one of your existing organization URLs, or sign in as an account that can create it.`,
                             true,
                         );
                         return;
@@ -3467,7 +3592,34 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to load organization projects.', true);
                 }
             });
+            workspaceModalOrgSelect.addEventListener('change', () => {
+                setWorkspaceSelectionSwitchAccountVisible(false);
+                syncWorkspaceSelectionOrgInput(workspaceModalOrgSelect.value || '');
+                setWorkspaceTextStatus(workspaceSelectionStatus, '');
+            });
             workspaceModalProjectSelect.addEventListener('change', refreshWorkspaceSelectionCopy);
+            workspaceSelectionSwitchAccountBtn.addEventListener('click', () => {
+                const organizationId = normalizeOrganizationUrl(
+                    workspaceSelectionSwitchAccountBtn.dataset.organizationId
+                    || workspaceOrgUrlInput.value
+                    || workspaceModalOrgSelect.value
+                    || ''
+                );
+                disableGoogleAutoSelect();
+                persistWorkspaceSelection(organizationId, '');
+                clearPendingInvite();
+                orgSpaceSelect.value = '';
+                projectSelect.value = '';
+                workspaceModalProjectSelect.value = '';
+                clearBearerSession({ openLoginGateway: true });
+                setWorkspaceTextStatus(
+                    workspaceLoginStatus,
+                    organizationId
+                        ? `Sign in with a Google account that can access "${organizationId}".`
+                        : 'Sign in with a different Google account.',
+                    true,
+                );
+            });
             workspaceSelectionContinueBtn.addEventListener('click', async () => {
                 if (!workspaceModalProjectSelect.value) {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Select an existing project first.', true);

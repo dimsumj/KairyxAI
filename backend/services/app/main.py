@@ -352,7 +352,7 @@ def _is_tenant_optional_path(path: str, settings) -> bool:
     return path in {
         f"{api}/auth/me",
         f"{api}/project-invites/redeem",
-    } or path.startswith(f"{api}/onboarding")
+    } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding")
 
 
 def _is_project_optional_path(path: str, settings) -> bool:
@@ -361,7 +361,7 @@ def _is_project_optional_path(path: str, settings) -> bool:
         f"{api}/auth/me",
         f"{api}/projects",
         f"{api}/project-invites/redeem",
-    } or path.startswith(f"{api}/onboarding") or path.endswith("/invites")
+    } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding") or path.endswith("/invites")
 
 
 def _bootstrap_mock_fallback_workspace(

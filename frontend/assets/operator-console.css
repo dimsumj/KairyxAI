@@ -403,6 +403,11 @@
             gap: 1rem;
         }
 
+        .workspace-org-select-group {
+            display: grid;
+            gap: 0.65rem;
+        }
+
         .workspace-field-label {
             display: block;
             font-size: 0.98rem;
@@ -435,6 +440,24 @@
             color: #1f2937 !important;
             box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.14);
             font-size: 1.1rem;
+        }
+
+        .workspace-organization-select {
+            width: 100%;
+            min-width: 0;
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            border: 1px solid #c7d5e6;
+            background: #ffffff;
+            color: #1f2937;
+            font-size: 1rem;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+        }
+
+        .workspace-organization-select:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
         }
 
         .workspace-helper-text {
