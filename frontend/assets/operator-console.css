@@ -1444,7 +1444,7 @@
             transition: transform 0.18s ease;
         }
 
-        .sidebar-nav-item.active > .nav-link-trigger .nav-caret svg,
+        .sidebar-nav-item.expanded > .nav-link-trigger .nav-caret svg,
         .sidebar-nav-item:hover > .nav-link-trigger .nav-caret svg,
         .sidebar-nav-item:focus-within > .nav-link-trigger .nav-caret svg {
             transform: rotate(180deg);
@@ -1460,7 +1460,7 @@
             margin-top: 0;
         }
 
-        .sidebar-nav-item.active .sidebar-submenu,
+        .sidebar-nav-item.expanded .sidebar-submenu,
         .sidebar-nav-item:hover .sidebar-submenu,
         .sidebar-nav-item:focus-within .sidebar-submenu {
             grid-template-rows: 1fr;
@@ -2188,7 +2188,7 @@
             z-index: 80;
         }
 
-        body.sidebar-is-collapsed .sidebar-nav-item.active .sidebar-submenu {
+        body.sidebar-is-collapsed .sidebar-nav-item.expanded .sidebar-submenu {
             opacity: 0 !important;
             visibility: hidden;
             pointer-events: none;

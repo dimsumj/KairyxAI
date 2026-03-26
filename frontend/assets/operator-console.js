@@ -108,6 +108,7 @@ export function initializeOperatorConsole() {
             let activeModuleId = 'data-core';
             let activeNavItemId = 'data-core-churn-rescue';
             let activePageId = 'operator-hub';
+            let expandedSidebarModuleId = 'data-core';
             let navLinks = [];
             let navSubmenuLinks = [];
             let oidcConfig = null;
@@ -247,6 +248,10 @@ export function initializeOperatorConsole() {
                 return moduleConfigs[moduleId]?.items || [];
             }
 
+            function hasSidebarSubmenu(moduleId) {
+                return moduleConfigs[moduleId]?.showSubmenu !== false && getModuleItems(moduleId).length > 1;
+            }
+
             function findModuleItem(moduleId, itemOrPageId = '') {
                 if (!itemOrPageId) {
                     return getModuleItems(moduleId)[0] || null;
@@ -261,7 +266,7 @@ export function initializeOperatorConsole() {
                 sidebarNav.innerHTML = '';
                 Object.entries(moduleConfigs).forEach(([moduleId, config]) => {
                     const moduleItems = getModuleItems(moduleId);
-                    const showSubmenu = config.showSubmenu !== false && moduleItems.length > 1;
+                    const showSubmenu = hasSidebarSubmenu(moduleId);
                     const listItem = document.createElement('li');
                     listItem.className = 'sidebar-nav-item';
                     listItem.dataset.module = moduleId;
@@ -921,11 +926,16 @@ export function initializeOperatorConsole() {
             function syncSidebarNavState(moduleId = activeModuleId, itemId = activeNavItemId) {
                 navLinks.forEach((link) => {
                     const isActive = link.dataset.module === moduleId;
+                    const isExpanded = link.dataset.module === expandedSidebarModuleId && hasSidebarSubmenu(link.dataset.module);
                     link.classList.toggle('active', isActive);
-                    link.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+                    link.classList.toggle('expanded', isExpanded);
+                    link.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
                 });
                 Array.from(sidebarNav?.querySelectorAll('.sidebar-nav-item') || []).forEach((entry) => {
-                    entry.classList.toggle('active', entry.dataset.module === moduleId);
+                    const isActive = entry.dataset.module === moduleId;
+                    const isExpanded = entry.dataset.module === expandedSidebarModuleId && hasSidebarSubmenu(entry.dataset.module);
+                    entry.classList.toggle('active', isActive);
+                    entry.classList.toggle('expanded', isExpanded);
                 });
                 navSubmenuLinks.forEach((button) => {
                     button.classList.toggle('active', button.dataset.item === itemId);
@@ -979,6 +989,7 @@ export function initializeOperatorConsole() {
                 if (!item) return;
                 activeModuleId = moduleId;
                 activeNavItemId = item.id;
+                expandedSidebarModuleId = hasSidebarSubmenu(moduleId) ? moduleId : null;
                 renderModuleHeader(moduleId);
                 syncSidebarNavState(moduleId, item.id);
                 if (moduleId === 'settings') {
@@ -996,7 +1007,19 @@ export function initializeOperatorConsole() {
             navLinks.forEach((link) => {
                 link.addEventListener('click', (event) => {
                     event.preventDefault();
-                    activateModule(link.dataset.module);
+                    const moduleId = link.dataset.module;
+                    if (
+                        !isSidebarMobileViewport()
+                        && !document.body.classList.contains('sidebar-is-collapsed')
+                        && hasSidebarSubmenu(moduleId)
+                        && activeModuleId === moduleId
+                        && expandedSidebarModuleId === moduleId
+                    ) {
+                        expandedSidebarModuleId = null;
+                        syncSidebarNavState(moduleId, activeNavItemId);
+                        return;
+                    }
+                    activateModule(moduleId);
                 });
             });
 
