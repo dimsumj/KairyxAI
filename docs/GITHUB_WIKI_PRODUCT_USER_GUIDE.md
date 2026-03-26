@@ -22,7 +22,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. In collapsed mode the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
+| Sidebar collapse button | Button | Shrinks the desktop sidebar to a tight icon rail and expands it again when clicked a second time. In collapsed mode the site brand is hidden, the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. The desktop shell also auto-collapses this rail when the viewport drops below `1200px`. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay from `Settings -> Organization`. | None | Creates a new project and switches into it after success. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar keeps the search field on the left and the theme selector on the right. | `settings` | The matching module or section opens and the matching page becomes active. |

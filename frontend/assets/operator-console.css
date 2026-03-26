@@ -2127,31 +2127,53 @@
             border: 1px solid var(--border-color);
         }
 
-        body.sidebar-collapsed .sidebar {
-            width: 98px;
+        body.sidebar-is-collapsed .sidebar {
+            width: 84px;
         }
 
-        body.sidebar-collapsed .brand-copy,
-        body.sidebar-collapsed .sidebar-nav .nav-copy,
-        body.sidebar-collapsed .sidebar-nav .nav-caret {
+        body.sidebar-is-collapsed .sidebar-brand,
+        body.sidebar-is-collapsed .sidebar-nav .nav-copy,
+        body.sidebar-is-collapsed .sidebar-nav .nav-caret {
             display: none !important;
         }
 
-        body.sidebar-collapsed .sidebar-header {
-            padding-inline: 0.9rem;
-        }
-
-        body.sidebar-collapsed .sidebar-body {
-            overflow: visible;
-            padding-inline: 0.7rem;
-        }
-
-        body.sidebar-collapsed .sidebar-nav .nav-link-trigger {
+        body.sidebar-is-collapsed .sidebar-header {
             justify-content: center;
-            padding: 0.78rem 0.55rem;
+            padding: 1rem 0.45rem 0.65rem;
         }
 
-        body.sidebar-collapsed .sidebar-submenu {
+        body.sidebar-is-collapsed .sidebar-header-actions {
+            width: 100%;
+            justify-content: center;
+            gap: 0;
+        }
+
+        body.sidebar-is-collapsed .sidebar-body {
+            overflow: visible;
+            padding: 0.45rem 0.4rem 0.85rem;
+        }
+
+        body.sidebar-is-collapsed .sidebar-nav {
+            padding-top: 0.15rem;
+            gap: 0.28rem;
+        }
+
+        body.sidebar-is-collapsed .sidebar-nav .nav-link-trigger {
+            justify-content: center;
+            padding: 0.64rem 0.3rem;
+            border-radius: 1.1rem;
+        }
+
+        body.sidebar-is-collapsed .sidebar-nav-item.active > .nav-link-trigger {
+            padding-left: 0.3rem;
+        }
+
+        body.sidebar-is-collapsed .nav-icon {
+            width: 2.86rem;
+            height: 2.86rem;
+        }
+
+        body.sidebar-is-collapsed .sidebar-submenu {
             position: absolute;
             top: 0;
             left: calc(100% + 0.85rem);
@@ -2166,22 +2188,22 @@
             z-index: 80;
         }
 
-        body.sidebar-collapsed .sidebar-nav-item.active .sidebar-submenu {
+        body.sidebar-is-collapsed .sidebar-nav-item.active .sidebar-submenu {
             opacity: 0 !important;
             visibility: hidden;
             pointer-events: none;
             transform: translate(0.45rem, -0.08rem) !important;
         }
 
-        body.sidebar-collapsed .sidebar-nav-item:hover .sidebar-submenu,
-        body.sidebar-collapsed .sidebar-nav-item:focus-within .sidebar-submenu {
+        body.sidebar-is-collapsed .sidebar-nav-item:hover .sidebar-submenu,
+        body.sidebar-is-collapsed .sidebar-nav-item:focus-within .sidebar-submenu {
             opacity: 1 !important;
             visibility: visible;
             pointer-events: auto;
             transform: translate(0, 0) !important;
         }
 
-        body.sidebar-collapsed .sidebar-submenu-shell {
+        body.sidebar-is-collapsed .sidebar-submenu-shell {
             overflow: visible;
             padding: 0.88rem;
             border-radius: 1.15rem;
@@ -2191,21 +2213,21 @@
             box-shadow: 0 24px 44px rgba(15, 23, 42, 0.24);
         }
 
-        body.dark-theme.sidebar-collapsed .sidebar-submenu-shell {
+        body.dark-theme.sidebar-is-collapsed .sidebar-submenu-shell {
             background: rgba(17, 24, 39, 0.96);
         }
 
-        body.sidebar-collapsed .sidebar-submenu-header {
+        body.sidebar-is-collapsed .sidebar-submenu-header {
             display: grid;
             gap: 0.2rem;
             margin-bottom: 0.65rem;
         }
 
-        body.sidebar-collapsed .sidebar-submenu-list {
+        body.sidebar-is-collapsed .sidebar-submenu-list {
             padding-left: 0;
         }
 
-        body.sidebar-collapsed .sidebar-collapse-btn svg {
+        body.sidebar-is-collapsed .sidebar-collapse-btn svg {
             transform: rotate(180deg);
         }
 

@@ -93,6 +93,8 @@ export function initializeOperatorConsole() {
             const workspaceCreateProjectStatus = document.getElementById('workspace-create-project-status');
             const workspaceCreateProjectCancelBtn = document.getElementById('workspace-create-project-cancel-btn');
             const workspaceCreateProjectSubmitBtn = document.getElementById('workspace-create-project-submit-btn');
+            const SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH = 1200;
+            const SIDEBAR_MOBILE_MAX_WIDTH = 960;
             const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
             const PROJECT_ID_STORAGE_KEY = 'kairyx.projectId';
             const API_KEY_STORAGE_KEY = 'kairyx.apiKey';
@@ -1058,8 +1060,49 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function isSidebarMobileViewport() {
+                return window.innerWidth <= SIDEBAR_MOBILE_MAX_WIDTH;
+            }
+
+            function isSidebarAutoCollapseViewport() {
+                return !isSidebarMobileViewport() && window.innerWidth < SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH;
+            }
+
+            function syncSidebarResponsiveState() {
+                const isMobileViewport = isSidebarMobileViewport();
+                const isAutoCollapseViewport = isSidebarAutoCollapseViewport();
+
+                document.body.classList.toggle('sidebar-auto-collapsed', isAutoCollapseViewport);
+
+                if (!isAutoCollapseViewport) {
+                    document.body.classList.remove('sidebar-user-expanded');
+                }
+
+                if (!isMobileViewport) {
+                    document.body.classList.remove('sidebar-mobile-open');
+                }
+
+                const isCollapsed = !isMobileViewport && (
+                    isAutoCollapseViewport
+                        ? !document.body.classList.contains('sidebar-user-expanded')
+                        : document.body.classList.contains('sidebar-collapsed')
+                );
+
+                document.body.classList.toggle('sidebar-is-collapsed', isCollapsed);
+
+                if (sidebarCollapseBtn) {
+                    sidebarCollapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+                    sidebarCollapseBtn.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+                }
+            }
+
             sidebarCollapseBtn?.addEventListener('click', () => {
-                document.body.classList.toggle('sidebar-collapsed');
+                if (isSidebarAutoCollapseViewport()) {
+                    document.body.classList.toggle('sidebar-user-expanded');
+                } else {
+                    document.body.classList.toggle('sidebar-collapsed');
+                }
+                syncSidebarResponsiveState();
             });
             mobileNavOpenBtn?.addEventListener('click', () => setSidebarMobileOpen(true));
             mobileNavCloseBtn?.addEventListener('click', () => setSidebarMobileOpen(false));
@@ -1077,6 +1120,8 @@ export function initializeOperatorConsole() {
                     topbarSearchInput.value = '';
                 }
             });
+            window.addEventListener('resize', syncSidebarResponsiveState);
+            syncSidebarResponsiveState();
 
 
             // Connectors Page Logic
