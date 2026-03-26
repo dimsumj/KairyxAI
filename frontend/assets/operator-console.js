@@ -117,8 +117,10 @@ export function initializeOperatorConsole() {
             let activeNavItemId = 'data-core-churn-rescue';
             let activePageId = 'operator-hub';
             let expandedSidebarModuleId = 'data-core';
+            let navItems = [];
             let navLinks = [];
             let navSubmenuLinks = [];
+            let collapsedSidebarSuppressedModuleId = null;
             let oidcConfig = null;
             let accessToken = '';
             let authSessionState = null;
@@ -267,6 +269,28 @@ export function initializeOperatorConsole() {
                 return getModuleItems(moduleId).find((entry) => entry.id === itemOrPageId || entry.pageId === itemOrPageId) || null;
             }
 
+            function syncCollapsedSidebarSubmenuSuppression() {
+                const suppressedModuleId = document.body.classList.contains('sidebar-is-collapsed')
+                    ? collapsedSidebarSuppressedModuleId
+                    : null;
+                navItems.forEach((entry) => {
+                    entry.classList.toggle('sidebar-popout-suppressed', entry.dataset.module === suppressedModuleId);
+                });
+            }
+
+            function suppressCollapsedSidebarSubmenu(moduleId = null) {
+                collapsedSidebarSuppressedModuleId = moduleId || null;
+                syncCollapsedSidebarSubmenuSuppression();
+            }
+
+            function clearCollapsedSidebarSubmenuSuppression(moduleId = null) {
+                if (moduleId && collapsedSidebarSuppressedModuleId !== moduleId) {
+                    return;
+                }
+                collapsedSidebarSuppressedModuleId = null;
+                syncCollapsedSidebarSubmenuSuppression();
+            }
+
             function renderSidebarNav() {
                 if (!sidebarNav) {
                     return;
@@ -352,6 +376,7 @@ export function initializeOperatorConsole() {
                     sidebarNav.appendChild(listItem);
                 });
 
+                navItems = Array.from(sidebarNav.querySelectorAll('.sidebar-nav-item'));
                 navLinks = Array.from(sidebarNav.querySelectorAll('.nav-link-trigger'));
                 navSubmenuLinks = Array.from(sidebarNav.querySelectorAll('.sidebar-submenu-link'));
             }
@@ -1115,13 +1140,26 @@ export function initializeOperatorConsole() {
 
             renderSidebarNav();
 
+            navItems.forEach((entry) => {
+                entry.addEventListener('pointerleave', () => {
+                    clearCollapsedSidebarSubmenuSuppression(entry.dataset.module);
+                });
+                entry.addEventListener('focusout', (event) => {
+                    if (!entry.contains(event.relatedTarget) && !entry.matches(':hover')) {
+                        clearCollapsedSidebarSubmenuSuppression(entry.dataset.module);
+                    }
+                });
+            });
+
             navLinks.forEach((link) => {
                 link.addEventListener('click', (event) => {
                     event.preventDefault();
                     const moduleId = link.dataset.module;
+                    const isCollapsedDesktopNav = !isSidebarMobileViewport()
+                        && document.body.classList.contains('sidebar-is-collapsed');
+                    const shouldDismissCollapsedPopout = isCollapsedDesktopNav && hasSidebarSubmenu(moduleId);
                     if (
-                        !isSidebarMobileViewport()
-                        && !document.body.classList.contains('sidebar-is-collapsed')
+                        !isCollapsedDesktopNav
                         && hasSidebarSubmenu(moduleId)
                         && activeModuleId === moduleId
                         && expandedSidebarModuleId === moduleId
@@ -1131,6 +1169,12 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     activateModule(moduleId);
+                    if (shouldDismissCollapsedPopout) {
+                        suppressCollapsedSidebarSubmenu(moduleId);
+                        link.blur();
+                    } else {
+                        clearCollapsedSidebarSubmenuSuppression(moduleId);
+                    }
                 });
             });
 
@@ -1146,6 +1190,10 @@ export function initializeOperatorConsole() {
                             reloadPage: activePageId !== findModuleItem(button.dataset.module, button.dataset.item)?.pageId,
                         },
                     );
+                    if (!isSidebarMobileViewport() && document.body.classList.contains('sidebar-is-collapsed')) {
+                        suppressCollapsedSidebarSubmenu(button.dataset.module);
+                        button.blur();
+                    }
                 });
             });
 
@@ -1223,6 +1271,7 @@ export function initializeOperatorConsole() {
                 );
 
                 document.body.classList.toggle('sidebar-is-collapsed', isCollapsed);
+                syncCollapsedSidebarSubmenuSuppression();
 
                 if (sidebarCollapseBtn) {
                     sidebarCollapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');

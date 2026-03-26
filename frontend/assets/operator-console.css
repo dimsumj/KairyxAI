@@ -2373,12 +2373,21 @@
             transform: translate(0.45rem, -0.08rem) !important;
         }
 
-        body.sidebar-is-collapsed .sidebar-nav-item:hover .sidebar-submenu,
-        body.sidebar-is-collapsed .sidebar-nav-item:focus-within .sidebar-submenu {
+        body.sidebar-is-collapsed .sidebar-nav-item:not(.sidebar-popout-suppressed):hover .sidebar-submenu,
+        body.sidebar-is-collapsed .sidebar-nav-item:not(.sidebar-popout-suppressed):focus-within .sidebar-submenu {
             opacity: 1 !important;
             visibility: visible;
             pointer-events: auto;
             transform: translate(0, 0) !important;
+        }
+
+        body.sidebar-is-collapsed .sidebar-nav-item.sidebar-popout-suppressed .sidebar-submenu,
+        body.sidebar-is-collapsed .sidebar-nav-item.sidebar-popout-suppressed:hover .sidebar-submenu,
+        body.sidebar-is-collapsed .sidebar-nav-item.sidebar-popout-suppressed:focus-within .sidebar-submenu {
+            opacity: 0 !important;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translate(0.45rem, -0.08rem) !important;
         }
 
         body.sidebar-is-collapsed .sidebar-submenu-shell {
