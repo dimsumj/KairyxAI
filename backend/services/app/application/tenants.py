@@ -11,6 +11,9 @@ class TenantService:
         return self.repository.list_tenants()
 
     def create_tenant(self, tenant_id: str, name: str, status: str = "active") -> Dict[str, Any]:
+        existing = self.repository.get_tenant(tenant_id)
+        if existing is not None:
+            raise ValueError(f"Organization space '{tenant_id}' already exists.")
         tenant = self.repository.ensure_tenant(tenant_id, name, status=status)
         self.repository.ensure_project(tenant_id, "default", "Default Project", description="", status="active")
         return tenant

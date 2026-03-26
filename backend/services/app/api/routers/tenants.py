@@ -24,7 +24,11 @@ def list_tenants(request: Request, service: TenantService = Depends(get_tenant_s
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_tenant(payload: TenantCreateRequest, request: Request, service: TenantService = Depends(get_tenant_service)):
     ensure_platform_admin(get_governance_context(request))
-    return {"tenant": service.create_tenant(payload.tenant_id, payload.name, status=payload.status)}
+    try:
+        tenant = service.create_tenant(payload.tenant_id, payload.name, status=payload.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"tenant": tenant}
 
 
 @router.get("/{tenant_id}/memberships", response_model=dict)

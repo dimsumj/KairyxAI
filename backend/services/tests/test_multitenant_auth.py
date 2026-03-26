@@ -224,6 +224,57 @@ def test_org_space_onboarding_rejects_invalid_organization_id(monkeypatch, tmp_p
         assert "lowercase letters and numbers" in json.dumps(onboard.json())
 
 
+def test_org_space_onboarding_rejects_duplicate_organization_id(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    second_founder_token = _make_token("second-founder")
+    with _client(monkeypatch, tmp_path) as client:
+        first = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert first.status_code == 201
+
+        duplicate = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(second_founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games 2",
+                "project_id": "growth",
+                "project_name": "Growth",
+                "project_description": "Duplicate organization attempt",
+            },
+        )
+        assert duplicate.status_code == 409
+        assert "already exists" in json.dumps(duplicate.json())
+
+
+def test_platform_admin_tenant_creation_rejects_duplicate_organization_id(monkeypatch, tmp_path):
+    admin_token = _make_token("platform-admin", platform_admin=True)
+    with _client(monkeypatch, tmp_path) as client:
+        first = client.post(
+            "/api/v1/tenants",
+            headers=_auth_headers(admin_token, "default"),
+            json={"tenant_id": "studio-a", "name": "Studio A"},
+        )
+        assert first.status_code == 201
+
+        duplicate = client.post(
+            "/api/v1/tenants",
+            headers=_auth_headers(admin_token, "default"),
+            json={"tenant_id": "studio-a", "name": "Studio A Updated"},
+        )
+        assert duplicate.status_code == 409
+        assert "already exists" in json.dumps(duplicate.json())
+
+
 def test_org_scoped_v1_path_selects_membership_without_tenant_header(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     with _client(monkeypatch, tmp_path) as client:
