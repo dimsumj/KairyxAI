@@ -1307,31 +1307,93 @@ dimensions: campaign,country,platform</pre>
 
         <section id="settings" class="page">
             <h1>Settings</h1>
-            <div class="settings-grid settings-grid-primary">
-                <div id="settings-appearance-section" class="card">
-                    <div class="module-section-header">
-                        <h2>Appearance</h2>
-                        <span class="pill">Theme</span>
+            <p class="settings-page-subtitle">Manage your account and workspace preferences</p>
+
+            <div class="settings-tab-strip" role="tablist" aria-label="Settings sections">
+                <button type="button" class="settings-tab-button active" role="tab" aria-selected="true" aria-controls="settings-tab-panel-profile" data-settings-item="settings-profile">Profile</button>
+                <button type="button" class="settings-tab-button" role="tab" aria-selected="false" aria-controls="settings-tab-panel-organization" data-settings-item="settings-organization">Organization</button>
+                <button type="button" class="settings-tab-button" role="tab" aria-selected="false" aria-controls="settings-tab-panel-projects" data-settings-item="settings-projects">Projects</button>
+                <button type="button" class="settings-tab-button" role="tab" aria-selected="false" aria-controls="settings-tab-panel-teams" data-settings-item="settings-teams">Teams</button>
+                <button type="button" class="settings-tab-button" role="tab" aria-selected="false" aria-controls="settings-tab-panel-notifications" data-settings-item="settings-notifications">Notifications</button>
+                <button type="button" class="settings-tab-button" role="tab" aria-selected="false" aria-controls="settings-tab-panel-billing" data-settings-item="settings-billing">Billing</button>
+            </div>
+
+            <div id="settings-tab-panel-profile" class="settings-tab-panel active" data-settings-panel="settings-profile" role="tabpanel" aria-hidden="false">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Profile Information</h2>
+                        <p>Update your personal information</p>
                     </div>
-                    <div class="settings-row">
-                        <div class="settings-copy">
-                            <h3>Light mode / Dark mode</h3>
-                            <p>Switch the operator console theme. The selection is saved in this browser and applies across the current workspace.</p>
+                    <div class="settings-profile-hero">
+                        <div class="settings-avatar-art" aria-hidden="true">
+                            <div class="settings-avatar-portrait">
+                                <span class="settings-avatar-face"></span>
+                            </div>
                         </div>
-                        <label class="theme-switch settings-theme-switch">
-                            <input type="checkbox" id="theme-switch-checkbox" />
-                            <span class="slider"></span>
-                        </label>
+                        <div class="settings-profile-hero-copy">
+                            <button type="button" class="settings-dark-button">Change Avatar</button>
+                            <p>JPG, PNG or GIF. Max size 2MB.</p>
+                        </div>
                     </div>
-                    <div id="theme-label" class="settings-inline-note">Light mode active</div>
+                    <div class="settings-form-divider"></div>
+                    <div class="settings-form-grid">
+                        <div class="form-group">
+                            <label for="settings-profile-first-name">First Name</label>
+                            <input id="settings-profile-first-name" type="text" value="John" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="settings-profile-last-name">Last Name</label>
+                            <input id="settings-profile-last-name" type="text" value="Doe" readonly>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-profile-email">Email</label>
+                        <input id="settings-profile-email" type="email" value="john@company.com" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-profile-role">Job Title</label>
+                        <input id="settings-profile-role" type="text" value="Product Manager" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-profile-bio">Bio</label>
+                        <textarea id="settings-profile-bio" rows="3" readonly>Experienced product manager with a passion for building great products</textarea>
+                    </div>
+                    <div class="settings-form-actions">
+                        <button type="button" class="settings-dark-button">Save Changes</button>
+                    </div>
                 </div>
 
-                <div id="settings-workspace-section" class="card">
-                    <div class="module-section-header">
-                        <h2>Workspace Tools</h2>
-                        <span class="pill">Context</span>
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Change Password</h2>
+                        <p>Update your password to keep your account secure</p>
                     </div>
-                    <p class="subtle">Use Switcher or New Project without leaving the console shell.</p>
+                    <div class="form-group">
+                        <label for="settings-current-password">Current Password</label>
+                        <input id="settings-current-password" type="password" value="placeholder-password" readonly>
+                    </div>
+                    <div class="settings-form-grid">
+                        <div class="form-group">
+                            <label for="settings-new-password">New Password</label>
+                            <input id="settings-new-password" type="password" value="placeholder-password" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="settings-confirm-password">Confirm Password</label>
+                            <input id="settings-confirm-password" type="password" value="placeholder-password" readonly>
+                        </div>
+                    </div>
+                    <div class="settings-form-actions">
+                        <button type="button" class="settings-dark-button">Update Password</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="settings-tab-panel-organization" class="settings-tab-panel hidden" data-settings-panel="settings-organization" role="tabpanel" aria-hidden="true">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Organization Workspace</h2>
+                        <p>Use the live shell tools to move between organization spaces and projects.</p>
+                    </div>
                     <div class="settings-stats">
                         <div class="stat-card">
                             <div class="label">Current workspace</div>
@@ -1342,18 +1404,16 @@ dimensions: campaign,country,platform</pre>
                             <div id="settings-session-summary" class="value">Google login required</div>
                         </div>
                     </div>
-                    <div class="inline-actions" style="margin-top: 1rem;">
+                    <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-open-switcher-btn">Switcher</button>
                         <button type="button" id="settings-create-project-btn">New Project</button>
                     </div>
                 </div>
-            </div>
 
-            <div class="settings-grid">
-                <div id="settings-session-section" class="card">
-                    <div class="module-section-header">
-                        <h2>Session & Access</h2>
-                        <span class="pill">Access</span>
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Access & Session</h2>
+                        <p>Live controls for sign-in state, legacy access, and startup health.</p>
                     </div>
                     <div class="settings-stats">
                         <div class="stat-card">
@@ -1366,7 +1426,7 @@ dimensions: campaign,country,platform</pre>
                         </div>
                     </div>
                     <p id="settings-auth-copy" class="subtle" style="margin-top: 1rem;">Sign in with Google for organization-aware access, or keep using local demo mode where configured.</p>
-                    <div class="inline-actions" style="margin-top: 1rem;">
+                    <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="oidc-login-btn">Continue with Google</button>
                         <button type="button" id="oidc-logout-btn" class="secondary-action">Logout</button>
                     </div>
@@ -1379,33 +1439,106 @@ dimensions: campaign,country,platform</pre>
                         <span id="status-text">Connecting...</span>
                     </div>
                 </div>
+            </div>
 
-                <div id="settings-shell-section" class="card">
-                    <div class="module-section-header">
-                        <h2>Shell Behavior</h2>
-                        <span class="pill">Responsive</span>
+            <div id="settings-tab-panel-projects" class="settings-tab-panel hidden" data-settings-panel="settings-projects" role="tabpanel" aria-hidden="true">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Projects</h2>
+                        <p>Placeholder project settings layout matching the new Settings navigation style.</p>
                     </div>
-                    <div class="settings-checklist">
-                        <div class="settings-checklist-item">
-                            <div>
-                                <strong>Collapsible sidebar</strong>
-                                <p>Desktop navigation can be reduced to an icon rail, and hovering an icon opens that module's sections in a right-side popout.</p>
-                            </div>
-                            <span class="pill">Enabled</span>
+                    <div class="settings-placeholder-list">
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Project Directory</span>
+                            <span class="pill">Placeholder</span>
                         </div>
-                        <div class="settings-checklist-item">
-                            <div>
-                                <strong>Mobile drawer</strong>
-                                <p>On small screens the navigation becomes an overlay drawer with backdrop dismissal.</p>
-                            </div>
-                            <span class="pill">Enabled</span>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Default Templates</span>
+                            <span class="pill">Placeholder</span>
                         </div>
-                        <div class="settings-checklist-item">
-                            <div>
-                                <strong>Quick search</strong>
-                                <p>Use the top bar search to jump directly to a module or subpage label.</p>
-                            </div>
-                            <span class="pill">Enabled</span>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Archive Rules</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="settings-tab-panel-teams" class="settings-tab-panel hidden" data-settings-panel="settings-teams" role="tabpanel" aria-hidden="true">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Teams</h2>
+                        <p>Placeholder team management elements for later role, invite, and membership wiring.</p>
+                    </div>
+                    <div class="settings-placeholder-list">
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Invite Team Member</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Role Matrix</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Team Directory</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="settings-tab-panel-notifications" class="settings-tab-panel hidden" data-settings-panel="settings-notifications" role="tabpanel" aria-hidden="true">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Notifications</h2>
+                        <p>Placeholder notification preferences with the live theme switch kept inside Settings.</p>
+                    </div>
+                    <div class="settings-row settings-row-top">
+                        <div class="settings-copy">
+                            <h3>Light mode / Dark mode</h3>
+                            <p>Switch the operator console theme. The selection is saved in this browser and applies across the current workspace.</p>
+                        </div>
+                        <label class="theme-switch settings-theme-switch">
+                            <input type="checkbox" id="theme-switch-checkbox" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div id="theme-label" class="settings-inline-note">Light mode active</div>
+                    <div class="settings-placeholder-list" style="margin-top: 1.1rem;">
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Email Digest</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Incident Alerts</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Weekly Summary</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="settings-tab-panel-billing" class="settings-tab-panel hidden" data-settings-panel="settings-billing" role="tabpanel" aria-hidden="true">
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Billing</h2>
+                        <p>Placeholder billing and plan-management elements for later subscription wiring.</p>
+                    </div>
+                    <div class="settings-placeholder-list">
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Current Plan</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Payment Method</span>
+                            <span class="pill">Placeholder</span>
+                        </div>
+                        <div class="settings-placeholder-row">
+                            <span class="settings-placeholder-title">Invoices</span>
+                            <span class="pill">Placeholder</span>
                         </div>
                     </div>
                 </div>

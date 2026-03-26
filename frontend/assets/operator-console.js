@@ -223,6 +223,7 @@ export function initializeOperatorConsole() {
                 'settings': {
                     title: 'Settings',
                     subtitle: 'Manage appearance, workspace tools, shell preferences, and session controls without leaving the operator console.',
+                    showSubmenu: false,
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" fill="none" stroke="currentColor" stroke-width="1.7"></path>
@@ -230,10 +231,12 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
-                        { id: 'settings-appearance', label: 'Appearance', pageId: 'settings', targetId: 'settings-appearance-section' },
-                        { id: 'settings-workspace', label: 'Workspace Tools', pageId: 'settings', targetId: 'settings-workspace-section' },
-                        { id: 'settings-session', label: 'Session & Access', pageId: 'settings', targetId: 'settings-session-section' },
-                        { id: 'settings-shell', label: 'Shell Behavior', pageId: 'settings', targetId: 'settings-shell-section' },
+                        { id: 'settings-profile', label: 'Profile', pageId: 'settings', targetId: 'settings-tab-panel-profile' },
+                        { id: 'settings-organization', label: 'Organization', pageId: 'settings', targetId: 'settings-tab-panel-organization' },
+                        { id: 'settings-projects', label: 'Projects', pageId: 'settings', targetId: 'settings-tab-panel-projects' },
+                        { id: 'settings-teams', label: 'Teams', pageId: 'settings', targetId: 'settings-tab-panel-teams' },
+                        { id: 'settings-notifications', label: 'Notifications', pageId: 'settings', targetId: 'settings-tab-panel-notifications' },
+                        { id: 'settings-billing', label: 'Billing', pageId: 'settings', targetId: 'settings-tab-panel-billing' },
                     ],
                 },
             };
@@ -255,6 +258,8 @@ export function initializeOperatorConsole() {
                 }
                 sidebarNav.innerHTML = '';
                 Object.entries(moduleConfigs).forEach(([moduleId, config]) => {
+                    const moduleItems = getModuleItems(moduleId);
+                    const showSubmenu = config.showSubmenu !== false && moduleItems.length > 1;
                     const listItem = document.createElement('li');
                     listItem.className = 'sidebar-nav-item';
                     listItem.dataset.module = moduleId;
@@ -263,7 +268,7 @@ export function initializeOperatorConsole() {
                     trigger.type = 'button';
                     trigger.className = 'nav-link nav-link-trigger';
                     trigger.dataset.module = moduleId;
-                    trigger.setAttribute('aria-haspopup', 'true');
+                    trigger.setAttribute('aria-haspopup', showSubmenu ? 'true' : 'false');
 
                     const icon = document.createElement('span');
                     icon.className = 'nav-icon';
@@ -277,59 +282,82 @@ export function initializeOperatorConsole() {
                     label.textContent = config.title;
                     copy.appendChild(label);
 
-                    const caret = document.createElement('span');
-                    caret.className = 'nav-caret';
-                    caret.setAttribute('aria-hidden', 'true');
-                    caret.innerHTML = `
-                        <svg viewBox="0 0 24 24">
-                            <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
-                        </svg>
-                    `.trim();
-
-                    trigger.append(icon, copy, caret);
+                    trigger.append(icon, copy);
+                    if (showSubmenu) {
+                        const caret = document.createElement('span');
+                        caret.className = 'nav-caret';
+                        caret.setAttribute('aria-hidden', 'true');
+                        caret.innerHTML = `
+                            <svg viewBox="0 0 24 24">
+                                <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+                            </svg>
+                        `.trim();
+                        trigger.appendChild(caret);
+                    }
                     listItem.appendChild(trigger);
 
-                    const submenu = document.createElement('div');
-                    submenu.className = 'sidebar-submenu';
-                    submenu.setAttribute('aria-label', `${config.title} sections`);
+                    if (showSubmenu) {
+                        const submenu = document.createElement('div');
+                        submenu.className = 'sidebar-submenu';
+                        submenu.setAttribute('aria-label', `${config.title} sections`);
 
-                    const submenuShell = document.createElement('div');
-                    submenuShell.className = 'sidebar-submenu-shell';
+                        const submenuShell = document.createElement('div');
+                        submenuShell.className = 'sidebar-submenu-shell';
 
-                    const submenuHeader = document.createElement('div');
-                    submenuHeader.className = 'sidebar-submenu-header';
+                        const submenuHeader = document.createElement('div');
+                        submenuHeader.className = 'sidebar-submenu-header';
 
-                    const submenuEyebrow = document.createElement('span');
-                    submenuEyebrow.className = 'sidebar-submenu-eyebrow';
-                    submenuEyebrow.textContent = config.title;
+                        const submenuEyebrow = document.createElement('span');
+                        submenuEyebrow.className = 'sidebar-submenu-eyebrow';
+                        submenuEyebrow.textContent = config.title;
 
-                    const submenuTitle = document.createElement('strong');
-                    submenuTitle.textContent = 'Sections';
+                        const submenuTitle = document.createElement('strong');
+                        submenuTitle.textContent = 'Sections';
 
-                    submenuHeader.append(submenuEyebrow, submenuTitle);
-                    submenuShell.appendChild(submenuHeader);
+                        submenuHeader.append(submenuEyebrow, submenuTitle);
+                        submenuShell.appendChild(submenuHeader);
 
-                    const submenuList = document.createElement('div');
-                    submenuList.className = 'sidebar-submenu-list';
+                        const submenuList = document.createElement('div');
+                        submenuList.className = 'sidebar-submenu-list';
 
-                    getModuleItems(moduleId).forEach((entry) => {
-                        const itemButton = document.createElement('button');
-                        itemButton.type = 'button';
-                        itemButton.className = 'sidebar-submenu-link';
-                        itemButton.dataset.module = moduleId;
-                        itemButton.dataset.item = entry.id;
-                        itemButton.textContent = entry.label;
-                        submenuList.appendChild(itemButton);
-                    });
+                        moduleItems.forEach((entry) => {
+                            const itemButton = document.createElement('button');
+                            itemButton.type = 'button';
+                            itemButton.className = 'sidebar-submenu-link';
+                            itemButton.dataset.module = moduleId;
+                            itemButton.dataset.item = entry.id;
+                            itemButton.textContent = entry.label;
+                            submenuList.appendChild(itemButton);
+                        });
 
-                    submenuShell.appendChild(submenuList);
-                    submenu.appendChild(submenuShell);
-                    listItem.appendChild(submenu);
+                        submenuShell.appendChild(submenuList);
+                        submenu.appendChild(submenuShell);
+                        listItem.appendChild(submenu);
+                    }
                     sidebarNav.appendChild(listItem);
                 });
 
                 navLinks = Array.from(sidebarNav.querySelectorAll('.nav-link-trigger'));
                 navSubmenuLinks = Array.from(sidebarNav.querySelectorAll('.sidebar-submenu-link'));
+            }
+
+            const settingsTabButtons = Array.from(document.querySelectorAll('.settings-tab-button'));
+            const settingsTabPanels = Array.from(document.querySelectorAll('.settings-tab-panel'));
+
+            function syncSettingsTabState(itemId = activeNavItemId) {
+                const resolvedItemId = findModuleItem('settings', itemId)?.id || getModuleItems('settings')[0]?.id;
+                settingsTabButtons.forEach((button) => {
+                    const isActive = button.dataset.settingsItem === resolvedItemId;
+                    button.classList.toggle('active', isActive);
+                    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+                    button.setAttribute('tabindex', isActive ? '0' : '-1');
+                });
+                settingsTabPanels.forEach((panel) => {
+                    const isActive = panel.dataset.settingsPanel === resolvedItemId;
+                    panel.classList.toggle('active', isActive);
+                    panel.classList.toggle('hidden', !isActive);
+                    panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+                });
             }
 
             function setWorkspaceTextStatus(element, message = '', isError = false) {
@@ -951,6 +979,9 @@ export function initializeOperatorConsole() {
                 activeNavItemId = item.id;
                 renderModuleHeader(moduleId);
                 syncSidebarNavState(moduleId, item.id);
+                if (moduleId === 'settings') {
+                    syncSettingsTabState(item.id);
+                }
                 activatePage(item.pageId, { reload: reloadPage });
                 scrollToModuleItem(item, scrollBehavior);
                 if (closeSidebar) {
@@ -979,6 +1010,17 @@ export function initializeOperatorConsole() {
                             reloadPage: activePageId !== findModuleItem(button.dataset.module, button.dataset.item)?.pageId,
                         },
                     );
+                });
+            });
+
+            settingsTabButtons.forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    activateModule('settings', button.dataset.settingsItem, {
+                        closeSidebar: false,
+                        scrollBehavior: 'smooth',
+                        reloadPage: false,
+                    });
                 });
             });
 

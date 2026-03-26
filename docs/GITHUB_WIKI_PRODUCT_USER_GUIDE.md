@@ -23,10 +23,10 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. In collapsed mode the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Workspace Tools`. | None | Lets you choose an organization space and project before entering the app. |
-| `New Project` | Button | Opens the new-project overlay from `Settings -> Workspace Tools`. | None | Creates a new project and switches into it after success. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization space and project before entering the app. |
+| `New Project` | Button | Opens the new-project overlay from `Settings -> Organization`. | None | Creates a new project and switches into it after success. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar now contains only this search control. | `settings` | The matching module or section opens and the matching page becomes active. |
-| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
+| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout. The `Settings` module is the exception: it opens directly into the Settings page without a sidebar submenu. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
 | Sidebar section list | Inline submenu or collapsed popout | Click any section button in the expanded list under a module, or in the collapsed right-side popout, to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
-10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, or use the shell-level `Switcher` and `New Project` shortcuts.
+10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, use the shell-level `Switcher` and `New Project` shortcuts, or view the placeholder account-management layouts.
 
 ### 2.3 Onboarding And Workspace Overlays
 
@@ -886,16 +886,40 @@ WHERE predicted_churn_risk = 'high'
 ---
 
 ## 8) Settings
-The `Settings` module is the shell-level control page for appearance, workspace actions, session access, and shell behavior.
+The `Settings` module is now a tabbed page. The left sidebar opens `Settings` directly, and the in-page tab strip controls the visible placeholder or live settings surface.
 
-### 8.1 Appearance
+### 8.1 Settings Tab Strip
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Light mode / Dark mode` switch | Checkbox | Toggle the console theme. The choice is stored in local storage for the current browser. | Checked | The shell and module pages switch to dark mode. |
-| Theme state label | Read-only text | Shows the currently active appearance mode. | `Dark mode active` | Confirms which theme is active after a toggle. |
+| `Profile` | Tab button | Opens the profile placeholder layout. | None | The profile information and password placeholder cards become visible. |
+| `Organization` | Tab button | Opens the organization workspace tab. | None | Live workspace and session controls become visible. |
+| `Projects` | Tab button | Opens the projects placeholder layout. | None | Project placeholder rows become visible. |
+| `Teams` | Tab button | Opens the teams placeholder layout. | None | Team placeholder rows become visible. |
+| `Notifications` | Tab button | Opens the notifications tab. | None | The live theme switch plus notification placeholder rows become visible. |
+| `Billing` | Tab button | Opens the billing placeholder layout. | None | Billing placeholder rows become visible. |
 
-### 8.2 Workspace Tools
+### 8.2 Profile
+
+The `Profile` tab is currently a placeholder layout styled to match the new SaaS settings reference.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Change Avatar` | Placeholder button | Visible for layout only. It does not upload an image yet. | None | No backend action occurs yet. |
+| `First Name` | Placeholder text box | Shows example profile content. | `John` | Layout only. No save is performed yet. |
+| `Last Name` | Placeholder text box | Shows example profile content. | `Doe` | Layout only. No save is performed yet. |
+| `Email` | Placeholder text box | Shows example profile content. | `john@company.com` | Layout only. No save is performed yet. |
+| `Job Title` | Placeholder text box | Shows example profile content. | `Product Manager` | Layout only. No save is performed yet. |
+| `Bio` | Placeholder text area | Shows example profile content. | `Experienced product manager with a passion for building great products` | Layout only. No save is performed yet. |
+| `Save Changes` | Placeholder button | Visible for layout only. | None | No backend action occurs yet. |
+| `Current Password` | Placeholder password box | Visible for layout only. | `placeholder-password` | No password update occurs yet. |
+| `New Password` | Placeholder password box | Visible for layout only. | `placeholder-password` | No password update occurs yet. |
+| `Confirm Password` | Placeholder password box | Visible for layout only. | `placeholder-password` | No password update occurs yet. |
+| `Update Password` | Placeholder button | Visible for layout only. | None | No backend action occurs yet. |
+
+### 8.3 Organization
+
+The `Organization` tab holds the live shell controls that still drive workspace and session behavior.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -903,24 +927,23 @@ The `Settings` module is the shell-level control page for appearance, workspace 
 | `New Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization space after success. |
 | Current workspace card | Read-only summary | Shows the active organization space and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
 | Session state card | Read-only summary | Shows the current login or demo state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session. |
-
-### 8.3 Session & Access
-
-| Control | Type | How to use it | Sample input | Expected result |
-| --- | --- | --- | --- | --- |
 | Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session before you switch workspaces or log out. |
 | `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a bearer token. |
 | `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to logged-out or local/demo state. |
 | `API Key` | Password box | Optional legacy/demo API key entry. This stays hidden when Google login is configured or an OIDC bearer session is active. | `local-demo-key` | Local/demo requests reuse the stored API key in the browser. |
 | Application startup status | Read-only status line | Shows the latest startup or health result from inside Settings. | `Application start completed (mock)` | Confirms whether the backend is reachable from the console. |
 
-### 8.4 Shell Behavior
+### 8.4 Projects, Teams, And Billing
+
+The `Projects`, `Teams`, and `Billing` tabs are placeholder layouts only. Their visible rows are present for design and navigation structure, but they do not execute backend actions yet.
+
+### 8.5 Notifications
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Collapsible sidebar` | Read-only checklist item | Describes the current desktop navigation behavior. | None | Confirms that the desktop rail can collapse to icon-only mode. |
-| `Mobile drawer` | Read-only checklist item | Describes the current small-screen navigation behavior. | None | Confirms that navigation becomes an overlay drawer on mobile. |
-| `Quick search` | Read-only checklist item | Describes the top-bar search shortcut. | None | Confirms that search can open modules and sections directly. |
+| `Light mode / Dark mode` switch | Checkbox | Toggle the console theme. The choice is stored in local storage for the current browser. | Checked | The shell and module pages switch to dark mode. |
+| Theme state label | Read-only text | Shows the currently active appearance mode. | `Dark mode active` | Confirms which theme is active after a toggle. |
+| Notification rows | Placeholder rows | Visible for layout only. | None | No backend action occurs yet. |
 
 ---
 
