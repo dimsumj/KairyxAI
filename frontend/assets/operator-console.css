@@ -609,6 +609,24 @@
             opacity: 1;
         }
 
+        #workspace-org-url-input::-webkit-input-placeholder,
+        #onboarding-organization-name::-webkit-input-placeholder,
+        #onboarding-project-name::-webkit-input-placeholder,
+        #workspace-create-project-name::-webkit-input-placeholder,
+        #workspace-create-project-inline-name::-webkit-input-placeholder {
+            color: #a0aec0 !important;
+            opacity: 1;
+        }
+
+        #workspace-org-url-input:placeholder-shown,
+        #onboarding-organization-name:placeholder-shown,
+        #onboarding-project-name:placeholder-shown,
+        #workspace-create-project-name:placeholder-shown,
+        #workspace-create-project-inline-name:placeholder-shown {
+            color: #a0aec0 !important;
+            -webkit-text-fill-color: #a0aec0 !important;
+        }
+
         .workspace-modal input:-webkit-autofill,
         .workspace-modal input:-webkit-autofill:hover,
         .workspace-modal input:-webkit-autofill:focus,
