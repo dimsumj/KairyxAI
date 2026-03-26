@@ -129,6 +129,7 @@ export function initializeOperatorConsole() {
             let onboardingStep = 1;
             let onboardingResult = null;
             let inviteRedemptionInFlight = false;
+            let rootGatewayBootPending = !getOrganizationIdFromPathname();
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -864,7 +865,15 @@ export function initializeOperatorConsole() {
 
             function syncWorkspaceGateClass() {
                 const gated = Boolean(workspaceOverlayMode) || isWorkspaceSelectionRequired();
+                syncWorkspaceBootClass();
                 document.body.classList.toggle('workspace-gated', gated);
+            }
+
+            function syncWorkspaceBootClass() {
+                document.documentElement.classList.toggle(
+                    'workspace-gateway-boot',
+                    Boolean(rootGatewayBootPending && !getOrganizationIdFromPathname()),
+                );
             }
 
             function setWorkspaceSelectionStage(stage = 'org') {
@@ -1016,6 +1025,7 @@ export function initializeOperatorConsole() {
             }
             setWorkspaceUrlPrefixes();
             setOnboardingStep(1);
+            syncWorkspaceBootClass();
             syncAuthModeUi();
             if (authStatusText) {
                 authStatusText.textContent = accessToken
@@ -6444,6 +6454,8 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(workspaceLoginStatus, error.message || 'Google session initialization failed.', true);
                 }
                 syncWorkspaceOverlayFromSession();
+                rootGatewayBootPending = false;
+                syncWorkspaceBootClass();
             }
 
             // Check status on page load and then every 30 seconds.

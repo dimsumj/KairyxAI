@@ -3,6 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const path = window.location.pathname || "/";
+            const segments = path.split("/").filter(Boolean);
+            const candidate = segments.length === 1 ? segments[0] : "";
+            const hasOrgPath = /^[a-z0-9][a-z0-9-]{0,63}$/.test(candidate) && !["api", "health", "static"].includes(candidate);
+            if (!hasOrgPath) {
+                document.documentElement.classList.add("workspace-gateway-boot");
+            }
+        })();
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <title>Kairyx AI - Player Engagement Platform</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
@@ -1589,15 +1600,15 @@ dimensions: campaign,country,platform</pre>
             <div class="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
                 <div class="workspace-modal-header">
                     <div>
-                        <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Setup</div>
-                        <h2 id="workspace-modal-title">Enter your organization URL</h2>
-                        <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Type the organization URL you want to use. The first project comes next.</p>
+                        <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Gateway</div>
+                        <h2 id="workspace-modal-title">Log in to your organization</h2>
+                        <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Open the gateway at the base URL, then continue into the main app at your organization path.</p>
                         <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
                     </div>
                     <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
                 </div>
 
-                <div id="workspace-login-panel" class="workspace-panel hidden">
+                <div id="workspace-login-panel" class="workspace-panel">
                     <div class="workspace-login-copy">
                         <p>Sign in with your Google account before opening an existing organization or creating a new one.</p>
                     </div>

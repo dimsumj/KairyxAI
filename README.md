@@ -179,6 +179,7 @@ In the backend, `tenant` remains the internal organization-space identifier for 
 
 - a Figma-derived SaaS shell with a responsive sidebar, inline expanding and collapsible section lists, a bottom-left session profile chip with logout, a search-first top bar with a three-mode theme selector, a tighter icon rail when collapsed, collapsed-icon clicks that land on each module's first section and dismiss the temporary popout, hover-safe collapsed popouts that stay reachable while moving into the submenu, and a tabbed Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
+- a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, with the main operator app shown only after the browser is on `https://<base-url>/<organization_id>`
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second, with new organization URLs limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
@@ -200,6 +201,10 @@ Examples:
 For the browser shell itself, the canonical workspace URL is:
 
 - `https://<base-url>/<organization_id>`
+
+In deployed Google-login environments, the bare base URL remains the gateway page only:
+
+- `https://<base-url>/`
 
 The older `/api/v1/...` routes remain available for bootstrap flows such as Google OIDC config, first-time onboarding before an organization exists, local/demo compatibility, and backward compatibility.
 

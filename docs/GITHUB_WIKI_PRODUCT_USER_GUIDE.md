@@ -61,6 +61,8 @@ Every user now passes through the Google login gate first. After successful sign
 - enters the existing organization and project, or opens the workspace selector if the user has more than one choice
 - rewrites the browser URL to `https://<base-url>/<organization_id>` as soon as an active organization is resolved
 
+In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`.
+
 #### Organization-space onboarding wizard
 
 | Control | Type | How to use it | Sample input | Expected result |

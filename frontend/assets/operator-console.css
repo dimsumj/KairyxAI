@@ -39,6 +39,22 @@
             overflow: hidden;
         }
 
+        html.workspace-gateway-boot body {
+            display: block;
+            min-height: 100vh;
+            height: auto;
+            overflow: auto;
+        }
+
+        html.workspace-gateway-boot body .sidebar,
+        html.workspace-gateway-boot body .content {
+            display: none !important;
+        }
+
+        html.workspace-gateway-boot body #workspace-overlay {
+            display: flex !important;
+        }
+
         body.workspace-gated {
             display: block;
             min-height: 100vh;

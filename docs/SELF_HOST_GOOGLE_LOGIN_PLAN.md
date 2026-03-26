@@ -17,6 +17,7 @@ while making the auth model safe for customer-managed domains and production Goo
 The intended browser result after login remains:
 
 - the Google callback uses one fixed application callback URL
+- the bare base URL `https://<host>/` is only the gateway page
 - once Kairyx resolves the active organization, the browser URL becomes `https://<host>/<organization_id>`
 - Kairyx API traffic continues on `https://<host>/<organization_id>/v1/...`
 
