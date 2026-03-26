@@ -36,35 +36,29 @@
         </div>
 
         <div class="sidebar-body">
-            <div class="workspace-summary-card">
-                <div class="workspace-summary-label">Workspace</div>
-                <div id="workspace-summary-text" class="workspace-summary-value">Local demo / default / default</div>
-                <div id="workspace-role-summary" class="workspace-summary-meta">Local demo session</div>
-            </div>
-
-            <div id="oidc-workspace-controls" class="hidden">
-                <div class="form-group">
-                    <label for="org-space-select">Organization Space</label>
-                    <select id="org-space-select">
-                        <option value="">Select an organization space</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="project-select">Project</label>
-                    <select id="project-select">
-                        <option value="">Select a project</option>
-                    </select>
-                </div>
-                <div class="workspace-inline-actions">
-                    <button type="button" id="workspace-open-switcher-btn">Switcher</button>
-                    <button type="button" id="workspace-create-project-btn">New Project</button>
-                </div>
-                <div id="workspace-selector-status" class="workspace-inline-status"></div>
-            </div>
-
             <ul id="sidebar-nav" class="sidebar-nav"></ul>
         </div>
     </nav>
+
+    <div class="hidden" aria-hidden="true">
+        <div>
+            <span id="workspace-summary-text">Local demo / default / default</span>
+            <span id="workspace-role-summary">Local demo session</span>
+        </div>
+        <div id="oidc-workspace-controls" class="hidden">
+            <label for="org-space-select">Organization Space</label>
+            <select id="org-space-select">
+                <option value="">Select an organization space</option>
+            </select>
+            <label for="project-select">Project</label>
+            <select id="project-select">
+                <option value="">Select a project</option>
+            </select>
+            <button type="button" id="workspace-open-switcher-btn">Switcher</button>
+            <button type="button" id="workspace-create-project-btn">New Project</button>
+            <div id="workspace-selector-status"></div>
+        </div>
+    </div>
 
     <main class="content">
         <header class="topbar">
@@ -1395,7 +1389,7 @@ dimensions: campaign,country,platform</pre>
                         <div class="settings-checklist-item">
                             <div>
                                 <strong>Collapsible sidebar</strong>
-                                <p>Desktop navigation can be reduced to an icon rail while keeping the active module visible.</p>
+                                <p>Desktop navigation can be reduced to an icon rail, and hovering an icon opens that module's sections in a right-side popout.</p>
                             </div>
                             <span class="pill">Enabled</span>
                         </div>

@@ -22,15 +22,12 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| Workspace summary card | Read-only summary | Shows the current auth mode, selected organization space, selected project, and effective roles. | `North Star Games / Live Ops` | Confirms the live workspace context before you run any action. |
-| Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. When collapsed, hovering or focusing the rail peeks it back open so module sections still expand downward inline. | None | Navigation stays visible with less horizontal space used without switching to a side popout. |
-| `Organization Space` | Select | After Google login, choose which organization space to operate in from the sidebar once you are inside the app. The console uses that value in the org-scoped API path, for example `/{organization_id}/v1/...`. | `northstar` | The console reloads project access for that organization space and switches future authenticated API requests to the org-specific path. |
-| `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay from the sidebar workspace controls or from `Settings -> Workspace Tools`. | None | Lets you choose an organization space and project before entering the app. |
-| `New Project` | Button | Opens the new-project overlay from the sidebar workspace controls or from `Settings -> Workspace Tools`. | None | Creates a new project and switches into it after success. |
+| Sidebar collapse button | Button | Shrinks the desktop sidebar to an icon rail and expands it again when clicked a second time. In collapsed mode the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Workspace Tools`. | None | Lets you choose an organization space and project before entering the app. |
+| `New Project` | Button | Opens the new-project overlay from `Settings -> Workspace Tools`. | None | Creates a new project and switches into it after success. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar now contains only this search control. | `settings` | The matching module or section opens and the matching page becomes active. |
-| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the sidebar. Click the module button to open that module's first section by default. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
-| Sidebar section list | Inline submenu | Click any section button in the expanded list under a module to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
+| Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout. | `Audience Engine` | The first section under that module becomes active and the matching page content loads. |
+| Sidebar section list | Inline submenu or collapsed popout | Click any section button in the expanded list under a module, or in the collapsed right-side popout, to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
@@ -39,7 +36,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
    - enter the `Organization URL`
    - continue to the `Project Name`
    - create the first workspace
-3. If you already belong to more than one organization space or project, use the `Switcher` button from the sidebar or `Settings`, or use the sidebar selects to choose the active workspace.
+3. If you already belong to more than one organization space or project, use the `Switcher` button from `Settings` to choose the active workspace.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.

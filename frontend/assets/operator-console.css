@@ -1266,7 +1266,7 @@
             min-height: 0;
             overflow-y: auto;
             overflow-x: visible;
-            padding: 0 1rem 1rem;
+            padding: 0.65rem 1rem 1rem;
         }
 
         .sidebar-brand {
@@ -1406,6 +1406,11 @@
         .sidebar-nav-item {
             position: relative;
             list-style: none;
+        }
+
+        .sidebar-nav-item:hover,
+        .sidebar-nav-item:focus-within {
+            z-index: 2;
         }
 
         .sidebar-nav .nav-link-trigger {
@@ -1924,91 +1929,81 @@
         }
 
         body.sidebar-collapsed .sidebar {
-            width: 104px;
+            width: 98px;
         }
 
         body.sidebar-collapsed .brand-copy,
-        body.sidebar-collapsed .workspace-summary-card,
-        body.sidebar-collapsed #oidc-workspace-controls,
         body.sidebar-collapsed .sidebar-nav .nav-copy,
         body.sidebar-collapsed .sidebar-nav .nav-caret {
             display: none !important;
         }
 
         body.sidebar-collapsed .sidebar-header {
-            justify-content: center;
             padding-inline: 0.9rem;
         }
 
-        body.sidebar-collapsed .sidebar:hover,
-        body.sidebar-collapsed .sidebar:focus-within {
-            width: 292px;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .sidebar-header,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-header {
-            justify-content: space-between;
-            padding-inline: 1.15rem;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .brand-copy,
-        body.sidebar-collapsed .sidebar:hover .workspace-summary-card,
-        body.sidebar-collapsed .sidebar:hover #oidc-workspace-controls,
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav .nav-copy,
-        body.sidebar-collapsed .sidebar:focus-within .brand-copy,
-        body.sidebar-collapsed .sidebar:focus-within .workspace-summary-card,
-        body.sidebar-collapsed .sidebar:focus-within #oidc-workspace-controls,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav .nav-copy {
-            display: block !important;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav .nav-caret,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav .nav-caret {
-            display: inline-flex !important;
-        }
-
-        body.sidebar-collapsed .sidebar-brand {
-            justify-content: center;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .sidebar-brand,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-brand {
-            justify-content: flex-start;
+        body.sidebar-collapsed .sidebar-body {
+            overflow: visible;
+            padding-inline: 0.7rem;
         }
 
         body.sidebar-collapsed .sidebar-nav .nav-link-trigger {
             justify-content: center;
-            padding-inline: 0.55rem;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav .nav-link-trigger,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav .nav-link-trigger {
-            justify-content: flex-start;
-            padding-inline: 0.95rem;
+            padding: 0.78rem 0.55rem;
         }
 
         body.sidebar-collapsed .sidebar-submenu {
-            grid-template-rows: 0fr !important;
-            opacity: 0 !important;
-            transform: translateY(-0.28rem) !important;
-            margin-top: 0 !important;
-        }
-
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav-item.active .sidebar-submenu,
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav-item:hover .sidebar-submenu,
-        body.sidebar-collapsed .sidebar:hover .sidebar-nav-item:focus-within .sidebar-submenu,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav-item.active .sidebar-submenu,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav-item:hover .sidebar-submenu,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-nav-item:focus-within .sidebar-submenu {
+            position: absolute;
+            top: 0;
+            left: calc(100% + 0.85rem);
+            width: min(248px, calc(100vw - 8rem));
+            display: block;
             grid-template-rows: 1fr !important;
-            opacity: 1 !important;
-            transform: translateY(0) !important;
-            margin-top: 0.15rem !important;
+            opacity: 0 !important;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translate(0.45rem, -0.08rem) !important;
+            margin-top: 0 !important;
+            z-index: 80;
         }
 
-        body.sidebar-collapsed .sidebar:hover .sidebar-submenu-list,
-        body.sidebar-collapsed .sidebar:focus-within .sidebar-submenu-list {
-            padding-left: 3.6rem;
+        body.sidebar-collapsed .sidebar-nav-item.active .sidebar-submenu {
+            opacity: 0 !important;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translate(0.45rem, -0.08rem) !important;
+        }
+
+        body.sidebar-collapsed .sidebar-nav-item:hover .sidebar-submenu,
+        body.sidebar-collapsed .sidebar-nav-item:focus-within .sidebar-submenu {
+            opacity: 1 !important;
+            visibility: visible;
+            pointer-events: auto;
+            transform: translate(0, 0) !important;
+        }
+
+        body.sidebar-collapsed .sidebar-submenu-shell {
+            overflow: visible;
+            padding: 0.88rem;
+            border-radius: 1.15rem;
+            border: 1px solid var(--sidebar-border);
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 24px 44px rgba(15, 23, 42, 0.24);
+        }
+
+        body.dark-theme.sidebar-collapsed .sidebar-submenu-shell {
+            background: rgba(17, 24, 39, 0.96);
+        }
+
+        body.sidebar-collapsed .sidebar-submenu-header {
+            display: grid;
+            gap: 0.2rem;
+            margin-bottom: 0.65rem;
+        }
+
+        body.sidebar-collapsed .sidebar-submenu-list {
+            padding-left: 0;
         }
 
         body.sidebar-collapsed .sidebar-collapse-btn svg {
