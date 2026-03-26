@@ -2387,6 +2387,15 @@
             z-index: 80;
         }
 
+        body.sidebar-is-collapsed .sidebar-submenu::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: -1rem;
+            width: 1.15rem;
+        }
+
         body.sidebar-is-collapsed .sidebar-nav-item.expanded .sidebar-submenu {
             opacity: 0 !important;
             visibility: hidden;
