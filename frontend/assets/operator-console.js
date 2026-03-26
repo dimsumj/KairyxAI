@@ -988,7 +988,9 @@ export function initializeOperatorConsole() {
 
             function setWorkspaceSelectionStage(stage = 'org') {
                 let normalizedStage = stage === 'project' ? 'project' : 'org';
-                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
+                const pathTenantId = getOrganizationIdFromPathname();
+                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || pathTenantId || '';
+                const isStandaloneOrgPath = Boolean(pathTenantId);
                 if (normalizedStage === 'project' && !selectedTenantId) {
                     normalizedStage = 'org';
                 }
@@ -1003,11 +1005,19 @@ export function initializeOperatorConsole() {
                 workspaceSelectionContinueBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 workspaceSelectionCreateProjectBtn.classList.toggle('hidden', normalizedStage !== 'project');
                 if (normalizedStage === 'org') {
-                    workspaceModalEyebrow.textContent = 'Workspace';
-                    workspaceModalTitle.textContent = 'Log in to your organization';
-                    workspaceModalSubtitle.textContent = !accessToken && isGoogleLoginConfigured()
-                        ? 'Type the organization URL you want to open, then continue with Google.'
-                        : 'Type the organization URL you want to open.';
+                    workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
+                    workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Log in to your organization';
+                    workspaceModalSubtitle.textContent = isStandaloneOrgPath
+                        ? (
+                            !accessToken && isGoogleLoginConfigured()
+                                ? 'Continue with Google to open this organization path.'
+                                : 'Confirm the organization URL to continue into this organization path.'
+                        )
+                        : (
+                            !accessToken && isGoogleLoginConfigured()
+                                ? 'Type the organization URL you want to open, then continue with Google.'
+                                : 'Type the organization URL you want to open.'
+                        );
                     workspaceSelectionResolveBtn.textContent = !accessToken && isGoogleLoginConfigured()
                         ? 'Continue with Google'
                         : 'Continue';
@@ -1798,8 +1808,21 @@ export function initializeOperatorConsole() {
             function syncWorkspaceOverlayFromSession() {
                 const sessionView = authSessionState || (accessToken ? buildFallbackWorkspaceSession() : null);
                 if (isGoogleLoginConfigured() && !accessToken) {
-                    openWorkspaceOverlay('login');
-                    refreshWorkspaceLoginStatus();
+                    if (isGatewayRootPath()) {
+                        openWorkspaceOverlay('login');
+                        refreshWorkspaceLoginStatus();
+                    } else {
+                        syncWorkspaceSelectionOrgInput(
+                            normalizeOrganizationUrl(
+                                workspaceOrgUrlInput?.value
+                                || getStoredWorkspaceSelection().tenantId
+                                || getOrganizationIdFromPathname()
+                                || ''
+                            )
+                        );
+                        openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                        setWorkspaceTextStatus(workspaceSelectionStatus, 'Continue with Google to open this organization.');
+                    }
                     return;
                 }
                 if (sessionView?.needs_onboarding) {
