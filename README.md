@@ -177,13 +177,14 @@ The current operator console uses a two-level workspace hierarchy:
 
 In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
 
-- a Figma-derived SaaS shell with a responsive sidebar, top search bar, workspace summary card, and Settings page
+- a Figma-derived SaaS shell with a responsive sidebar, hover-driven section flyouts, top search bar, workspace summary card, and Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a centered full-screen first-login onboarding gate that asks for the organization URL first and the first project name second
 - a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose an existing project or add a new one inside that organization
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - invite-link redemption support for project access after login
 - authenticated organization-space and project selectors in the sidebar
+- Settings-hosted session, API key, and application-status controls so the left rail stays focused on navigation
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
@@ -478,7 +479,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout and responsive Settings-driven appearance control
+- backend-served React shell with a Figma-based SaaS layout, flyout section navigation, and Settings-driven appearance/session control
 
 ## Current Limitations
 

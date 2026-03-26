@@ -6,11 +6,11 @@ export function initializeOperatorConsole() {
     if (typeof window !== 'undefined') {
         window.__KAIRYX_OPERATOR_CONSOLE_INITIALIZED = true;
     }
-            const navLinks = document.querySelectorAll('.nav-link');
+            const sidebarNav = document.getElementById('sidebar-nav');
             const pages = document.querySelectorAll('.page');
+            const contentScroll = document.querySelector('.content-scroll');
             const moduleTitle = document.getElementById('module-title');
             const moduleSubtitle = document.getElementById('module-subtitle');
-            const moduleSubnav = document.getElementById('module-subnav');
             const sidebarBackdrop = document.getElementById('sidebar-backdrop');
             const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
             const mobileNavOpenBtn = document.getElementById('mobile-nav-open-btn');
@@ -31,8 +31,6 @@ export function initializeOperatorConsole() {
             const settingsAuthCopy = document.getElementById('settings-auth-copy');
             const settingsOpenSwitcherBtn = document.getElementById('settings-open-switcher-btn');
             const settingsCreateProjectBtn = document.getElementById('settings-create-project-btn');
-            const settingsLoginBtn = document.getElementById('settings-login-btn');
-            const settingsLogoutBtn = document.getElementById('settings-logout-btn');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -114,7 +112,10 @@ export function initializeOperatorConsole() {
             const LOCAL_DEMO_TENANT_ID = 'default';
             const LOCAL_DEMO_PROJECT_ID = 'default';
             let activeModuleId = 'data-core';
+            let activeNavItemId = 'data-core-churn-rescue';
             let activePageId = 'operator-hub';
+            let navLinks = [];
+            let navSubmenuLinks = [];
             let oidcConfig = null;
             let accessToken = '';
             let authSessionState = null;
@@ -126,48 +127,214 @@ export function initializeOperatorConsole() {
                 'data-core': {
                     title: 'Data Core',
                     subtitle: 'Manage connectors, imports, mappings, governance checks, and health signals that power the closed-loop lifecycle.',
-                    pages: [
-                        { id: 'operator-hub', label: 'Churn Rescue' },
-                        { id: 'player-cohorts', label: 'Imports' },
-                        { id: 'connectors', label: 'Connectors' },
-                        { id: 'data-sandbox', label: 'Mappings' },
-                        { id: 'action-history', label: 'Audit Trail' },
-                        { id: 'scenario-templates', label: 'Templates' },
-                        { id: 'service-health', label: 'Health' },
-                        { id: 'safety-rails', label: 'Governance' },
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="4" y="4" width="6" height="6" rx="1.5"></rect>
+                            <rect x="14" y="4" width="6" height="6" rx="1.5"></rect>
+                            <rect x="4" y="14" width="6" height="6" rx="1.5"></rect>
+                            <rect x="14" y="14" width="6" height="6" rx="1.5"></rect>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'data-core-churn-rescue', label: 'Churn Rescue', pageId: 'operator-hub' },
+                        { id: 'data-core-imports', label: 'Imports', pageId: 'player-cohorts' },
+                        { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
+                        { id: 'data-core-mappings', label: 'Mappings', pageId: 'data-sandbox' },
+                        { id: 'data-core-audit-trail', label: 'Audit Trail', pageId: 'action-history' },
+                        { id: 'data-core-templates', label: 'Templates', pageId: 'scenario-templates' },
+                        { id: 'data-core-health', label: 'Health', pageId: 'service-health' },
+                        { id: 'data-core-governance', label: 'Governance', pageId: 'safety-rails' },
                     ],
                 },
                 'audience-engine': {
                     title: 'Audience Engine',
                     subtitle: 'Build and operate cohorts with SQL workspace support, refresh controls, member previews, metrics, and version-aware rollback.',
-                    pages: [{ id: 'audience-engine', label: 'Audience Console' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 18c0-2.21 2.24-4 5-4s5 1.79 5 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
+                            <circle cx="12" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'audience-engine-build', label: 'Create Cohort', pageId: 'audience-engine', targetId: 'audience-create-section' },
+                        { id: 'audience-engine-sql', label: 'SQL Workspace', pageId: 'audience-engine', targetId: 'audience-sql-section' },
+                        { id: 'audience-engine-cohorts', label: 'Cohorts', pageId: 'audience-engine', targetId: 'audience-list-section' },
+                        { id: 'audience-engine-versions', label: 'Versions & Comparison', pageId: 'audience-engine', targetId: 'audience-versions-section' },
+                    ],
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
                     subtitle: 'Configure workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
-                    pages: [{ id: 'action-orchestrator', label: 'Workflow Runtime' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                            <circle cx="17" cy="12" r="2" fill="currentColor"></circle>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'action-orchestrator-create', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-create-section' },
+                        { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-section' },
+                        { id: 'action-orchestrator-workflows', label: 'Workflows', pageId: 'action-orchestrator', targetId: 'workflow-list-section' },
+                        { id: 'action-orchestrator-deliveries', label: 'Deliveries', pageId: 'action-orchestrator', targetId: 'workflow-deliveries-section' },
+                    ],
                 },
                 'experiment-hub': {
                     title: 'Experiment Hub',
                     subtitle: 'Operate treatment-vs-holdout experiments with explicit configuration, exposure and outcome inspection, summary gates, and decision logging.',
-                    pages: [{ id: 'experiment-hub', label: 'Experiment Console' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M8 4h8M10 4v5l-4.5 7.5A2 2 0 0 0 7.2 20h9.6a2 2 0 0 0 1.7-3.5L14 9V4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"></path>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'experiment-hub-control', label: 'Experiment Control', pageId: 'experiment-hub', targetId: 'experiment-control-section' },
+                        { id: 'experiment-hub-summary', label: 'Summary', pageId: 'experiment-hub', targetId: 'experiment-summary-section' },
+                        { id: 'experiment-hub-results', label: 'Exposures & Outcomes', pageId: 'experiment-hub', targetId: 'experiment-results-section' },
+                        { id: 'experiment-hub-ingestion', label: 'Outcome Ingestion', pageId: 'experiment-hub', targetId: 'experiment-ingest-section' },
+                    ],
                 },
                 'insight-copilot': {
                     title: 'Insight Copilot',
                     subtitle: 'Run query, explain, recommend, and report flows against curated evidence with query logs, anomaly tracking, and archived reports.',
-                    pages: [{ id: 'insight-copilot', label: 'Copilot Workspace' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M8 15h8M8 11h8M10 19h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
+                            <path d="M7 5h10a2 2 0 0 1 2 2v7.5a2 2 0 0 1-.8 1.6l-3.5 2.6a2 2 0 0 1-1.2.4h-3a2 2 0 0 1-1.2-.4l-3.5-2.6a2 2 0 0 1-.8-1.6V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"></path>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'insight-copilot-query', label: 'Query', pageId: 'insight-copilot', targetId: 'copilot-query-section' },
+                        { id: 'insight-copilot-explain', label: 'Explain', pageId: 'insight-copilot', targetId: 'copilot-explain-section' },
+                        { id: 'insight-copilot-recommend', label: 'Recommend', pageId: 'insight-copilot', targetId: 'copilot-recommend-section' },
+                        { id: 'insight-copilot-report', label: 'Report', pageId: 'insight-copilot', targetId: 'copilot-report-section' },
+                        { id: 'insight-copilot-evidence', label: 'Evidence & Logs', pageId: 'insight-copilot', targetId: 'copilot-evidence-section' },
+                    ],
                 },
                 'help': {
                     title: 'Help',
                     subtitle: 'Read the current v1 manual, follow the end-to-end operator path, and copy sample SQL or JSON payloads that match the live UI.',
-                    pages: [{ id: 'help', label: 'Manual & Samples' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+                            <path d="M9.5 9.5a2.5 2.5 0 1 1 4.28 1.77c-.76.75-1.78 1.32-1.78 2.73" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
+                            <circle cx="12" cy="17" r="1" fill="currentColor"></circle>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'help-overview', label: 'Overview', pageId: 'help', targetId: 'help-overview-section' },
+                        { id: 'help-quickstart', label: 'Quick Start', pageId: 'help', targetId: 'help-quickstart-section' },
+                        { id: 'help-roles', label: 'Role Guide', pageId: 'help', targetId: 'help-roles-section' },
+                        { id: 'help-samples', label: 'Samples', pageId: 'help', targetId: 'help-samples-section' },
+                        { id: 'help-common-issues', label: 'Common Issues', pageId: 'help', targetId: 'help-issues-section' },
+                    ],
                 },
                 'settings': {
                     title: 'Settings',
                     subtitle: 'Manage appearance, workspace tools, shell preferences, and session controls without leaving the operator console.',
-                    pages: [{ id: 'settings', label: 'Workspace Settings' }],
+                    icon: `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" fill="none" stroke="currentColor" stroke-width="1.7"></path>
+                            <path d="M4.8 13.3a1.5 1.5 0 0 1 0-2.6l1.2-.7a6.9 6.9 0 0 1 .7-1.7L6.3 7a1.5 1.5 0 0 1 0-2.1l1.6-1.6a1.5 1.5 0 0 1 2.1 0l1 .4c.55-.25 1.12-.46 1.72-.58l.7-1.2a1.5 1.5 0 0 1 2.6 0l.7 1.2c.6.12 1.17.33 1.72.58l1-.4a1.5 1.5 0 0 1 2.1 0l1.6 1.6a1.5 1.5 0 0 1 0 2.1l-.4 1c.25.55.46 1.12.58 1.72l1.2.7a1.5 1.5 0 0 1 0 2.6l-1.2.7a6.92 6.92 0 0 1-.58 1.72l.4 1a1.5 1.5 0 0 1 0 2.1l-1.6 1.6a1.5 1.5 0 0 1-2.1 0l-1-.4c-.55.25-1.12.46-1.72.58l-.7 1.2a1.5 1.5 0 0 1-2.6 0l-.7-1.2a6.9 6.9 0 0 1-1.72-.58l-1 .4a1.5 1.5 0 0 1-2.1 0l-1.6-1.6a1.5 1.5 0 0 1 0-2.1l.4-1a6.9 6.9 0 0 1-.58-1.72Z" fill="none" stroke="currentColor" stroke-width="1.5"></path>
+                        </svg>
+                    `,
+                    items: [
+                        { id: 'settings-appearance', label: 'Appearance', pageId: 'settings', targetId: 'settings-appearance-section' },
+                        { id: 'settings-workspace', label: 'Workspace Tools', pageId: 'settings', targetId: 'settings-workspace-section' },
+                        { id: 'settings-session', label: 'Session & Access', pageId: 'settings', targetId: 'settings-session-section' },
+                        { id: 'settings-shell', label: 'Shell Behavior', pageId: 'settings', targetId: 'settings-shell-section' },
+                    ],
                 },
             };
+
+            function getModuleItems(moduleId) {
+                return moduleConfigs[moduleId]?.items || [];
+            }
+
+            function findModuleItem(moduleId, itemOrPageId = '') {
+                if (!itemOrPageId) {
+                    return getModuleItems(moduleId)[0] || null;
+                }
+                return getModuleItems(moduleId).find((entry) => entry.id === itemOrPageId || entry.pageId === itemOrPageId) || null;
+            }
+
+            function renderSidebarNav() {
+                if (!sidebarNav) {
+                    return;
+                }
+                sidebarNav.innerHTML = '';
+                Object.entries(moduleConfigs).forEach(([moduleId, config]) => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'sidebar-nav-item';
+                    listItem.dataset.module = moduleId;
+
+                    const trigger = document.createElement('button');
+                    trigger.type = 'button';
+                    trigger.className = 'nav-link nav-link-trigger';
+                    trigger.dataset.module = moduleId;
+                    trigger.setAttribute('aria-haspopup', 'true');
+
+                    const icon = document.createElement('span');
+                    icon.className = 'nav-icon';
+                    icon.setAttribute('aria-hidden', 'true');
+                    icon.innerHTML = config.icon.trim();
+
+                    const copy = document.createElement('span');
+                    copy.className = 'nav-copy';
+
+                    const label = document.createElement('span');
+                    label.textContent = config.title;
+                    copy.appendChild(label);
+
+                    const hint = document.createElement('span');
+                    hint.className = 'nav-flyout-hint';
+                    hint.textContent = 'Hover for sections';
+                    copy.appendChild(hint);
+
+                    trigger.append(icon, copy);
+                    listItem.appendChild(trigger);
+
+                    const submenu = document.createElement('div');
+                    submenu.className = 'sidebar-submenu';
+                    submenu.setAttribute('aria-label', `${config.title} sections`);
+
+                    const submenuShell = document.createElement('div');
+                    submenuShell.className = 'sidebar-submenu-shell';
+
+                    const submenuHeader = document.createElement('div');
+                    submenuHeader.className = 'sidebar-submenu-header';
+
+                    const submenuEyebrow = document.createElement('span');
+                    submenuEyebrow.className = 'sidebar-submenu-eyebrow';
+                    submenuEyebrow.textContent = config.title;
+
+                    const submenuTitle = document.createElement('strong');
+                    submenuTitle.textContent = 'Sections';
+
+                    submenuHeader.append(submenuEyebrow, submenuTitle);
+                    submenuShell.appendChild(submenuHeader);
+
+                    const submenuList = document.createElement('div');
+                    submenuList.className = 'sidebar-submenu-list';
+
+                    getModuleItems(moduleId).forEach((entry) => {
+                        const itemButton = document.createElement('button');
+                        itemButton.type = 'button';
+                        itemButton.className = 'sidebar-submenu-link';
+                        itemButton.dataset.module = moduleId;
+                        itemButton.dataset.item = entry.id;
+                        itemButton.textContent = entry.label;
+                        submenuList.appendChild(itemButton);
+                    });
+
+                    submenuShell.appendChild(submenuList);
+                    submenu.appendChild(submenuShell);
+                    listItem.appendChild(submenu);
+                    sidebarNav.appendChild(listItem);
+                });
+
+                navLinks = Array.from(sidebarNav.querySelectorAll('.nav-link-trigger'));
+                navSubmenuLinks = Array.from(sidebarNav.querySelectorAll('.sidebar-submenu-link'));
+            }
 
             function setWorkspaceTextStatus(element, message = '', isError = false) {
                 if (!element) return;
@@ -487,12 +654,6 @@ export function initializeOperatorConsole() {
                 if (settingsCreateProjectBtn) {
                     settingsCreateProjectBtn.disabled = !usingOidc;
                 }
-                if (settingsLoginBtn) {
-                    settingsLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
-                }
-                if (settingsLogoutBtn) {
-                    settingsLogoutBtn.classList.toggle('hidden', !usingOidc);
-                }
                 syncWorkspaceSummary();
             }
 
@@ -721,13 +882,13 @@ export function initializeOperatorConsole() {
                 document.body.classList.toggle('sidebar-mobile-open', Boolean(isOpen));
             }
 
-            function updatePageContext(moduleId = activeModuleId, pageId = activePageId) {
+            function updatePageContext(moduleId = activeModuleId, itemId = activeNavItemId) {
                 const moduleConfig = moduleConfigs[moduleId];
                 if (!topbarPageContext || !moduleConfig) {
                     return;
                 }
-                const pageConfig = (moduleConfig.pages || []).find((entry) => entry.id === pageId);
-                topbarPageContext.textContent = `${moduleConfig.title} / ${pageConfig?.label || moduleConfig.title}`;
+                const itemConfig = findModuleItem(moduleId, itemId) || findModuleItem(moduleId);
+                topbarPageContext.textContent = `${moduleConfig.title} / ${itemConfig?.label || moduleConfig.title}`;
             }
 
             function loadPageData(pageId) {
@@ -771,54 +932,94 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function activatePage(pageId) {
-                clearPageIntervals();
+            function syncSidebarNavState(moduleId = activeModuleId, itemId = activeNavItemId) {
+                navLinks.forEach((link) => {
+                    const isActive = link.dataset.module === moduleId;
+                    link.classList.toggle('active', isActive);
+                    link.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+                });
+                Array.from(sidebarNav?.querySelectorAll('.sidebar-nav-item') || []).forEach((entry) => {
+                    entry.classList.toggle('active', entry.dataset.module === moduleId);
+                });
+                navSubmenuLinks.forEach((button) => {
+                    button.classList.toggle('active', button.dataset.item === itemId);
+                });
+            }
+
+            function scrollToModuleItem(item, behavior = 'smooth') {
+                const resolvedBehavior = behavior === 'instant' ? 'auto' : behavior;
+                if (!item?.targetId) {
+                    contentScroll?.scrollTo({ top: 0, behavior: resolvedBehavior });
+                    return;
+                }
+                window.requestAnimationFrame(() => {
+                    const target = document.getElementById(item.targetId);
+                    if (target) {
+                        target.scrollIntoView({ block: 'start', behavior: resolvedBehavior });
+                    }
+                });
+            }
+
+            function activatePage(pageId, { reload = true } = {}) {
+                const pageChanged = activePageId !== pageId;
+                if (pageChanged) {
+                    clearPageIntervals();
+                }
                 activePageId = pageId;
                 pages.forEach((page) => page.classList.remove('active'));
                 const page = document.getElementById(pageId);
                 if (page) {
                     page.classList.add('active');
-                    loadPageData(pageId);
+                    if (reload || pageChanged) {
+                        loadPageData(pageId);
+                    }
                 }
-                Array.from(moduleSubnav.querySelectorAll('button')).forEach((button) => {
-                    button.classList.toggle('active', button.dataset.page === pageId);
-                });
-                updatePageContext(activeModuleId, pageId);
+                updatePageContext(activeModuleId, activeNavItemId);
             }
 
-            function renderModuleSubnav(moduleId, preferredPageId = null) {
+            function renderModuleHeader(moduleId) {
                 const config = moduleConfigs[moduleId];
                 moduleTitle.textContent = config.title;
                 moduleSubtitle.textContent = config.subtitle;
-                moduleSubnav.innerHTML = '';
-                config.pages.forEach((entry) => {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.textContent = entry.label;
-                    button.dataset.page = entry.id;
-                    if (entry.id === (preferredPageId || config.pages[0].id)) {
-                        button.classList.add('active');
-                    }
-                    button.addEventListener('click', () => activatePage(entry.id));
-                    moduleSubnav.appendChild(button);
-                });
             }
 
-            function activateModule(moduleId, preferredPageId = null) {
+            function activateModule(moduleId, preferredItemOrPageId = null, { scrollBehavior = 'smooth', closeSidebar = true, reloadPage = true } = {}) {
                 const config = moduleConfigs[moduleId];
                 if (!config) return;
+                const item = findModuleItem(moduleId, preferredItemOrPageId) || getModuleItems(moduleId)[0];
+                if (!item) return;
                 activeModuleId = moduleId;
-                navLinks.forEach((link) => link.classList.toggle('active', link.dataset.module === moduleId));
-                const nextPageId = preferredPageId || config.pages[0].id;
-                renderModuleSubnav(moduleId, nextPageId);
-                activatePage(nextPageId);
-                setSidebarMobileOpen(false);
+                activeNavItemId = item.id;
+                renderModuleHeader(moduleId);
+                syncSidebarNavState(moduleId, item.id);
+                activatePage(item.pageId, { reload: reloadPage });
+                scrollToModuleItem(item, scrollBehavior);
+                if (closeSidebar) {
+                    setSidebarMobileOpen(false);
+                }
             }
+
+            renderSidebarNav();
 
             navLinks.forEach((link) => {
                 link.addEventListener('click', (event) => {
                     event.preventDefault();
                     activateModule(link.dataset.module);
+                });
+            });
+
+            navSubmenuLinks.forEach((button) => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    activateModule(
+                        button.dataset.module,
+                        button.dataset.item,
+                        {
+                            closeSidebar: true,
+                            scrollBehavior: 'smooth',
+                            reloadPage: activePageId !== findModuleItem(button.dataset.module, button.dataset.item)?.pageId,
+                        },
+                    );
                 });
             });
 
@@ -840,18 +1041,18 @@ export function initializeOperatorConsole() {
                         }
                         return;
                     }
-                    const pageMatch = (config.pages || []).find((entry) => entry.label.toLowerCase().includes(normalized));
-                    if (pageMatch) {
-                        activateModule(moduleId, pageMatch.id);
+                    const itemMatch = getModuleItems(moduleId).find((entry) => entry.label.toLowerCase().includes(normalized));
+                    if (itemMatch) {
+                        activateModule(moduleId, itemMatch.id);
                         if (topbarSearchStatus) {
-                            topbarSearchStatus.textContent = `Opened ${config.title} / ${pageMatch.label}.`;
+                            topbarSearchStatus.textContent = `Opened ${config.title} / ${itemMatch.label}.`;
                             topbarSearchStatus.classList.remove('hidden');
                         }
                         return;
                     }
                 }
                 if (topbarSearchStatus) {
-                    topbarSearchStatus.textContent = `No module or page matched "${query}".`;
+                    topbarSearchStatus.textContent = `No module or section matched "${query}".`;
                     topbarSearchStatus.classList.remove('hidden');
                 }
             }
@@ -866,8 +1067,6 @@ export function initializeOperatorConsole() {
             topbarNewProjectBtn?.addEventListener('click', () => workspaceCreateProjectBtn.click());
             settingsOpenSwitcherBtn?.addEventListener('click', () => workspaceOpenSwitcherBtn.click());
             settingsCreateProjectBtn?.addEventListener('click', () => workspaceCreateProjectBtn.click());
-            settingsLoginBtn?.addEventListener('click', () => oidcLoginBtn.click());
-            settingsLogoutBtn?.addEventListener('click', () => oidcLogoutBtn.click());
             topbarSearchForm?.addEventListener('submit', (event) => {
                 event.preventDefault();
                 focusSearchResult(topbarSearchInput?.value || '');
@@ -1280,7 +1479,7 @@ export function initializeOperatorConsole() {
                 persistWorkspaceSelection(tenantId || '', projectId || '');
                 const payload = await hydrateAuthSession();
                 if (reloadPage && activePageId && (!accessToken || payload?.project_id)) {
-                    activatePage(activePageId);
+                    activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                 }
                 return payload;
             }
@@ -1506,7 +1705,7 @@ export function initializeOperatorConsole() {
                         );
                         await hydrateAuthSession();
                         if (isAuthenticatedWorkspaceReady()) {
-                            activatePage(activePageId);
+                            activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                         }
                         closeWorkspaceOverlay(true);
                         setWorkspaceTextStatus(workspaceSelectorStatus, `Created ${organizationId} / ${projectId}.`);

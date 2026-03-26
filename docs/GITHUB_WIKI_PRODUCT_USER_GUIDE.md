@@ -28,14 +28,12 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | `Project` | Select | After Google login, choose which project to operate in. This is sent as `X-Kairyx-Project`. | `liveops` | API requests and UI data reload into that project context. |
 | `Switcher` | Button | Opens the full-screen workspace selector overlay. | None | Lets you choose an organization space and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay for the currently selected organization space. | None | Creates a new project and switches into it after success. |
-| Top bar search | Search box | Enter a module title or subpage label to jump directly to it. | `settings` | The matching module or subpage opens and the page-context text updates. |
+| Top bar search | Search box | Enter a module title or section label to jump directly to it. | `settings` | The matching module or section opens and the page-context text updates. |
 | Top bar `Switcher` | Button | Opens the full-screen workspace selector overlay from the top bar. | None | Lets you switch organization space or project without opening the sidebar controls first. |
 | Top bar `New Project` | Button | Opens the create-project overlay from the top bar. | None | Creates a new project in the active organization space after confirmation. |
-| `Auth Session` | Status text | Read-only session state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated Google user and active workspace. |
-| `Continue with Google` | Button | Starts the PKCE Google browser login flow. | None | Browser redirects to Google and returns with a bearer token. |
-| `Logout` | Button | Clears the local bearer token and, when configured, redirects to the IdP logout URL. | None | Session returns to local/demo or logged-out state. |
 | Backend status badge | Status indicator | Read-only live health status. | None | Shows whether the backend is reachable. |
-| Sidebar module links | Navigation buttons | Open the target product module, including `Settings`. | `Audience Engine` | Module title, subtitle, sub-navigation, and page content change. |
+| Sidebar module links | Navigation buttons | Hover a module to reveal its section flyout. Click the module button to open that module's first section by default. | `Audience Engine` | Module title, subtitle, active section context, and page content change. |
+| Sidebar section flyout | Flyout menu | Hover a module and click any section button in the flyout to jump directly to that section. | `Versions & Comparison` | The matching section becomes active and the page-context text updates. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
 
 ### 2.2 Recommended First-Time Path
@@ -51,7 +49,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
-10. Go to `Settings` if you want to switch between light mode and dark mode or use the shell-level workspace shortcuts.
+10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, or use the shell-level workspace shortcuts.
 
 ### 2.3 Onboarding And Workspace Overlays
 
@@ -894,7 +892,7 @@ WHERE predicted_churn_risk = 'high'
 ---
 
 ## 8) Settings
-The `Settings` module is the shell-level control page for appearance, session shortcuts, and workspace actions.
+The `Settings` module is the shell-level control page for appearance, workspace actions, session access, and shell behavior.
 
 ### 8.1 Appearance
 
@@ -912,12 +910,23 @@ The `Settings` module is the shell-level control page for appearance, session sh
 | Current workspace card | Read-only summary | Shows the active organization space and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
 | Session state card | Read-only summary | Shows the current login or demo state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session. |
 
-### 8.3 Session
+### 8.3 Session & Access
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
+| Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session before you switch workspaces or log out. |
 | `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a bearer token. |
 | `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to logged-out or local/demo state. |
+| `API Key` | Password box | Optional legacy/demo API key entry. This stays hidden when Google login is configured or an OIDC bearer session is active. | `local-demo-key` | Local/demo requests reuse the stored API key in the browser. |
+| Application startup status | Read-only status line | Shows the latest startup or health result from inside Settings. | `Application start completed (mock)` | Confirms whether the backend is reachable from the console. |
+
+### 8.4 Shell Behavior
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Collapsible sidebar` | Read-only checklist item | Describes the current desktop navigation behavior. | None | Confirms that the desktop rail can collapse to icon-only mode. |
+| `Mobile drawer` | Read-only checklist item | Describes the current small-screen navigation behavior. | None | Confirms that navigation becomes an overlay drawer on mobile. |
+| `Quick search` | Read-only checklist item | Describes the top-bar search shortcut. | None | Confirms that search can open modules and sections directly. |
 
 ---
 
