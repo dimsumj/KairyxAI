@@ -711,6 +711,7 @@ export function initializeOperatorConsole() {
                 if (googleIdentityButtonClientId !== oidcConfig.client_id) {
                     window.google.accounts.id.initialize({
                         client_id: oidcConfig.client_id,
+                        auto_select: false,
                         callback: (response) => {
                             handleGoogleCredentialResponse(response).catch((error) => {
                                 const message = error.message || 'Google sign-in failed.';
@@ -723,6 +724,9 @@ export function initializeOperatorConsole() {
                 }
                 containers.forEach((container, index) => {
                     if (!container) return;
+                    if (container.classList.contains('hidden')) {
+                        return;
+                    }
                     container.innerHTML = '';
                     window.google.accounts.id.renderButton(container, {
                         theme: 'outline',
@@ -737,18 +741,10 @@ export function initializeOperatorConsole() {
                 if (!isGoogleLoginConfigured() || accessToken || !isGoogleProvider()) {
                     return;
                 }
+                oidcLoginBtn?.classList.remove('hidden');
+                workspaceGoogleLoginBtn?.classList.remove('hidden');
                 [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
-                    if (!container) {
-                        return;
-                    }
-                    container.classList.remove('hidden');
-                });
-                window.requestAnimationFrame(() => {
-                    ensureGoogleIdentityButtons().catch((error) => {
-                        const message = error.message || 'Google Sign-In is unavailable.';
-                        setAuthStatus(message);
-                        setWorkspaceTextStatus(workspaceLoginStatus, message, true);
-                    });
+                    container?.classList.add('hidden');
                 });
             }
 
@@ -1208,16 +1204,17 @@ export function initializeOperatorConsole() {
                     legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
                 }
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
-                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc || isGoogleProvider());
+                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
                 if (workspaceGoogleLoginBtn) {
-                    workspaceGoogleLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc || isGoogleProvider());
+                    workspaceGoogleLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
                 }
                 [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
                     if (!container) return;
-                    container.classList.toggle('hidden', !usingGoogleLogin || usingOidc || !isGoogleProvider());
+                    container.classList.add('hidden');
+                    container.innerHTML = '';
                 });
                 if (usingGoogleLogin && !usingOidc && isGoogleProvider()) {
                     ensureGoogleIdentityButtons().catch((error) => {
@@ -2516,6 +2513,15 @@ export function initializeOperatorConsole() {
                         refreshWorkspaceLoginStatus(resolvedOrganizationId);
                     }
                     await ensureGoogleIdentityButtons();
+                    disableGoogleAutoSelect();
+                    setAuthStatus('Choose a Google account to continue.');
+                    setWorkspaceTextStatus(
+                        workspaceLoginStatus,
+                        resolvedOrganizationId
+                            ? `Choose the Google account you want to use for "${resolvedOrganizationId}".`
+                            : 'Choose the Google account you want to use.',
+                    );
+                    window.google.accounts.id.prompt();
                     return;
                 }
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
