@@ -35,6 +35,7 @@ from app.api.routers import (
 from app.application.imports import ImportService
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
+from app.application.projects import project_role_for_org_role
 from app.application.predictions import PredictionService
 from app.core.db import get_session_factory, init_db, is_runtime_database_fallback_active
 from app.core.auth import get_authenticator
@@ -520,7 +521,11 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                     if str(membership.get("status") or "").lower() == "active"
                 ]
                 memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
-                if mock_workspace_fallback_active and requested_project and requested_project not in memberships_by_project:
+                projects_by_id = {
+                    str(item["project_id"]): item
+                    for item in repository.list_projects(selected_tenant)
+                }
+                if mock_workspace_fallback_active and requested_project and requested_project not in projects_by_id:
                     _bootstrap_mock_fallback_workspace(
                         repository,
                         settings,
@@ -536,18 +541,24 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                         if str(membership.get("status") or "").lower() == "active"
                     ]
                     memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
+                    projects_by_id = {
+                        str(item["project_id"]): item
+                        for item in repository.list_projects(selected_tenant)
+                    }
+                default_project_role = project_role_for_org_role(org_role)
                 if requested_project:
-                    membership = memberships_by_project.get(requested_project)
-                    if membership is None:
-                        raise HTTPException(status_code=403, detail=f"Project membership for '{requested_project}' is missing or inactive.")
+                    if requested_project not in projects_by_id:
+                        raise HTTPException(status_code=403, detail=f"Project '{requested_project}' was not found in organization space '{selected_tenant}'.")
                     selected_project = requested_project
-                    project_role = str(membership.get("role") or "operator")
-                elif len(memberships_by_project) == 1:
-                    selected_project, membership = next(iter(memberships_by_project.items()))
-                    project_role = str(membership.get("role") or "operator")
-                elif not memberships_by_project:
+                    membership = memberships_by_project.get(requested_project)
+                    project_role = str((membership or {}).get("role") or default_project_role)
+                elif len(projects_by_id) == 1:
+                    selected_project = next(iter(projects_by_id))
+                    membership = memberships_by_project.get(selected_project)
+                    project_role = str((membership or {}).get("role") or default_project_role)
+                elif not projects_by_id:
                     if not allow_missing_project:
-                        raise HTTPException(status_code=403, detail=f"Project membership is missing or inactive for organization space '{selected_tenant}'.")
+                        raise HTTPException(status_code=403, detail=f"No active projects are available in organization space '{selected_tenant}'.")
                 elif not allow_missing_project:
                     raise HTTPException(status_code=409, detail="Project selection is required.")
 

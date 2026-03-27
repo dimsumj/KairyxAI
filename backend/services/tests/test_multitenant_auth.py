@@ -74,6 +74,7 @@ def _client(monkeypatch, tmp_path: Path, **env_overrides: str):
     env.update({key: str(value) for key, value in env_overrides.items()})
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    db_module.clear_runtime_database_fallback()
     db_module.get_engine.cache_clear()
     db_module.get_session_factory.cache_clear()
     clear_shared_bigquery_service_cache()
@@ -231,10 +232,47 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         assert teammate_me.status_code == 200
         assert teammate_me.json()["organization_role"] == "member"
         assert teammate_me.json()["project_role"] == "analyst"
-        assert [item["project_id"] for item in teammate_me.json()["accessible_projects"]] == ["liveops"]
+        assert [item["project_id"] for item in teammate_me.json()["accessible_projects"]] == ["liveops", "sandbox"]
 
-        wrong_project = client.get("/northstar/v1/auth/me", headers=_auth_headers(teammate_token, project_id="sandbox"))
-        assert wrong_project.status_code == 403
+        teammate_projects = client.get("/northstar/v1/projects", headers=_auth_headers(teammate_token))
+        assert teammate_projects.status_code == 200
+        assert [
+            {
+                "tenant_id": item["tenant_id"],
+                "project_id": item["project_id"],
+                "name": item["name"],
+                "description": item["description"],
+                "status": item["status"],
+                "role": item["role"],
+            }
+            for item in teammate_projects.json()["items"]
+        ] == [
+            {
+                "tenant_id": "northstar",
+                "project_id": "liveops",
+                "name": "Live Ops",
+                "description": "Primary production project",
+                "status": "active",
+                "role": "analyst",
+            },
+            {
+                "tenant_id": "northstar",
+                "project_id": "sandbox",
+                "name": "Sandbox",
+                "description": "Experiment workspace",
+                "status": "active",
+                "role": "operator",
+            },
+        ]
+
+        teammate_org = client.get("/northstar/v1/auth/me", headers=_auth_headers(teammate_token))
+        assert teammate_org.status_code == 200
+        assert teammate_org.json()["project_id"] is None
+        assert teammate_org.json()["needs_project_selection"] is True
+
+        sandbox_project = client.get("/northstar/v1/auth/me", headers=_auth_headers(teammate_token, project_id="sandbox"))
+        assert sandbox_project.status_code == 200
+        assert sandbox_project.json()["project_role"] == "operator"
 
 
 def test_mock_mode_allows_existing_member_to_create_another_organization(monkeypatch, tmp_path):

@@ -18,6 +18,13 @@ def normalize_org_role(raw_role: str | None) -> str:
     return "member"
 
 
+def project_role_for_org_role(raw_role: str | None) -> str:
+    normalized = normalize_org_role(raw_role)
+    if normalized in {"owner", "admin"}:
+        return "admin"
+    return "operator"
+
+
 class ProjectWorkspaceService:
     def __init__(self, repository):
         self.repository = repository
@@ -59,7 +66,27 @@ class ProjectWorkspaceService:
 
     def list_accessible_projects(self, tenant_id: str, user_id: str) -> List[Dict[str, Any]]:
         tenant_key = self._validate_identifier(tenant_id, label="organization_id")
-        return self.repository.list_projects(tenant_key, user_id=user_id)
+        membership = self.repository.get_tenant_membership(tenant_key, user_id)
+        if str((membership or {}).get("status") or "").lower() != "active":
+            return []
+
+        project_memberships = {
+            str(item["project_id"]): item
+            for item in self.repository.list_project_memberships(tenant_id=tenant_key, user_id=user_id)
+            if str(item.get("status") or "").lower() == "active"
+        }
+        default_role = project_role_for_org_role(membership.get("role"))
+
+        items: List[Dict[str, Any]] = []
+        for item in self.repository.list_projects(tenant_key):
+            explicit_membership = project_memberships.get(str(item["project_id"]))
+            items.append(
+                {
+                    **item,
+                    "role": str((explicit_membership or {}).get("role") or default_role),
+                }
+            )
+        return items
 
     def inspect_organization_space_access(self, organization_id: str, user_id: str) -> Dict[str, Any]:
         tenant_key = self._validate_identifier(organization_id, label="organization_id")
