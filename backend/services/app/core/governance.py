@@ -18,6 +18,8 @@ ROLE_PERMISSIONS = {
         "copilot.query",
         "copilot.explain",
         "copilot.report",
+        "copilot.agent.read",
+        "copilot.agent.run",
         "copilot.metrics.read",
         "copilot.overview.read",
         "copilot.query_log.read",
@@ -55,6 +57,9 @@ ROLE_PERMISSIONS = {
         "predictions.models.read",
     },
     "operator": {
+        "copilot.agent.read",
+        "copilot.agent.run",
+        "copilot.agent.confirm",
         "provider_connections.read",
         "provider_connections.write",
         "exports.create",

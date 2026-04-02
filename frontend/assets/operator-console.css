@@ -2426,6 +2426,149 @@
             border-radius: 1.1rem;
         }
 
+        .secondary-button {
+            background: transparent;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .copilot-manual-header {
+            margin-top: 1.5rem;
+        }
+
+        .copilot-agent-shell {
+            gap: 1.25rem;
+        }
+
+        .copilot-agent-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .copilot-agent-main,
+        .copilot-agent-side {
+            display: grid;
+            gap: 1rem;
+            min-width: 0;
+        }
+
+        .copilot-agent-starters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+        }
+
+        .copilot-agent-thread {
+            display: grid;
+            gap: 0.85rem;
+            padding: 1rem;
+            border-radius: 1rem;
+            border: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--white) 92%, var(--bg-color) 8%);
+            min-height: 18rem;
+        }
+
+        .copilot-agent-turn {
+            display: grid;
+            gap: 0.55rem;
+            padding: 0.9rem 1rem;
+            border-radius: 0.95rem;
+            border: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--white) 94%, var(--bg-color) 6%);
+        }
+
+        .copilot-agent-turn.is-user {
+            border-color: color-mix(in srgb, var(--primary-color) 28%, var(--border-color) 72%);
+        }
+
+        .copilot-agent-turn-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            align-items: center;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .copilot-agent-turn-body {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.92rem;
+        }
+
+        .copilot-agent-composer {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .copilot-agent-panel {
+            gap: 0.9rem;
+        }
+
+        .copilot-agent-panel .module-section-header {
+            margin-bottom: 0;
+        }
+
+        .copilot-agent-clarifications,
+        .copilot-agent-confirmations,
+        .copilot-agent-artifacts,
+        .copilot-agent-preview-steps,
+        .copilot-agent-clarification-form {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .copilot-agent-clarification-item,
+        .copilot-agent-confirmation-item,
+        .copilot-agent-artifact-item,
+        .copilot-agent-preview-step {
+            display: grid;
+            gap: 0.45rem;
+            padding: 0.85rem 0.95rem;
+            border-radius: 0.95rem;
+            border: 1px solid var(--border-color);
+            background: color-mix(in srgb, var(--white) 95%, var(--bg-color) 5%);
+        }
+
+        .copilot-agent-confirmation-item {
+            border-color: color-mix(in srgb, var(--yellow) 32%, var(--border-color) 68%);
+        }
+
+        .copilot-agent-step-title,
+        .copilot-agent-artifact-title,
+        .copilot-agent-confirmation-title,
+        .copilot-agent-clarification-label {
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .copilot-agent-inline-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .copilot-agent-form-row {
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .copilot-agent-form-row textarea,
+        .copilot-agent-form-row input,
+        .copilot-agent-form-row select {
+            width: 100%;
+        }
+
+        .copilot-agent-artifact-actions,
+        .copilot-agent-confirmation-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+        }
+
         body.sidebar-is-collapsed .sidebar-nav-item.active > .nav-link-trigger {
             padding-left: 0.3rem;
         }
@@ -2644,5 +2787,9 @@
 
             .sidebar-submenu-link {
                 padding: 0.72rem 0.82rem;
+            }
+
+            .copilot-agent-layout {
+                grid-template-columns: 1fr;
             }
         }

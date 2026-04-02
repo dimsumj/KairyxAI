@@ -48,3 +48,133 @@ class CopilotResponse(BaseModel):
     report_id: str | None = None
     audit_id: int | None = None
     masked_fields: List[str] = Field(default_factory=list)
+
+
+class CopilotAgentSessionCreateRequest(BaseModel):
+    title: str = ""
+    ui_context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CopilotAgentMessageRequest(BaseModel):
+    message: str
+    ui_context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CopilotAgentConfirmRequest(BaseModel):
+    note: str = ""
+
+
+class AgentArtifactLink(BaseModel):
+    resource_type: str
+    resource_id: str
+    label: str = ""
+    module_id: str = ""
+    page_id: str = ""
+    api_path: str = ""
+    focus: Dict[str, Any] = Field(default_factory=dict)
+    status: str = ""
+
+
+class AgentClarification(BaseModel):
+    key: str
+    label: str
+    question: str
+    required: bool = True
+    input_type: str = "text"
+    options: List[str] = Field(default_factory=list)
+
+
+class AgentExecutionPreviewStep(BaseModel):
+    action_id: str = ""
+    action_type: str
+    title: str
+    summary: str = ""
+    status: str = "pending"
+    requires_confirmation: bool = False
+    risk_level: str = "low"
+
+
+class AgentExecutionPreview(BaseModel):
+    intent: str
+    title: str
+    summary: str = ""
+    risk_level: str = "low"
+    ready: bool = False
+    missing_fields: List[str] = Field(default_factory=list)
+    blockers: List[str] = Field(default_factory=list)
+    steps: List[AgentExecutionPreviewStep] = Field(default_factory=list)
+
+
+class AgentActionRun(BaseModel):
+    action_id: str
+    session_id: str
+    action_type: str
+    title: str
+    status: str
+    requires_confirmation: bool = False
+    risk_level: str = "low"
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    result: Dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    artifacts: List[AgentArtifactLink] = Field(default_factory=list)
+    confirmation_id: str | None = None
+    confirmation_note: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class AgentSessionState(BaseModel):
+    session_id: str
+    title: str
+    status: str
+    current_intent: str | None = None
+    last_user_message: str = ""
+    ui_context: Dict[str, Any] = Field(default_factory=dict)
+    latest_execution_preview: AgentExecutionPreview | None = None
+    latest_artifacts: List[AgentArtifactLink] = Field(default_factory=list)
+    latest_clarifications: List[AgentClarification] = Field(default_factory=list)
+    pending_confirmation_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class AgentTurn(BaseModel):
+    turn_id: str
+    session_id: str
+    user_message: str
+    assistant_message: str
+    intent: str
+    status: str
+    clarifications: List[AgentClarification] = Field(default_factory=list)
+    execution_preview: AgentExecutionPreview | None = None
+    completed_actions: List[AgentActionRun] = Field(default_factory=list)
+    pending_confirmations: List[AgentActionRun] = Field(default_factory=list)
+    artifacts: List[AgentArtifactLink] = Field(default_factory=list)
+    ui_context: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+
+
+class CopilotAgentSessionResponse(BaseModel):
+    session_state: AgentSessionState
+    pending_confirmations: List[AgentActionRun] = Field(default_factory=list)
+    latest_turn: AgentTurn | None = None
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+
+
+class CopilotAgentTurnsResponse(BaseModel):
+    items: List[AgentTurn] = Field(default_factory=list)
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+
+
+class CopilotAgentMessageResponse(BaseModel):
+    assistant_message: str
+    session_state: AgentSessionState
+    clarifications: List[AgentClarification] = Field(default_factory=list)
+    execution_preview: AgentExecutionPreview | None = None
+    completed_actions: List[AgentActionRun] = Field(default_factory=list)
+    pending_confirmations: List[AgentActionRun] = Field(default_factory=list)
+    artifacts: List[AgentArtifactLink] = Field(default_factory=list)
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)

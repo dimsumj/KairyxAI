@@ -3,6 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.schemas.copilot import (
+    AgentTurn,
+    CopilotAgentConfirmRequest,
+    CopilotAgentMessageRequest,
+    CopilotAgentMessageResponse,
+    CopilotAgentSessionCreateRequest,
+    CopilotAgentSessionResponse,
+    CopilotAgentTurnsResponse,
     CopilotExplainRequest,
     CopilotQueryRequest,
     CopilotReportReviewRequest,
@@ -11,11 +18,128 @@ from app.api.schemas.copilot import (
     CopilotResponse,
 )
 from app.application.copilot import CopilotService
+from app.application.copilot_agent import CopilotAgentService
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
-from app.core.deps import get_copilot_service
+from app.core.deps import get_copilot_agent_service, get_copilot_service
 
 
 router = APIRouter(prefix="/copilot", tags=["copilot"])
+
+
+@router.post("/agent/sessions", response_model=CopilotAgentSessionResponse, status_code=201)
+def create_copilot_agent_session(
+    request: CopilotAgentSessionCreateRequest,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.read")
+    payload = service.create_session(title=request.title, ui_context=request.ui_context)
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_session_create",
+        resource_type="copilot_agent_session",
+        resource_id=payload["session_state"]["session_id"],
+        payload=payload,
+    )
+
+
+@router.get("/agent/sessions/{session_id}", response_model=CopilotAgentSessionResponse)
+def get_copilot_agent_session(
+    session_id: str,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.read")
+    try:
+        payload = service.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot agent session '{session_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_session_read",
+        resource_type="copilot_agent_session",
+        resource_id=session_id,
+        payload=payload,
+    )
+
+
+@router.get("/agent/sessions/{session_id}/turns", response_model=CopilotAgentTurnsResponse)
+def list_copilot_agent_turns(
+    session_id: str,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.read")
+    try:
+        payload = service.list_turns(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot agent session '{session_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_turns_read",
+        resource_type="copilot_agent_turn",
+        resource_id=session_id,
+        payload=payload,
+    )
+
+
+@router.post("/agent/sessions/{session_id}/messages", response_model=CopilotAgentMessageResponse)
+def send_copilot_agent_message(
+    session_id: str,
+    request: CopilotAgentMessageRequest,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.run")
+    try:
+        payload = service.handle_message(
+            session_id,
+            message=request.message,
+            ui_context=request.ui_context,
+            context=context,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot agent session '{session_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_message",
+        resource_type="copilot_agent_turn",
+        resource_id=session_id,
+        payload=payload,
+    )
+
+
+@router.post("/agent/actions/{action_id}/confirm", response_model=CopilotAgentMessageResponse)
+def confirm_copilot_agent_action(
+    action_id: str,
+    request: CopilotAgentConfirmRequest,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.confirm")
+    try:
+        payload = service.confirm_action(action_id, note=request.note, context=context)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot agent action '{action_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_action_confirm",
+        resource_type="copilot_agent_action_run",
+        resource_id=action_id,
+        payload=payload,
+    )
 
 
 @router.post("/query", response_model=CopilotResponse)

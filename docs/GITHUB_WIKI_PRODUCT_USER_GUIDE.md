@@ -44,7 +44,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Go to `Insight Copilot` for query, explain, recommend, and report flows.
+9. Go to `Insight Copilot` to use the agent workspace for dashboard summary, cohort setup, experiment setup, or connection setup, then use the manual query, explain, recommend, and report tools when needed.
 10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, use the shell-level `Switcher` and `New Project` shortcuts, or view the placeholder account-management layouts.
 
 ### 2.3 Deployment Surface Notes
@@ -801,7 +801,62 @@ WHERE predicted_churn_risk = 'high'
 
 ## 7) Insight Copilot
 
-### 7.1 Query
+### 7.1 Agent Workspace
+
+The top of `Insight Copilot` is now the primary operator agent surface. Use it first when you want the system to collect missing inputs and perform low-risk setup work on your behalf.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Starter task buttons` | Buttons | Sends a suggested task into the agent workspace. | `Summarize Dashboard` | The conversation starts with that operator task. |
+| `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... · active` | Confirms the active agent session. |
+| `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
+| `Message` | Text area | Ask for a dashboard summary or a setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `Set up a connection` | The agent classifies the request and either asks for missing inputs or executes safe steps. |
+| `Send To Agent` | Button | Sends the current message to the agent. | None | Conversation thread, preview, and artifacts update. |
+| `Clarifications` | Structured form | Fill only the missing inputs requested by the agent, then submit them. | `connection_scope: connector` | The agent continues the task without restarting the session. |
+| `Submit Clarifications` | Button | Sends the structured clarification form back to the agent. | None | The task either moves into preview/execution or asks for the next missing field. |
+| `Execution Preview` | Preview card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary update. |
+| `Pending Confirmations` | Action list | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears instead of auto-running the action. |
+| `Confirm Action` | Button | Explicitly approves a risky prepared action. | None | The held action executes and the conversation updates. |
+| `Artifacts` | Resource list | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+
+#### Supported v1 agent tasks
+
+- `Summarize the dashboard`
+- `Set up a cohort`
+- `Set up an A/B test`
+- `Set up a connection`
+
+The v1 agent executes only low-risk reads and draft/setup actions automatically. It does not auto-run destructive deletes. Cohort activation, experiment start/stop, experiment decision logging, and similar risky follow-up actions are held for explicit confirmation.
+
+#### Sample agent response output
+```json
+{
+  "assistant_message": "Created connector `agent_amplitude_connector` for `amplitude`.",
+  "session_state": {
+    "session_id": "cpa_20260401_1200",
+    "status": "active",
+    "current_intent": "setup_connection"
+  },
+  "execution_preview": {
+    "intent": "setup_connection",
+    "summary": "Create or update the connection and optionally verify connector health."
+  },
+  "completed_actions": [
+    {
+      "action_type": "upsert_connector",
+      "status": "completed"
+    }
+  ],
+  "artifacts": [
+    {
+      "resource_type": "connector",
+      "resource_id": "conn_123"
+    }
+  ]
+}
+```
+
+### 7.2 Query
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -826,7 +881,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 7.2 Explain
+### 7.3 Explain
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -847,7 +902,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 7.3 Recommend
+### 7.4 Recommend
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -877,7 +932,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 7.4 Report
+### 7.5 Report
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -895,7 +950,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 7.5 Query Logs, Anomalies, And Reports
+### 7.6 Query Logs, Anomalies, And Reports
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |

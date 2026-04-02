@@ -1041,6 +1041,87 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="insight-copilot" class="page">
             <h1>Insight Copilot</h1>
+            <div id="copilot-agent-section" class="card split-card copilot-agent-shell">
+                <div class="module-section-header">
+                    <div>
+                        <h2>Agent Workspace</h2>
+                        <div class="subtle">Chat with the operator agent to summarize the workspace or set up cohorts, experiments, and connections with preview-first execution.</div>
+                    </div>
+                    <div class="inline-actions">
+                        <span id="copilot-agent-session-status" class="subtle">Preparing agent session...</span>
+                        <button id="copilot-agent-new-session-btn">New Session</button>
+                    </div>
+                </div>
+                <div class="copilot-agent-layout">
+                    <div class="copilot-agent-main">
+                        <div class="copilot-agent-starters">
+                            <button type="button" class="secondary-button" data-agent-starter-message="Summarize the dashboard.">Summarize Dashboard</button>
+                            <button type="button" class="secondary-button" data-agent-starter-message="Set up an amplitude connector named agent_amplitude with api_key: demo_api_key and secret_key: demo_secret_key.">Set Up Connector</button>
+                            <button type="button" class="secondary-button" data-agent-starter-message="Set up a SQL cohort named high_risk_agent_cohort with SQL: SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'">Set Up SQL Cohort</button>
+                            <button type="button" class="secondary-button" data-agent-starter-message="Set up an A/B test named agent_ab_test for cohort_id: cohort_demo with primary metric: return_rate">Set Up A/B Test</button>
+                        </div>
+                        <div id="copilot-agent-thread" class="copilot-agent-thread">
+                            <div class="list-empty">The operator agent conversation will appear here.</div>
+                        </div>
+                        <div class="copilot-agent-composer">
+                            <div class="form-group">
+                                <label for="copilot-agent-message-input">Message</label>
+                                <textarea id="copilot-agent-message-input" style="min-height: 8rem; font-family: monospace;" placeholder="Ask for a dashboard summary, a cohort draft, an experiment config, or a connector/provider connection setup."></textarea>
+                            </div>
+                            <div class="inline-actions">
+                                <button id="copilot-agent-send-btn">Send To Agent</button>
+                                <span id="copilot-agent-send-status" class="subtle"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="copilot-agent-side">
+                        <div class="card copilot-agent-panel">
+                            <div class="module-section-header">
+                                <h2>Clarifications</h2>
+                                <span class="pill">Structured</span>
+                            </div>
+                            <div id="copilot-agent-clarifications" class="copilot-agent-clarifications">
+                                <div class="list-empty">Missing inputs will be listed here.</div>
+                            </div>
+                            <div id="copilot-agent-clarification-form" class="copilot-agent-clarification-form"></div>
+                            <div class="inline-actions">
+                                <button id="copilot-agent-submit-clarifications-btn">Submit Clarifications</button>
+                            </div>
+                        </div>
+                        <div class="card copilot-agent-panel">
+                            <div class="module-section-header">
+                                <h2>Execution Preview</h2>
+                                <span class="pill">Preview First</span>
+                            </div>
+                            <div id="copilot-agent-preview-summary" class="subtle">The agent preview will appear here.</div>
+                            <div id="copilot-agent-preview-steps" class="copilot-agent-preview-steps"></div>
+                            <pre id="copilot-agent-preview-output" class="json-output">Execution preview details will appear here.</pre>
+                        </div>
+                        <div class="card copilot-agent-panel">
+                            <div class="module-section-header">
+                                <h2>Pending Confirmations</h2>
+                                <span class="pill">High Risk</span>
+                            </div>
+                            <div id="copilot-agent-confirmations" class="copilot-agent-confirmations">
+                                <div class="list-empty">No confirmations are waiting.</div>
+                            </div>
+                        </div>
+                        <div class="card copilot-agent-panel">
+                            <div class="module-section-header">
+                                <h2>Artifacts</h2>
+                                <span class="pill">Deep Links</span>
+                            </div>
+                            <div id="copilot-agent-artifacts" class="copilot-agent-artifacts">
+                                <div class="list-empty">Created or updated resources will appear here.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="module-section-header copilot-manual-header">
+                <h2>Manual Tools</h2>
+                <span class="pill">Advanced</span>
+            </div>
             <div class="grid-2">
                 <div id="copilot-query-section" class="card split-card">
                     <div class="module-section-header">

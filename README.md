@@ -8,7 +8,7 @@ The current repository already implements a working v1 control plane for:
 - `Audience Engine`: cohort lifecycle, refresh, versions, metrics, compare, and activation controls
 - `Action Orchestrator`: workflows, triggers, delivery diagnostics, policy guards, and activation callbacks
 - `Experiment Hub`: config, assignment, exposure, outcome, integrity, summary, and rollout suggestion
-- `Insight Copilot`: query, explain, recommend, report, anomaly, and evidence-oriented reporting
+- `Insight Copilot`: operator agent workspace, query, explain, recommend, report, anomaly, and evidence-oriented reporting
 
 ## Product Vision
 
@@ -128,6 +128,8 @@ Primary backend surface:
 
 Insight Copilot is the operator-facing analysis layer:
 
+- chat-plus-preview operator agent for dashboard summary, cohort setup, experiment setup, and connection setup
+- structured clarifications, execution preview, artifact deep links, and confirmation gating for risky actions
 - natural-language metric query
 - anomaly explanation
 - action recommendation drafts
@@ -137,6 +139,7 @@ Insight Copilot is the operator-facing analysis layer:
 Primary backend surface:
 
 - `/api/v1/copilot`
+- `/api/v1/copilot/agent`
 
 ## Architecture Overview
 
@@ -470,6 +473,7 @@ For a more production-shaped warehouse path, also expect GCP-related configurati
 5. Publish or test a workflow
 6. Review experiment summary or integrity
 7. Ask Copilot for explanation or a report
+   - or use the agent workspace to summarize the dashboard and draft cohorts, experiments, or connections
 
 ## API Surface Snapshot
 
@@ -490,6 +494,7 @@ Common resources include:
 - `/api/v1/exports`
 - `/api/v1/experiments`
 - `/api/v1/copilot`
+- `/api/v1/copilot/agent`
 - `/api/v1/audit`
 - `/api/v1/templates`
 
@@ -503,7 +508,7 @@ There is also a lightweight liveness endpoint at:
 ### Backend tests
 
 ```bash
-.venv/bin/pytest backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
+.venv/bin/pytest backend/services/tests/test_copilot_agent.py backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
 ```
 
 ### Frontend/operator smoke
@@ -511,6 +516,8 @@ There is also a lightweight liveness endpoint at:
 ```bash
 PWCLI=/path/to/playwright_cli.sh BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
 ```
+
+The smoke script now checks the Insight Copilot agent workspace shell, a clarification loop, one safe setup action, and a risky follow-up that stops at confirmation.
 
 ### Lightweight frontend checks
 
