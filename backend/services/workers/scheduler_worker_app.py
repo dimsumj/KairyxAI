@@ -7,7 +7,8 @@ from fastapi import FastAPI, Request
 from app.application.control_loop import ControlLoopService
 from app.core.db import init_db, session_scope
 from app.core.request_context import RequestContext, request_context
-from app.core.settings import get_settings
+from app.core.settings import get_settings, validate_runtime_settings
+from app.core.worker_auth import require_worker_auth
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 
 
@@ -19,8 +20,14 @@ def health_live() -> dict:
     return {"status": "ok", "service": "scheduler-worker"}
 
 
+@app.on_event("startup")
+def _startup() -> None:
+    validate_runtime_settings(get_settings())
+
+
 @app.post("/run")
 async def run_scheduler(request: Request) -> dict:
+    require_worker_auth(request)
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     reference_time = body.get("reference_time") if isinstance(body, dict) else None
 

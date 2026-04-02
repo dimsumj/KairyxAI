@@ -1,0 +1,23 @@
+{
+  "serviceName": "kairyx-export-worker",
+  "cluster": "arn:aws:ecs:<aws-region>:<account-id>:cluster/<cluster-name>",
+  "taskDefinition": "kairyx-export-worker",
+  "launchType": "FARGATE",
+  "desiredCount": 1,
+  "platformVersion": "LATEST",
+  "enableExecuteCommand": true,
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:<aws-region>:<account-id>:targetgroup/kairyx-export-worker/<target-group-id>",
+      "containerName": "export-worker",
+      "containerPort": 8080
+    }
+  ],
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-aaaaaaaa", "subnet-bbbbbbbb"],
+      "securityGroups": ["sg-exportworker"],
+      "assignPublicIp": "DISABLED"
+    }
+  }
+}

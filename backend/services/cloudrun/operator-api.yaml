@@ -7,7 +7,7 @@ spec:
     spec:
       serviceAccountName: operator-api
       containers:
-        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/operator-api:latest
+        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/kairyxai@sha256:REPLACE_WITH_IMAGE_DIGEST
           env:
             - name: APP_ENV
               value: prod

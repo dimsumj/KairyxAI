@@ -1,0 +1,69 @@
+{
+  "family": "kairyx-operator-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "executionRoleArn": "arn:aws:iam::<account-id>:role/kairyx-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::<account-id>:role/kairyx-operator-api",
+  "containerDefinitions": [
+    {
+      "name": "operator-api",
+      "image": "<image-uri>",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "APP_ENV", "value": "prod" },
+        { "name": "SERVICE_ROLE", "value": "operator-api" },
+        { "name": "DATA_BACKEND_MODE", "value": "gcp" },
+        { "name": "LEGACY_HEADER_AUTH_ENABLED", "value": "false" },
+        { "name": "SCHEDULER_ENABLED", "value": "false" },
+        { "name": "CORS_ALLOWED_ORIGINS", "value": "https://console.example.com" },
+        { "name": "GCP_PROJECT_ID", "value": "your-gcp-project-id" },
+        { "name": "GCP_SECRET_PROJECT_ID", "value": "your-gcp-project-id" },
+        { "name": "IMPORT_COMMAND_TOPIC", "value": "kairyx-import-jobs" },
+        { "name": "PREDICTION_COMMAND_TOPIC", "value": "kairyx-prediction-jobs" },
+        { "name": "EXPORT_COMMAND_TOPIC", "value": "kairyx-export-jobs" },
+        { "name": "PUBSUB_TOPIC_NAME", "value": "kairyx-raw-shards" },
+        { "name": "PORT", "value": "8080" },
+        { "name": "WEB_CONCURRENCY", "value": "4" },
+        { "name": "GUNICORN_TIMEOUT", "value": "300" }
+      ],
+      "secrets": [
+        {
+          "name": "CONTROL_PLANE_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/control-plane-database-url"
+        },
+        {
+          "name": "OIDC_ISSUER",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/oidc-issuer"
+        },
+        {
+          "name": "OIDC_AUDIENCE",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/oidc-audience"
+        },
+        {
+          "name": "OIDC_JWKS_URL",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/oidc-jwks-url"
+        },
+        {
+          "name": "OIDC_CLIENT_ID",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/oidc-client-id"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/kairyx/operator-api",
+          "awslogs-region": "<aws-region>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

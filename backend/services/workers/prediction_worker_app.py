@@ -9,7 +9,8 @@ from fastapi import FastAPI, HTTPException, Request
 from app.application.predictions import PredictionService
 from app.core.db import init_db, session_scope
 from app.core.request_context import RequestContext, request_context
-from app.core.settings import get_settings
+from app.core.settings import get_settings, validate_runtime_settings
+from app.core.worker_auth import require_worker_auth
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 
 
@@ -30,8 +31,14 @@ def health_live() -> dict:
     return {"status": "ok", "service": "prediction-worker"}
 
 
+@app.on_event("startup")
+def _startup() -> None:
+    validate_runtime_settings(get_settings())
+
+
 @app.post("/pubsub/push")
 async def handle_pubsub_push(request: Request) -> dict:
+    require_worker_auth(request)
     envelope = await request.json()
     payload = _decode_pubsub_envelope(envelope)
     job_id = str(payload.get("job_id") or "").strip()

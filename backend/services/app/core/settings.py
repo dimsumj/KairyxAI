@@ -23,6 +23,7 @@ class Settings:
     bootstrap_project_id: str = "default"
     bootstrap_project_name: str = "Default Project"
     cors_allowed_origins: tuple[str, ...] = ("*",)
+    worker_shared_token: str = ""
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
@@ -111,6 +112,7 @@ def get_settings() -> Settings:
         bootstrap_project_id=normalize_env_text(os.getenv("BOOTSTRAP_PROJECT_ID", "default")) or "default",
         bootstrap_project_name=normalize_env_text(os.getenv("BOOTSTRAP_PROJECT_NAME", "Default Project")) or "Default Project",
         cors_allowed_origins=cors_allowed_origins,
+        worker_shared_token=normalize_env_text(os.getenv("WORKER_SHARED_TOKEN")),
         oidc_issuer=oidc_issuer,
         oidc_audience=oidc_audience,
         oidc_jwks_url=oidc_jwks_url,
@@ -160,6 +162,8 @@ def validate_runtime_settings(settings: Settings) -> None:
         raise RuntimeError("APP_ENV=prod requires LEGACY_HEADER_AUTH_ENABLED=false.")
     if "*" in settings.cors_allowed_origins:
         raise RuntimeError("APP_ENV=prod requires explicit CORS_ALLOWED_ORIGINS.")
+    if settings.service_role != "operator-api" and not settings.worker_shared_token:
+        raise RuntimeError("APP_ENV=prod worker services require WORKER_SHARED_TOKEN.")
     if not settings.oidc_issuer or not settings.oidc_audience or not (settings.oidc_jwks_url or settings.oidc_jwt_signing_secret):
         raise RuntimeError("APP_ENV=prod requires OIDC issuer, audience, and JWKS settings.")
     if settings.service_role == "operator-api" and settings.scheduler_enabled:

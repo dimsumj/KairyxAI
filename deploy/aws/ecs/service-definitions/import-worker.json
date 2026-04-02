@@ -1,0 +1,23 @@
+{
+  "serviceName": "kairyx-import-worker",
+  "cluster": "arn:aws:ecs:<aws-region>:<account-id>:cluster/<cluster-name>",
+  "taskDefinition": "kairyx-import-worker",
+  "launchType": "FARGATE",
+  "desiredCount": 1,
+  "platformVersion": "LATEST",
+  "enableExecuteCommand": true,
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:<aws-region>:<account-id>:targetgroup/kairyx-import-worker/<target-group-id>",
+      "containerName": "import-worker",
+      "containerPort": 8080
+    }
+  ],
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-aaaaaaaa", "subnet-bbbbbbbb"],
+      "securityGroups": ["sg-importworker"],
+      "assignPublicIp": "DISABLED"
+    }
+  }
+}
