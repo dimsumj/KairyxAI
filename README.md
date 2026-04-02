@@ -423,7 +423,7 @@ The Imports page now keeps restart-time load lighter:
 | `SERVICE_ROLE` | Runtime role (`operator-api`, `scheduler-worker`, etc.) | `operator-api` |
 | `SCHEDULER_ENABLED` | Enables background control loop | `true` |
 | `SQLITE_BUSY_TIMEOUT_SECONDS` | SQLite busy timeout | `15` |
-| `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import network timeout | `60` |
+| `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import inactivity timeout during fetch/stage | `300` |
 | `PREDICTION_NETWORK_TIMEOUT_SECONDS` | Prediction network timeout | `20` |
 | `MAX_SQL_PREVIEW_ROWS_PER_TENANT` | Tenant limit for SQL preview rows | `1000` |
 | `MAX_IMPORT_JOBS_PER_TENANT` | Tenant limit for active imports | `10` |
