@@ -6,13 +6,6 @@
   "desiredCount": 1,
   "platformVersion": "LATEST",
   "enableExecuteCommand": true,
-  "loadBalancers": [
-    {
-      "targetGroupArn": "arn:aws:elasticloadbalancing:<aws-region>:<account-id>:targetgroup/kairyx-prediction-worker/<target-group-id>",
-      "containerName": "prediction-worker",
-      "containerPort": 8080
-    }
-  ],
   "networkConfiguration": {
     "awsvpcConfiguration": {
       "subnets": ["subnet-aaaaaaaa", "subnet-bbbbbbbb"],

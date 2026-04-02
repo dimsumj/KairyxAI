@@ -15,7 +15,10 @@ This runbook assumes the current repository runtime model:
 - `export-worker`
 - `scheduler-worker`
 
-It also assumes the first portability phase is `portable compute, GCP data plane`. The containers can run on GCP, AWS, or self-hosted Docker, but production data services still remain BigQuery, GCS, Pub/Sub, and Google Secret Manager compatible.
+The runtime now supports either a GCP-native or AWS-native data plane. The same image can run:
+
+- with `BigQuery + GCS + Pub/Sub + Google Secret Manager`
+- with `Redshift Serverless + S3 + EventBridge/SQS + AWS Secrets Manager`
 
 ## 2) What The Container Contract Looks Like
 
@@ -37,14 +40,29 @@ Common settings:
 - `SERVICE_ROLE`
 - `CONTROL_PLANE_DATABASE_URL`
 - `DATA_BACKEND_MODE`
+- `WAREHOUSE_BACKEND`
+- `OBJECT_STORAGE_BACKEND`
+- `MESSAGE_BACKEND`
+- `SECRET_BACKEND`
 - `CORS_ALLOWED_ORIGINS`
-- `GCP_PROJECT_ID`
-- `GCP_SECRET_PROJECT_ID`
 - `IMPORT_COMMAND_TOPIC`
 - `PREDICTION_COMMAND_TOPIC`
 - `EXPORT_COMMAND_TOPIC`
 - `PUBSUB_TOPIC_NAME`
 - `PORT`
+
+AWS-native settings when `DATA_BACKEND_MODE=aws`:
+
+- `AWS_REGION`
+- `REDSHIFT_WORKGROUP_NAME`
+- `REDSHIFT_DATABASE`
+- `REDSHIFT_SCHEMA`
+- `S3_BUCKET_NAME`
+- `EVENTBRIDGE_BUS_NAME`
+- `SQS_IMPORT_QUEUE_URL`
+- `SQS_PREDICTION_QUEUE_URL`
+- `SQS_EXPORT_QUEUE_URL`
+- `SQS_SCHEDULER_QUEUE_URL`
 
 API-specific tuning:
 
@@ -173,23 +191,22 @@ They are starter templates, not Terraform.
 ### 6.2 Recommended AWS Shape
 
 - `operator-api` as an ECS service behind an ALB
-- `import-worker`, `prediction-worker`, and `export-worker` as separate ECS services with HTTPS-reachable endpoints if GCP Pub/Sub push or another external caller must reach them
-- `scheduler-worker` invoked on a schedule by an HTTP-capable scheduler path such as EventBridge plus API Destination, or another internal scheduler that can call `/run?token=...`
+- `import-worker`, `prediction-worker`, and `export-worker` as separate ECS services that consume dedicated SQS queues
+- `scheduler-worker` as an ECS service that consumes a scheduler queue populated by `EventBridge Scheduler`
 
-### 6.3 GCP Dependency Note
-Because the application still uses `DATA_BACKEND_MODE=gcp` in production, AWS tasks must also have Google Cloud credentials and network reachability to:
+### 6.3 AWS Native Data Plane
+For the AWS-native path, AWS tasks must have IAM access to:
 
-- BigQuery
-- Cloud Storage
-- Pub/Sub
-- Google Secret Manager if `gsm://` references are used
+- Redshift Serverless Data API
+- S3
+- EventBridge
+- SQS
+- AWS Secrets Manager
 
-Recommended order of preference:
+Recommended access model:
 
-1. workload identity federation from AWS to GCP
-2. a securely mounted GCP service account credential file as a fallback
-
-Do not treat ECS deployment as cloud-agnostic unless the GCP service dependency has been explicitly removed in code.
+1. ECS task roles for AWS API access
+2. Redshift IAM credentials or `REDSHIFT_SECRET_ARN` where needed
 
 ## 7) Release Checklist
 

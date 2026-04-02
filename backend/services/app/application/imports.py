@@ -1002,7 +1002,11 @@ class ImportService:
             "source_name": (job.get("spec") or {}).get("source_name"),
             "processing_contract": {
                 "mode": "manifest-driven",
-                "runtime_path": "gcp" if self.settings.data_backend_mode == "gcp" else "local_demo",
+                "runtime_path": (
+                    "gcp"
+                    if self.settings.data_backend_mode == "gcp"
+                    else ("aws" if self.settings.data_backend_mode == "aws" else "local_demo")
+                ),
                 "checkpoint_unit": "shard",
                 "replay_unit": "shard",
                 "canonical_aliases": self._canonical_aliases(),

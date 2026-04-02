@@ -140,7 +140,7 @@ class DataProcessingService:
             if not gcs_path:
                 continue
 
-            blob_name = gcs_path.replace(f"gs://{self.gcs_service.bucket_name}/", "")
+            blob_name = self.gcs_service.resolve_blob_name(gcs_path)
             raw_events = self.gcs_service.download_raw_events(blob_name)
             normalized_events = self.normalizer.normalize_events(raw_events)
             raw_normalized_events += len(normalized_events)

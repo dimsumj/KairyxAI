@@ -409,6 +409,10 @@ The Imports page now keeps restart-time load lighter:
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `DATA_BACKEND_MODE` | Data runtime mode | `mock` |
+| `WAREHOUSE_BACKEND` | Warehouse backend (`mock`, `bigquery`, `redshift`) | derived from `DATA_BACKEND_MODE` |
+| `OBJECT_STORAGE_BACKEND` | Object storage backend (`mock`, `gcs`, `s3`) | derived from `DATA_BACKEND_MODE` |
+| `MESSAGE_BACKEND` | Async messaging backend (`mock`, `pubsub`, `eventbridge_sqs`) | derived from `DATA_BACKEND_MODE` |
+| `SECRET_BACKEND` | Secret backend (`env`, `gcp_secret_manager`, `aws_secrets_manager`) | derived from `DATA_BACKEND_MODE` |
 | `CONTROL_PLANE_DATABASE_URL` | Control-plane database URL | local SQLite path |
 | `KAIRYX_LOCAL_DB_PATH` | Local runtime/checkpoint DB | local SQLite path |
 | `APP_ENV` | Runtime environment (`local`, `prod`) | `local` |
@@ -428,6 +432,17 @@ The Imports page now keeps restart-time load lighter:
 | `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |
 | `SERVICE_ROLE` | Runtime role (`operator-api`, `scheduler-worker`, etc.) | `operator-api` |
 | `WORKER_SHARED_TOKEN` | Shared bearer or query token for worker-only endpoints such as `/pubsub/push` and `/run` | empty |
+| `AWS_REGION` | AWS region for ECS, S3, SQS, EventBridge, Secrets Manager, and Redshift | empty |
+| `REDSHIFT_WORKGROUP_NAME` | Redshift Serverless workgroup name | empty |
+| `REDSHIFT_DATABASE` | Redshift database name | empty |
+| `REDSHIFT_SCHEMA` | Redshift schema used by the warehouse adapter | `public` |
+| `REDSHIFT_SECRET_ARN` | Optional Secrets Manager secret ARN for Redshift Data API auth | empty |
+| `S3_BUCKET_NAME` | S3 bucket for raw shards, manifests, exports, and migration landing files | empty |
+| `EVENTBRIDGE_BUS_NAME` | EventBridge bus used for job dispatch | `default` |
+| `SQS_IMPORT_QUEUE_URL` | Import worker queue URL | empty |
+| `SQS_PREDICTION_QUEUE_URL` | Prediction worker queue URL | empty |
+| `SQS_EXPORT_QUEUE_URL` | Export worker queue URL | empty |
+| `SQS_SCHEDULER_QUEUE_URL` | Scheduler worker queue URL | empty |
 | `SCHEDULER_ENABLED` | Enables background control loop | `true` |
 | `PORT` | Container listen port for the role-aware entrypoint | `8080` |
 | `WEB_CONCURRENCY` | Gunicorn worker count for `operator-api` containers | `4` |
@@ -459,7 +474,9 @@ Production deployment assets in this repository now include:
 - [backend/services/cloudrun/scheduler-worker.yaml](backend/services/cloudrun/scheduler-worker.yaml)
 - [deploy/aws/ecs/task-definitions/operator-api.json](deploy/aws/ecs/task-definitions/operator-api.json)
 - [deploy/aws/ecs/service-definitions/operator-api.json](deploy/aws/ecs/service-definitions/operator-api.json)
+- [deploy/aws/cloudwatch/alarms.json](deploy/aws/cloudwatch/alarms.json)
 - [docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md](docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md)
+- [docs/AWS_DATA_STACK_MIGRATION_RUNBOOK.md](docs/AWS_DATA_STACK_MIGRATION_RUNBOOK.md)
 - [docs/PORTABLE_DOCKER_DEPLOYMENT_RUNBOOK.md](docs/PORTABLE_DOCKER_DEPLOYMENT_RUNBOOK.md)
 - [docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md](docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 
@@ -470,10 +487,10 @@ The same image digest is now intended to serve all five runtime roles through `S
 | `SERVICE_ROLE` | Runtime |
 | --- | --- |
 | `operator-api` | public API + frontend shell |
-| `import-worker` | import Pub/Sub push worker |
-| `prediction-worker` | prediction Pub/Sub push worker |
-| `export-worker` | export Pub/Sub push worker |
-| `scheduler-worker` | scheduled control-loop worker |
+| `import-worker` | import worker with HTTP compatibility plus SQS polling in AWS mode |
+| `prediction-worker` | prediction worker with HTTP compatibility plus SQS polling in AWS mode |
+| `export-worker` | export worker with HTTP compatibility plus SQS polling in AWS mode |
+| `scheduler-worker` | control-loop worker with HTTP compatibility plus scheduler-queue polling in AWS mode |
 
 ### Docker build
 
@@ -504,7 +521,10 @@ Worker endpoints require `WORKER_SHARED_TOKEN`. Use either:
 - `Authorization: Bearer <WORKER_SHARED_TOKEN>`
 - `?token=<WORKER_SHARED_TOKEN>`
 
-For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, ADC credentials, and worker ingress auth on managed platforms.
+For production-shaped deployments, use one of the native backend stacks:
+
+- GCP: `bigquery + gcs + pubsub + gcp_secret_manager`
+- AWS: `redshift + s3 + eventbridge_sqs + aws_secrets_manager`
 
 ## How to Use the Product Locally
 
