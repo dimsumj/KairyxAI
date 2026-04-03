@@ -8242,13 +8242,6 @@ export function initializeOperatorConsole() {
             const copilotAgentThread = document.getElementById('copilot-agent-thread');
             const copilotAgentMessageInput = document.getElementById('copilot-agent-message-input');
             const copilotAgentSendStatus = document.getElementById('copilot-agent-send-status');
-            const copilotAgentClarifications = document.getElementById('copilot-agent-clarifications');
-            const copilotAgentClarificationForm = document.getElementById('copilot-agent-clarification-form');
-            const copilotAgentPreviewSummary = document.getElementById('copilot-agent-preview-summary');
-            const copilotAgentPreviewSteps = document.getElementById('copilot-agent-preview-steps');
-            const copilotAgentPreviewOutput = document.getElementById('copilot-agent-preview-output');
-            const copilotAgentConfirmations = document.getElementById('copilot-agent-confirmations');
-            const copilotAgentArtifacts = document.getElementById('copilot-agent-artifacts');
             const actionHistoryRefreshBtn = document.getElementById('action-history-refresh-btn');
             const actionHistoryStatus = document.getElementById('action-history-status');
             const serviceHealthStatus = document.getElementById('service-health-status');
@@ -9172,74 +9165,9 @@ export function initializeOperatorConsole() {
                 return rendered.join('');
             }
 
-            function renderCopilotAgentThread(turns = []) {
-                if (!copilotAgentThread) return;
-                if (!Array.isArray(turns) || turns.length === 0) {
-                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
-                    return;
-                }
-                const rows = [];
-                turns.forEach((turn) => {
-                    rows.push(`
-                        <div class="copilot-agent-turn is-user">
-                            <div class="copilot-agent-turn-header">
-                                <strong>User</strong>
-                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
-                            </div>
-                            <div class="copilot-agent-turn-body">${escapeHtml(turn.user_message || '')}</div>
-                        </div>
-                    `);
-                    rows.push(`
-                        <div class="copilot-agent-turn">
-                            <div class="copilot-agent-turn-header">
-                                <div class="copilot-agent-inline-meta">
-                                    <strong>Agent</strong>
-                                    <span class="pill">${escapeHtml(turn.intent || 'task')}</span>
-                                    <span class="pill">${escapeHtml(turn.status || 'active')}</span>
-                                </div>
-                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
-                            </div>
-                            <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
-                        </div>
-                    `);
-                });
-                copilotAgentThread.innerHTML = rows.join('');
-                copilotAgentThread.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
-                    button.addEventListener('click', async () => {
-                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
-                        try {
-                            await navigator.clipboard.writeText(code);
-                            button.textContent = 'Copied';
-                            window.setTimeout(() => {
-                                button.textContent = 'Copy';
-                            }, 1200);
-                        } catch (error) {
-                            button.textContent = 'Copy failed';
-                            window.setTimeout(() => {
-                                button.textContent = 'Copy';
-                            }, 1600);
-                        }
-                    });
-                });
-            }
-
-            function renderCopilotAgentClarifications(items = []) {
-                if (!copilotAgentClarifications || !copilotAgentClarificationForm) return;
+            function renderCopilotAgentClarificationFields(items = []) {
                 const clarifications = Array.isArray(items) ? items : [];
-                if (clarifications.length === 0) {
-                    copilotAgentClarifications.innerHTML = '<div class="list-empty">Missing inputs will be listed here.</div>';
-                    copilotAgentClarificationForm.innerHTML = '';
-                    document.getElementById('copilot-agent-submit-clarifications-btn').disabled = true;
-                    return;
-                }
-                copilotAgentClarifications.innerHTML = clarifications.map((item) => `
-                    <div class="copilot-agent-clarification-item">
-                        <div class="copilot-agent-clarification-label">${escapeHtml(item.label || item.key || 'Input')}</div>
-                        <div>${escapeHtml(item.question || '')}</div>
-                        ${Array.isArray(item.options) && item.options.length ? `<div class="subtle">Options: ${escapeHtml(item.options.join(', '))}</div>` : ''}
-                    </div>
-                `).join('');
-                copilotAgentClarificationForm.innerHTML = clarifications.map((item) => {
+                return clarifications.map((item) => {
                     const key = String(item.key || '');
                     const inputType = String(item.input_type || 'text');
                     if (inputType === 'choice') {
@@ -9268,84 +9196,186 @@ export function initializeOperatorConsole() {
                         </label>
                     `;
                 }).join('');
-                document.getElementById('copilot-agent-submit-clarifications-btn').disabled = false;
             }
 
-            function renderCopilotAgentPreview(preview = null) {
-                if (!copilotAgentPreviewSummary || !copilotAgentPreviewSteps || !copilotAgentPreviewOutput) return;
-                if (!preview) {
-                    copilotAgentPreviewSummary.textContent = 'The agent preview will appear here.';
-                    copilotAgentPreviewSteps.innerHTML = '<div class="list-empty">No preview steps yet.</div>';
-                    renderJsonOutput(copilotAgentPreviewOutput, null, 'Execution preview details will appear here.');
-                    return;
-                }
-                copilotAgentPreviewSummary.textContent = preview.summary || 'Preview ready.';
-                const steps = Array.isArray(preview.steps) ? preview.steps : [];
-                copilotAgentPreviewSteps.innerHTML = steps.length ? steps.map((step) => `
-                    <div class="copilot-agent-preview-step">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-step-title">${escapeHtml(step.title || step.action_type || 'Step')}</span>
-                            <span class="pill">${escapeHtml(step.status || 'pending')}</span>
-                            <span class="pill">${escapeHtml(step.risk_level || 'low')}</span>
+            function renderCopilotAgentInlineCards({ clarifications = [], preview = null, confirmations = [], artifacts = [] } = {}) {
+                const cards = [];
+                if (preview) {
+                    const steps = Array.isArray(preview.steps) ? preview.steps : [];
+                    cards.push(`
+                        <div class="copilot-agent-inline-card">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Execution Preview</span>
+                                <span class="pill">${escapeHtml(preview.risk_level || 'low')}</span>
+                                <span class="pill">${escapeHtml(preview.readiness || 'ready')}</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-copy">
+                                <div>${escapeHtml(preview.summary || 'Preview ready.')}</div>
+                                ${steps.length ? `<div class="copilot-agent-preview-steps">${steps.map((step) => `
+                                    <div class="copilot-agent-preview-step">
+                                        <div class="copilot-agent-inline-meta">
+                                            <span class="copilot-agent-step-title">${escapeHtml(step.title || step.action_type || 'Step')}</span>
+                                            <span class="pill">${escapeHtml(step.status || 'pending')}</span>
+                                            <span class="pill">${escapeHtml(step.risk_level || 'low')}</span>
+                                        </div>
+                                        <div>${escapeHtml(step.summary || '')}</div>
+                                    </div>
+                                `).join('')}</div>` : ''}
+                            </div>
                         </div>
-                        <div>${escapeHtml(step.summary || '')}</div>
-                    </div>
-                `).join('') : '<div class="list-empty">No preview steps yet.</div>';
-                renderJsonOutput(copilotAgentPreviewOutput, preview, 'Execution preview details will appear here.');
+                    `);
+                }
+                if (clarifications.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Clarifications Needed</span>
+                                <span class="pill">Required</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${clarifications.map((item) => `
+                                    <div class="copilot-agent-clarification-item">
+                                        <div class="copilot-agent-clarification-label">${escapeHtml(item.label || item.key || 'Input')}</div>
+                                        <div>${escapeHtml(item.question || '')}</div>
+                                        ${Array.isArray(item.options) && item.options.length ? `<div class="subtle">Options: ${escapeHtml(item.options.join(', '))}</div>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="copilot-agent-clarification-form">
+                                ${renderCopilotAgentClarificationFields(clarifications)}
+                            </div>
+                            <div class="copilot-agent-confirmation-actions">
+                                <button type="button" data-copilot-agent-submit-clarifications="true">Send Answers</button>
+                            </div>
+                        </div>
+                    `);
+                }
+                if (confirmations.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card is-warning">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Ready To Confirm</span>
+                                <span class="pill">High Risk</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${confirmations.map((item) => `
+                                    <div class="copilot-agent-confirmation-item">
+                                        <div class="copilot-agent-inline-meta">
+                                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
+                                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
+                                        </div>
+                                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
+                                        <div class="copilot-agent-confirmation-actions">
+                                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `);
+                }
+                if (artifacts.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Artifacts</span>
+                                <span class="pill">${escapeHtml(String(artifacts.length))}</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${artifacts.map((item, index) => `
+                                    <div class="copilot-agent-artifact-item">
+                                        <div class="copilot-agent-inline-meta">
+                                            <span class="copilot-agent-artifact-title">${escapeHtml(item.label || item.resource_id || 'Artifact')}</span>
+                                            <span class="pill">${escapeHtml(item.resource_type || 'resource')}</span>
+                                            <span class="pill">${escapeHtml(item.status || 'ready')}</span>
+                                        </div>
+                                        <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
+                                        <div class="copilot-agent-artifact-actions">
+                                            <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `);
+                }
+                return cards.join('');
             }
 
-            function renderCopilotAgentConfirmations(items = []) {
-                if (!copilotAgentConfirmations) return;
-                const confirmations = Array.isArray(items) ? items : [];
-                if (confirmations.length === 0) {
-                    copilotAgentConfirmations.innerHTML = '<div class="list-empty">No confirmations are waiting.</div>';
-                    return;
-                }
-                copilotAgentConfirmations.innerHTML = confirmations.map((item) => `
-                    <div class="copilot-agent-confirmation-item">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
-                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
-                        </div>
-                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
-                        <div class="copilot-agent-confirmation-actions">
-                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
-                        </div>
-                    </div>
-                `).join('');
-                copilotAgentConfirmations.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
+            function bindCopilotAgentThreadActions(artifacts = []) {
+                copilotAgentThread?.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
+                        try {
+                            await navigator.clipboard.writeText(code);
+                            button.textContent = 'Copied';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1200);
+                        } catch (error) {
+                            button.textContent = 'Copy failed';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1600);
+                        }
+                    });
+                });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         await confirmCopilotAgentAction(button.dataset.copilotAgentConfirm);
                     });
                 });
-            }
-
-            function renderCopilotAgentArtifacts(items = []) {
-                if (!copilotAgentArtifacts) return;
-                const artifacts = Array.isArray(items) ? items : [];
-                if (artifacts.length === 0) {
-                    copilotAgentArtifacts.innerHTML = '<div class="list-empty">Created or updated resources will appear here.</div>';
-                    return;
-                }
-                copilotAgentArtifacts.innerHTML = artifacts.map((item, index) => `
-                    <div class="copilot-agent-artifact-item">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-artifact-title">${escapeHtml(item.label || item.resource_id || 'Artifact')}</span>
-                            <span class="pill">${escapeHtml(item.resource_type || 'resource')}</span>
-                            <span class="pill">${escapeHtml(item.status || 'ready')}</span>
-                        </div>
-                        <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
-                        <div class="copilot-agent-artifact-actions">
-                            <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
-                        </div>
-                    </div>
-                `).join('');
-                copilotAgentArtifacts.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         const artifact = artifacts[Number(button.dataset.copilotAgentArtifactIndex)];
                         await openCopilotAgentArtifact(artifact);
                     });
                 });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-submit-clarifications]').forEach((button) => {
+                    button.addEventListener('click', submitCopilotAgentClarifications);
+                });
+            }
+
+            function renderCopilotAgentThread(turns = [], extras = {}) {
+                if (!copilotAgentThread) return;
+                const rows = [];
+                if (Array.isArray(turns)) {
+                    turns.forEach((turn) => {
+                        rows.push(`
+                            <div class="copilot-agent-turn is-user">
+                                <div class="copilot-agent-turn-header">
+                                    <strong>User</strong>
+                                    <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                                </div>
+                                <div class="copilot-agent-turn-body">${escapeHtml(turn.user_message || '')}</div>
+                            </div>
+                        `);
+                        rows.push(`
+                            <div class="copilot-agent-turn">
+                                <div class="copilot-agent-turn-header">
+                                    <div class="copilot-agent-inline-meta">
+                                        <strong>Agent</strong>
+                                        <span class="pill">${escapeHtml(turn.intent || 'task')}</span>
+                                        <span class="pill">${escapeHtml(turn.status || 'active')}</span>
+                                    </div>
+                                    <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                                </div>
+                                <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
+                            </div>
+                        `);
+                    });
+                }
+                const inlineCards = renderCopilotAgentInlineCards(extras);
+                if (inlineCards) {
+                    rows.push(inlineCards);
+                }
+                if (!rows.length) {
+                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
+                    return;
+                }
+                copilotAgentThread.innerHTML = rows.join('');
+                bindCopilotAgentThreadActions(extras.artifacts || []);
+                copilotAgentThread.scrollTop = copilotAgentThread.scrollHeight;
             }
 
             async function openCopilotAgentArtifact(artifact) {
@@ -9438,11 +9468,12 @@ export function initializeOperatorConsole() {
                         `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
                     );
                 }
-                renderCopilotAgentThread(turns);
-                renderCopilotAgentClarifications(payload.clarifications || sessionState.latest_clarifications || []);
-                renderCopilotAgentPreview(payload.execution_preview || sessionState.latest_execution_preview || null);
-                renderCopilotAgentConfirmations(payload.pending_confirmations || []);
-                renderCopilotAgentArtifacts(payload.artifacts || sessionState.latest_artifacts || []);
+                renderCopilotAgentThread(turns, {
+                    clarifications: payload.clarifications || sessionState.latest_clarifications || [],
+                    preview: payload.execution_preview || sessionState.latest_execution_preview || null,
+                    confirmations: payload.pending_confirmations || [],
+                    artifacts: payload.artifacts || sessionState.latest_artifacts || [],
+                });
                 syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
             }
 
@@ -9464,7 +9495,7 @@ export function initializeOperatorConsole() {
             }
 
             function buildCopilotAgentClarificationMessage() {
-                const fields = Array.from(copilotAgentClarificationForm?.querySelectorAll('[data-clarification-key]') || []);
+                const fields = Array.from(copilotAgentThread?.querySelectorAll('[data-clarification-key]') || []);
                 if (!fields.length) {
                     return '';
                 }
@@ -9509,10 +9540,6 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         renderCopilotAgentThread([]);
-                        renderCopilotAgentClarifications([]);
-                        renderCopilotAgentPreview(null);
-                        renderCopilotAgentConfirmations([]);
-                        renderCopilotAgentArtifacts([]);
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         return;
                     }
@@ -9727,14 +9754,9 @@ export function initializeOperatorConsole() {
                 copilotAgentSessionId = null;
                 copilotAgentLastResponse = null;
                 renderCopilotAgentThread([]);
-                renderCopilotAgentClarifications([]);
-                renderCopilotAgentPreview(null);
-                renderCopilotAgentConfirmations([]);
-                renderCopilotAgentArtifacts([]);
                 syncCopilotAgentLauncherBadge(0);
                 await loadCopilotAgentWorkspace(true);
             });
-            document.getElementById('copilot-agent-submit-clarifications-btn').addEventListener('click', submitCopilotAgentClarifications);
             copilotAgentMessageInput.addEventListener('keydown', (event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();

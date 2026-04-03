@@ -56,11 +56,9 @@ The primary Copilot surface is now a global chat-first assistant with:
 - persistent bottom-right launcher
 - right-side drawer on desktop and full-screen sheet on mobile
 - conversation thread
-- suggested starter tasks
-- structured clarification prompts
-- execution preview card
-- pending confirmation banner
-- result artifact links into the relevant module
+- bottom composer with a standard `Send` action
+- inline clarification cards that appear only when required
+- inline execution preview, confirmation, and artifact cards inside the transcript instead of side panels
 
 The assistant is available from every app page after workspace resolution and keeps one shared session alive across SPA navigation. The existing manual `query / explain / recommend / report` tools remain on the Insight Copilot page as the advanced/manual fallback.
 
@@ -212,12 +210,16 @@ The execution preview must show:
 - blockers
 - ordered preview steps with action type, title, summary, confirmation flag, and status
 
+The frontend renders this preview inline in the transcript only when a preview exists.
+
 ### 4.4 Artifacts
 Completed actions may return deep-linkable artifacts such as:
 - cohort
 - experiment
 - connector
 - provider connection
+
+The frontend renders artifacts as inline transcript cards instead of a dedicated side rail.
 - saved query
 
 ---

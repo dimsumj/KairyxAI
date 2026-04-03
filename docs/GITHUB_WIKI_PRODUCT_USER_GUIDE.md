@@ -827,23 +827,27 @@ The assistant can:
 - set up low-risk draft cohorts, experiment configs, connectors, and provider connections
 - stop high-risk actions at explicit confirmation
 
+The drawer now behaves like a normal chat room:
+- one transcript from top to bottom
+- one message box at the bottom
+- inline clarification, preview, confirmation, and artifact cards only when they are relevant
+- no persistent side panels for agent workflow state
+
 The `Insight Copilot` page now acts as the advanced/manual fallback for direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` usage.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
 | `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
-| `Starter task buttons` | Buttons | Sends a suggested task into the assistant drawer. | `Connector Help` | The conversation starts with that operator task. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
 | `Message` | Text area | Ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant returns grounded guidance or executes the supported setup flow. |
-| `Send To Agent` | Button | Sends the current message to the assistant. | None | Conversation thread, preview, and artifacts update. |
-| `Clarifications` | Structured form | Fill only the missing inputs requested by the agent, then submit them. | `connection_scope: connector` | The agent continues the task without restarting the session. |
-| `Submit Clarifications` | Button | Sends the structured clarification form back to the agent. | None | The task either moves into preview/execution or asks for the next missing field. |
-| `Execution Preview` | Preview card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary update. |
-| `Pending Confirmations` | Action list | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears instead of auto-running the action. |
-| `Confirm Action` | Button | Explicitly approves a risky prepared action. | None | The held action executes and the conversation updates. |
-| `Artifacts` | Resource list | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| `Send` | Button | Sends the current message to the assistant. | None | The transcript updates with the latest answer or task state. |
+| Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
+| Inline execution preview | Conditional card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary appear in the transcript. |
+| Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
+| `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
+| Inline artifact card | Conditional resource card | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
 | `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 
 #### Supported v1 agent tasks
