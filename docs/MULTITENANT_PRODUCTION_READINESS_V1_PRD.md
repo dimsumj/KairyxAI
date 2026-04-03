@@ -26,8 +26,11 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ### 3.1 In Scope
 - OIDC bearer-token operator auth with organization-scoped paths like `/{organization_id}/v1/...` and project selection through `X-Kairyx-Project`
-- Control-plane tenant model with `tenant`, `platform_user`, and `tenant_membership`
+- Control-plane tenant model with `tenant`, `platform_user`, organization-level membership, and org-level invite records
+- Organization roles limited to `owner`, `admin`, and `member`
+- Organization gateway behavior at `/`, with `/{organization_id}` as the app shell after org and project resolution
 - Tenant-scoped persistence, job metadata, audit metadata, and operator context propagation
+- Oldest-active-project defaulting, org-wide project access, and permanent project deletion with explicit confirmation
 - Secret-reference-based connector and provider configuration with Google Secret Manager compatibility
 - Dedicated Cloud Run service topology for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
 - Structured observability, correlation IDs, worker replay paths, and operational runbooks
@@ -47,8 +50,11 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ### 4.1 Identity And Governance Baseline
 - The backend now supports bearer-token operator traffic on organization-scoped paths through `Authorization: Bearer <OIDC JWT>` plus `X-Kairyx-Project`.
-- `/api/v1/auth/me` exposes the resolved Google user, organization, project, and correlation context for the active request.
+- `/api/v1/auth/me` is the gateway source of truth and exposes the resolved Google user, accessible organizations, accessible projects, active organization, active project, and correlation context for the active request.
+- Product access is organization-level: all organization members can access all active projects in that organization.
+- Organization roles are now fixed to `owner`, `admin`, and `member`.
 - `/api/v1/tenants` and `/api/v1/tenants/{tenant_id}/memberships/{user_id}` establish the platform-admin path for tenant creation and membership management.
+- Product-facing team management uses organization members and organization invites rather than project memberships.
 - Legacy header auth remains a local/demo compatibility path and is intended to stay disabled in production.
 - Governance permissions now cover tenant admin, provider connection, callback ingestion, and module-specific operator actions.
 
@@ -76,7 +82,16 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - The documented dependency-guard direction from `DEVELOPMENT_MEMORY.md` is now part of the production-readiness baseline and no longer a purely speculative gap.
 
 ### 4.6 Frontend And Operator Baseline
-- The frontend now has a minimum production-shaped auth baseline with Google PKCE login, organization-URL routing, and project switching.
+- The frontend now has a minimum production-shaped auth baseline with Google PKCE login, a gateway-only `/` route, an authoritative `/{organization_id}` app shell, organization URL resolution, and project switching.
+- The frozen gateway behavior is:
+  - `0` accessible orgs -> create-organization flow
+  - `1` accessible org -> project selection for that org
+  - `2+` accessible orgs -> organization selection, then project selection
+- If the typed organization exists but the signed-in Google account is not a member, the gateway must show an explicit not-a-member error.
+- Duplicate organization creation must fail explicitly.
+- The default project is the oldest active project in the selected organization.
+- Organization invites are email-based and org-level, with optional shareable invite links layered on top.
+- Project deletion is owner/admin-only, permanent, and guarded by typed `delete` confirmation.
 - Local/demo operation remains supported so operators can still run the single-page console without a live IdP during development.
 - Broader console productization and deeper end-to-end coverage remain separate workstreams.
 
@@ -105,7 +120,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Validate that credential rotation does not require reauthoring published workflows or exports.
 
 ### 5.5 End-To-End Operator Validation
-- Expand regression coverage so JWT auth, organization-path selection, provider-backed execution, and callback ingestion are exercised together.
+- Expand regression coverage so JWT auth, organization-path selection, provider-backed execution, org invite acceptance, project deletion, and callback ingestion are exercised together.
 - Run the console smoke flow for login, tenant switch, import, cohort, workflow, experiment, and diagnostics in a production-shaped staging environment.
 - Confirm that platform-admin cross-tenant actions are limited to the explicit routes intended for them.
 
@@ -120,28 +135,47 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ### 6.1 Auth Contract
 - Operator traffic uses `Authorization: Bearer <OIDC JWT>`.
+- Google login happens before workspace entry.
+- The bare `/` route is gateway-only, while `/{organization_id}` is the active operator shell.
 - Organization selection uses the URL path shape `/{organization_id}/v1/...`.
 - Project selection uses `X-Kairyx-Project`.
-- Effective role comes from tenant membership stored in the control plane, not from request headers.
+- Effective access comes from organization membership stored in the control plane, not from request headers or project membership checks.
+- Organization roles are exactly `owner`, `admin`, and `member`.
+- All organization members can access all active projects inside the selected organization.
 - Legacy `x-api-key`, `x-actor-role`, `x-actor-id`, and `x-tenant-id` are local/demo compatibility only and are not part of production traffic.
 
 ### 6.2 Tenant Governance Contract
 - `POST /api/v1/tenants` creates a tenant through a platform-admin path.
 - `GET /api/v1/tenants/{tenant_id}/memberships` lists memberships for a tenant.
 - `PUT /api/v1/tenants/{tenant_id}/memberships/{user_id}` grants or updates tenant membership.
-- `/api/v1/auth/me` returns the resolved Google user, organization, project, role, and correlation context for the active request.
+- `/api/v1/auth/me` returns the resolved Google user, accessible organizations, accessible projects for the selected organization, active role, and correlation context for the active request.
+- Product-facing team management is organization-level:
+  - `GET /api/v1/organization-members`
+  - `POST /api/v1/organization-members`
+  - `PATCH /api/v1/organization-members/{member_id}`
+- Product-facing invite management is organization-level and email-based:
+  - `POST /api/v1/organization-invites`
+  - `POST /api/v1/organization-invites/redeem`
+- If an organization already exists but the signed-in Google account is not a member, the org-resolution contract must return `exists=true` and `accessible=false`.
 
-### 6.3 Resource Metadata Contract
+### 6.3 Project Lifecycle And Isolation Contract
+- The default project for an organization is the oldest active project by `created_at`.
+- `POST /api/v1/projects/{project_id}/permanent-delete` permanently deletes a project and requires a confirmation payload of `delete`.
+- Project deletion is allowed only to organization `owner` and `admin` users.
+- The team member list is shared across projects in the organization.
+- Project-scoped data must remain isolated across connectors, imports, data layers, workflows, cohorts, predictions, AI agents, tools, experiments, exports, and project-scoped audit history.
+
+### 6.4 Resource Metadata Contract
 - Control-plane resources and jobs must include `tenant_id`, `created_by`, `updated_by`, and `correlation_id`.
 - Tenant-scoped IDs are immutable and must be used by downstream references instead of mutable names.
 - Cross-tenant reads are not the default behavior and require explicit platform-admin handling.
 
-### 6.4 Secret Contract
+### 6.5 Secret Contract
 - Persist only secret references or provider-connection references in production resource config.
 - Inline production secrets are rejected for published resources and are allowed only for local sandbox-style test flows where the contract explicitly allows them.
 - Secret resolution must happen at execution time through the platform secret layer.
 
-### 6.5 Provider And Callback Contract
+### 6.6 Provider And Callback Contract
 - Provider-backed actions and exports resolve credentials from tenant-scoped provider connections.
 - Callback verification uses provider-specific signing material resolved from the provider connection or secret layer.
 - Callback identity must be tenant-aware so one tenant's delivery reconciliation cannot collide with another tenant's events.
@@ -154,22 +188,29 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
    - Missing membership returns the correct denial path.
    - Wrong organization selection is rejected.
    - Platform-admin override works only on explicit routes.
+   - Existing organization + non-member returns an explicit accessible-false gateway result.
+   - Duplicate organization creation returns a conflict instead of silently reusing the org.
 2. `Tenant isolation`
    - Connectors, imports, cohorts, workflows, experiments, exports, audit records, BigQuery datasets, and GCS prefixes are isolated per tenant.
    - Same logical names can exist across tenants without creating collisions inside a single tenant.
+   - Inside one organization, team membership is shared while project data remains isolated across all project-scoped modules.
 3. `Secret handling`
    - Read APIs never expose raw secret material.
    - Rotation keeps stable references where possible.
    - Published production resources cannot persist inline credentials.
-4. `Runtime isolation`
+4. `Project lifecycle`
+   - The oldest active project is returned as the default project.
+   - Owner/admin-only project deletion requires typed `delete` confirmation.
+   - Deleting a project removes its project-scoped data without deleting the org or the shared team list.
+5. `Runtime isolation`
    - Worker execution does not depend on in-process API threads.
    - Production startup rejects local/demo-only settings.
    - Retry, replay, and dead-letter handling preserve tenant context and correlation context.
-5. `Provider and measurement integrity`
+6. `Provider and measurement integrity`
    - Signed callbacks are accepted only when signatures validate.
    - Invalid signatures are rejected.
    - Delayed callbacks still reconcile against the correct tenant-scoped delivery and experiment state.
-6. `Operational readiness`
+7. `Operational readiness`
    - Runbooks have been rehearsed in staging.
    - Alert policies are active and routed.
    - Backup and restore has been validated in an isolated environment.

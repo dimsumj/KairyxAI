@@ -14,7 +14,7 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 
 ## 1.2) Current-Version Non-Goals (Inherited from Current-State Scope)
 - No on-prem control-plane rewrite; shared SaaS multi-tenancy on GCP is the primary operating model for this phase
-- No custom enterprise IAM product beyond OIDC federation and tenant-membership governance in the control plane
+- No custom enterprise IAM product beyond OIDC federation and organization-membership governance in the control plane
 - No general-purpose secret-management platform beyond product-integrated secret references and Google Secret Manager resolution
 - No real-time streaming decision engine
 - No fully automated high-risk closed-loop optimization
@@ -215,7 +215,17 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 **Principle**: critical behavior must be traceable, auditable, and reviewable.
 
 **Execution requirements**
-- RBAC: `Admin / Analyst / Operator`
+- Google login is required before workspace entry
+- The bare `/` route is gateway-only and `/{organization_id}` is the operator app shell
+- Organization roles are exactly `owner`, `admin`, and `member`
+- The organization creator becomes the only `owner`, and `owner` also has admin privileges
+- All organization members can access all active projects in the same organization
+- Organization invites are email-based and organization-level; invite links are optional convenience only
+- If a typed organization already exists but the signed-in Google account is not a member, the gateway must show an explicit not-a-member error
+- Duplicate organization creation must fail explicitly instead of reusing an existing org
+- The default project is the oldest active project in the organization
+- Project deletion is permanent, owner/admin-only, and requires typing `delete`
+- Team membership is shared at the organization level while project data stays isolated
 - Audit coverage: configuration changes, cohort changes, experiment decisions, execution actions
 - PII masking is enabled by default
 - Queries and replays must be protected by resource limits such as timeout, scan caps, and concurrency limits
@@ -328,11 +338,11 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 #### Gap-M2 Production Readiness
 - Current state:
-  - The repository now includes the first production-shaped baseline for OIDC bearer auth, tenant membership governance, secret references, Cloud Run worker topology artifacts, and multi-tenant runbooks
+  - The repository now includes the first production-shaped baseline for OIDC bearer auth, organization-membership governance, secret references, Cloud Run worker topology artifacts, and multi-tenant runbooks
   - The remaining work is production cutover hardening: infrastructure rollout, alerting, staged validation, provider drills, and final enforcement of production-only startup rules
   - Detailed sequencing and launch gates are owned by `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
 - Ownership split:
-  - Master: authN / authZ / tenant model / deployment topology / monitoring / runbook / rollout gates
+  - Master: authN / authZ / org gateway / org-role model / deployment topology / monitoring / runbook / rollout gates
   - Data Core: data and connector secrets / warehouse access boundary
   - Audience / Action / Experiment / Copilot: module-level RBAC, audit, and high-risk action boundaries
 - Exit criteria:

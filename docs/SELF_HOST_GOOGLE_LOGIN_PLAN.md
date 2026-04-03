@@ -8,7 +8,7 @@ The intent is to keep the current user-facing product flow:
 
 - user reaches the full-screen Google login gate
 - user signs in with Google
-- KairyxAI resolves organization-space and project access
+- KairyxAI resolves accessible organizations and then project access inside the selected org
 - first-time users go into onboarding
 - returning users land in their existing workspace
 
@@ -34,7 +34,7 @@ The recommended model is:
   - optional local or preview
 - KairyxAI remains the authorization system
   - Google proves identity
-  - KairyxAI stores organization-space membership, project membership, org role, and project role
+  - KairyxAI stores organization membership, org role, org-level invite state, and project selection state
 - the Vercel adapter remains a separate demo surface only
   - `api/index.py` sets `KAIRYX_PLATFORM_SURFACE=vercel_demo`
   - runtime SQLite fallback and database-backed mock state are fenced to that demo adapter
@@ -93,9 +93,9 @@ KairyxAI issues or manages the application session used against Kairyx APIs.
 9. Frontend receives only the Kairyx session token or a short-lived bootstrap code that can be redeemed for it.
 10. Frontend calls `GET /api/v1/auth/me`.
 11. Kairyx routes the user to:
-    - onboarding if no memberships exist
-    - direct workspace entry if exactly one org and project are active
-    - workspace selection if more than one org or project is available
+    - create-organization if no org memberships exist
+    - project selection if exactly one org is accessible
+    - organization selection if more than one org is accessible
 12. After the organization is resolved, the frontend rewrites the browser URL to `https://<host>/<organization_id>` while keeping the Google callback URL fixed.
 
 ### Session Ownership
@@ -214,6 +214,18 @@ Keep [backend/services/app/api/routers/auth.py](backend/services/app/api/routers
 - accessible organizations and projects
 
 That preserves the current product behavior after login.
+
+Frozen workspace contract for self-hosted Google login:
+
+- `/` remains the gateway only
+- `/{organization_id}` is the operator app shell
+- all org members can access all active projects in that org
+- organization roles are `owner`, `admin`, and `member`
+- organization invites are email-based and org-level
+- if the typed org already exists but the signed-in Google account is not a member, the gateway must show an explicit not-a-member error
+- duplicate organization creation must fail explicitly
+- the default project is the oldest active project in the organization
+- project deletion remains owner/admin-only, permanent, and typed-confirmation gated
 
 ### 7. Update Frontend Login Flow
 
@@ -392,7 +404,7 @@ Run all of these before declaring production ready:
 
 1. Logged-out user sees only the Google login gate.
 2. Google login redirects to the exact customer-owned production domain with no redirect mismatch.
-3. First-time user reaches organization-space onboarding.
+3. First-time user reaches organization onboarding.
 4. Existing user lands directly in their expected organization and project or sees the workspace selector when appropriate.
 5. Invite redemption works end to end through Google login.
 6. Logout clears the Kairyx session and returns the browser to the login gate.
@@ -425,7 +437,7 @@ Kairyx-owned:
 
 - backend callback implementation
 - Kairyx session issuance
-- organization-space and project authorization logic
+- organization and project authorization logic
 - onboarding and workspace routing
 - documentation and upgrade path
 
