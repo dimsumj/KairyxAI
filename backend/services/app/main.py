@@ -361,6 +361,11 @@ def _is_tenant_optional_path(path: str, settings) -> bool:
     } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding")
 
 
+def _prefer_forbidden_for_missing_tenant(path: str, settings) -> bool:
+    api = settings.api_v1_prefix.rstrip("/")
+    return path == f"{api}/auth/me"
+
+
 def _is_project_optional_path(path: str, settings) -> bool:
     api = settings.api_v1_prefix.rstrip("/")
     return path in {
@@ -499,7 +504,7 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
 
             if not memberships_by_tenant:
                 if requested_tenant:
-                    if repository.get_tenant(requested_tenant) is None:
+                    if repository.get_tenant(requested_tenant) is None and not _prefer_forbidden_for_missing_tenant(resolved_path, settings):
                         raise HTTPException(
                             status_code=404,
                             detail=f"Organization space '{requested_tenant}' was not found.",
@@ -526,7 +531,7 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             selected_tenant = None
             if requested_tenant:
                 if requested_tenant not in memberships_by_tenant:
-                    if repository.get_tenant(requested_tenant) is None:
+                    if repository.get_tenant(requested_tenant) is None and not _prefer_forbidden_for_missing_tenant(resolved_path, settings):
                         raise HTTPException(
                             status_code=404,
                             detail=f"Organization space '{requested_tenant}' was not found.",
