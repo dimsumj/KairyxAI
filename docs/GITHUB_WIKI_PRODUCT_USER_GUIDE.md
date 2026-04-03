@@ -842,7 +842,6 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
-| `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
 | `Message` | Text area | Wait until the placeholder changes from `Getting Agents Ready...` to the normal prompt, then ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant blocks only the initial first message while the first session is created, then returns grounded guidance or executes the supported setup flow. |

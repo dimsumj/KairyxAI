@@ -32,7 +32,6 @@ export function initializeOperatorConsole() {
             const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
             const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
             const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
-            const copilotAgentCurrentContext = document.getElementById('copilot-agent-current-context');
             const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
@@ -9125,9 +9124,6 @@ export function initializeOperatorConsole() {
                 const label = getCopilotAgentContextLabel();
                 if (copilotAgentLauncherContext) {
                     copilotAgentLauncherContext.textContent = label;
-                }
-                if (copilotAgentCurrentContext) {
-                    copilotAgentCurrentContext.textContent = `Context: ${label}`;
                 }
             }
 
