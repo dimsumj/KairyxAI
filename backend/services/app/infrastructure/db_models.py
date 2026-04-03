@@ -94,6 +94,29 @@ class ProjectInviteModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class OrganizationInviteModel(Base):
+    __tablename__ = "organization_invites_v1"
+    __table_args__ = (
+        UniqueConstraint("invite_code", name="uq_organization_invites_v1_invite_code"),
+        UniqueConstraint("tenant_id", "email", name="uq_organization_invites_v1_tenant_email"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    invite_code: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="member", index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", index=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="system", index=True)
+    redeemed_by: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    correlation_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ConnectorConfigModel(Base):
     __tablename__ = "connector_configs"
     __table_args__ = (

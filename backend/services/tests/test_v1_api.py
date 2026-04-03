@@ -470,7 +470,7 @@ def test_startup_upgrades_legacy_sqlite_control_plane_without_alembic_version(mo
 
         version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
         assert version_row is not None
-        assert version_row[0] == "20260324_0004"
+        assert version_row[0] == "20260402_0005"
     finally:
         upgraded_connection.close()
 
@@ -549,7 +549,7 @@ def test_startup_resumes_partial_multitenant_sqlite_upgrade(monkeypatch, tmp_pat
 
         version_row = upgraded_connection.execute("SELECT version_num FROM alembic_version").fetchone()
         assert version_row is not None
-        assert version_row[0] == "20260324_0004"
+        assert version_row[0] == "20260402_0005"
 
         bootstrap_tenants = upgraded_connection.execute(
             "SELECT COUNT(*) FROM tenants_v1 WHERE tenant_id = 'default'"

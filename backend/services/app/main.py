@@ -24,6 +24,8 @@ from app.api.routers import (
     imports,
     mappings,
     onboarding,
+    organization_invites,
+    organization_members,
     predictions,
     projects,
     provider_connections,
@@ -306,6 +308,8 @@ def create_app() -> FastAPI:
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
     app.include_router(mappings.router, prefix=settings.api_v1_prefix)
     app.include_router(onboarding.router, prefix=settings.api_v1_prefix)
+    app.include_router(organization_members.router, prefix=settings.api_v1_prefix)
+    app.include_router(organization_invites.router, prefix=settings.api_v1_prefix)
     app.include_router(projects.router, prefix=settings.api_v1_prefix)
     app.include_router(imports.router, prefix=settings.api_v1_prefix)
     app.include_router(predictions.router, prefix=settings.api_v1_prefix)
@@ -353,6 +357,7 @@ def _is_tenant_optional_path(path: str, settings) -> bool:
     return path in {
         f"{api}/auth/me",
         f"{api}/project-invites/redeem",
+        f"{api}/organization-invites/redeem",
     } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding")
 
 
@@ -362,7 +367,10 @@ def _is_project_optional_path(path: str, settings) -> bool:
         f"{api}/auth/me",
         f"{api}/projects",
         f"{api}/project-invites/redeem",
-    } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding") or path.endswith("/invites")
+        f"{api}/organization-members",
+        f"{api}/organization-invites",
+        f"{api}/organization-invites/redeem",
+    } or path.startswith(f"{api}/auth/organization-space/") or path.startswith(f"{api}/onboarding") or path.startswith(f"{api}/organization-members/") or path.startswith(f"{api}/projects/") or path.endswith("/invites")
 
 
 def _bootstrap_mock_fallback_workspace(
@@ -438,6 +446,12 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                 email=principal.email,
                 display_name=principal.display_name,
             )
+            if principal.email:
+                repository.activate_organization_invites_for_email(
+                    email=principal.email,
+                    user_id=principal.subject,
+                    display_name=principal.display_name,
+                )
             if principal.platform_admin:
                 effective_tenant = requested_tenant or settings.bootstrap_tenant_id
                 effective_project = requested_project or settings.bootstrap_project_id
@@ -485,6 +499,16 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
 
             if not memberships_by_tenant:
                 if not allow_missing_tenant:
+                    if requested_tenant:
+                        if repository.get_tenant(requested_tenant) is None:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Organization space '{requested_tenant}' was not found.",
+                            )
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Organization space '{requested_tenant}' exists, but this Google account is not a member.",
+                        )
                     raise HTTPException(status_code=403, detail="No organization space membership is active for this user.")
                 session.commit()
                 return GovernanceContext(
@@ -502,7 +526,15 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             selected_tenant = None
             if requested_tenant:
                 if requested_tenant not in memberships_by_tenant:
-                    raise HTTPException(status_code=403, detail=f"Tenant membership for '{requested_tenant}' is missing or inactive.")
+                    if repository.get_tenant(requested_tenant) is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Organization space '{requested_tenant}' was not found.",
+                        )
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Organization space '{requested_tenant}' exists, but this Google account is not a member.",
+                    )
                 selected_tenant = requested_tenant
             elif len(memberships_by_tenant) == 1:
                 selected_tenant = next(iter(memberships_by_tenant))
@@ -512,15 +544,9 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
             org_membership = memberships_by_tenant.get(selected_tenant) if selected_tenant else None
             org_role = _normalize_org_role((org_membership or {}).get("role"))
             selected_project = None
-            project_role = None
+            project_role = project_role_for_org_role(org_role) if selected_tenant else None
 
             if selected_tenant:
-                project_memberships = [
-                    membership
-                    for membership in repository.list_project_memberships(tenant_id=selected_tenant, user_id=principal.subject)
-                    if str(membership.get("status") or "").lower() == "active"
-                ]
-                memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
                 projects_by_id = {
                     str(item["project_id"]): item
                     for item in repository.list_projects(selected_tenant)
@@ -535,27 +561,16 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                         tenant_id=selected_tenant,
                         project_id=requested_project,
                     )
-                    project_memberships = [
-                        membership
-                        for membership in repository.list_project_memberships(tenant_id=selected_tenant, user_id=principal.subject)
-                        if str(membership.get("status") or "").lower() == "active"
-                    ]
-                    memberships_by_project = {str(item["project_id"]): item for item in project_memberships}
                     projects_by_id = {
                         str(item["project_id"]): item
                         for item in repository.list_projects(selected_tenant)
                     }
-                default_project_role = project_role_for_org_role(org_role)
                 if requested_project:
                     if requested_project not in projects_by_id:
                         raise HTTPException(status_code=403, detail=f"Project '{requested_project}' was not found in organization space '{selected_tenant}'.")
                     selected_project = requested_project
-                    membership = memberships_by_project.get(requested_project)
-                    project_role = str((membership or {}).get("role") or default_project_role)
                 elif len(projects_by_id) == 1:
                     selected_project = next(iter(projects_by_id))
-                    membership = memberships_by_project.get(selected_project)
-                    project_role = str((membership or {}).get("role") or default_project_role)
                 elif not projects_by_id:
                     if not allow_missing_project:
                         raise HTTPException(status_code=403, detail=f"No active projects are available in organization space '{selected_tenant}'.")

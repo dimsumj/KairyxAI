@@ -2,6 +2,7 @@
 
 import os
 import json
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -245,3 +246,33 @@ class GcsService:
                         continue
                     os.remove(file_to_delete)
                     print(f"Deleted blob '{rel_path}' from local GCS mock.")
+
+    def delete_project_scope(self) -> None:
+        tenant_scope = self._tenant_scope_key()
+        project_scope = self._project_scope_key()
+        prefix = self._scope_prefix(tenant_scope, project_scope).rstrip("/") + "/"
+        if self.backend == "gcs":
+            for blob in self._client.list_blobs(self.bucket_name, prefix=prefix):
+                blob.delete()
+                print(f"Deleted blob '{blob.name}' from GCS.")
+            return
+        if self.backend == "s3":
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+                for item in page.get("Contents", []):
+                    key = str(item.get("Key") or "")
+                    if not key:
+                        continue
+                    self._client.delete_object(Bucket=self.bucket_name, Key=key)
+                    print(f"Deleted blob '{key}' from S3.")
+            return
+
+        scoped_bucket_path = Path(self._mock_bucket_path(tenant_scope, project_scope)).resolve()
+        if scoped_bucket_path.exists():
+            shutil.rmtree(scoped_bucket_path, ignore_errors=True)
+        legacy_prefix = Path(self._legacy_bucket_path) / prefix
+        if legacy_prefix.exists():
+            if legacy_prefix.is_dir():
+                shutil.rmtree(legacy_prefix, ignore_errors=True)
+            else:
+                legacy_prefix.unlink(missing_ok=True)

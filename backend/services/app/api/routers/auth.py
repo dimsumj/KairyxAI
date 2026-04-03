@@ -38,6 +38,7 @@ def _project_to_public(item: dict | None) -> dict | None:
         "description": item.get("description"),
         "status": item.get("status"),
         "role": item.get("role"),
+        "is_default": bool(item.get("is_default")),
     }
 
 

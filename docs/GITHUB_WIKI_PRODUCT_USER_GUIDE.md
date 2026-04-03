@@ -36,7 +36,8 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 1. Use `Continue with Google`.
 2. After Google sign-in, follow the gateway state that matches your account:
    - if you belong to `0` organizations, create a new organization and its first project
-   - if you belong to `1` organization, continue directly to project selection for that org
+   - if you belong to `1` organization with `1` active project, the console enters that workspace directly
+   - if you belong to `1` organization with multiple active projects, continue to project selection for that org
    - if you belong to `2+` organizations, choose the organization you want to enter first
 3. In the project step, either choose an existing project or create a new project if your org role allows it.
 4. Go to `Data Core -> Connectors` and create at least one connector.
@@ -70,7 +71,8 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 Every user now passes through the Google login gate first. After successful sign-in, the console keeps the browser on the base gateway URL and then does one of these things:
 - opens the organization onboarding wizard if the user has no org memberships yet
-- opens project selection immediately if the user belongs to exactly one organization
+- enters the workspace immediately if the user belongs to exactly one organization and that organization has exactly one active project
+- opens project selection if the user belongs to exactly one organization and that organization has multiple active projects
 - opens the organization gateway plus an accessible-organization list if the user belongs to two or more organizations
 - rewrites the browser URL to `https://<base-url>/<organization_id>` only after an active organization and project are chosen or created
 
@@ -93,7 +95,7 @@ The console now asks for the org URL directly and generates the internal organiz
 
 Gateway validation rules for the org step are:
 - if the typed org does not exist, the user can create it
-- if the typed org already exists and the signed-in Google account belongs to it, the user continues into project selection for that org
+- if the typed org already exists and the signed-in Google account belongs to it, the user continues into direct entry or project selection for that org depending on how many active projects it has
 - if the typed org already exists and the signed-in Google account does not belong to it, the gateway must show an explicit error that the org exists but this account is not a member
 - if the user tries to create an organization URL that already exists, creation fails with an explicit already-exists error instead of reusing the existing org
 
@@ -132,17 +134,17 @@ Gateway validation rules for the org step are:
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
+| `Your organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization. If multiple active projects exist, the oldest active project is preselected as the default. | `sandbox` | The selected project becomes the active console context after continue. |
 | `Use Existing Project` | Button | Confirms the selected existing project. Available to any member of the selected organization. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization. | `Growth Sandbox` | The console generates the internal project id automatically. |
-| `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization. Available only to organization `owner` and `admin` users. | None | The project is created, the console switches into it, and the browser URL stays on `/<organization_id>`. |
+| `Create New Project` or `Create First Project` | Button | Creates a new project inside the selected organization. Available only to organization `owner` and `admin` users. | None | The project is created, the console switches into it, and the browser URL stays on `/<organization_id>`. |
 
 When the typed organization already exists and the signed-in Google user has access to it, the gateway now stays on `/` and explicitly offers the two choices required for that org:
 - `Use Existing Project`
-- `Add New Project`
+- `Create New Project`
 
 If the same signed-in user wants a different organization instead, they can use `Back`, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
 
@@ -162,7 +164,7 @@ As in onboarding, the current new-project UI generates the internal `project_id`
 - Organization invites are email-based and organization-level. The default invited role is `member`.
 - Admins and owners can optionally copy a shareable invite link, but the actual access grant still belongs to the invited Google email.
 - If the browser opens a URL containing `invite_code`, the console stores that invite locally before Google login.
-- After successful Google login, the console redeems the invite against the organization invite flow, grants org membership when the Google email matches the invited email, and then loads project selection for that organization.
+- After successful Google login, the console first auto-activates any pending organization invite whose email matches the signed-in Google account, and the explicit invite-redeem call remains idempotent for that same user.
 - On success, the user chooses or creates a project inside the invited org, and the browser URL becomes `/<organization_id>`.
 
 ---
@@ -1056,7 +1058,7 @@ The `Projects` tab manages the active organization's projects. Project access is
 | `Delete Project` | Row button | Starts the permanent delete flow. Available only to `owner` and `admin` users. | None | Opens the delete confirmation modal for that project. |
 | Delete confirmation text box | Text box | Type the exact confirmation keyword. | `delete` | Enables the final delete action. |
 | Final delete confirmation | Modal warning | Read-only warning in the delete modal. | `This permanently deletes the project and its data. This cannot be recovered.` | Explains that deletion removes project-scoped data permanently. |
-| `Confirm Delete` | Button | Permanently deletes the project after the confirmation text matches. | None | Project is removed. If it was the current project, the console moves to the next default project or to create-first-project state if no projects remain. |
+| `Delete Project` | Button | Permanently deletes the project after the confirmation text matches. | None | Project is removed. If it was the current project, the console moves to the next default project or to create-first-project state if no projects remain. |
 
 Project deletion is hard delete only. It removes the selected project's connectors, imports, data layers, workflows, cohorts, predictions, AI agent state, tools, experiments, exports, and project-scoped audit history. Organization metadata and the shared team member list remain intact.
 
@@ -1070,9 +1072,19 @@ Project deletion is hard delete only. It removes the selected project's connecto
 #### Sample project-delete result
 ```json
 {
-  "project_id": "sandbox",
-  "status": "deleted",
   "organization_id": "northstar",
+  "deleted_project_id": "sandbox",
+  "remaining_projects": [
+    {
+      "organization_id": "northstar",
+      "project_id": "liveops",
+      "name": "Live Ops",
+      "description": "Primary production project",
+      "status": "active",
+      "role": "admin",
+      "is_default": true
+    }
+  ],
   "next_default_project_id": "liveops"
 }
 ```
@@ -1083,12 +1095,13 @@ The `Teams` tab manages organization-level access. Team membership is shared acr
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| Member list | Read-only table | Shows every current organization member and pending invite. | `alice@example.com`, `member` | Confirms who has access to the org. |
-| `Add Member` | Button | Opens the add-member form. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
+| Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
+| `Add Team Member` | Button | Opens the add-member form. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
 | `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
 | `Role` | Select | Choose the starting org role. The default is `member`. | `member` | The invited user will join as `member` unless changed later. |
-| `Save Member` | Button | Stores the organization invite. Available only to `owner` and `admin` users. | None | Creates the pending org invite and returns an optional shareable invite link. |
-| `Copy Invite Link` | Row button | Copies the optional invite link for the pending invite. | None | The link can be shared, but access still depends on the invited Google email. |
+| `Add Team Member` submit action | Button | Stores the organization invite. Available only to `owner` and `admin` users. | None | Creates the pending org invite and returns an optional shareable invite link. |
+| `Generate Invite Link` | Row button | Regenerates or retrieves the optional invite link for that member or pending invite row. | None | The link can be shared, but access still depends on the invited Google email. |
+| `Copy Invite Link` | Top-level button | Copies the most recently generated invite link from the invite-link field. | None | The current invite link is placed on the clipboard. |
 | Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users. | `admin` | Updates the user's org-level role. |
 | Owner badge | Read-only badge | Marks the organization creator. | `Owner` | Indicates the only role that cannot be reassigned through the normal team-management flow. |
 
@@ -1108,11 +1121,14 @@ Role contract:
 #### Sample add-member result
 ```json
 {
-  "organization_id": "northstar",
-  "email": "teammate@example.com",
-  "role": "member",
-  "status": "pending",
-  "invite_link": "https://app.example.com/?invite_code=org_invite_123"
+  "member": null,
+  "invite": {
+    "organization_id": "northstar",
+    "email": "teammate@example.com",
+    "role": "member",
+    "status": "pending",
+    "invite_url": "/?invite_code=oinv_123&organization_id=northstar"
+  }
 }
 ```
 

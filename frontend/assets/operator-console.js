@@ -113,7 +113,6 @@ export function initializeOperatorConsole() {
             const onboardingInviteEmailInput = document.getElementById('onboarding-invite-email');
             const onboardingInviteDisplayNameInput = document.getElementById('onboarding-invite-display-name');
             const onboardingInviteOrgRoleSelect = document.getElementById('onboarding-invite-org-role');
-            const onboardingInviteProjectRoleSelect = document.getElementById('onboarding-invite-project-role');
             const onboardingInviteLinkInput = document.getElementById('onboarding-invite-link');
             const onboardingInviteStatus = document.getElementById('onboarding-invite-status');
             const onboardingStatus = document.getElementById('workspace-onboarding-status');
@@ -1904,7 +1903,7 @@ export function initializeOperatorConsole() {
                 settingsTeamMemberList.innerHTML = members.map((member) => {
                     const memberId = String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
                     const role = String(member?.role || 'member').trim().toLowerCase();
-                    const canChangeRole = canManage && role !== 'owner';
+                    const canChangeRole = canManage && !Boolean(member?.pending) && role !== 'owner';
                     return `
                         <div class="settings-entity-card">
                             <div class="settings-entity-card-head">
@@ -1925,7 +1924,7 @@ export function initializeOperatorConsole() {
                                 </select>
                                 <div class="settings-entity-card-foot">
                                     ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}">Save Role</button>` : ''}
-                                    ${canManage ? `<button type="button" class="secondary-action" data-settings-member-invite="${escapeHtml(memberId)}" data-settings-member-email="${escapeHtml(member?.email || '')}">Generate Invite Link</button>` : ''}
+                                    ${canManage ? `<button type="button" class="secondary-action" data-settings-member-invite="${escapeHtml(memberId)}" data-settings-member-email="${escapeHtml(member?.email || '')}" data-settings-member-invite-role="${escapeHtml(role)}">Generate Invite Link</button>` : ''}
                                 </div>
                             </div>
                         </div>
@@ -2541,29 +2540,14 @@ export function initializeOperatorConsole() {
                     }
                     settingsTeamMemberEmailInput.value = '';
                     settingsTeamMemberRoleSelect.value = 'member';
-                    try {
-                        const inviteResponse = await fetch(`${getApiBaseUrl(organizationId)}/organization-invites`, {
-                            method: 'POST',
-                            headers: {
-                                Authorization: `Bearer ${accessToken}`,
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({ email, role }),
-                        });
-                        const invitePayload = await inviteResponse.json().catch(() => ({}));
-                        if (inviteResponse.ok) {
-                            const rawInviteUrl = String(
-                                invitePayload?.invite?.invite_url
-                                || invitePayload?.invite_url
-                                || ''
-                            ).trim();
-                            settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
-                            if (settingsTeamInviteLinkInput) {
-                                settingsTeamInviteLinkInput.value = settingsLastInviteLink;
-                            }
-                        }
-                    } catch (error) {
-                        console.warn('Unable to auto-create organization invite link:', error);
+                    const rawInviteUrl = String(
+                        payload?.invite?.invite_url
+                        || payload?.invite_url
+                        || ''
+                    ).trim();
+                    settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
+                    if (settingsTeamInviteLinkInput) {
+                        settingsTeamInviteLinkInput.value = settingsLastInviteLink;
                     }
                     await refreshSettingsTeamsPanel();
                     setWorkspaceTextStatus(settingsTeamStatus, `Added ${email} to the organization.`);
@@ -2616,6 +2600,7 @@ export function initializeOperatorConsole() {
                 const inviteButton = event.target.closest('[data-settings-member-invite]');
                 if (inviteButton) {
                     const email = String(inviteButton.dataset.settingsMemberEmail || '').trim();
+                    const role = String(inviteButton.dataset.settingsMemberInviteRole || 'member').trim().toLowerCase() || 'member';
                     if (!email) {
                         setWorkspaceTextStatus(settingsTeamStatus, 'This member does not have an invite email.', true);
                         return;
@@ -2628,7 +2613,7 @@ export function initializeOperatorConsole() {
                                 Authorization: `Bearer ${accessToken}`,
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ email, role: 'member' }),
+                            body: JSON.stringify({ email, role }),
                         });
                         const payload = await response.json().catch(() => ({}));
                         if (!response.ok) {
@@ -4683,19 +4668,18 @@ export function initializeOperatorConsole() {
                 }
             });
             onboardingGenerateInviteBtn.addEventListener('click', async () => {
-                if (!authSessionState?.project_id) {
+                if (!authSessionState?.organization_id) {
                     setWorkspaceTextStatus(onboardingInviteStatus, 'Create the organization space first.', true);
                     return;
                 }
                 try {
                     setWorkspaceTextStatus(onboardingInviteStatus, 'Generating invite link...');
-                    const payload = await apiRequest(`/projects/${encodeURIComponent(authSessionState.project_id)}/invites`, {
+                    const payload = await apiRequest('/organization-invites', {
                         method: 'POST',
                         body: {
                             email: onboardingInviteEmailInput.value.trim() || null,
                             display_name: onboardingInviteDisplayNameInput.value.trim() || null,
-                            org_role: onboardingInviteOrgRoleSelect.value || 'member',
-                            project_role: onboardingInviteProjectRoleSelect.value || 'operator',
+                            role: onboardingInviteOrgRoleSelect.value || 'member',
                         },
                     });
                     const inviteUrl = payload.invite?.invite_url ? new URL(payload.invite.invite_url, window.location.origin).toString() : '';

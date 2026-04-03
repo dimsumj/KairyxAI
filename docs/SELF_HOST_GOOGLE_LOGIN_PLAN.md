@@ -94,9 +94,10 @@ KairyxAI issues or manages the application session used against Kairyx APIs.
 10. Frontend calls `GET /api/v1/auth/me`.
 11. Kairyx routes the user to:
     - create-organization if no org memberships exist
-    - project selection if exactly one org is accessible
+    - direct entry if exactly one org is accessible and it has exactly one active project
+    - project selection if exactly one org is accessible and it has multiple active projects
     - organization selection if more than one org is accessible
-12. After the organization is resolved, the frontend rewrites the browser URL to `https://<host>/<organization_id>` while keeping the Google callback URL fixed.
+12. After both the organization and project are resolved, the frontend rewrites the browser URL to `https://<host>/<organization_id>` while keeping the Google callback URL fixed.
 
 ### Session Ownership
 
@@ -219,6 +220,8 @@ Frozen workspace contract for self-hosted Google login:
 
 - `/` remains the gateway only
 - `/{organization_id}` is the operator app shell
+- users with exactly one accessible organization and one active project may enter directly after login
+- users with exactly one accessible organization and multiple active projects must see project selection for that org
 - all org members can access all active projects in that org
 - organization roles are `owner`, `admin`, and `member`
 - organization invites are email-based and org-level

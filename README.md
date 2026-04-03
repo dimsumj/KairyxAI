@@ -196,7 +196,8 @@ The frozen v1 workspace and access contract is:
 - `https://<base-url>/<organization_id>` is the app shell.
 - After login:
   - users with `0` organizations go directly to create-organization
-  - users with `1` organization go directly to project selection for that org
+  - users with `1` organization and `1` active project enter that project directly
+  - users with `1` organization and multiple active projects go directly to project selection for that org
   - users with `2+` organizations choose an organization first, then a project
 - When a typed organization URL already exists:
   - members can continue into project selection for that organization
@@ -218,7 +219,7 @@ In the backend, `tenant` remains the internal organization identifier for compat
 - a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, including after Google sign-in; the main operator app is shown only after the browser is on `https://<base-url>/<organization_id>`
 - a centered full-screen first-login onboarding gate that opens immediately after Google sign-in when the user has no org memberships, asks for the organization URL first and the first project name second, preserves any organization URL the user already typed before sign-in, and fails creation if that organization URL already exists; new organization URLs are limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
 - after creating the first organization and project in the gateway, the user is placed into that new organization and project by default
-- a centered full-screen workspace gate that starts with an organization URL lookup, shows the organizations already associated with the signed-in Google email, then lets users choose `Select an existing project to go` or `Add New Project` inside that organization when the org already exists
+- a centered full-screen workspace gate that starts with an organization URL lookup, shows the organizations already associated with the signed-in Google email, automatically enters the workspace when the selected org has only one active project, and otherwise lets users choose `Use Existing Project` or `Create New Project` inside that organization, or `Create First Project` when the organization has none yet
 - an explicit gateway error when the typed organization already exists but the signed-in Google account does not belong to it
 - a base-URL gateway flow where a signed-in user can back out of the existing-project chooser, type a different organization URL, and create that new organization without being forced back into the previously active org; once the first project is created, the browser lands on the new `/{organization_id}` path by default
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
@@ -227,6 +228,7 @@ In the backend, `tenant` remains the internal organization identifier for compat
 - module loaders that now wait for a valid organization/project workspace before loading protected data, so deployed Google-login environments do not replace page content with transient raw membership errors during session handoff or stale workspace recovery
 - mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
 - organization-level email invites that pre-authorize a Google account to join the organization as a `member`, plus optional shareable invite links that land the user in the invited org flow after login
+- idempotent invite redemption, so a matching Google login can auto-activate a pending org invite by email and a later invite-link redeem request still succeeds for that same user
 - a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 

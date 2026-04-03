@@ -11,8 +11,11 @@ import jwt
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.core.request_context import RequestContext, request_context
+from app.infrastructure.db_models import OrganizationInviteModel
 from app.main import create_app
-from bigquery_service import clear_shared_bigquery_service_cache
+from bigquery_service import BigQueryService, clear_shared_bigquery_service_cache
+from gcs_service import GcsService
 
 
 OIDC_ISSUER = "https://issuer.example.com"
@@ -158,7 +161,7 @@ def test_vercel_mock_fallback_bootstraps_path_scoped_workspace_membership(monkey
         assert connectors.status_code == 200
 
 
-def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch, tmp_path):
+def test_org_space_onboarding_project_creation_and_org_invite_redemption(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     teammate_token = _make_token(
         "studio-analyst",
@@ -207,32 +210,47 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         assert founder_sandbox.status_code == 200
         assert founder_sandbox.json()["project_role"] == "admin"
 
-        invite = client.post(
-            "/northstar/v1/projects/liveops/invites",
+        member = client.post(
+            "/northstar/v1/organization-members",
             headers=_auth_headers(founder_token, project_id="liveops"),
             json={
                 "email": "studio-analyst@example.com",
                 "display_name": "Studio Analyst",
-                "org_role": "member",
-                "project_role": "analyst",
+                "role": "member",
             },
         )
-        assert invite.status_code == 201
-        invite_code = invite.json()["invite"]["invite_code"]
+        assert member.status_code == 201
+        invite_code = member.json()["invite"]["invite_code"]
+        pending_members = client.get("/northstar/v1/organization-members", headers=_auth_headers(founder_token))
+        assert pending_members.status_code == 200
+        assert any(
+            item["email"] == "studio-analyst@example.com" and item["pending"] is True
+            for item in pending_members.json()["items"]
+        )
 
         redeem = client.post(
-            "/api/v1/project-invites/redeem",
+            "/api/v1/organization-invites/redeem",
             headers=_auth_headers(teammate_token),
             json={"invite_code": invite_code},
         )
         assert redeem.status_code == 200
-        assert redeem.json()["project"]["project_id"] == "liveops"
+        assert redeem.json()["organization_space"]["tenant_id"] == "northstar"
 
         teammate_me = client.get("/northstar/v1/auth/me", headers=_auth_headers(teammate_token, project_id="liveops"))
         assert teammate_me.status_code == 200
         assert teammate_me.json()["organization_role"] == "member"
-        assert teammate_me.json()["project_role"] == "analyst"
-        assert [item["project_id"] for item in teammate_me.json()["accessible_projects"]] == ["liveops", "sandbox"]
+        assert teammate_me.json()["project_role"] == "operator"
+        assert [
+            {
+                "project_id": item["project_id"],
+                "role": item["role"],
+                "is_default": item["is_default"],
+            }
+            for item in teammate_me.json()["accessible_projects"]
+        ] == [
+            {"project_id": "liveops", "role": "operator", "is_default": True},
+            {"project_id": "sandbox", "role": "operator", "is_default": False},
+        ]
 
         teammate_projects = client.get("/northstar/v1/projects", headers=_auth_headers(teammate_token))
         assert teammate_projects.status_code == 200
@@ -253,7 +271,7 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
                 "name": "Live Ops",
                 "description": "Primary production project",
                 "status": "active",
-                "role": "analyst",
+                "role": "operator",
             },
             {
                 "tenant_id": "northstar",
@@ -273,6 +291,241 @@ def test_org_space_onboarding_project_creation_and_invite_redemption(monkeypatch
         sandbox_project = client.get("/northstar/v1/auth/me", headers=_auth_headers(teammate_token, project_id="sandbox"))
         assert sandbox_project.status_code == 200
         assert sandbox_project.json()["project_role"] == "operator"
+
+
+def test_organization_member_role_management_and_owner_protection(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    admin_token = _make_token("studio-admin", extra_claims={"email": "studio-admin@example.com", "name": "Studio Admin"})
+    member_token = _make_token("studio-member", extra_claims={"email": "studio-member@example.com", "name": "Studio Member"})
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        add_member = client.post(
+            "/northstar/v1/organization-members",
+            headers=_auth_headers(founder_token),
+            json={
+                "email": "studio-admin@example.com",
+                "display_name": "Studio Admin",
+                "role": "member",
+            },
+        )
+        assert add_member.status_code == 201
+
+        redeem = client.post(
+            "/api/v1/organization-invites/redeem",
+            headers=_auth_headers(admin_token),
+            json={"invite_code": add_member.json()["invite"]["invite_code"]},
+        )
+        assert redeem.status_code == 200
+
+        add_viewer = client.post(
+            "/northstar/v1/organization-members",
+            headers=_auth_headers(founder_token),
+            json={
+                "email": "studio-member@example.com",
+                "display_name": "Studio Member",
+                "role": "member",
+            },
+        )
+        assert add_viewer.status_code == 201
+
+        redeem_viewer = client.post(
+            "/api/v1/organization-invites/redeem",
+            headers=_auth_headers(member_token),
+            json={"invite_code": add_viewer.json()["invite"]["invite_code"]},
+        )
+        assert redeem_viewer.status_code == 200
+
+        forbidden_add = client.post(
+            "/northstar/v1/organization-members",
+            headers=_auth_headers(member_token, project_id="liveops"),
+            json={
+                "email": "viewer@example.com",
+                "display_name": "Viewer",
+                "role": "member",
+            },
+        )
+        assert forbidden_add.status_code == 403
+
+        forbidden_delete = client.post(
+            "/northstar/v1/projects/liveops/permanent-delete",
+            headers=_auth_headers(member_token, project_id="liveops"),
+            json={"confirmation": "delete"},
+        )
+        assert forbidden_delete.status_code == 403
+
+        members = client.get("/northstar/v1/organization-members", headers=_auth_headers(founder_token))
+        assert members.status_code == 200
+        founder_membership = next(item for item in members.json()["items"] if item["user_id"] == "founder")
+        admin_membership = next(item for item in members.json()["items"] if item["user_id"] == "studio-admin")
+
+        promote = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(founder_token),
+            json={"role": "admin"},
+        )
+        assert promote.status_code == 200
+        assert promote.json()["member"]["role"] == "admin"
+
+        owner_change = client.patch(
+            f"/northstar/v1/organization-members/{founder_membership['id']}",
+            headers=_auth_headers(founder_token),
+            json={"role": "member"},
+        )
+        assert owner_change.status_code == 400
+        assert "owner" in owner_change.json()["detail"]
+
+
+def test_project_delete_requires_confirmation_and_reassigns_default(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        sandbox = client.post(
+            "/northstar/v1/projects",
+            headers=_auth_headers(founder_token, project_id="liveops"),
+            json={"project_id": "sandbox", "name": "Sandbox", "description": "Experiment workspace"},
+        )
+        assert sandbox.status_code == 201
+
+        connector = client.post(
+            "/northstar/v1/connectors",
+            headers=_auth_headers(founder_token, project_id="sandbox"),
+            json={"name": "Sandbox Source", "type": "csv", "config": {"path": "sandbox.csv"}},
+        )
+        assert connector.status_code == 201
+
+        with request_context(
+            RequestContext(
+                actor_id="founder",
+                actor_role="admin",
+                tenant_id="northstar",
+                project_id="liveops",
+                correlation_id="project-delete-test",
+                org_role="owner",
+                project_role="admin",
+            )
+        ):
+            bigquery = BigQueryService()
+            gcs = GcsService()
+            bigquery.replace_prediction_results(
+                "pred-liveops",
+                [{"user_id": "player-1", "canonical_user_id": "player-1", "predicted_churn_risk": "high"}],
+            )
+            gcs.upload_raw_events(
+                [{"user_id": "player-1", "event_type": "session_start"}],
+                "raw_events/liveops/events.ndjson",
+            )
+            prediction_cache_root = Path(bigquery._cache_path).parent
+            raw_cache_root = Path(gcs._mock_bucket_path("northstar", "liveops"))
+
+        assert prediction_cache_root.exists()
+        assert raw_cache_root.exists()
+
+        bad_delete = client.post(
+            "/northstar/v1/projects/liveops/permanent-delete",
+            headers=_auth_headers(founder_token),
+            json={"confirmation": "nope"},
+        )
+        assert bad_delete.status_code == 422
+
+        deleted = client.post(
+            "/northstar/v1/projects/liveops/permanent-delete",
+            headers=_auth_headers(founder_token),
+            json={"confirmation": "delete"},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted_project_id"] == "liveops"
+        assert deleted.json()["next_default_project_id"] == "sandbox"
+        assert [item["project_id"] for item in deleted.json()["remaining_projects"]] == ["sandbox"]
+        assert not prediction_cache_root.exists()
+        assert not raw_cache_root.exists()
+
+        projects = client.get("/northstar/v1/projects", headers=_auth_headers(founder_token))
+        assert projects.status_code == 200
+        assert [item["project_id"] for item in projects.json()["items"]] == ["sandbox"]
+        assert projects.json()["items"][0]["is_default"] is True
+
+        missing_connector = client.get("/northstar/v1/connectors", headers=_auth_headers(founder_token, project_id="liveops"))
+        assert missing_connector.status_code in {403, 404}
+
+
+def test_expired_organization_invite_is_not_auto_activated_on_login(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    expired_user_token = _make_token(
+        "expired-user",
+        extra_claims={"email": "expired-user@example.com", "name": "Expired User"},
+    )
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        invite = client.post(
+            "/northstar/v1/organization-invites",
+            headers=_auth_headers(founder_token),
+            json={
+                "email": "expired-user@example.com",
+                "display_name": "Expired User",
+                "role": "member",
+                "expires_in_days": 1,
+            },
+        )
+        assert invite.status_code == 201
+        invite_code = invite.json()["invite"]["invite_code"]
+
+        with db_module.session_scope() as session:
+            row = session.query(OrganizationInviteModel).filter(OrganizationInviteModel.invite_code == invite_code).one()
+            row.expires_at = datetime.utcnow() - timedelta(days=1)
+            session.flush()
+
+        me = client.get("/api/v1/auth/me", headers=_auth_headers(expired_user_token))
+        assert me.status_code == 200
+        assert me.json()["accessible_organizations"] == []
+        assert me.json()["needs_onboarding"] is True
+
+        blocked = client.get("/northstar/v1/connectors", headers=_auth_headers(expired_user_token, project_id="liveops"))
+        assert blocked.status_code == 403
+        assert "not a member" in blocked.json()["detail"]
+
+        redeem = client.post(
+            "/api/v1/organization-invites/redeem",
+            headers=_auth_headers(expired_user_token),
+            json={"invite_code": invite_code},
+        )
+        assert redeem.status_code == 400
+        assert "expired" in redeem.json()["detail"].lower()
 
 
 def test_mock_mode_allows_existing_member_to_create_another_organization(monkeypatch, tmp_path):
@@ -470,6 +723,20 @@ def test_org_scoped_v1_path_selects_membership_without_tenant_header(monkeypatch
             headers=_auth_headers(founder_token, "other-org", "liveops"),
         )
         assert mismatch.status_code == 409
+
+
+def test_org_scoped_v1_path_returns_not_found_for_missing_organization(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    with _client(monkeypatch, tmp_path) as client:
+        missing = client.get(
+            "/torpedo/v1/connectors",
+            headers={
+                "Authorization": f"Bearer {founder_token}",
+                "X-Kairyx-Project": "liveops",
+            },
+        )
+        assert missing.status_code == 404
+        assert "was not found" in missing.json()["detail"]
 
 
 def test_google_oidc_config_defaults_and_google_issuer_alias(monkeypatch, tmp_path):

@@ -85,7 +85,8 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - The frontend now has a minimum production-shaped auth baseline with Google PKCE login, a gateway-only `/` route, an authoritative `/{organization_id}` app shell, organization URL resolution, and project switching.
 - The frozen gateway behavior is:
   - `0` accessible orgs -> create-organization flow
-  - `1` accessible org -> project selection for that org
+  - `1` accessible org + `1` active project -> direct workspace entry
+  - `1` accessible org + multiple active projects -> project selection for that org
   - `2+` accessible orgs -> organization selection, then project selection
 - If the typed organization exists but the signed-in Google account is not a member, the gateway must show an explicit not-a-member error.
 - Duplicate organization creation must fail explicitly.
@@ -156,6 +157,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Product-facing invite management is organization-level and email-based:
   - `POST /api/v1/organization-invites`
   - `POST /api/v1/organization-invites/redeem`
+- Matching Google login may auto-activate a pending organization invite by email before the explicit redeem call; the explicit redeem path must remain idempotent for that same user.
 - If an organization already exists but the signed-in Google account is not a member, the org-resolution contract must return `exists=true` and `accessible=false`.
 
 ### 6.3 Project Lifecycle And Isolation Contract

@@ -217,6 +217,8 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 **Execution requirements**
 - Google login is required before workspace entry
 - The bare `/` route is gateway-only and `/{organization_id}` is the operator app shell
+- If a signed-in user has exactly one accessible organization and exactly one active project, the console may enter that workspace directly
+- If a signed-in user has exactly one accessible organization and multiple active projects, the gateway must show project selection for that org
 - Organization roles are exactly `owner`, `admin`, and `member`
 - The organization creator becomes the only `owner`, and `owner` also has admin privileges
 - All organization members can access all active projects in the same organization
