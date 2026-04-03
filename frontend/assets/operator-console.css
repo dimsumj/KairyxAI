@@ -2372,6 +2372,92 @@
             border: 1px solid var(--border-color);
         }
 
+        .settings-status-message {
+            min-height: 1.15rem;
+            margin-top: 0.9rem;
+        }
+
+        .settings-entity-list {
+            display: grid;
+            gap: 0.85rem;
+            margin-top: 1rem;
+        }
+
+        .settings-entity-card {
+            display: grid;
+            gap: 0.9rem;
+            padding: 1rem 1.05rem;
+            border-radius: 1rem;
+            border: 1px solid var(--border-color);
+            background: var(--surface-muted);
+        }
+
+        .settings-entity-card-head,
+        .settings-entity-card-foot,
+        .settings-role-editor {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.85rem;
+            flex-wrap: wrap;
+        }
+
+        .settings-entity-title {
+            font-size: 0.98rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .settings-entity-meta {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            line-height: 1.5;
+        }
+
+        .settings-project-marker-list {
+            display: inline-flex;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .settings-dialog {
+            position: fixed;
+            inset: 0;
+            z-index: 70;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .settings-dialog-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.54);
+            backdrop-filter: blur(3px);
+        }
+
+        .settings-dialog-card {
+            position: relative;
+            z-index: 1;
+            width: min(520px, 100%);
+            padding: 1.8rem 1.9rem;
+            border-radius: 1.2rem;
+            background: var(--white);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+        }
+
+        .danger-action {
+            background: #dc2626;
+            color: #ffffff;
+        }
+
+        .danger-action:hover {
+            background: #b91c1c;
+        }
+
         .settings-checklist {
             display: grid;
             gap: 0.9rem;
@@ -2901,7 +2987,10 @@
 
             .settings-profile-hero,
             .settings-form-actions,
-            .settings-placeholder-row {
+            .settings-placeholder-row,
+            .settings-entity-card-head,
+            .settings-entity-card-foot,
+            .settings-role-editor {
                 align-items: stretch;
                 flex-direction: column;
             }

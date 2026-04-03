@@ -1306,20 +1306,46 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Projects</h2>
-                        <p>Placeholder project settings layout matching the new Settings navigation style.</p>
+                        <p>Projects are isolated from each other. Connectors, imports, workflows, cohorts, predictions, and AI tooling stay inside the selected project.</p>
                     </div>
-                    <div class="settings-placeholder-list">
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Project Directory</span>
-                            <span class="pill">Placeholder</span>
+                    <div class="settings-inline-note">
+                        <strong>Default project:</strong> the first project created in the organization.
+                    </div>
+                    <div id="settings-projects-status" class="settings-status-message subtle">Sign in with Google and select an organization to manage projects.</div>
+                    <div id="settings-project-list" class="settings-entity-list">
+                        <div class="list-empty">No projects loaded yet.</div>
+                    </div>
+                </div>
+
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Create Project</h2>
+                        <p>Create a new isolated workspace inside the current organization.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-project-create-name">Project Name</label>
+                        <input id="settings-project-create-name" type="text" placeholder="Growth Sandbox">
+                    </div>
+                    <div class="settings-form-actions settings-form-actions-left">
+                        <button type="button" id="settings-project-create-button">Create Project</button>
+                    </div>
+                </div>
+
+                <div id="settings-project-delete-modal" class="settings-dialog hidden" aria-hidden="true">
+                    <div class="settings-dialog-backdrop"></div>
+                    <div class="settings-dialog-card" role="dialog" aria-modal="true" aria-labelledby="settings-project-delete-title">
+                        <div class="settings-section-heading">
+                            <h2 id="settings-project-delete-title">Delete Project</h2>
+                            <p id="settings-project-delete-copy">Deleting a project is permanent. All project data will be removed and cannot be recovered.</p>
                         </div>
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Default Templates</span>
-                            <span class="pill">Placeholder</span>
+                        <div class="form-group">
+                            <label for="settings-project-delete-confirm-input">Type <code>delete</code> to confirm</label>
+                            <input id="settings-project-delete-confirm-input" type="text" autocomplete="off" placeholder="delete">
                         </div>
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Archive Rules</span>
-                            <span class="pill">Placeholder</span>
+                        <div id="settings-project-delete-status" class="settings-status-message subtle"></div>
+                        <div class="settings-form-actions">
+                            <button type="button" id="settings-project-delete-cancel-btn" class="secondary-action">Cancel</button>
+                            <button type="button" id="settings-project-delete-submit-btn" class="danger-action">Delete Project</button>
                         </div>
                     </div>
                 </div>
@@ -1329,21 +1355,49 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Teams</h2>
-                        <p>Placeholder team management elements for later role, invite, and membership wiring.</p>
+                        <p>Team membership is shared across the organization. Every member can enter every project in the organization.</p>
                     </div>
-                    <div class="settings-placeholder-list">
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Invite Team Member</span>
-                            <span class="pill">Placeholder</span>
+                    <div id="settings-team-role-summary" class="settings-inline-note">Organization owners and administrators can add members, promote admins, and share invite links.</div>
+                    <div id="settings-team-status" class="settings-status-message subtle">Sign in with Google and select an organization to manage team access.</div>
+                    <div id="settings-team-member-list" class="settings-entity-list">
+                        <div class="list-empty">No team members loaded yet.</div>
+                    </div>
+                </div>
+
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Add Team Member</h2>
+                        <p>Add a Google account by email. The default organization role is member.</p>
+                    </div>
+                    <div class="settings-form-grid">
+                        <div class="form-group">
+                            <label for="settings-team-member-email">Google Email</label>
+                            <input id="settings-team-member-email" type="email" placeholder="teammate@example.com">
                         </div>
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Role Matrix</span>
-                            <span class="pill">Placeholder</span>
+                        <div class="form-group">
+                            <label for="settings-team-member-role">Role</label>
+                            <select id="settings-team-member-role">
+                                <option value="member" selected>Member</option>
+                                <option value="admin">Administrator</option>
+                            </select>
                         </div>
-                        <div class="settings-placeholder-row">
-                            <span class="settings-placeholder-title">Team Directory</span>
-                            <span class="pill">Placeholder</span>
-                        </div>
+                    </div>
+                    <div class="settings-form-actions settings-form-actions-left">
+                        <button type="button" id="settings-team-add-member-btn">Add Team Member</button>
+                    </div>
+                </div>
+
+                <div class="card settings-form-card">
+                    <div class="settings-section-heading">
+                        <h2>Invite Link</h2>
+                        <p>Create an organization invite link after adding an email, then share it with the teammate if needed.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-team-invite-link">Latest Invite Link</label>
+                        <input id="settings-team-invite-link" type="text" readonly placeholder="No invite link generated yet">
+                    </div>
+                    <div class="settings-form-actions settings-form-actions-left">
+                        <button type="button" id="settings-team-copy-invite-btn" class="secondary-action">Copy Invite Link</button>
                     </div>
                 </div>
             </div>

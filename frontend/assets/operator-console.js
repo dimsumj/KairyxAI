@@ -39,6 +39,24 @@ export function initializeOperatorConsole() {
             const settingsAuthCopy = document.getElementById('settings-auth-copy');
             const settingsOpenSwitcherBtn = document.getElementById('settings-open-switcher-btn');
             const settingsCreateProjectBtn = document.getElementById('settings-create-project-btn');
+            const settingsProjectsStatus = document.getElementById('settings-projects-status');
+            const settingsProjectList = document.getElementById('settings-project-list');
+            const settingsProjectCreateNameInput = document.getElementById('settings-project-create-name');
+            const settingsProjectCreateButton = document.getElementById('settings-project-create-button');
+            const settingsProjectDeleteModal = document.getElementById('settings-project-delete-modal');
+            const settingsProjectDeleteCopy = document.getElementById('settings-project-delete-copy');
+            const settingsProjectDeleteConfirmInput = document.getElementById('settings-project-delete-confirm-input');
+            const settingsProjectDeleteStatus = document.getElementById('settings-project-delete-status');
+            const settingsProjectDeleteCancelBtn = document.getElementById('settings-project-delete-cancel-btn');
+            const settingsProjectDeleteSubmitBtn = document.getElementById('settings-project-delete-submit-btn');
+            const settingsTeamRoleSummary = document.getElementById('settings-team-role-summary');
+            const settingsTeamStatus = document.getElementById('settings-team-status');
+            const settingsTeamMemberList = document.getElementById('settings-team-member-list');
+            const settingsTeamMemberEmailInput = document.getElementById('settings-team-member-email');
+            const settingsTeamMemberRoleSelect = document.getElementById('settings-team-member-role');
+            const settingsTeamAddMemberBtn = document.getElementById('settings-team-add-member-btn');
+            const settingsTeamInviteLinkInput = document.getElementById('settings-team-invite-link');
+            const settingsTeamCopyInviteBtn = document.getElementById('settings-team-copy-invite-btn');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -126,6 +144,7 @@ export function initializeOperatorConsole() {
             const OIDC_CODE_VERIFIER_STORAGE_KEY = 'kairyx.oidcCodeVerifier';
             const GOOGLE_IDENTITY_SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
             const PENDING_INVITE_STORAGE_KEY = 'kairyx.pendingInvite';
+            const GATEWAY_ORGANIZATION_HINT_STORAGE_KEY = 'kairyx.gatewayOrganizationHint';
             const LOCAL_DEMO_ACTOR_ID = 'local-demo';
             const LOCAL_DEMO_ACTOR_ROLE = 'admin';
             const LOCAL_DEMO_TENANT_ID = 'default';
@@ -148,6 +167,14 @@ export function initializeOperatorConsole() {
             let oidcConfig = null;
             let accessToken = '';
             let authSessionState = null;
+            let workspaceSelectionContext = {
+                organizationId: '',
+                organization: null,
+                projects: [],
+            };
+            let settingsMembersState = [];
+            let settingsLastInviteLink = '';
+            let settingsDeleteProjectCandidate = null;
             let workspaceOverlayMode = null;
             let onboardingStep = 1;
             let onboardingResult = null;
@@ -555,7 +582,10 @@ export function initializeOperatorConsole() {
             }
 
             function syncWorkspaceSelectedOrgContext() {
-                const organizationId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
+                const organizationId = workspaceSelectionContext.organizationId
+                    || workspaceModalOrgSelect.value
+                    || authSessionState?.organization_id
+                    || '';
                 const orgUrl = organizationId ? `${window.location.origin.replace(/\/+$/, '')}/${organizationId}` : '';
                 if (workspaceSelectionCurrentOrg) {
                     workspaceSelectionCurrentOrg.textContent = orgUrl ? `Organization URL: ${orgUrl}` : '';
@@ -565,6 +595,75 @@ export function initializeOperatorConsole() {
                     workspaceCreateProjectCurrentOrg.textContent = orgUrl ? `Organization URL: ${orgUrl}` : '';
                     workspaceCreateProjectCurrentOrg.classList.toggle('hidden', !orgUrl);
                 }
+            }
+
+            function sortWorkspaceProjects(items = []) {
+                return [...items].sort((left, right) => {
+                    if (left?.is_default && !right?.is_default) return -1;
+                    if (!left?.is_default && right?.is_default) return 1;
+                    const leftCreated = String(left?.created_at || '');
+                    const rightCreated = String(right?.created_at || '');
+                    if (leftCreated && rightCreated && leftCreated !== rightCreated) {
+                        return leftCreated.localeCompare(rightCreated);
+                    }
+                    return String(left?.project_id || '').localeCompare(String(right?.project_id || ''));
+                });
+            }
+
+            function resolveDefaultProjectId(items = []) {
+                const sortedItems = sortWorkspaceProjects(items);
+                const explicitDefault = sortedItems.find((item) => item?.is_default);
+                return explicitDefault?.project_id || sortedItems[0]?.project_id || '';
+            }
+
+            function setWorkspaceSelectionContext({ organizationId = '', organization = null, projects = [] } = {}) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId || organization?.organization_id || '');
+                const normalizedProjects = sortWorkspaceProjects((projects || []).map((item) => ({
+                    ...item,
+                    organization_id: normalizeOrganizationUrl(item?.organization_id || normalizedOrganizationId),
+                })));
+                if (normalizedProjects.length && !normalizedProjects.some((item) => item?.is_default)) {
+                    normalizedProjects[0] = {
+                        ...normalizedProjects[0],
+                        is_default: true,
+                    };
+                }
+                workspaceSelectionContext = {
+                    organizationId: normalizedOrganizationId,
+                    organization: normalizedOrganizationId
+                        ? {
+                            organization_id: normalizedOrganizationId,
+                            name: organization?.name || normalizedOrganizationId,
+                            role: organization?.role || null,
+                            status: organization?.status || 'active',
+                        }
+                        : null,
+                    projects: normalizedProjects,
+                };
+                if (workspaceModalOrgSelect) {
+                    const hasMatchingOption = Array.from(workspaceModalOrgSelect.options || []).some((option) => option.value === normalizedOrganizationId);
+                    if (hasMatchingOption) {
+                        workspaceModalOrgSelect.value = normalizedOrganizationId;
+                    }
+                }
+                populateWorkspaceSelect(
+                    workspaceModalProjectSelect,
+                    normalizedProjects,
+                    resolveDefaultProjectId(normalizedProjects),
+                    normalizedProjects.length ? 'Select an existing project' : 'No existing projects',
+                    'project_id',
+                );
+                syncWorkspaceSelectedOrgContext();
+            }
+
+            function clearWorkspaceSelectionContext({ preserveOrganization = false } = {}) {
+                const organizationId = preserveOrganization ? workspaceSelectionContext.organizationId : '';
+                const organization = preserveOrganization ? workspaceSelectionContext.organization : null;
+                setWorkspaceSelectionContext({ organizationId, organization, projects: [] });
+            }
+
+            function getWorkspaceSelectionProjects() {
+                return Array.isArray(workspaceSelectionContext.projects) ? workspaceSelectionContext.projects : [];
             }
 
             function findAccessibleTenant(rawValue) {
@@ -597,6 +696,150 @@ export function initializeOperatorConsole() {
                     throw new Error(payload.detail || 'Failed to inspect organization access.');
                 }
                 return payload;
+            }
+
+            async function fetchOrganizationProjects(organizationId) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                if (!normalizedOrganizationId || !accessToken) {
+                    return [];
+                }
+                const response = await fetch(`${getApiBaseUrl(normalizedOrganizationId)}/projects`, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearBearerSession({ openLoginGateway: true });
+                    }
+                    throw new Error(payload.detail || 'Failed to load projects.');
+                }
+                const projects = sortWorkspaceProjects((Array.isArray(payload?.items) ? payload.items : []).map((item) => ({
+                    ...item,
+                    organization_id: normalizeOrganizationUrl(item?.organization_id || normalizedOrganizationId),
+                })));
+                if (projects.length && !projects.some((item) => item?.is_default)) {
+                    projects[0] = {
+                        ...projects[0],
+                        is_default: true,
+                    };
+                }
+                return projects;
+            }
+
+            async function fetchOrganizationMembers(organizationId) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                if (!normalizedOrganizationId || !accessToken) {
+                    return [];
+                }
+                const response = await fetch(`${getApiBaseUrl(normalizedOrganizationId)}/organization-members`, {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (response.status === 404) {
+                    throw new Error('Organization member management is not available on this deployment yet.');
+                }
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearBearerSession({ openLoginGateway: true });
+                    }
+                    throw new Error(payload.detail || 'Failed to load organization members.');
+                }
+                return Array.isArray(payload?.items) ? payload.items : [];
+            }
+
+            async function createProjectInOrganization(organizationId, { projectId = '', name = '', description = '' } = {}) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                const normalizedProjectId = slugifyIdentifier(projectId || name);
+                if (!normalizedOrganizationId || !normalizedProjectId || !String(name || '').trim()) {
+                    throw new Error('Organization and project name are required.');
+                }
+                const response = await fetch(`${getApiBaseUrl(normalizedOrganizationId)}/projects`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        project_id: normalizedProjectId,
+                        name: String(name || '').trim(),
+                        description: String(description || '').trim(),
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearBearerSession({ openLoginGateway: true });
+                    }
+                    throw new Error(payload.detail || 'Failed to create project.');
+                }
+                return payload?.project || null;
+            }
+
+            async function confirmWorkspaceActivation(organizationId, projectId, { syncBrowserPath = true, reloadPage = true } = {}) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                const normalizedProjectId = String(projectId || '').trim().toLowerCase();
+                const headers = {
+                    Authorization: `Bearer ${accessToken}`,
+                };
+                if (normalizedProjectId) {
+                    headers['X-Kairyx-Project'] = normalizedProjectId;
+                }
+                const response = await fetch(`${getApiBaseUrl(normalizedOrganizationId)}/auth/me`, { headers });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearBearerSession({ openLoginGateway: true });
+                    }
+                    throw new Error(payload.detail || 'Failed to activate the selected workspace.');
+                }
+                persistGatewayOrganizationHint(normalizedOrganizationId);
+                applyAuthSessionPayload(payload);
+                if (syncBrowserPath) {
+                    syncBrowserOrganizationPath(payload.organization_id || normalizedOrganizationId, { preserveHintOnEmpty: true });
+                }
+                if (reloadPage && activePageId && payload?.project_id) {
+                    activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
+                }
+                return payload;
+            }
+
+            async function prepareProjectSelectionForOrganization(organization, { selectedProjectId = '', statusMessage = '' } = {}) {
+                const normalizedOrganizationId = normalizeOrganizationUrl(
+                    organization?.organization_id
+                    || organization?.tenant_id
+                    || workspaceModalOrgSelect?.value
+                    || ''
+                );
+                if (!normalizedOrganizationId) {
+                    throw new Error('Organization selection is required.');
+                }
+                const projects = await fetchOrganizationProjects(normalizedOrganizationId);
+                setWorkspaceSelectionContext({
+                    organizationId: normalizedOrganizationId,
+                    organization: organization || findAccessibleTenant(normalizedOrganizationId) || {
+                        organization_id: normalizedOrganizationId,
+                        name: normalizedOrganizationId,
+                    },
+                    projects,
+                });
+                const preferredProjectId = String(selectedProjectId || '').trim() || resolveDefaultProjectId(projects);
+                if (workspaceModalProjectSelect) {
+                    workspaceModalProjectSelect.value = preferredProjectId;
+                }
+                openWorkspaceOverlay('selection', { selectionStage: 'project', allowClose: isGatewayRootPath() });
+                setWorkspaceTextStatus(
+                    workspaceSelectionStatus,
+                    statusMessage || (
+                        projects.length
+                            ? 'Select an existing project to continue, or create a new one.'
+                            : 'Create the first project in this organization to continue.'
+                    ),
+                );
+                return projects;
             }
 
             function disableGoogleAutoSelect() {
@@ -674,7 +917,10 @@ export function initializeOperatorConsole() {
                 }
                 persistAccessToken(credential);
                 try {
-                    await hydrateAuthSession();
+                    await hydrateAuthSession({
+                        forceGlobalScope: isGatewayRootPath(),
+                        syncBrowserPath: !isGatewayRootPath(),
+                    });
                     if (activePageId) {
                         activatePage(activePageId);
                     }
@@ -772,19 +1018,7 @@ export function initializeOperatorConsole() {
             }
 
             function canSelfServeOrganizationCreation() {
-                if (!accessToken) {
-                    return false;
-                }
-                if (backendMode === 'mock') {
-                    return true;
-                }
-                if (authSessionState?.platform_admin) {
-                    return true;
-                }
-                const orgCount = Array.isArray(authSessionState?.accessible_organizations)
-                    ? authSessionState.accessible_organizations.length
-                    : 0;
-                return orgCount === 0;
+                return Boolean(accessToken);
             }
 
             function primeOnboardingForNewOrganization(organizationId) {
@@ -792,6 +1026,7 @@ export function initializeOperatorConsole() {
                 onboardingFromWorkspaceSelection = true;
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 workspaceOrgUrlInput.value = normalizedOrganizationId;
+                persistGatewayOrganizationHint(normalizedOrganizationId);
                 onboardingOrganizationNameInput.value = normalizedOrganizationId;
                 onboardingOrganizationIdInput.value = normalizedOrganizationId;
                 if (!onboardingProjectNameInput.value.trim()) {
@@ -803,7 +1038,7 @@ export function initializeOperatorConsole() {
                 openWorkspaceOverlay('onboarding');
                 setWorkspaceTextStatus(
                     onboardingStatus,
-                    `"${normalizedOrganizationId}" does not exist yet. Confirm this URL to create a new organization, or go back to enter an existing one.`,
+                    `"${normalizedOrganizationId}" is available. Confirm it to create a new organization, or go back to open an existing one.`,
                 );
             }
 
@@ -851,7 +1086,7 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(
                     workspaceLoginStatus,
                     invitePending
-                        ? 'Project invite detected. Continue with Google to redeem it.'
+                        ? 'Organization invite detected. Continue with Google to redeem it.'
                         : (
                             resolvedOrganizationId
                                 ? `Continue with Google to open "${resolvedOrganizationId}".`
@@ -946,9 +1181,32 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function persistGatewayOrganizationHint(organizationId = '') {
+                const normalizedOrganizationId = normalizeOrganizationUrl(organizationId);
+                try {
+                    if (normalizedOrganizationId) {
+                        localStorage.setItem(GATEWAY_ORGANIZATION_HINT_STORAGE_KEY, normalizedOrganizationId);
+                    } else {
+                        localStorage.removeItem(GATEWAY_ORGANIZATION_HINT_STORAGE_KEY);
+                    }
+                } catch (error) {
+                    console.warn('Unable to persist gateway organization hint:', error);
+                }
+            }
+
+            function readGatewayOrganizationHint() {
+                try {
+                    return normalizeOrganizationUrl(localStorage.getItem(GATEWAY_ORGANIZATION_HINT_STORAGE_KEY) || '');
+                } catch (error) {
+                    return '';
+                }
+            }
+
             function getWorkspaceOrganizationHint() {
                 return normalizeOrganizationUrl(
-                    getStoredWorkspaceSelection().tenantId || getOrganizationIdFromPathname()
+                    getOrganizationIdFromPathname()
+                    || readGatewayOrganizationHint()
+                    || getStoredWorkspaceSelection().tenantId
                 );
             }
 
@@ -1008,11 +1266,12 @@ export function initializeOperatorConsole() {
             function getActiveTenantId() {
                 const selectedTenantId = String(orgSpaceSelect.value || '').trim();
                 const pathTenantId = getOrganizationIdFromPathname();
+                const storedTenantId = getStoredWorkspaceSelection().tenantId;
                 if (accessToken) {
-                    return selectedTenantId || pathTenantId || getStoredWorkspaceSelection().tenantId;
+                    return pathTenantId || selectedTenantId || storedTenantId;
                 }
                 if (isGoogleLoginConfigured()) {
-                    return pathTenantId || getStoredWorkspaceSelection().tenantId || '';
+                    return pathTenantId || readGatewayOrganizationHint() || storedTenantId || '';
                 }
                 return LOCAL_DEMO_TENANT_ID;
             }
@@ -1282,10 +1541,14 @@ export function initializeOperatorConsole() {
             function setWorkspaceSelectionStage(stage = 'org') {
                 let normalizedStage = stage === 'project' ? 'project' : 'org';
                 const pathTenantId = getOrganizationIdFromPathname();
-                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || pathTenantId || '';
+                const selectedTenantId = workspaceSelectionContext.organizationId
+                    || workspaceModalOrgSelect.value
+                    || authSessionState?.organization_id
+                    || pathTenantId
+                    || '';
                 const isStandaloneOrgPath = Boolean(pathTenantId);
                 const accessibleOrgCount = getAccessibleTenantItems().length;
-                const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
+                const projectItems = getWorkspaceSelectionProjects();
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 if (normalizedStage === 'project' && !selectedTenantId) {
                     normalizedStage = 'org';
@@ -1306,7 +1569,7 @@ export function initializeOperatorConsole() {
                 if (normalizedStage === 'org') {
                     const currentOrgInput = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
                     workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
-                    workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Log in to your organization';
+                    workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Choose your organization';
                     workspaceModalSubtitle.textContent = accessibleOrgCount > 1 && accessToken
                         ? 'Choose one of your organizations below, or type another organization URL to open.'
                         : (
@@ -1328,9 +1591,9 @@ export function initializeOperatorConsole() {
                     syncWorkspaceSelectionOrgInput(currentOrgInput || selectedTenantId || '');
                 } else {
                     workspaceModalEyebrow.textContent = 'Workspace';
-                    workspaceModalTitle.textContent = hasExistingProjects ? 'Choose a project' : 'Create your first project';
+                    workspaceModalTitle.textContent = hasExistingProjects ? 'Choose your project' : 'Create your first project';
                     workspaceModalSubtitle.textContent = hasExistingProjects
-                        ? 'Use an existing project or create a new one inside this organization.'
+                        ? 'Select an existing project to continue, or create a new one in this organization.'
                         : 'This organization does not have a project yet. Create the first one to continue.';
                 }
                 syncWorkspaceSelectedOrgContext();
@@ -1341,8 +1604,11 @@ export function initializeOperatorConsole() {
             }
 
             function refreshWorkspaceSelectionCopy() {
-                const selectedTenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
-                const projectItems = Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : [];
+                const selectedTenantId = workspaceSelectionContext.organizationId
+                    || workspaceModalOrgSelect.value
+                    || authSessionState?.organization_id
+                    || '';
+                const projectItems = getWorkspaceSelectionProjects();
                 const hasExistingProjects = Boolean(selectedTenantId && projectItems.length > 0);
                 refreshWorkspaceOrganizationChooser();
                 syncWorkspaceSelectedOrgContext();
@@ -1360,17 +1626,21 @@ export function initializeOperatorConsole() {
                 workspaceSelectionContinueBtn.disabled = !hasExistingProjects || !workspaceModalProjectSelect.value;
                 workspaceModalProjectSelect.disabled = !hasExistingProjects;
                 workspaceSelectionCreateProjectBtn.disabled = !selectedTenantId;
-                workspaceSelectionCreateProjectBtn.textContent = hasExistingProjects ? 'Add New Project' : 'Create First Project';
+                workspaceSelectionCreateProjectBtn.textContent = hasExistingProjects ? 'Create New Project' : 'Create First Project';
             }
 
             function resolveGatewaySelectionStage(payload = authSessionState) {
                 const requestedOrganizationId = normalizeOrganizationUrl(
-                    workspaceOrgUrlInput?.value
-                    || getStoredWorkspaceSelection().tenantId
+                    workspaceSelectionContext.organizationId
+                    || workspaceOrgUrlInput?.value
+                    || readGatewayOrganizationHint()
                     || ''
                 );
-                const activeOrganizationId = normalizeOrganizationUrl(payload?.organization_id || '');
-                if (requestedOrganizationId && activeOrganizationId && requestedOrganizationId === activeOrganizationId) {
+                const accessibleOrganizations = Array.isArray(payload?.accessible_organizations) ? payload.accessible_organizations : [];
+                if (requestedOrganizationId && accessibleOrganizations.some((item) => normalizeOrganizationUrl(item?.organization_id || '') === requestedOrganizationId)) {
+                    return 'project';
+                }
+                if (accessibleOrganizations.length === 1) {
                     return 'project';
                 }
                 return 'org';
@@ -1414,7 +1684,8 @@ export function initializeOperatorConsole() {
                     setWorkspaceSelectionStage(
                         selectionStage
                         || (
-                            authSessionState?.organization_id && !authSessionState?.needs_org_selection
+                            workspaceSelectionContext.organizationId
+                            || (authSessionState?.organization_id && !authSessionState?.needs_org_selection)
                                 ? 'project'
                                 : 'org'
                         )
@@ -1459,7 +1730,8 @@ export function initializeOperatorConsole() {
 
             function applyAuthSessionPayload(payload) {
                 authSessionState = payload || null;
-                const selectedTenantId = getOrganizationIdFromPathname() || payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
+                const pathTenantId = getOrganizationIdFromPathname();
+                const selectedTenantId = pathTenantId || payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
                 const selectedProjectId = payload?.project_id || getStoredWorkspaceSelection().projectId || '';
                 populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
                 populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
@@ -1469,12 +1741,287 @@ export function initializeOperatorConsole() {
                 if (payload?.organization_id || payload?.project_id) {
                     persistWorkspaceSelection(payload.organization_id || '', payload.project_id || '');
                 }
+                persistGatewayOrganizationHint(selectedTenantId);
+                if (selectedTenantId) {
+                    setWorkspaceSelectionContext({
+                        organizationId: selectedTenantId,
+                        organization: payload?.organization || findAccessibleTenant(selectedTenantId) || {
+                            organization_id: selectedTenantId,
+                            name: selectedTenantId,
+                            role: payload?.organization_role || null,
+                        },
+                        projects: payload?.organization_id && normalizeOrganizationUrl(payload.organization_id) === normalizeOrganizationUrl(selectedTenantId)
+                            ? (payload?.accessible_projects || [])
+                            : [],
+                    });
+                } else {
+                    clearWorkspaceSelectionContext();
+                }
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 syncWorkspaceSelectionOrgInput(selectedTenantId);
                 syncWorkspaceSelectedOrgContext();
                 refreshWorkspaceSelectionCopy();
                 syncAuthModeUi();
                 syncWorkspaceSummary(payload);
+                if (activePageId === 'settings') {
+                    void refreshWorkspaceManagementPanels();
+                }
+            }
+
+            function canManageOrganizationWorkspace() {
+                const normalizedRole = String(authSessionState?.organization_role || '').trim().toLowerCase();
+                return Boolean(accessToken && (normalizedRole === 'owner' || normalizedRole === 'admin'));
+            }
+
+            function getCurrentSettingsOrganizationId() {
+                return normalizeOrganizationUrl(authSessionState?.organization_id || getActiveTenantId());
+            }
+
+            function getCurrentSettingsProjects() {
+                return sortWorkspaceProjects(Array.isArray(authSessionState?.accessible_projects) ? authSessionState.accessible_projects : []);
+            }
+
+            function getFallbackSignedInMember() {
+                if (!accessToken || !authSessionState) {
+                    return [];
+                }
+                return [{
+                    member_id: authSessionState.actor_id || authSessionState.email || 'current-user',
+                    user_id: authSessionState.actor_id || authSessionState.email || 'current-user',
+                    email: authSessionState.email || '',
+                    display_name: authSessionState.display_name || authSessionState.email || 'Current user',
+                    role: authSessionState.organization_role || 'member',
+                    status: 'active',
+                    pending: false,
+                }];
+            }
+
+            function renderSettingsProjectsPanel() {
+                if (!settingsProjectList || !settingsProjectsStatus) {
+                    return;
+                }
+                const organizationId = getCurrentSettingsOrganizationId();
+                const projects = getCurrentSettingsProjects();
+                const canManage = canManageOrganizationWorkspace();
+                if (settingsProjectCreateButton) {
+                    settingsProjectCreateButton.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsProjectCreateNameInput) {
+                    settingsProjectCreateNameInput.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (!accessToken) {
+                    settingsProjectList.innerHTML = '<div class="list-empty">Sign in with Google to manage projects.</div>';
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Google login required.');
+                    return;
+                }
+                if (!organizationId) {
+                    settingsProjectList.innerHTML = '<div class="list-empty">Select an organization first.</div>';
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Choose an organization before managing projects.');
+                    return;
+                }
+                if (projects.length === 0) {
+                    settingsProjectList.innerHTML = '<div class="list-empty">No projects exist in this organization yet.</div>';
+                    setWorkspaceTextStatus(
+                        settingsProjectsStatus,
+                        canManage
+                            ? 'Create the first project for this organization.'
+                            : 'An administrator needs to create the first project for this organization.',
+                        !canManage,
+                    );
+                    return;
+                }
+                const defaultProjectId = resolveDefaultProjectId(projects);
+                settingsProjectList.innerHTML = projects.map((project) => {
+                    const projectId = String(project?.project_id || '').trim();
+                    const isDefault = Boolean(project?.is_default) || projectId === defaultProjectId;
+                    const isCurrent = projectId === String(authSessionState?.project_id || '').trim();
+                    return `
+                        <div class="settings-entity-card">
+                            <div class="settings-entity-card-head">
+                                <div>
+                                    <div class="settings-entity-title">${escapeHtml(project?.name || projectId)}</div>
+                                    <div class="settings-entity-meta">${escapeHtml(projectId)}${project?.description ? ` · ${escapeHtml(project.description)}` : ''}</div>
+                                </div>
+                                <div class="settings-project-marker-list">
+                                    ${isDefault ? '<span class="pill">Default</span>' : ''}
+                                    ${isCurrent ? '<span class="pill">Current</span>' : ''}
+                                    ${project?.role ? `<span class="pill">${escapeHtml(project.role)}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="settings-entity-card-foot">
+                                <button type="button" class="secondary-action" data-settings-project-open="${escapeHtml(projectId)}">Open Project</button>
+                                ${canManage ? `<button type="button" class="danger-action" data-settings-project-delete="${escapeHtml(projectId)}" data-settings-project-name="${escapeHtml(project?.name || projectId)}">Delete Project</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                setWorkspaceTextStatus(
+                    settingsProjectsStatus,
+                    canManage
+                        ? 'Projects are fully isolated from each other inside this organization.'
+                        : 'Project isolation is active. Only organization owners and administrators can create or delete projects.',
+                    false,
+                );
+            }
+
+            function renderSettingsTeamsPanel() {
+                if (!settingsTeamMemberList || !settingsTeamStatus || !settingsTeamRoleSummary) {
+                    return;
+                }
+                const organizationId = getCurrentSettingsOrganizationId();
+                const canManage = canManageOrganizationWorkspace();
+                if (settingsTeamAddMemberBtn) {
+                    settingsTeamAddMemberBtn.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsTeamMemberEmailInput) {
+                    settingsTeamMemberEmailInput.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsTeamMemberRoleSelect) {
+                    settingsTeamMemberRoleSelect.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsTeamCopyInviteBtn) {
+                    settingsTeamCopyInviteBtn.disabled = !accessToken || !organizationId || !settingsLastInviteLink;
+                }
+                if (settingsTeamInviteLinkInput) {
+                    settingsTeamInviteLinkInput.value = settingsLastInviteLink;
+                }
+                const members = Array.isArray(settingsMembersState) && settingsMembersState.length
+                    ? settingsMembersState
+                    : getFallbackSignedInMember();
+                settingsTeamRoleSummary.textContent = canManage
+                    ? 'Owner and administrators can add Google accounts, update admin/member roles, and share invite links.'
+                    : 'Members can view the organization roster. Only owners and administrators can manage access.';
+                if (!accessToken) {
+                    settingsTeamMemberList.innerHTML = '<div class="list-empty">Sign in with Google to manage team access.</div>';
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Google login required.');
+                    return;
+                }
+                if (!organizationId) {
+                    settingsTeamMemberList.innerHTML = '<div class="list-empty">Select an organization first.</div>';
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Choose an organization before managing team access.');
+                    return;
+                }
+                settingsTeamMemberList.innerHTML = members.map((member) => {
+                    const memberId = String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
+                    const role = String(member?.role || 'member').trim().toLowerCase();
+                    const canChangeRole = canManage && role !== 'owner';
+                    return `
+                        <div class="settings-entity-card">
+                            <div class="settings-entity-card-head">
+                                <div>
+                                    <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
+                                    <div class="settings-entity-meta">${escapeHtml(member?.email || '')}${member?.pending ? ' · Pending invite' : ''}</div>
+                                </div>
+                                <div class="settings-project-marker-list">
+                                    <span class="pill">${escapeHtml(role)}</span>
+                                    <span class="pill">${escapeHtml(member?.status || 'active')}</span>
+                                </div>
+                            </div>
+                            <div class="settings-role-editor">
+                                <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
+                                    <option value="member" ${role === 'member' ? 'selected' : ''}>Member</option>
+                                    <option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrator</option>
+                                    ${role === 'owner' ? '<option value="owner" selected>Owner</option>' : ''}
+                                </select>
+                                <div class="settings-entity-card-foot">
+                                    ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}">Save Role</button>` : ''}
+                                    ${canManage ? `<button type="button" class="secondary-action" data-settings-member-invite="${escapeHtml(memberId)}" data-settings-member-email="${escapeHtml(member?.email || '')}">Generate Invite Link</button>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                setWorkspaceTextStatus(
+                    settingsTeamStatus,
+                    settingsLastInviteLink
+                        ? 'Invite link generated. Copy it below and share it with the teammate.'
+                        : (canManage
+                            ? 'Add a Google email to pre-authorize organization access.'
+                            : 'Team membership is shared across every project in this organization.'),
+                    false,
+                );
+            }
+
+            function openSettingsProjectDeleteDialog(projectId, projectName) {
+                settingsDeleteProjectCandidate = {
+                    projectId: String(projectId || '').trim(),
+                    projectName: String(projectName || projectId || '').trim(),
+                };
+                if (settingsProjectDeleteCopy) {
+                    settingsProjectDeleteCopy.textContent = `Deleting "${settingsDeleteProjectCandidate.projectName}" is permanent. Its connectors, imports, workflows, cohorts, predictions, and AI data will be removed and cannot be recovered.`;
+                }
+                if (settingsProjectDeleteConfirmInput) {
+                    settingsProjectDeleteConfirmInput.value = '';
+                }
+                setWorkspaceTextStatus(settingsProjectDeleteStatus, '');
+                settingsProjectDeleteModal?.classList.remove('hidden');
+                settingsProjectDeleteModal?.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeSettingsProjectDeleteDialog() {
+                settingsDeleteProjectCandidate = null;
+                settingsProjectDeleteModal?.classList.add('hidden');
+                settingsProjectDeleteModal?.setAttribute('aria-hidden', 'true');
+                if (settingsProjectDeleteConfirmInput) {
+                    settingsProjectDeleteConfirmInput.value = '';
+                }
+                setWorkspaceTextStatus(settingsProjectDeleteStatus, '');
+            }
+
+            async function refreshSettingsProjectsPanel({ requery = false } = {}) {
+                const organizationId = getCurrentSettingsOrganizationId();
+                if (!accessToken || !organizationId) {
+                    renderSettingsProjectsPanel();
+                    return;
+                }
+                if (requery) {
+                    try {
+                        const refreshedProjects = await fetchOrganizationProjects(organizationId);
+                        applyAuthSessionPayload({
+                            ...(authSessionState || {}),
+                            organization_id: organizationId,
+                            accessible_projects: refreshedProjects,
+                        });
+                    } catch (error) {
+                        renderSettingsProjectsPanel();
+                        throw error;
+                    }
+                }
+                renderSettingsProjectsPanel();
+            }
+
+            async function refreshSettingsTeamsPanel() {
+                const organizationId = getCurrentSettingsOrganizationId();
+                settingsMembersState = [];
+                settingsLastInviteLink = settingsTeamInviteLinkInput?.value || '';
+                if (!accessToken || !organizationId) {
+                    renderSettingsTeamsPanel();
+                    return;
+                }
+                let loadError = '';
+                try {
+                    settingsMembersState = await fetchOrganizationMembers(organizationId);
+                } catch (error) {
+                    settingsMembersState = getFallbackSignedInMember();
+                    loadError = error.message || 'Unable to load organization members.';
+                }
+                renderSettingsTeamsPanel();
+                if (loadError) {
+                    setWorkspaceTextStatus(settingsTeamStatus, loadError, true);
+                }
+            }
+
+            async function refreshWorkspaceManagementPanels(options = {}) {
+                const [projectsResult, teamsResult] = await Promise.allSettled([
+                    refreshSettingsProjectsPanel(options),
+                    refreshSettingsTeamsPanel(),
+                ]);
+                if (projectsResult.status === 'rejected') {
+                    setWorkspaceTextStatus(settingsProjectsStatus, projectsResult.reason?.message || 'Failed to refresh projects.', true);
+                }
+                if (teamsResult.status === 'rejected') {
+                    setWorkspaceTextStatus(settingsTeamStatus, teamsResult.reason?.message || 'Failed to refresh team members.', true);
+                }
             }
 
             const storedActorContext = readStoredActorContext();
@@ -1587,6 +2134,12 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'insight-copilot') {
                     loadInsightCopilot();
+                }
+                if (pageId === 'settings') {
+                    refreshWorkspaceManagementPanels({ requery: true }).catch((error) => {
+                        setWorkspaceTextStatus(settingsProjectsStatus, error.message || 'Failed to refresh workspace settings.', true);
+                        setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to refresh workspace settings.', true);
+                    });
                 }
             }
 
@@ -1831,6 +2384,268 @@ export function initializeOperatorConsole() {
             sidebarBackdrop?.addEventListener('click', () => setSidebarMobileOpen(false));
             settingsOpenSwitcherBtn?.addEventListener('click', () => workspaceOpenSwitcherBtn.click());
             settingsCreateProjectBtn?.addEventListener('click', () => workspaceCreateProjectBtn.click());
+            settingsProjectCreateButton?.addEventListener('click', async () => {
+                const organizationId = getCurrentSettingsOrganizationId();
+                const projectName = String(settingsProjectCreateNameInput?.value || '').trim();
+                const projectId = slugifyIdentifier(projectName);
+                if (!organizationId) {
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Select an organization before creating a project.', true);
+                    return;
+                }
+                if (!canManageOrganizationWorkspace()) {
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Only organization owners and administrators can create projects.', true);
+                    return;
+                }
+                if (!projectName || !projectId) {
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Enter a project name to continue.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(settingsProjectsStatus, 'Creating project...');
+                    const response = await fetch(`${getApiBaseUrl(organizationId)}/projects`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            project_id: projectId,
+                            name: projectName,
+                            description: '',
+                        }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Failed to create project.');
+                    }
+                    settingsProjectCreateNameInput.value = '';
+                    await refreshSettingsProjectsPanel({ requery: true });
+                    setWorkspaceTextStatus(settingsProjectsStatus, `Created project "${payload?.project?.name || projectName}".`);
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsProjectsStatus, error.message || 'Failed to create project.', true);
+                }
+            });
+            settingsProjectList?.addEventListener('click', async (event) => {
+                const openButton = event.target.closest('[data-settings-project-open]');
+                if (openButton) {
+                    const projectId = openButton.dataset.settingsProjectOpen || '';
+                    if (!projectId) {
+                        return;
+                    }
+                    try {
+                        setWorkspaceTextStatus(settingsProjectsStatus, 'Opening project...');
+                        await confirmWorkspaceActivation(getCurrentSettingsOrganizationId(), projectId);
+                        setWorkspaceTextStatus(settingsProjectsStatus, `Opened project "${projectId}".`);
+                    } catch (error) {
+                        setWorkspaceTextStatus(settingsProjectsStatus, error.message || 'Failed to open project.', true);
+                    }
+                    return;
+                }
+                const deleteButton = event.target.closest('[data-settings-project-delete]');
+                if (deleteButton) {
+                    if (!canManageOrganizationWorkspace()) {
+                        setWorkspaceTextStatus(settingsProjectsStatus, 'Only organization owners and administrators can delete projects.', true);
+                        return;
+                    }
+                    openSettingsProjectDeleteDialog(
+                        deleteButton.dataset.settingsProjectDelete || '',
+                        deleteButton.dataset.settingsProjectName || '',
+                    );
+                }
+            });
+            settingsProjectDeleteCancelBtn?.addEventListener('click', () => {
+                closeSettingsProjectDeleteDialog();
+            });
+            settingsProjectDeleteModal?.addEventListener('click', (event) => {
+                if (event.target === settingsProjectDeleteModal || event.target.closest('.settings-dialog-backdrop')) {
+                    closeSettingsProjectDeleteDialog();
+                }
+            });
+            settingsProjectDeleteSubmitBtn?.addEventListener('click', async () => {
+                if (!settingsDeleteProjectCandidate?.projectId) {
+                    setWorkspaceTextStatus(settingsProjectDeleteStatus, 'Choose a project to delete first.', true);
+                    return;
+                }
+                if (String(settingsProjectDeleteConfirmInput?.value || '').trim() !== 'delete') {
+                    setWorkspaceTextStatus(settingsProjectDeleteStatus, 'Type delete to confirm this permanent action.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(settingsProjectDeleteStatus, 'Deleting project...');
+                    const organizationId = getCurrentSettingsOrganizationId();
+                    const response = await fetch(`${getApiBaseUrl(organizationId)}/projects/${encodeURIComponent(settingsDeleteProjectCandidate.projectId)}/permanent-delete`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ confirmation: 'delete' }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Project deletion is not available on this deployment yet.');
+                    }
+                    const deletedProjectId = settingsDeleteProjectCandidate.projectId;
+                    closeSettingsProjectDeleteDialog();
+                    const deletedCurrentProject = deletedProjectId === String(authSessionState?.project_id || '').trim();
+                    await refreshSettingsProjectsPanel({ requery: true });
+                    if (deletedCurrentProject) {
+                        const refreshedProjects = getCurrentSettingsProjects();
+                        if (refreshedProjects.length > 0) {
+                            await prepareProjectSelectionForOrganization(
+                                findAccessibleTenant(organizationId) || { organization_id: organizationId },
+                                { selectedProjectId: resolveDefaultProjectId(refreshedProjects), statusMessage: 'Select a project to continue after deletion.' },
+                            );
+                        } else {
+                            openWorkspaceOverlay('selection', { selectionStage: 'project', allowClose: true });
+                            setWorkspaceTextStatus(workspaceSelectionStatus, 'Create the first project in this organization to continue.');
+                        }
+                    }
+                    setWorkspaceTextStatus(settingsProjectsStatus, payload?.detail || 'Project deleted.');
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsProjectDeleteStatus, error.message || 'Failed to delete project.', true);
+                }
+            });
+            settingsTeamAddMemberBtn?.addEventListener('click', async () => {
+                const organizationId = getCurrentSettingsOrganizationId();
+                const email = String(settingsTeamMemberEmailInput?.value || '').trim();
+                const role = String(settingsTeamMemberRoleSelect?.value || 'member').trim().toLowerCase();
+                if (!organizationId) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Select an organization before adding a team member.', true);
+                    return;
+                }
+                if (!canManageOrganizationWorkspace()) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Only organization owners and administrators can add team members.', true);
+                    return;
+                }
+                if (!email) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Enter a Google email address to continue.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Adding team member...');
+                    const response = await fetch(`${getApiBaseUrl(organizationId)}/organization-members`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            email,
+                            role,
+                        }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Failed to add team member.');
+                    }
+                    settingsTeamMemberEmailInput.value = '';
+                    settingsTeamMemberRoleSelect.value = 'member';
+                    try {
+                        const inviteResponse = await fetch(`${getApiBaseUrl(organizationId)}/organization-invites`, {
+                            method: 'POST',
+                            headers: {
+                                Authorization: `Bearer ${accessToken}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ email, role }),
+                        });
+                        const invitePayload = await inviteResponse.json().catch(() => ({}));
+                        if (inviteResponse.ok) {
+                            const rawInviteUrl = String(
+                                invitePayload?.invite?.invite_url
+                                || invitePayload?.invite_url
+                                || ''
+                            ).trim();
+                            settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
+                            if (settingsTeamInviteLinkInput) {
+                                settingsTeamInviteLinkInput.value = settingsLastInviteLink;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Unable to auto-create organization invite link:', error);
+                    }
+                    await refreshSettingsTeamsPanel();
+                    setWorkspaceTextStatus(settingsTeamStatus, `Added ${email} to the organization.`);
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to add team member.', true);
+                }
+            });
+            settingsTeamCopyInviteBtn?.addEventListener('click', async () => {
+                const inviteLink = String(settingsTeamInviteLinkInput?.value || '').trim();
+                if (!inviteLink) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Generate an invite link first.', true);
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(inviteLink);
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Invite link copied.');
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Unable to copy the invite link in this browser.', true);
+                }
+            });
+            settingsTeamMemberList?.addEventListener('click', async (event) => {
+                const saveRoleButton = event.target.closest('[data-settings-member-save]');
+                if (saveRoleButton) {
+                    const memberId = saveRoleButton.dataset.settingsMemberSave || '';
+                    const roleSelect = Array.from(settingsTeamMemberList.querySelectorAll('[data-settings-member-role]')).find((entry) => {
+                        return entry.getAttribute('data-settings-member-role') === memberId;
+                    });
+                    const nextRole = String(roleSelect?.value || 'member').trim().toLowerCase();
+                    try {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'Updating member role...');
+                        const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-members/${encodeURIComponent(memberId)}`, {
+                            method: 'PATCH',
+                            headers: {
+                                Authorization: `Bearer ${accessToken}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ role: nextRole }),
+                        });
+                        const payload = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            throw new Error(payload.detail || 'Failed to update member role.');
+                        }
+                        await refreshSettingsTeamsPanel();
+                        setWorkspaceTextStatus(settingsTeamStatus, 'Member role updated.');
+                    } catch (error) {
+                        setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to update member role.', true);
+                    }
+                    return;
+                }
+                const inviteButton = event.target.closest('[data-settings-member-invite]');
+                if (inviteButton) {
+                    const email = String(inviteButton.dataset.settingsMemberEmail || '').trim();
+                    if (!email) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This member does not have an invite email.', true);
+                        return;
+                    }
+                    try {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'Generating invite link...');
+                        const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-invites`, {
+                            method: 'POST',
+                            headers: {
+                                Authorization: `Bearer ${accessToken}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ email, role: 'member' }),
+                        });
+                        const payload = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            throw new Error(payload.detail || 'Failed to generate invite link.');
+                        }
+                        const rawInviteUrl = String(payload?.invite?.invite_url || payload?.invite_url || '').trim();
+                        settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
+                        if (settingsTeamInviteLinkInput) {
+                            settingsTeamInviteLinkInput.value = settingsLastInviteLink;
+                        }
+                        renderSettingsTeamsPanel();
+                        setWorkspaceTextStatus(settingsTeamStatus, 'Invite link generated.');
+                    } catch (error) {
+                        setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
+                    }
+                }
+            });
             topbarSearchForm?.addEventListener('submit', (event) => {
                 event.preventDefault();
                 focusSearchResult(topbarSearchInput?.value || '');
@@ -2020,6 +2835,7 @@ export function initializeOperatorConsole() {
             }
 
             function openOrganizationGateway(message = 'Enter the organization URL you want to open.') {
+                clearWorkspaceSelectionContext();
                 openWorkspaceOverlay('selection', { selectionStage: 'org' });
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 setWorkspaceTextStatus(workspaceSelectionStatus, message);
@@ -2028,6 +2844,7 @@ export function initializeOperatorConsole() {
             function clearBearerSession({ openOrgGateway = false, openLoginGateway = !openOrgGateway } = {}) {
                 persistAccessToken('');
                 authSessionState = null;
+                clearWorkspaceSelectionContext();
                 try {
                     localStorage.removeItem(OIDC_CODE_VERIFIER_STORAGE_KEY);
                 } catch (error) {
@@ -2047,7 +2864,7 @@ export function initializeOperatorConsole() {
                         openWorkspaceOverlay('login');
                         refreshWorkspaceLoginStatus();
                     } else {
-                        syncWorkspaceOverlayFromSession();
+                        void syncWorkspaceOverlayFromSession();
                     }
                     return;
                 }
@@ -2083,6 +2900,7 @@ export function initializeOperatorConsole() {
             function handleSessionLogout() {
                 disableGoogleAutoSelect();
                 persistWorkspaceSelection('', '');
+                persistGatewayOrganizationHint('');
                 clearPendingInvite();
                 orgSpaceSelect.value = '';
                 projectSelect.value = '';
@@ -2097,7 +2915,10 @@ export function initializeOperatorConsole() {
                 const inviteCode = params.get('invite_code');
                 const tenantId = params.get('organization_id') || params.get('tenant_id') || getOrganizationIdFromPathname();
                 const projectId = params.get('project_id');
-                if (tenantId || projectId) {
+                if (tenantId) {
+                    persistGatewayOrganizationHint(tenantId);
+                }
+                if (!accessToken && (tenantId || projectId)) {
                     persistWorkspaceSelection(tenantId || '', projectId || '');
                 }
                 if (inviteCode) {
@@ -2258,8 +3079,8 @@ export function initializeOperatorConsole() {
                 }
                 inviteRedemptionInFlight = true;
                 try {
-                    setAuthStatus('Redeeming project invite...');
-                    const response = await fetch(`${getApiBaseUrl(pendingInvite.tenantId || '', { forceGlobal: !pendingInvite.tenantId })}/project-invites/redeem`, {
+                    setAuthStatus('Redeeming organization invite...');
+                    const response = await fetch(`${getApiBaseUrl(pendingInvite.tenantId || '', { forceGlobal: !pendingInvite.tenantId })}/organization-invites/redeem`, {
                         method: 'POST',
                         headers: {
                             Authorization: `Bearer ${accessToken}`,
@@ -2269,12 +3090,10 @@ export function initializeOperatorConsole() {
                     });
                     const payload = await response.json().catch(() => ({}));
                     if (!response.ok) {
-                        throw new Error(payload.detail || 'Project invite redemption failed.');
+                        throw new Error(payload.detail || 'Organization invite redemption failed.');
                     }
-                    persistWorkspaceSelection(
-                        payload.organization_space?.organization_id || payload.organization_space?.tenant_id || pendingInvite.tenantId || '',
-                        payload.project?.project_id || pendingInvite.projectId || '',
-                    );
+                    const organizationId = payload.organization_space?.organization_id || payload.organization_space?.tenant_id || pendingInvite.tenantId || '';
+                    persistGatewayOrganizationHint(organizationId);
                     clearPendingInvite();
                     setWorkspaceTextStatus(onboardingInviteStatus, 'Invite redeemed.', false);
                     window.history.replaceState({}, document.title, redirectUri());
@@ -2284,7 +3103,7 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function syncWorkspaceOverlayFromSession() {
+            async function syncWorkspaceOverlayFromSession() {
                 const sessionView = authSessionState || (accessToken ? buildFallbackWorkspaceSession() : null);
                 if (isGoogleLoginConfigured() && !accessToken) {
                     if (isGatewayRootPath()) {
@@ -2294,6 +3113,7 @@ export function initializeOperatorConsole() {
                         syncWorkspaceSelectionOrgInput(
                             normalizeOrganizationUrl(
                                 workspaceOrgUrlInput?.value
+                                || readGatewayOrganizationHint()
                                 || getStoredWorkspaceSelection().tenantId
                                 || getOrganizationIdFromPathname()
                                 || ''
@@ -2308,51 +3128,97 @@ export function initializeOperatorConsole() {
                     onboardingFromWorkspaceSelection = false;
                     onboardingResult = null;
                     setOnboardingStep(1);
+                    clearWorkspaceSelectionContext();
                     openWorkspaceOverlay('onboarding');
                     setWorkspaceTextStatus(onboardingStatus, 'Enter the organization URL you want to create.');
                     return;
                 }
+                const accessibleOrganizations = Array.isArray(sessionView?.accessible_organizations)
+                    ? sessionView.accessible_organizations
+                    : [];
+                const pathOrganizationId = getOrganizationIdFromPathname();
                 if (isGatewayRootPath() && accessToken) {
-                    if (sessionView?.organization_id) {
-                        workspaceModalOrgSelect.value = sessionView.organization_id;
+                    if (accessibleOrganizations.length === 0) {
+                        onboardingFromWorkspaceSelection = false;
+                        onboardingResult = null;
+                        setOnboardingStep(1);
+                        openWorkspaceOverlay('onboarding');
+                        setWorkspaceTextStatus(onboardingStatus, 'Enter the organization URL you want to create.');
+                        return;
                     }
-                    if (sessionView?.project_id) {
-                        workspaceModalProjectSelect.value = sessionView.project_id;
+                    if (accessibleOrganizations.length === 1) {
+                        const [onlyOrganization] = accessibleOrganizations;
+                        const accessibleProjects = Array.isArray(sessionView?.accessible_projects) ? sessionView.accessible_projects : [];
+                        if (
+                            normalizeOrganizationUrl(sessionView?.organization_id || '') === normalizeOrganizationUrl(onlyOrganization.organization_id || '')
+                            && accessibleProjects.length === 1
+                            && sessionView?.project_id
+                        ) {
+                            await confirmWorkspaceActivation(onlyOrganization.organization_id, sessionView.project_id, { reloadPage: true, syncBrowserPath: true });
+                            if (workspaceOverlayMode !== 'create-project') {
+                                closeWorkspaceOverlay(true);
+                            }
+                            syncWorkspaceGateClass();
+                            return;
+                        }
+                        syncWorkspaceSelectionOrgInput(onlyOrganization.organization_id);
+                        await prepareProjectSelectionForOrganization(onlyOrganization, {
+                            selectedProjectId: sessionView?.organization_id === onlyOrganization.organization_id ? sessionView?.project_id : '',
+                        });
+                        return;
                     }
-                    syncWorkspaceSelectionOrgInput(
-                        normalizeOrganizationUrl(
-                            workspaceOrgUrlInput?.value
-                            || getStoredWorkspaceSelection().tenantId
-                            || sessionView?.organization_id
-                            || ''
-                        )
-                    );
-                    const selectionStage = resolveGatewaySelectionStage(sessionView);
-                    openWorkspaceOverlay('selection', { selectionStage });
+                    openWorkspaceOverlay('selection', {
+                        selectionStage: 'org',
+                    });
+                    clearWorkspaceSelectionContext();
+                    syncWorkspaceSelectionOrgInput(readGatewayOrganizationHint() || '');
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
-                        selectionStage === 'project'
-                            ? ((sessionView?.accessible_projects || []).length
-                                ? 'Select an existing project to go, or create a new one.'
-                                : 'Create the first project in this organization to continue.')
-                            : 'Enter the organization URL you want to open.',
+                        'Choose one of your organizations below, or type an organization URL to open.',
                     );
                     return;
                 }
-                if (sessionView?.needs_org_selection || sessionView?.needs_project_selection) {
-                    if (!authSessionState && sessionView?.organization_id) {
-                        syncWorkspaceSelectionOrgInput(sessionView.organization_id);
+                if (pathOrganizationId && accessToken) {
+                    const matchedOrganization = accessibleOrganizations.find((item) => normalizeOrganizationUrl(item?.organization_id || '') === pathOrganizationId);
+                    if (matchedOrganization) {
+                        if (
+                            normalizeOrganizationUrl(sessionView?.organization_id || '') === pathOrganizationId
+                            && sessionView?.project_id
+                            && !sessionView?.needs_project_selection
+                        ) {
+                            if (workspaceOverlayMode !== 'create-project') {
+                                closeWorkspaceOverlay(true);
+                            }
+                            syncWorkspaceGateClass();
+                            return;
+                        }
+                        await prepareProjectSelectionForOrganization(matchedOrganization, {
+                            selectedProjectId: normalizeOrganizationUrl(sessionView?.organization_id || '') === pathOrganizationId ? sessionView?.project_id : '',
+                        });
+                        return;
                     }
-                    openWorkspaceOverlay('selection', {
-                        selectionStage: sessionView?.needs_project_selection && sessionView?.organization_id ? 'project' : 'org',
-                    });
+                    openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                    clearWorkspaceSelectionContext();
+                    syncWorkspaceSelectionOrgInput(pathOrganizationId);
+                    setWorkspaceSelectionSwitchAccountVisible(true, pathOrganizationId);
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
-                        sessionView.needs_org_selection
-                            ? 'Enter the organization URL you want to open.'
-                            : ((sessionView?.accessible_projects || []).length
-                                ? 'Select a project to continue.'
-                                : 'Create the first project in this organization to continue.'),
+                        `"${pathOrganizationId}" exists, but this Google account is not a member. Enter one of your organizations, or create a new one.`,
+                        true,
+                    );
+                    return;
+                }
+                if (sessionView?.needs_org_selection) {
+                    openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                    clearWorkspaceSelectionContext();
+                    syncWorkspaceSelectionOrgInput(readGatewayOrganizationHint() || '');
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Choose the organization you want to open.');
+                    return;
+                }
+                if (sessionView?.needs_project_selection && sessionView?.organization_id) {
+                    await prepareProjectSelectionForOrganization(
+                        findAccessibleTenant(sessionView.organization_id) || sessionView.organization,
+                        { selectedProjectId: sessionView.project_id || '' },
                     );
                     return;
                 }
@@ -2376,7 +3242,7 @@ export function initializeOperatorConsole() {
                     authSessionState = null;
                     syncAuthModeUi();
                     setAuthStatus(isGoogleLoginConfigured() ? 'Google login required.' : 'Local demo session');
-                    syncWorkspaceOverlayFromSession();
+                    await syncWorkspaceOverlayFromSession();
                     return;
                 }
                 const pathTenantId = normalizeOrganizationUrl(requestedPathTenantId || getOrganizationIdFromPathname());
@@ -2483,7 +3349,7 @@ export function initializeOperatorConsole() {
                 setAuthStatus(
                     `Google ${resolvedPayload.display_name || resolvedPayload.email || 'user'}${workspaceBits.length ? ` @ ${workspaceBits.join(' / ')}` : ''}`
                 );
-                syncWorkspaceOverlayFromSession();
+                await syncWorkspaceOverlayFromSession();
                 return resolvedPayload;
             }
 
@@ -2492,12 +3358,13 @@ export function initializeOperatorConsole() {
                 await loadOidcConfig();
                 const resolvedOrganizationId = normalizeOrganizationUrl(
                     organizationId
+                    || readGatewayOrganizationHint()
                     || getStoredWorkspaceSelection().tenantId
                     || getOrganizationIdFromPathname()
                     || '',
                 );
                 if (resolvedOrganizationId) {
-                    persistWorkspaceSelection(resolvedOrganizationId, '');
+                    persistGatewayOrganizationHint(resolvedOrganizationId);
                 }
                 if (isGoogleProvider()) {
                     if (openLoginOverlay) {
@@ -3414,17 +4281,7 @@ export function initializeOperatorConsole() {
             }
 
             async function switchWorkspaceSelection(tenantId, projectId, { reloadPage = true, syncBrowserPath = true } = {}) {
-                persistWorkspaceSelection(tenantId || '', projectId || '');
-                const payload = await hydrateAuthSession({
-                    syncBrowserPath,
-                    tenantIdOverride: tenantId || '',
-                    projectIdOverride: projectId || '',
-                    preferredBrowserTenantId: tenantId || '',
-                });
-                if (reloadPage && activePageId && (!accessToken || payload?.project_id)) {
-                    activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
-                }
-                return payload;
+                return confirmWorkspaceActivation(tenantId || '', projectId || '', { reloadPage, syncBrowserPath });
             }
 
             function openCreateProjectOverlay() {
@@ -3491,26 +4348,34 @@ export function initializeOperatorConsole() {
             workspaceModalCloseBtn.addEventListener('click', () => closeWorkspaceOverlay());
             workspaceOpenSwitcherBtn.addEventListener('click', () => {
                 setWorkspaceSelectionSwitchAccountVisible(false);
+                clearWorkspaceSelectionContext();
                 openWorkspaceOverlay('selection', { allowClose: true, selectionStage: 'org' });
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
             });
             workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
             orgSpaceSelect.addEventListener('change', async () => {
                 try {
-                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching organization space...');
-                    await switchWorkspaceSelection(orgSpaceSelect.value || '', '', { reloadPage: false });
-                    setWorkspaceTextStatus(
-                        workspaceSelectorStatus,
-                        authSessionState?.needs_project_selection ? 'Select a project to finish switching.' : 'Organization space updated.',
-                    );
+                    const organizationId = normalizeOrganizationUrl(orgSpaceSelect.value || '');
+                    if (!organizationId) {
+                        setWorkspaceTextStatus(workspaceSelectorStatus, 'Select an organization first.', true);
+                        return;
+                    }
+                    persistGatewayOrganizationHint(organizationId);
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Loading organization projects...');
+                    await prepareProjectSelectionForOrganization(findAccessibleTenant(organizationId) || { organization_id: organizationId });
+                    setWorkspaceTextStatus(workspaceSelectorStatus, 'Choose a project to finish switching.');
                 } catch (error) {
                     setWorkspaceTextStatus(workspaceSelectorStatus, error.message || 'Failed to switch organization space.', true);
                 }
             });
             projectSelect.addEventListener('change', async () => {
                 try {
+                    if (!orgSpaceSelect.value || !projectSelect.value) {
+                        setWorkspaceTextStatus(workspaceSelectorStatus, 'Select both an organization and a project.', true);
+                        return;
+                    }
                     setWorkspaceTextStatus(workspaceSelectorStatus, 'Switching project...');
-                    await switchWorkspaceSelection(orgSpaceSelect.value || '', projectSelect.value || '');
+                    await confirmWorkspaceActivation(orgSpaceSelect.value || '', projectSelect.value || '');
                     setWorkspaceTextStatus(workspaceSelectorStatus, 'Project updated.');
                 } catch (error) {
                     setWorkspaceTextStatus(workspaceSelectorStatus, error.message || 'Failed to switch project.', true);
@@ -3519,6 +4384,7 @@ export function initializeOperatorConsole() {
             workspaceSelectionBackBtn.addEventListener('click', () => {
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
+                clearWorkspaceSelectionContext({ preserveOrganization: true });
                 setWorkspaceSelectionStage('org');
             });
             workspaceSelectionResolveBtn.addEventListener('click', async () => {
@@ -3531,7 +4397,7 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     workspaceOrgUrlInput.value = organizationId;
-                    persistWorkspaceSelection(organizationId, '');
+                    persistGatewayOrganizationHint(organizationId);
                     try {
                         await startOidcLogin({ organizationId, openLoginOverlay: true });
                     } catch (error) {
@@ -3556,8 +4422,8 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 let tenant = findAccessibleTenant(organizationId);
+                let accessState = null;
                 if (!tenant) {
-                    let accessState = null;
                     try {
                         setWorkspaceTextStatus(workspaceSelectionStatus, 'Checking organization access...');
                         accessState = await inspectOrganizationSpaceAccess(organizationId);
@@ -3567,11 +4433,12 @@ export function initializeOperatorConsole() {
                     }
                     if (accessState?.exists && !accessState?.accessible) {
                         workspaceOrgUrlInput.value = organizationId;
-                        persistWorkspaceSelection(organizationId, '');
+                        persistGatewayOrganizationHint(organizationId);
+                        clearWorkspaceSelectionContext();
                         setWorkspaceSelectionSwitchAccountVisible(true, organizationId);
                         setWorkspaceTextStatus(
                             workspaceSelectionStatus,
-                            `"${organizationId}" already exists, but it is not linked to this Google account. Sign in with a different Google account or pick one of your own organizations.`,
+                            `"${organizationId}" already exists, but this Google account is not a member. Create a different organization, or enter one you already belong to.`,
                             true,
                         );
                         return;
@@ -3605,25 +4472,8 @@ export function initializeOperatorConsole() {
                     workspaceCreateProjectNameInput.value = '';
                     workspaceCreateProjectIdInput.value = '';
                     workspaceModalProjectSelect.value = '';
-                    const payload = await switchWorkspaceSelection(tenant.organization_id, '', { reloadPage: false, syncBrowserPath: false });
-                    if (payload?.project_id && !payload?.needs_project_selection) {
-                        syncBrowserOrganizationPath(payload.organization_id || tenant.organization_id, { preserveHintOnEmpty: true });
-                        closeWorkspaceOverlay(true);
-                        setWorkspaceTextStatus(workspaceSelectionStatus, '');
-                        if (activePageId) {
-                            activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
-                        }
-                        return;
-                    }
-                    workspaceModalOrgSelect.value = authSessionState?.organization_id || tenant.organization_id;
-                    workspaceModalProjectSelect.value = authSessionState?.project_id || '';
-                    setWorkspaceSelectionStage('project');
-                    setWorkspaceTextStatus(
-                        workspaceSelectionStatus,
-                        (authSessionState?.accessible_projects || []).length
-                            ? 'Use an existing project or type a new project name.'
-                            : 'Create the first project in this organization to continue.',
-                    );
+                    persistGatewayOrganizationHint(tenant.organization_id);
+                    await prepareProjectSelectionForOrganization(tenant);
                 } catch (error) {
                     setWorkspaceTextStatus(workspaceSelectionStatus, error.message || 'Failed to load organization projects.', true);
                 }
@@ -3631,6 +4481,7 @@ export function initializeOperatorConsole() {
             workspaceModalOrgSelect.addEventListener('change', () => {
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 syncWorkspaceSelectionOrgInput(workspaceModalOrgSelect.value || '');
+                clearWorkspaceSelectionContext({ preserveOrganization: false });
                 setWorkspaceTextStatus(workspaceSelectionStatus, '');
             });
             workspaceModalProjectSelect.addEventListener('change', refreshWorkspaceSelectionCopy);
@@ -3642,7 +4493,7 @@ export function initializeOperatorConsole() {
                     || ''
                 );
                 disableGoogleAutoSelect();
-                persistWorkspaceSelection(organizationId, '');
+                persistGatewayOrganizationHint(organizationId);
                 clearPendingInvite();
                 orgSpaceSelect.value = '';
                 projectSelect.value = '';
@@ -3663,8 +4514,8 @@ export function initializeOperatorConsole() {
                 }
                 try {
                     setWorkspaceTextStatus(workspaceSelectionStatus, 'Applying workspace...');
-                    const payload = await switchWorkspaceSelection(
-                        workspaceModalOrgSelect.value || authSessionState?.organization_id || '',
+                    const payload = await confirmWorkspaceActivation(
+                        workspaceSelectionContext.organizationId || workspaceModalOrgSelect.value || authSessionState?.organization_id || '',
                         workspaceModalProjectSelect.value || '',
                     );
                     if (payload?.project_id) {
@@ -3676,7 +4527,7 @@ export function initializeOperatorConsole() {
                 }
             });
             workspaceSelectionCreateProjectBtn.addEventListener('click', async () => {
-                const tenantId = workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
+                const tenantId = workspaceSelectionContext.organizationId || workspaceModalOrgSelect.value || authSessionState?.organization_id || '';
                 const projectName = workspaceCreateProjectNameInput.value.trim();
                 const projectId = slugifyIdentifier(workspaceCreateProjectIdInput.value || projectName);
                 if (!tenantId) {
@@ -3688,17 +4539,24 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 try {
-                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Adding project to organization space...');
-                    await switchWorkspaceSelection(tenantId, '', { reloadPage: false, syncBrowserPath: false });
-                    await apiRequest('/projects', {
+                    setWorkspaceTextStatus(workspaceSelectionStatus, 'Creating project...');
+                    const response = await fetch(`${getApiBaseUrl(tenantId)}/projects`, {
                         method: 'POST',
-                        body: {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
                             project_id: projectId,
                             name: projectName,
                             description: workspaceCreateProjectDescriptionInput.value.trim(),
-                        },
+                        }),
                     });
-                    await switchWorkspaceSelection(tenantId, projectId);
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Failed to create the project.');
+                    }
+                    await confirmWorkspaceActivation(tenantId, payload?.project?.project_id || projectId);
                     closeWorkspaceOverlay(true);
                     setWorkspaceTextStatus(workspaceSelectorStatus, `Added project ${projectId}.`);
                 } catch (error) {
@@ -3720,15 +4578,23 @@ export function initializeOperatorConsole() {
                 }
                 try {
                     setWorkspaceTextStatus(workspaceCreateProjectStatus, 'Creating project...');
-                    await apiRequest('/projects', {
+                    const response = await fetch(`${getApiBaseUrl(getActiveTenantId())}/projects`, {
                         method: 'POST',
-                        body: {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
                             project_id: projectId,
                             name: workspaceCreateProjectInlineNameInput.value.trim(),
                             description: workspaceCreateProjectInlineDescriptionInput.value.trim(),
-                        },
+                        }),
                     });
-                    await switchWorkspaceSelection(getActiveTenantId(), projectId);
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(payload.detail || 'Failed to create the project.');
+                    }
+                    await confirmWorkspaceActivation(getActiveTenantId(), payload?.project?.project_id || projectId);
                     closeWorkspaceOverlay(true);
                     setWorkspaceTextStatus(workspaceSelectorStatus, `Created project ${projectId}.`);
                 } catch (error) {
@@ -3803,12 +4669,9 @@ export function initializeOperatorConsole() {
                             || onboardingResult.organization_space?.tenant_id
                             || organizationId;
                         const createdProjectId = onboardingResult.project?.project_id || projectId;
-                        persistWorkspaceSelection(
-                            createdOrganizationId,
-                            createdProjectId,
-                        );
                         onboardingFromWorkspaceSelection = false;
-                        await switchWorkspaceSelection(createdOrganizationId, createdProjectId, { reloadPage: false });
+                        persistGatewayOrganizationHint(createdOrganizationId);
+                        await confirmWorkspaceActivation(createdOrganizationId, createdProjectId, { reloadPage: false });
                         if (isAuthenticatedWorkspaceReady()) {
                             activateModule(activeModuleId, activeNavItemId, { closeSidebar: false, scrollBehavior: 'instant', reloadPage: true });
                         }
@@ -8913,12 +9776,15 @@ export function initializeOperatorConsole() {
                 syncAuthModeUi();
                 try {
                     await handleOidcRedirect();
-                    await hydrateAuthSession({ syncBrowserPath: !isGatewayRootPath() });
+                    await hydrateAuthSession({
+                        forceGlobalScope: isGatewayRootPath(),
+                        syncBrowserPath: !isGatewayRootPath(),
+                    });
                 } catch (error) {
                     const errorMessage = handleGoogleSessionFailure(error, 'Google session initialization failed.');
                     setWorkspaceTextStatus(workspaceLoginStatus, errorMessage, true);
                 }
-                syncWorkspaceOverlayFromSession();
+                await syncWorkspaceOverlayFromSession();
                 rootGatewayBootPending = false;
                 syncWorkspaceBootClass();
             }
