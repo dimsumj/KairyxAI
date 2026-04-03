@@ -14,6 +14,21 @@ These instructions apply to the entire repository.
 - Do not commit absolute filesystem paths, worktree paths, `.codex` paths, or machine-specific home-directory references into the repository.
 - Use the `repo-path-hygiene` skill when it is available for documentation, specs, runbooks, READMEs, wiki-source docs, or any change that introduces or rewrites repository file references.
 
+## Main-Agent Workflow
+
+- For every repo-changing bug fix, feature implementation, refactor, or production code change, the main agent must use a main-agent -> sub-agent workflow. The main agent remains accountable for the final result and must not skip delegation.
+- Required sequence for those tasks:
+  1. Plan the work before editing, including scope, affected systems, validation, and rollout risk.
+  2. Delegate focused implementation or research lanes to sub-agents.
+  3. Keep sub-agent scopes disjoint when practical, such as backend, frontend, data or migration, docs, review, or QA.
+  4. Review every sub-agent output before integrating it. Delegated output must not be accepted without verification.
+  5. Run QA after delegated work is integrated back into the main branch of work, using the most relevant local tests, integration checks, and smoke coverage for the changed behavior.
+  6. Perform final integration in the main agent, including conflict resolution, final edits, final validation, commit, and push.
+- Minimum delegation expectation:
+  1. Use at least one sub-agent for any task that changes repo-tracked files.
+  2. Use multiple sub-agents when the work spans more than one major area, such as frontend plus backend, backend plus schema, or product code plus docs.
+- This rule applies to both bug fixes and new implementations. The main agent always owns the final handoff summary and final release-quality judgment.
+
 ## Validation
 
 - After making code changes, run the relevant local tests for the affected area before handoff.

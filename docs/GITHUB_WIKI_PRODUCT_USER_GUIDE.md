@@ -23,7 +23,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Sidebar collapse button | Button | Shrinks the desktop sidebar to a tight icon rail and expands it again when clicked a second time. In collapsed mode the site brand is hidden, the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. The popout stays reachable while you move the pointer from the icon into that section list. Clicking a collapsed icon routes to that module's first section and closes the temporary popout. The desktop shell also auto-collapses this rail when the viewport drops below `1200px`. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization and project before entering the app. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`, returns the browser to the base gateway URL, and lets you type a different organization URL without reusing the currently active org. | None | Lets you choose an organization and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay from `Settings -> Organization`. | None | Creates a new project and switches into it after success. |
 | Sidebar profile chip | Footer button | Shows the current signed-in identity at the bottom-left of the sidebar. Click it to open the account menu and use `Log out`. | `Studio Operator` | Opens the account menu, and `Log out` clears the app session then returns the shell to the organization URL gate. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar keeps the search field on the left and the theme selector on the right. | `settings` | The matching module or section opens and the matching page becomes active. |
@@ -137,6 +137,7 @@ Gateway validation rules for the org step are:
 | `Your organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
+| `Close` | Button | Closes the gateway overlay without applying a new workspace. The button sits in the bottom action row and uses red styling so it does not read like a primary continue action. | None | Returns to the prior app state. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization. If multiple active projects exist, the oldest active project is preselected as the default. | `sandbox` | The selected project becomes the active console context after continue. |
 | `Use Existing Project` | Button | Confirms the selected existing project. Available to any member of the selected organization. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization. | `Growth Sandbox` | The console generates the internal project id automatically. |
@@ -146,7 +147,7 @@ When the typed organization already exists and the signed-in Google user has acc
 - `Use Existing Project`
 - `Create New Project`
 
-If the same signed-in user wants a different organization instead, they can use `Back`, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
+If the same signed-in user wants a different organization instead, they can use `Switcher`, return to the base gateway, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
 
 All org members can access all active projects in that organization. Project selection is a workspace choice, not a project-membership permission check.
 
@@ -156,7 +157,7 @@ All org members can access all active projects in that organization. Project sel
 | --- | --- | --- | --- | --- |
 | `Project Name` | Text box | Enter the display name for the new project. | `Growth Sandbox` | The project is created with this name. |
 | `Create Project` | Button | Creates the project in the selected organization. Available only to `owner` and `admin` users. | None | The project is created, it joins the org-wide project list, and the console switches into it. |
-| `Cancel` | Button | Closes the new-project overlay. | None | Returns to the prior workspace selection state. |
+| `Cancel` | Button | Closes the new-project overlay. This button uses red styling to distinguish it from `Create Project`. | None | Returns to the prior workspace selection state. |
 
 As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
