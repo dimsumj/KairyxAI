@@ -55,8 +55,15 @@ export function initializeOperatorConsole() {
             const settingsTeamMemberEmailInput = document.getElementById('settings-team-member-email');
             const settingsTeamMemberRoleSelect = document.getElementById('settings-team-member-role');
             const settingsTeamAddMemberBtn = document.getElementById('settings-team-add-member-btn');
+            const settingsTeamGenerateInviteBtn = document.getElementById('settings-team-generate-invite-btn');
             const settingsTeamInviteLinkInput = document.getElementById('settings-team-invite-link');
             const settingsTeamCopyInviteBtn = document.getElementById('settings-team-copy-invite-btn');
+            const settingsTeamActionModal = document.getElementById('settings-team-action-modal');
+            const settingsTeamActionTitle = document.getElementById('settings-team-action-title');
+            const settingsTeamActionCopy = document.getElementById('settings-team-action-copy');
+            const settingsTeamActionStatus = document.getElementById('settings-team-action-status');
+            const settingsTeamActionCancelBtn = document.getElementById('settings-team-action-cancel-btn');
+            const settingsTeamActionSubmitBtn = document.getElementById('settings-team-action-submit-btn');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -172,8 +179,10 @@ export function initializeOperatorConsole() {
                 projects: [],
             };
             let settingsMembersState = [];
+            let settingsMemberRoleDrafts = {};
             let settingsLastInviteLink = '';
             let settingsDeleteProjectCandidate = null;
+            let settingsTeamActionCandidate = null;
             let workspaceOverlayMode = null;
             let workspaceOverlayAllowClose = false;
             let onboardingStep = 1;
@@ -183,6 +192,7 @@ export function initializeOperatorConsole() {
             let googleIdentityScriptPromise = null;
             let googleIdentityButtonClientId = '';
             let rootGatewayBootPending = !getOrganizationIdFromPathname();
+            const SETTINGS_CHANGES_SAVED_MESSAGE = 'Changes are saved.';
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -1819,6 +1829,136 @@ export function initializeOperatorConsole() {
                 }];
             }
 
+            function getNormalizedOrganizationRole(value = authSessionState?.organization_role) {
+                return String(value || '').trim().toLowerCase();
+            }
+
+            function isOrganizationOwner() {
+                return getNormalizedOrganizationRole() === 'owner';
+            }
+
+            function getSettingsMemberId(member) {
+                return String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
+            }
+
+            function getSettingsMemberRole(member) {
+                return String(member?.role || 'member').trim().toLowerCase();
+            }
+
+            function getSettingsMemberById(memberId = '') {
+                const normalizedMemberId = String(memberId || '').trim();
+                return settingsMembersState.find((member) => getSettingsMemberId(member) === normalizedMemberId) || null;
+            }
+
+            function getCurrentActorEmail() {
+                return String(authSessionState?.email || '').trim().toLowerCase();
+            }
+
+            function getCurrentActorId() {
+                return String(authSessionState?.actor_id || '').trim();
+            }
+
+            function isCurrentActorMember(member) {
+                const memberEmail = String(member?.email || '').trim().toLowerCase();
+                const memberUserId = String(member?.user_id || '').trim();
+                return Boolean(
+                    (memberEmail && memberEmail === getCurrentActorEmail())
+                    || (memberUserId && memberUserId === getCurrentActorId())
+                );
+            }
+
+            function getSettingsMemberJoinedLabel(member) {
+                const createdAt = member?.created_at || member?.joined_at || member?.updated_at || '';
+                if (!createdAt) {
+                    return member?.pending ? 'Invite pending' : 'Joined date unavailable';
+                }
+                return member?.pending
+                    ? `Invited ${formatDateTime(createdAt)}`
+                    : `Joined ${formatDateTime(createdAt)}`;
+            }
+
+            function getDraftRoleForMember(member) {
+                const memberId = getSettingsMemberId(member);
+                return String(settingsMemberRoleDrafts[memberId] || getSettingsMemberRole(member)).trim().toLowerCase();
+            }
+
+            function setDraftRoleForMember(memberId, role) {
+                const normalizedMemberId = String(memberId || '').trim();
+                if (!normalizedMemberId) {
+                    return;
+                }
+                settingsMemberRoleDrafts = {
+                    ...settingsMemberRoleDrafts,
+                    [normalizedMemberId]: String(role || 'member').trim().toLowerCase(),
+                };
+            }
+
+            function clearDraftRoleForMember(memberId) {
+                const normalizedMemberId = String(memberId || '').trim();
+                if (!normalizedMemberId || !(normalizedMemberId in settingsMemberRoleDrafts)) {
+                    return;
+                }
+                const nextDrafts = { ...settingsMemberRoleDrafts };
+                delete nextDrafts[normalizedMemberId];
+                settingsMemberRoleDrafts = nextDrafts;
+            }
+
+            function canEditMemberRole(member) {
+                return Boolean(
+                    canManageOrganizationWorkspace()
+                    && !member?.pending
+                    && getSettingsMemberRole(member) !== 'owner'
+                    && !isCurrentActorMember(member)
+                );
+            }
+
+            function canRemoveMember(member) {
+                return Boolean(
+                    canManageOrganizationWorkspace()
+                    && !member?.pending
+                    && getSettingsMemberRole(member) !== 'owner'
+                    && !isCurrentActorMember(member)
+                );
+            }
+
+            function canTransferOwnershipToMember(member) {
+                return Boolean(
+                    isOrganizationOwner()
+                    && !member?.pending
+                    && getSettingsMemberRole(member) !== 'owner'
+                    && !isCurrentActorMember(member)
+                );
+            }
+
+            function getTeamManagementErrorMessage(action, detail = '', status = 0) {
+                const normalizedDetail = String(detail || '').trim();
+                if (action === 'transfer-owner') {
+                    if (
+                        status === 404
+                        || status === 405
+                        || /owner transfer/i.test(normalizedDetail)
+                        || /confirm_owner_transfer/i.test(normalizedDetail)
+                        || /role must be one of admin or member/i.test(normalizedDetail)
+                    ) {
+                        return 'Owner transfer is not available on this deployment yet.';
+                    }
+                    return normalizedDetail || 'Failed to transfer ownership.';
+                }
+                if (action === 'remove-member') {
+                    if (status === 404 || status === 405) {
+                        return 'Member removal is not available on this deployment yet.';
+                    }
+                    return normalizedDetail || 'Failed to remove member.';
+                }
+                if (action === 'generate-invite') {
+                    if (status === 404 || status === 405) {
+                        return 'Invite link generation is not available on this deployment yet.';
+                    }
+                    return normalizedDetail || 'Failed to generate invite link.';
+                }
+                return normalizedDetail || 'Failed to update team settings.';
+            }
+
             function renderSettingsProjectsPanel() {
                 if (!settingsProjectList || !settingsProjectsStatus) {
                     return;
@@ -1893,14 +2033,19 @@ export function initializeOperatorConsole() {
                 }
                 const organizationId = getCurrentSettingsOrganizationId();
                 const canManage = canManageOrganizationWorkspace();
+                const isOwner = isOrganizationOwner();
                 if (settingsTeamAddMemberBtn) {
                     settingsTeamAddMemberBtn.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsTeamGenerateInviteBtn) {
+                    settingsTeamGenerateInviteBtn.disabled = !canManage || !accessToken || !organizationId;
                 }
                 if (settingsTeamMemberEmailInput) {
                     settingsTeamMemberEmailInput.disabled = !canManage || !accessToken || !organizationId;
                 }
                 if (settingsTeamMemberRoleSelect) {
                     settingsTeamMemberRoleSelect.disabled = !canManage || !accessToken || !organizationId;
+                    settingsTeamMemberRoleSelect.value = 'member';
                 }
                 if (settingsTeamCopyInviteBtn) {
                     settingsTeamCopyInviteBtn.disabled = !accessToken || !organizationId || !settingsLastInviteLink;
@@ -1912,8 +2057,12 @@ export function initializeOperatorConsole() {
                     ? settingsMembersState
                     : getFallbackSignedInMember();
                 settingsTeamRoleSummary.textContent = canManage
-                    ? 'Owner and administrators can add Google accounts, update admin/member roles, and share invite links.'
-                    : 'Members can view the organization roster. Only owners and administrators can manage access.';
+                    ? (
+                        isOwner
+                            ? 'Owners can add Google accounts, save admin or member role changes, remove non-owner members, and confirm ownership transfer.'
+                            : 'Administrators can add Google accounts, save admin or member role changes, and remove non-owner members. Only the owner can transfer ownership.'
+                    )
+                    : 'Members can view the organization roster only. Team access changes are limited to owners and administrators.';
                 if (!accessToken) {
                     settingsTeamMemberList.innerHTML = '<div class="list-empty">Sign in with Google to manage team access.</div>';
                     setWorkspaceTextStatus(settingsTeamStatus, 'Google login required.');
@@ -1925,31 +2074,47 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 settingsTeamMemberList.innerHTML = members.map((member) => {
-                    const memberId = String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
-                    const role = String(member?.role || 'member').trim().toLowerCase();
-                    const canChangeRole = canManage && !Boolean(member?.pending) && role !== 'owner';
+                    const memberId = getSettingsMemberId(member);
+                    const role = getSettingsMemberRole(member);
+                    const draftRole = getDraftRoleForMember(member);
+                    const canChangeRole = canEditMemberRole(member);
+                    const canRemove = canRemoveMember(member);
+                    const canTransferOwnership = canTransferOwnershipToMember(member);
+                    const hasUnsavedRoleChange = canChangeRole && draftRole !== role;
+                    const memberLifecycleLabel = getSettingsMemberJoinedLabel(member);
+                    const isSelf = isCurrentActorMember(member);
+                    const footActions = [];
+                    if (canTransferOwnership) {
+                        footActions.push(`<button type="button" class="secondary-action" data-settings-member-transfer-owner="${escapeHtml(memberId)}">Transfer Ownership</button>`);
+                    }
+                    if (canRemove) {
+                        footActions.push(`<button type="button" class="danger-action" data-settings-member-remove="${escapeHtml(memberId)}">Remove Member</button>`);
+                    }
                     return `
                         <div class="settings-entity-card">
                             <div class="settings-entity-card-head">
-                                <div>
+                                <div class="settings-entity-supporting">
                                     <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
-                                    <div class="settings-entity-meta">${escapeHtml(member?.email || '')}${member?.pending ? ' · Pending invite' : ''}</div>
+                                    <div class="settings-entity-meta">${escapeHtml(member?.email || 'No Google email recorded')}</div>
+                                    <div class="settings-entity-meta">${escapeHtml(memberLifecycleLabel)}${member?.pending ? ' · Invite pending' : ''}${isSelf ? ' · You' : ''}</div>
                                 </div>
                                 <div class="settings-project-marker-list">
                                     <span class="pill">${escapeHtml(role)}</span>
                                     <span class="pill">${escapeHtml(member?.status || 'active')}</span>
                                 </div>
                             </div>
-                            <div class="settings-role-editor">
-                                <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
-                                    <option value="member" ${role === 'member' ? 'selected' : ''}>Member</option>
-                                    <option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrator</option>
-                                    ${role === 'owner' ? '<option value="owner" selected>Owner</option>' : ''}
-                                </select>
-                                <div class="settings-entity-card-foot">
-                                    ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}">Save Role</button>` : ''}
-                                    ${canManage ? `<button type="button" class="secondary-action" data-settings-member-invite="${escapeHtml(memberId)}" data-settings-member-email="${escapeHtml(member?.email || '')}" data-settings-member-invite-role="${escapeHtml(role)}">Generate Invite Link</button>` : ''}
+                            <div class="settings-team-grid">
+                                <div class="settings-role-editor">
+                                    <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
+                                        <option value="member" ${draftRole === 'member' ? 'selected' : ''}>Member</option>
+                                        <option value="admin" ${draftRole === 'admin' ? 'selected' : ''}>Administrator</option>
+                                        ${role === 'owner' ? '<option value="owner" selected>Owner</option>' : ''}
+                                    </select>
+                                    <div class="settings-team-role-actions">
+                                        ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}" ${hasUnsavedRoleChange ? '' : 'disabled'}>Save</button>` : ''}
+                                    </div>
                                 </div>
+                                ${footActions.length ? `<div class="settings-entity-card-foot"><div class="settings-entity-action-group">${footActions.join('')}</div></div>` : ''}
                             </div>
                         </div>
                     `;
@@ -1957,9 +2122,9 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(
                     settingsTeamStatus,
                     settingsLastInviteLink
-                        ? 'Invite link generated. Copy it below and share it with the teammate.'
+                        ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
                         : (canManage
-                            ? 'Add a Google email to pre-authorize organization access.'
+                            ? 'Add a Google email to pre-authorize organization access. New members join as Member by default.'
                             : 'Team membership is shared across every project in this organization.'),
                     false,
                 );
@@ -1991,6 +2156,43 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(settingsProjectDeleteStatus, '');
             }
 
+            function openSettingsTeamActionDialog(candidate) {
+                settingsTeamActionCandidate = candidate || null;
+                if (!settingsTeamActionCandidate) {
+                    return;
+                }
+                const actionType = String(settingsTeamActionCandidate.type || '').trim();
+                if (settingsTeamActionTitle) {
+                    settingsTeamActionTitle.textContent = actionType === 'transfer-owner'
+                        ? 'Transfer Ownership'
+                        : 'Remove Member';
+                }
+                if (settingsTeamActionCopy) {
+                    settingsTeamActionCopy.textContent = actionType === 'transfer-owner'
+                        ? `Transfer organization ownership to "${settingsTeamActionCandidate.memberName}"? Only the current owner can continue, and some deployments may still block ownership transfer.`
+                        : `Remove "${settingsTeamActionCandidate.memberName}" from this organization? They will immediately lose access to every project in this organization.`;
+                }
+                if (settingsTeamActionSubmitBtn) {
+                    settingsTeamActionSubmitBtn.textContent = actionType === 'transfer-owner'
+                        ? 'Transfer Ownership'
+                        : 'Remove Member';
+                    settingsTeamActionSubmitBtn.classList.toggle('danger-action', actionType === 'remove-member');
+                }
+                setWorkspaceTextStatus(settingsTeamActionStatus, '');
+                settingsTeamActionModal?.classList.remove('hidden');
+                settingsTeamActionModal?.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeSettingsTeamActionDialog() {
+                settingsTeamActionCandidate = null;
+                settingsTeamActionModal?.classList.add('hidden');
+                settingsTeamActionModal?.setAttribute('aria-hidden', 'true');
+                setWorkspaceTextStatus(settingsTeamActionStatus, '');
+                if (settingsTeamActionSubmitBtn) {
+                    settingsTeamActionSubmitBtn.classList.remove('danger-action');
+                }
+            }
+
             async function refreshSettingsProjectsPanel({ requery = false } = {}) {
                 const organizationId = getCurrentSettingsOrganizationId();
                 if (!accessToken || !organizationId) {
@@ -2016,6 +2218,7 @@ export function initializeOperatorConsole() {
             async function refreshSettingsTeamsPanel() {
                 const organizationId = getCurrentSettingsOrganizationId();
                 settingsMembersState = [];
+                settingsMemberRoleDrafts = {};
                 settingsLastInviteLink = settingsTeamInviteLinkInput?.value || '';
                 if (!accessToken || !organizationId) {
                     renderSettingsTeamsPanel();
@@ -2532,7 +2735,6 @@ export function initializeOperatorConsole() {
             settingsTeamAddMemberBtn?.addEventListener('click', async () => {
                 const organizationId = getCurrentSettingsOrganizationId();
                 const email = String(settingsTeamMemberEmailInput?.value || '').trim();
-                const role = String(settingsTeamMemberRoleSelect?.value || 'member').trim().toLowerCase();
                 if (!organizationId) {
                     setWorkspaceTextStatus(settingsTeamStatus, 'Select an organization before adding a team member.', true);
                     return;
@@ -2555,7 +2757,7 @@ export function initializeOperatorConsole() {
                         },
                         body: JSON.stringify({
                             email,
-                            role,
+                            role: 'member',
                         }),
                     });
                     const payload = await response.json().catch(() => ({}));
@@ -2563,7 +2765,6 @@ export function initializeOperatorConsole() {
                         throw new Error(payload.detail || 'Failed to add team member.');
                     }
                     settingsTeamMemberEmailInput.value = '';
-                    settingsTeamMemberRoleSelect.value = 'member';
                     const rawInviteUrl = String(
                         payload?.invite?.invite_url
                         || payload?.invite_url
@@ -2574,9 +2775,62 @@ export function initializeOperatorConsole() {
                         settingsTeamInviteLinkInput.value = settingsLastInviteLink;
                     }
                     await refreshSettingsTeamsPanel();
-                    setWorkspaceTextStatus(settingsTeamStatus, `Added ${email} to the organization.`);
+                    setWorkspaceTextStatus(
+                        settingsTeamStatus,
+                        settingsLastInviteLink
+                            ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
+                            : SETTINGS_CHANGES_SAVED_MESSAGE,
+                    );
                 } catch (error) {
                     setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to add team member.', true);
+                }
+            });
+            settingsTeamGenerateInviteBtn?.addEventListener('click', async () => {
+                const organizationId = getCurrentSettingsOrganizationId();
+                const email = String(settingsTeamMemberEmailInput?.value || '').trim();
+                if (!organizationId) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Select an organization before generating an invite link.', true);
+                    return;
+                }
+                if (!canManageOrganizationWorkspace()) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Only organization owners and administrators can generate invite links.', true);
+                    return;
+                }
+                if (!email) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Enter a Google email address before generating an invite link.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Generating invite link...');
+                    const response = await fetch(`${getApiBaseUrl(organizationId)}/organization-invites`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            email,
+                            role: 'member',
+                        }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(getTeamManagementErrorMessage('generate-invite', payload.detail, response.status));
+                    }
+                    const rawInviteUrl = String(payload?.invite?.invite_url || payload?.invite_url || '').trim();
+                    settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
+                    if (settingsTeamInviteLinkInput) {
+                        settingsTeamInviteLinkInput.value = settingsLastInviteLink;
+                    }
+                    setWorkspaceTextStatus(
+                        settingsTeamStatus,
+                        settingsLastInviteLink
+                            ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
+                            : SETTINGS_CHANGES_SAVED_MESSAGE,
+                    );
+                    renderSettingsTeamsPanel();
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
                 }
             });
             settingsTeamCopyInviteBtn?.addEventListener('click', async () => {
@@ -2592,6 +2846,23 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(settingsTeamStatus, 'Unable to copy the invite link in this browser.', true);
                 }
             });
+            settingsTeamMemberList?.addEventListener('change', (event) => {
+                const roleSelect = event.target.closest('[data-settings-member-role]');
+                if (!roleSelect) {
+                    return;
+                }
+                const memberId = String(roleSelect.dataset.settingsMemberRole || '').trim();
+                setDraftRoleForMember(memberId, roleSelect.value);
+                const member = getSettingsMemberById(memberId);
+                const saveButton = Array.from(settingsTeamMemberList.querySelectorAll('[data-settings-member-save]')).find((entry) => {
+                    return entry.getAttribute('data-settings-member-save') === memberId;
+                });
+                if (saveButton) {
+                    const hasUnsavedRoleChange = Boolean(member && getDraftRoleForMember(member) !== getSettingsMemberRole(member));
+                    saveButton.disabled = !hasUnsavedRoleChange;
+                }
+                setWorkspaceTextStatus(settingsTeamStatus, '');
+            });
             settingsTeamMemberList?.addEventListener('click', async (event) => {
                 const saveRoleButton = event.target.closest('[data-settings-member-save]');
                 if (saveRoleButton) {
@@ -2600,6 +2871,15 @@ export function initializeOperatorConsole() {
                         return entry.getAttribute('data-settings-member-role') === memberId;
                     });
                     const nextRole = String(roleSelect?.value || 'member').trim().toLowerCase();
+                    const currentMember = getSettingsMemberById(memberId);
+                    if (!currentMember) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
+                        return;
+                    }
+                    if (nextRole === getSettingsMemberRole(currentMember)) {
+                        setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
+                        return;
+                    }
                     try {
                         setWorkspaceTextStatus(settingsTeamStatus, 'Updating member role...');
                         const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-members/${encodeURIComponent(memberId)}`, {
@@ -2614,45 +2894,95 @@ export function initializeOperatorConsole() {
                         if (!response.ok) {
                             throw new Error(payload.detail || 'Failed to update member role.');
                         }
+                        clearDraftRoleForMember(memberId);
                         await refreshSettingsTeamsPanel();
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Member role updated.');
+                        setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
                     } catch (error) {
                         setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to update member role.', true);
                     }
                     return;
                 }
-                const inviteButton = event.target.closest('[data-settings-member-invite]');
-                if (inviteButton) {
-                    const email = String(inviteButton.dataset.settingsMemberEmail || '').trim();
-                    const role = String(inviteButton.dataset.settingsMemberInviteRole || 'member').trim().toLowerCase() || 'member';
-                    if (!email) {
-                        setWorkspaceTextStatus(settingsTeamStatus, 'This member does not have an invite email.', true);
+                const transferOwnerButton = event.target.closest('[data-settings-member-transfer-owner]');
+                if (transferOwnerButton) {
+                    const memberId = String(transferOwnerButton.dataset.settingsMemberTransferOwner || '').trim();
+                    const member = getSettingsMemberById(memberId);
+                    if (!member) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
                         return;
                     }
-                    try {
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Generating invite link...');
-                        const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-invites`, {
-                            method: 'POST',
+                    openSettingsTeamActionDialog({
+                        type: 'transfer-owner',
+                        memberId,
+                        memberName: String(member.display_name || member.email || memberId).trim(),
+                    });
+                    return;
+                }
+                const removeMemberButton = event.target.closest('[data-settings-member-remove]');
+                if (removeMemberButton) {
+                    const memberId = String(removeMemberButton.dataset.settingsMemberRemove || '').trim();
+                    const member = getSettingsMemberById(memberId);
+                    if (!member) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
+                        return;
+                    }
+                    openSettingsTeamActionDialog({
+                        type: 'remove-member',
+                        memberId,
+                        memberName: String(member.display_name || member.email || memberId).trim(),
+                    });
+                }
+            });
+            settingsTeamActionCancelBtn?.addEventListener('click', () => {
+                closeSettingsTeamActionDialog();
+            });
+            settingsTeamActionModal?.addEventListener('click', (event) => {
+                if (event.target === settingsTeamActionModal || event.target.closest('.settings-dialog-backdrop')) {
+                    closeSettingsTeamActionDialog();
+                }
+            });
+            settingsTeamActionSubmitBtn?.addEventListener('click', async () => {
+                if (!settingsTeamActionCandidate?.memberId || !settingsTeamActionCandidate?.type) {
+                    setWorkspaceTextStatus(settingsTeamActionStatus, 'Select a team action first.', true);
+                    return;
+                }
+                const organizationId = getCurrentSettingsOrganizationId();
+                const actionType = settingsTeamActionCandidate.type;
+                const memberId = settingsTeamActionCandidate.memberId;
+                try {
+                    setWorkspaceTextStatus(
+                        settingsTeamActionStatus,
+                        actionType === 'transfer-owner' ? 'Transferring ownership...' : 'Removing member...',
+                    );
+                    let response;
+                    if (actionType === 'transfer-owner') {
+                        response = await fetch(`${getApiBaseUrl(organizationId)}/organization-members/${encodeURIComponent(memberId)}`, {
+                            method: 'PATCH',
                             headers: {
                                 Authorization: `Bearer ${accessToken}`,
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ email, role }),
+                            body: JSON.stringify({
+                                role: 'owner',
+                                confirm_owner_transfer: true,
+                            }),
                         });
-                        const payload = await response.json().catch(() => ({}));
-                        if (!response.ok) {
-                            throw new Error(payload.detail || 'Failed to generate invite link.');
-                        }
-                        const rawInviteUrl = String(payload?.invite?.invite_url || payload?.invite_url || '').trim();
-                        settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
-                        if (settingsTeamInviteLinkInput) {
-                            settingsTeamInviteLinkInput.value = settingsLastInviteLink;
-                        }
-                        renderSettingsTeamsPanel();
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Invite link generated.');
-                    } catch (error) {
-                        setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
+                    } else {
+                        response = await fetch(`${getApiBaseUrl(organizationId)}/organization-members/${encodeURIComponent(memberId)}`, {
+                            method: 'DELETE',
+                            headers: {
+                                Authorization: `Bearer ${accessToken}`,
+                            },
+                        });
                     }
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(getTeamManagementErrorMessage(actionType, payload.detail, response.status));
+                    }
+                    closeSettingsTeamActionDialog();
+                    await refreshSettingsTeamsPanel();
+                    setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamActionStatus, error.message || 'Failed to update team access.', true);
                 }
             });
             topbarSearchForm?.addEventListener('submit', (event) => {

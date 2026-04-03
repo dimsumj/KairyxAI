@@ -230,7 +230,7 @@ In the backend, `tenant` remains the internal organization identifier for compat
 - mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
 - organization-level email invites that pre-authorize a Google account to join the organization as a `member`, plus optional shareable invite links that land the user in the invited org flow after login
 - idempotent invite redemption, so a matching Google login can auto-activate a pending org invite by email and a later invite-link redeem request still succeeds for that same user
-- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
+- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership; the roster now shows joined dates, explicit role-save buttons, shared invite-link generation, member removal, and an owner-transfer confirmation flow while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
@@ -639,7 +639,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, team, and project management alongside lighter placeholder profile, notification, and billing layouts
+- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, project, and team management including explicit role-save buttons, joined-date roster rows, shared invite-link generation, member removal, and owner-transfer confirmation alongside lighter placeholder profile, notification, and billing layouts
 
 ## Current Limitations
 

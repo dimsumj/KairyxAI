@@ -1008,7 +1008,7 @@ The `Settings` module is now a tabbed page. The left sidebar opens `Settings` di
 | `Profile` | Tab button | Opens the profile placeholder layout. | None | The profile information and password placeholder cards become visible. |
 | `Organization` | Tab button | Opens the organization workspace tab. | None | Live workspace and session controls become visible. |
 | `Projects` | Tab button | Opens the live project-management tab for the active organization. | None | Project rows, default-project marker, create-project action, and delete flow become visible. |
-| `Teams` | Tab button | Opens the live team-management tab for the active organization. | None | Organization member rows, invite controls, and role-management controls become visible. |
+| `Teams` | Tab button | Opens the live team-management tab for the active organization. | None | Organization member rows, joined dates, invite controls, role-management controls, member removal, and owner-transfer confirmation become visible. |
 | `Notifications` | Tab button | Opens the notifications tab. | None | Notification placeholder rows become visible. |
 | `Billing` | Tab button | Opens the billing placeholder layout. | None | Billing placeholder rows become visible. |
 
@@ -1097,19 +1097,27 @@ The `Teams` tab manages organization-level access. Team membership is shared acr
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
-| `Add Team Member` | Button | Opens the add-member form. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
+| Joined date text | Read-only row text | Read the `Joined ...` or `Invited ...` line in each roster card. | `Joined 2026-04-03 10:30` | Confirms when the member or pending invite entered the organization roster. |
+| `Add Team Member` | Button | Uses the email field and adds that Google account to the organization as a `member`. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
 | `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
-| `Role` | Select | Choose the starting org role. The default is `member`. | `member` | The invited user will join as `member` unless changed later. |
-| `Add Team Member` submit action | Button | Stores the organization invite. Available only to `owner` and `admin` users. | None | Creates the pending org invite and returns an optional shareable invite link. |
-| `Generate Invite Link` | Row button | Regenerates or retrieves the optional invite link for that member or pending invite row. | None | The link can be shared, but access still depends on the invited Google email. |
+| Default role note | Read-only inline note | Read-only reminder below the email field. | `New team members join as Member by default.` | Confirms that owners and admins promote later from the roster instead of assigning `admin` during add-member creation. |
+| `Generate Invite Link` | Button | Uses the email field to create or refresh an optional organization invite link in the shared invite section. Available only to `owner` and `admin` users. | None | The latest invite link is refreshed in the top-level invite card. |
 | `Copy Invite Link` | Top-level button | Copies the most recently generated invite link from the invite-link field. | None | The current invite link is placed on the clipboard. |
-| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users. | `admin` | Updates the user's org-level role. |
+| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users, and disabled on the current signed-in user or the owner row. | `admin` | Stages a role change for that member. |
+| `Save` | Row button | Writes the selected `admin` or `member` role change for that row. Available only when the row has an unsaved change. | None | The role update is sent and the status line shows `Changes are saved.` on success. |
+| `Remove Member` | Row button | Opens the removal confirmation flow for a non-owner member. Available only to `owner` and `admin` users. | None | Attempts to remove that member from the organization. |
+| `Transfer Ownership` | Row button | Owner-only action that opens the ownership-transfer confirmation popup for a non-owner member. | None | Opens the confirmation popup before the transfer request is sent. |
 | Owner badge | Read-only badge | Marks the organization creator. | `Owner` | Indicates the only role that cannot be reassigned through the normal team-management flow. |
 
 Role contract:
-- `owner`: the creator of the org; also has admin privileges; cannot be reassigned in v1
-- `admin`: can add members, create projects, delete projects, and promote or demote between `admin` and `member`
+- `owner`: the creator of the org; also has admin privileges; only the owner sees the ownership-transfer action
+- `admin`: can add members, create projects, delete projects, remove non-owner members, and promote or demote between `admin` and `member`
 - `member`: can enter the org and use all its projects, but cannot manage team or project lifecycle actions
+
+Current UI limitations:
+- new team members are always created as `member`; promote them later from the roster
+- administrators cannot transfer ownership through the UI
+- the `Remove Member` and `Transfer Ownership` buttons are live UI controls, but they still depend on backend deployment support; if that endpoint is missing, the page now shows an explicit unavailable error instead of failing silently
 
 #### Sample add-member input
 ```json

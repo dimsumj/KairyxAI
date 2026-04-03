@@ -1367,23 +1367,20 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Add Team Member</h2>
-                        <p>Add a Google account by email. The default organization role is member.</p>
+                        <p>Add a Google account by email. New organization members always join as members, and owners or administrators can promote them later.</p>
                     </div>
                     <div class="settings-form-grid">
                         <div class="form-group">
                             <label for="settings-team-member-email">Google Email</label>
                             <input id="settings-team-member-email" type="email" placeholder="teammate@example.com">
                         </div>
-                        <div class="form-group">
-                            <label for="settings-team-member-role">Role</label>
-                            <select id="settings-team-member-role">
-                                <option value="member" selected>Member</option>
-                                <option value="admin">Administrator</option>
-                            </select>
-                        </div>
+                    </div>
+                    <div class="settings-inline-note">
+                        New team members join as <strong>Member</strong> by default. Promote them later from the roster if needed.
                     </div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-team-add-member-btn">Add Team Member</button>
+                        <button type="button" id="settings-team-generate-invite-btn" class="secondary-action">Generate Invite Link</button>
                     </div>
                 </div>
 
@@ -1398,6 +1395,21 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-team-copy-invite-btn" class="secondary-action">Copy Invite Link</button>
+                    </div>
+                </div>
+
+                <div id="settings-team-action-modal" class="settings-dialog hidden" aria-hidden="true">
+                    <div class="settings-dialog-backdrop"></div>
+                    <div class="settings-dialog-card" role="dialog" aria-modal="true" aria-labelledby="settings-team-action-title">
+                        <div class="settings-section-heading">
+                            <h2 id="settings-team-action-title">Confirm Team Change</h2>
+                            <p id="settings-team-action-copy">Review this organization team change before continuing.</p>
+                        </div>
+                        <div id="settings-team-action-status" class="settings-status-message subtle"></div>
+                        <div class="settings-form-actions">
+                            <button type="button" id="settings-team-action-cancel-btn" class="secondary-action">Cancel</button>
+                            <button type="button" id="settings-team-action-submit-btn">Continue</button>
+                        </div>
                     </div>
                 </div>
             </div>

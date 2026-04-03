@@ -2412,6 +2412,11 @@
             letter-spacing: -0.02em;
         }
 
+        .settings-entity-supporting {
+            display: grid;
+            gap: 0.35rem;
+        }
+
         .settings-entity-meta {
             color: var(--text-secondary);
             font-size: 0.88rem;
@@ -2421,6 +2426,25 @@
         .settings-project-marker-list {
             display: inline-flex;
             gap: 0.45rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .settings-entity-action-group {
+            display: inline-flex;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .settings-team-grid {
+            display: grid;
+            gap: 0.95rem;
+        }
+
+        .settings-team-role-actions {
+            display: inline-flex;
+            gap: 0.65rem;
             flex-wrap: wrap;
             align-items: center;
         }
