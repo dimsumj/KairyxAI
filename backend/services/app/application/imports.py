@@ -317,6 +317,8 @@ class ImportService:
         started_at = time.monotonic()
         last_activity_at = started_at
         poll_interval = max(0.05, float(self.settings.import_stop_poll_interval_seconds))
+        startup_grace_seconds = max(poll_interval, min(0.25, resolved_timeout * 0.5))
+        observed_progress = False
 
         while True:
             if self._should_stop(job_id):
@@ -328,10 +330,15 @@ class ImportService:
                     candidate_activity = None
                 if candidate_activity is not None:
                     try:
-                        last_activity_at = max(last_activity_at, float(candidate_activity))
+                        candidate_activity_at = float(candidate_activity)
+                        observed_progress = observed_progress or candidate_activity_at > started_at
+                        last_activity_at = max(last_activity_at, candidate_activity_at)
                     except (TypeError, ValueError):
                         pass
-            remaining = (last_activity_at + resolved_timeout) - time.monotonic()
+            timeout_deadline = last_activity_at + resolved_timeout
+            if not observed_progress:
+                timeout_deadline += startup_grace_seconds
+            remaining = timeout_deadline - time.monotonic()
             if remaining <= 0:
                 raise ImportTimeoutError(
                     f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s without progress. "

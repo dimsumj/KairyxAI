@@ -1869,6 +1869,62 @@ def test_import_staging_progress_resets_timeout_budget(client, monkeypatch):
     assert run_import.json()["progress"]["details"]["events_staged"] == 3000
 
 
+def test_import_staging_startup_grace_allows_first_progress_heartbeat(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        import_network_timeout_seconds=0.2,
+        import_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def delayed_first_progress_fetch(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        time.sleep(0.22)
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+        time.sleep(0.02)
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 0,
+            "events_staged": 1000,
+            "last_checkpoint": None,
+            "shard_manifests": [],
+            "stopped": False,
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        delayed_first_progress_fetch,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    assert run_import.json()["status"] == "completed"
+    assert run_import.json()["progress"]["current"] == 1000
+    assert run_import.json()["progress"]["details"]["events_staged"] == 1000
+
+
 def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",

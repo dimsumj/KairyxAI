@@ -277,12 +277,6 @@ def create_app() -> FastAPI:
     def root():
         return _frontend_shell_response(frontend_index)
 
-    @app.get("/{organization_id}")
-    def organization_root(organization_id: str):
-        if not _is_public_frontend_shell_path(f"/{organization_id}"):
-            raise HTTPException(status_code=404, detail="Not found")
-        return _frontend_shell_response(frontend_index)
-
     @app.get("/health")
     def root_health():
         session = get_session_factory()()
@@ -295,6 +289,12 @@ def create_app() -> FastAPI:
     @app.get("/health/live")
     def root_health_live():
         return health.health_live()
+
+    @app.get("/{organization_id}")
+    def organization_root(organization_id: str):
+        if not _is_public_frontend_shell_path(f"/{organization_id}"):
+            raise HTTPException(status_code=404, detail="Not found")
+        return _frontend_shell_response(frontend_index)
 
     if frontend_static_dir.exists():
         app.mount("/static", StaticFiles(directory=frontend_static_dir), name="frontend-static")
