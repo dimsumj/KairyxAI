@@ -2089,13 +2089,15 @@ export function initializeOperatorConsole() {
                         <div class="settings-entity-card">
                             <div class="settings-entity-card-head">
                                 <div class="settings-entity-supporting">
-                                    <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
+                                    <div class="settings-entity-title-row">
+                                        <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
+                                        <span class="settings-member-joined-label">${escapeHtml(memberLifecycleLabel)}</span>
+                                    </div>
                                     <div class="settings-entity-meta">${escapeHtml(member?.email || 'No Google email recorded')}</div>
                                     <div class="settings-entity-meta">${member?.pending ? 'Invite pending' : (isSelf ? 'You' : 'Organization member')}</div>
                                 </div>
                                 <div class="settings-project-marker-list">
                                     <span class="pill">${escapeHtml(role)}</span>
-                                    <span class="settings-member-joined-label">${escapeHtml(memberLifecycleLabel)}</span>
                                     <span class="pill">${escapeHtml(member?.status || 'active')}</span>
                                 </div>
                             </div>

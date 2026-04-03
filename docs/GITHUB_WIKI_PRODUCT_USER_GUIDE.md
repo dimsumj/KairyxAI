@@ -1104,7 +1104,7 @@ The `Teams` tab manages organization-level access. Team membership is shared acr
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
-| Joined date text | Read-only row text | Read the `Joined YYYY-MM-DD` or `Invited YYYY-MM-DD` label beside each member's role. | `Joined 2026-04-03` | Confirms when the member or pending invite entered the organization roster. |
+| Joined date text | Read-only row text | Read the `Joined YYYY-MM-DD` or `Invited YYYY-MM-DD` label next to each member's name. | `Joined 2026-04-03` | Confirms when the member or pending invite entered the organization roster. |
 | `Add Team Member` | Button | Uses the email field and adds that Google account to the organization as a `member`. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
 | `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
 | Default role note | Read-only inline note | Read-only reminder below the email field. | `New team members join as Member by default.` | Confirms that owners and admins promote later from the roster instead of assigning `admin` during add-member creation. |

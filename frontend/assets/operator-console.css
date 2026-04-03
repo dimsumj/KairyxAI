@@ -2424,6 +2424,13 @@
             letter-spacing: -0.02em;
         }
 
+        .settings-entity-title-row {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            align-items: center;
+        }
+
         .settings-entity-supporting {
             display: grid;
             gap: 0.35rem;
