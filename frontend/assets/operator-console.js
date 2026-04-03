@@ -27,12 +27,10 @@ export function initializeOperatorConsole() {
             const topbarSearchInput = document.getElementById('topbar-search-input');
             const topbarSearchStatus = document.getElementById('topbar-search-status');
             const copilotAgentLauncherBtn = document.getElementById('copilot-agent-launcher-btn');
-            const copilotAgentLauncherContext = document.getElementById('copilot-agent-launcher-context');
             const copilotAgentLauncherBadge = document.getElementById('copilot-agent-launcher-badge');
             const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
             const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
             const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
-            const copilotAgentCurrentContext = document.getElementById('copilot-agent-current-context');
             const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
@@ -9433,23 +9431,7 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function getCopilotAgentContextLabel() {
-                const moduleConfig = moduleConfigs[activeModuleId];
-                const activeItem = findModuleItem(activeModuleId, activeNavItemId);
-                if (moduleConfig && activeItem && activeItem.label) {
-                    return `${moduleConfig.title} / ${activeItem.label}`;
-                }
-                return moduleConfig?.title || 'Current page';
-            }
-
             function syncCopilotAgentContextChrome() {
-                const label = getCopilotAgentContextLabel();
-                if (copilotAgentLauncherContext) {
-                    copilotAgentLauncherContext.textContent = label;
-                }
-                if (copilotAgentCurrentContext) {
-                    copilotAgentCurrentContext.textContent = `Context: ${label}`;
-                }
             }
 
             function syncCopilotAgentLauncherBadge(count = null) {

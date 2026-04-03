@@ -2620,11 +2620,6 @@
             font-size: 0.95rem;
         }
 
-        .copilot-agent-launcher-context {
-            font-size: 0.78rem;
-            color: var(--text-secondary);
-        }
-
         .copilot-agent-launcher-badge {
             display: inline-flex;
             align-items: center;
