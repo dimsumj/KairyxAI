@@ -9758,7 +9758,7 @@ export function initializeOperatorConsole() {
                 await loadCopilotAgentWorkspace(true);
             });
             copilotAgentMessageInput.addEventListener('keydown', (event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                     event.preventDefault();
                     sendCopilotAgentMessage();
                 }
