@@ -21,6 +21,8 @@ from app.infrastructure.db_models import (
     FieldMappingModel,
     ImportJobModel,
     IngestionCheckpointModel,
+    MockWarehouseRowModel,
+    OrganizationInviteModel,
     PlatformUserModel,
     PredictionJobModel,
     ProjectInviteModel,
@@ -201,22 +203,13 @@ class SqlAlchemyControlPlaneRepository:
             query = query.where(ProjectModel.tenant_id == resolved_tenant_id)
         if not include_inactive:
             query = query.where(ProjectModel.status == "active")
-        rows = self.session.execute(query.order_by(ProjectModel.name.asc(), ProjectModel.project_id.asc())).scalars().all()
+        rows = self.session.execute(query.order_by(ProjectModel.created_at.asc(), ProjectModel.project_id.asc())).scalars().all()
         items = [self._project_to_dict(row) for row in rows]
         if user_id:
-            memberships = {
-                (item["tenant_id"], item["project_id"]): item
-                for item in self.list_project_memberships(tenant_id=resolved_tenant_id, user_id=user_id)
-                if str(item.get("status") or "").lower() == "active"
-            }
-            items = [
-                {
-                    **item,
-                    "role": memberships[(item["tenant_id"], item["project_id"])]["role"],
-                }
-                for item in items
-                if (item["tenant_id"], item["project_id"]) in memberships
-            ]
+            membership = self.get_tenant_membership(resolved_tenant_id or "", user_id) if resolved_tenant_id else None
+            if str((membership or {}).get("status") or "").lower() != "active":
+                return []
+            items = [{**item, "role": str((membership or {}).get("role") or "member")} for item in items]
         return items
 
     def upsert_platform_user(self, user_id: str, *, email: str | None = None, display_name: str | None = None) -> Dict[str, Any]:
@@ -234,6 +227,15 @@ class SqlAlchemyControlPlaneRepository:
 
     def get_platform_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         row = self.session.get(PlatformUserModel, user_id)
+        return self._platform_user_to_dict(row) if row else None
+
+    def get_platform_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        normalized_email = str(email or "").strip().lower()
+        if not normalized_email:
+            return None
+        row = self.session.execute(
+            select(PlatformUserModel).where(PlatformUserModel.email == normalized_email)
+        ).scalar_one_or_none()
         return self._platform_user_to_dict(row) if row else None
 
     def upsert_tenant_membership(self, tenant_id: str, user_id: str, *, role: str, status: str = "active") -> Dict[str, Any]:
@@ -279,6 +281,71 @@ class SqlAlchemyControlPlaneRepository:
             select(TenantMembershipModel).where(TenantMembershipModel.user_id == str(user_id)).order_by(TenantMembershipModel.tenant_id.asc())
         ).scalars().all()
         return [self._tenant_membership_to_dict(row) for row in rows]
+
+    def get_tenant_membership_by_id(self, membership_id: int) -> Optional[Dict[str, Any]]:
+        row = self.session.get(TenantMembershipModel, int(membership_id))
+        return self._tenant_membership_to_dict(row) if row else None
+
+    def update_tenant_membership_role(self, membership_id: int, *, role: str) -> Dict[str, Any]:
+        row = self.session.get(TenantMembershipModel, int(membership_id))
+        if row is None:
+            raise KeyError(membership_id)
+        row.role = str(role)
+        row.updated_at = datetime.utcnow()
+        self.session.flush()
+        return self._tenant_membership_to_dict(row)
+
+    def list_organization_members(self, tenant_id: str) -> List[Dict[str, Any]]:
+        rows = self.session.execute(
+            select(TenantMembershipModel)
+            .where(TenantMembershipModel.tenant_id == str(tenant_id))
+            .order_by(TenantMembershipModel.created_at.asc(), TenantMembershipModel.id.asc())
+        ).scalars().all()
+        members: List[Dict[str, Any]] = []
+        active_member_emails: set[str] = set()
+        for row in rows:
+            user = self.session.get(PlatformUserModel, row.user_id)
+            normalized_email = str(user.email or "").strip().lower() if user and user.email else ""
+            if normalized_email and str(row.status or "").lower() == "active":
+                active_member_emails.add(normalized_email)
+            members.append(
+                {
+                    **self._tenant_membership_to_dict(row),
+                    "email": user.email if user else None,
+                    "display_name": (user.display_name if user else None) or (user.email if user else None) or row.user_id,
+                    "pending": str(row.status or "").lower() != "active",
+                }
+            )
+        pending_invites = self.session.execute(
+            select(OrganizationInviteModel)
+            .where(
+                OrganizationInviteModel.tenant_id == str(tenant_id),
+                OrganizationInviteModel.status == "pending",
+            )
+            .order_by(OrganizationInviteModel.created_at.asc(), OrganizationInviteModel.id.asc())
+        ).scalars().all()
+        for invite in pending_invites:
+            normalized_email = str(invite.email or "").strip().lower()
+            if normalized_email and normalized_email in active_member_emails:
+                continue
+            members.append(
+                {
+                    "id": f"invite:{invite.invite_code}",
+                    "member_id": f"invite:{invite.invite_code}",
+                    "organization_id": invite.tenant_id,
+                    "tenant_id": invite.tenant_id,
+                    "user_id": None,
+                    "email": invite.email,
+                    "display_name": invite.display_name or invite.email,
+                    "role": invite.role,
+                    "status": invite.status,
+                    "pending": True,
+                    "invite_code": invite.invite_code,
+                    "created_at": invite.created_at.isoformat(),
+                    "updated_at": invite.updated_at.isoformat(),
+                }
+            )
+        return members
 
     def upsert_project_membership(
         self,
@@ -390,6 +457,167 @@ class SqlAlchemyControlPlaneRepository:
         row.updated_at = datetime.utcnow()
         self.session.flush()
         return self._project_invite_to_dict(row)
+
+    def create_organization_invite(
+        self,
+        tenant_id: str,
+        *,
+        invite_code: str,
+        email: str,
+        display_name: str | None,
+        role: str,
+        status: str = "pending",
+        expires_at: datetime | None = None,
+    ) -> Dict[str, Any]:
+        metadata = self._metadata(tenant_id, None)
+        normalized_email = str(email or "").strip().lower()
+        row = self.session.execute(
+            select(OrganizationInviteModel).where(
+                OrganizationInviteModel.tenant_id == metadata["tenant_id"],
+                OrganizationInviteModel.email == normalized_email,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = OrganizationInviteModel(
+                tenant_id=metadata["tenant_id"],
+                invite_code=str(invite_code),
+                email=normalized_email,
+                display_name=display_name,
+                role=str(role),
+                status=str(status),
+                created_by=metadata["actor_id"],
+                correlation_id=metadata["correlation_id"],
+                expires_at=expires_at,
+            )
+            self.session.add(row)
+        else:
+            row.invite_code = str(invite_code)
+            row.display_name = display_name
+            row.role = str(role)
+            row.status = str(status)
+            row.redeemed_by = None
+            row.redeemed_at = None
+            row.correlation_id = metadata["correlation_id"]
+            row.expires_at = expires_at
+            row.updated_at = datetime.utcnow()
+        self.session.flush()
+        return self._organization_invite_to_dict(row)
+
+    def get_organization_invite(self, invite_code: str) -> Optional[Dict[str, Any]]:
+        row = self.session.execute(
+            select(OrganizationInviteModel).where(OrganizationInviteModel.invite_code == str(invite_code))
+        ).scalar_one_or_none()
+        return self._organization_invite_to_dict(row) if row else None
+
+    def list_organization_invites(self, tenant_id: str) -> List[Dict[str, Any]]:
+        rows = self.session.execute(
+            select(OrganizationInviteModel)
+            .where(OrganizationInviteModel.tenant_id == str(tenant_id))
+            .order_by(OrganizationInviteModel.created_at.asc(), OrganizationInviteModel.id.asc())
+        ).scalars().all()
+        return [self._organization_invite_to_dict(row) for row in rows]
+
+    def mark_organization_invite_redeemed(self, invite_code: str, *, redeemed_by: str, status: str = "redeemed") -> Dict[str, Any]:
+        row = self.session.execute(
+            select(OrganizationInviteModel).where(OrganizationInviteModel.invite_code == str(invite_code))
+        ).scalar_one_or_none()
+        if row is None:
+            raise KeyError(invite_code)
+        row.status = status
+        row.redeemed_by = redeemed_by
+        row.redeemed_at = datetime.utcnow()
+        row.updated_at = datetime.utcnow()
+        self.session.flush()
+        return self._organization_invite_to_dict(row)
+
+    def activate_organization_invites_for_email(
+        self,
+        *,
+        email: str,
+        user_id: str,
+        display_name: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        normalized_email = str(email or "").strip().lower()
+        if not normalized_email:
+            return []
+        rows = self.session.execute(
+            select(OrganizationInviteModel).where(
+                OrganizationInviteModel.email == normalized_email,
+                OrganizationInviteModel.status == "pending",
+            )
+        ).scalars().all()
+        activated: List[Dict[str, Any]] = []
+        now = datetime.utcnow()
+        for row in rows:
+            if row.expires_at and row.expires_at < now:
+                row.status = "expired"
+                row.updated_at = now
+                continue
+            self.upsert_platform_user(user_id, email=normalized_email, display_name=display_name)
+            self.upsert_tenant_membership(
+                row.tenant_id,
+                user_id,
+                role=row.role,
+                status="active",
+            )
+            row.status = "redeemed"
+            row.redeemed_by = str(user_id)
+            row.redeemed_at = now
+            row.updated_at = now
+            activated.append(self._organization_invite_to_dict(row))
+        self.session.flush()
+        return activated
+
+    def delete_project_permanently(self, tenant_id: str, project_id: str) -> bool:
+        project_row = self.session.execute(
+            select(ProjectModel).where(
+                ProjectModel.tenant_id == str(tenant_id),
+                ProjectModel.project_id == str(project_id),
+            )
+        ).scalar_one_or_none()
+        if project_row is None:
+            return False
+
+        scoped_deletes = [
+            ProjectInviteModel,
+            ProjectMembershipModel,
+            ConnectorConfigModel,
+            FieldMappingModel,
+            IngestionCheckpointModel,
+            ExportJobModel,
+            PredictionJobModel,
+            ImportJobModel,
+            ExperimentConfigModel,
+            ActionHistoryModel,
+            ControlPlaneResourceEventModel,
+            ControlPlaneResourceVersionModel,
+            ControlPlaneResourceModel,
+        ]
+        for model in scoped_deletes:
+            self.session.execute(
+                delete(model).where(
+                    model.tenant_id == str(tenant_id),
+                    model.project_id == str(project_id),
+                )
+            )
+
+        mock_rows = self.session.execute(
+            select(MockWarehouseRowModel)
+        ).scalars().all()
+        for row in mock_rows:
+            try:
+                payload = _from_json_text(row.payload_json)
+            except json.JSONDecodeError:
+                continue
+            if (
+                str(payload.get("tenant_id") or payload.get("organization_id") or "") == str(tenant_id)
+                and str(payload.get("project_id") or "") == str(project_id)
+            ):
+                self.session.delete(row)
+
+        self.session.delete(project_row)
+        self.session.flush()
+        return True
 
     def list_connectors(
         self,
@@ -1210,6 +1438,26 @@ class SqlAlchemyControlPlaneRepository:
             "display_name": row.display_name,
             "org_role": row.org_role,
             "project_role": row.project_role,
+            "status": row.status,
+            "created_by": row.created_by,
+            "redeemed_by": row.redeemed_by,
+            "correlation_id": row.correlation_id,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+            "redeemed_at": row.redeemed_at.isoformat() if row.redeemed_at else None,
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        }
+
+    def _organization_invite_to_dict(self, row: OrganizationInviteModel) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "organization_id": row.tenant_id,
+            "tenant_id": row.tenant_id,
+            "invite_code": row.invite_code,
+            "invite_url": f"/?invite_code={row.invite_code}&organization_id={row.tenant_id}",
+            "email": row.email,
+            "display_name": row.display_name,
+            "role": row.role,
             "status": row.status,
             "created_by": row.created_by,
             "redeemed_by": row.redeemed_by,

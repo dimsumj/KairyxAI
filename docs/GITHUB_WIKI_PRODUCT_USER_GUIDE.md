@@ -23,7 +23,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Sidebar collapse button | Button | Shrinks the desktop sidebar to a tight icon rail and expands it again when clicked a second time. In collapsed mode the site brand is hidden, the rail keeps only the module icons, and hovering or focusing an icon opens that module's section list in a right-side popout above the page. The popout stays reachable while you move the pointer from the icon into that section list. Clicking a collapsed icon routes to that module's first section and closes the temporary popout. The desktop shell also auto-collapses this rail when the viewport drops below `1200px`. | None | Navigation uses less horizontal space while still exposing the current module sections from the icon rail. |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization space and project before entering the app. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from `Settings -> Organization`. | None | Lets you choose an organization and project before entering the app. |
 | `New Project` | Button | Opens the new-project overlay from `Settings -> Organization`. | None | Creates a new project and switches into it after success. |
 | Sidebar profile chip | Footer button | Shows the current signed-in identity at the bottom-left of the sidebar. Click it to open the account menu and use `Log out`. | `Studio Operator` | Opens the account menu, and `Log out` clears the app session then returns the shell to the organization URL gate. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar keeps the search field on the left and the theme selector on the right. | `settings` | The matching module or section opens and the matching page becomes active. |
@@ -34,18 +34,19 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 ### 2.2 Recommended First-Time Path
 1. Use `Continue with Google`.
-2. If this is your first login after Google sign-in, complete the onboarding wizard:
-   - enter the `Organization URL`
-   - continue to the `Project Name`
-   - create the first workspace
-3. If you already belong to more than one organization space or project, use the `Switcher` button from `Settings` to choose the active workspace.
+2. After Google sign-in, follow the gateway state that matches your account:
+   - if you belong to `0` organizations, create a new organization and its first project
+   - if you belong to `1` organization with `1` active project, the console enters that workspace directly
+   - if you belong to `1` organization with multiple active projects, continue to project selection for that org
+   - if you belong to `2+` organizations, choose the organization you want to enter first
+3. In the project step, either choose an existing project or create a new project if your org role allows it.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
-10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, use the shell-level `Switcher` and `New Project` shortcuts, or view the placeholder account-management layouts.
+10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
 ### 2.3 Deployment Surface Notes
 
@@ -69,8 +70,10 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
 
 Every user now passes through the Google login gate first. After successful sign-in, the console keeps the browser on the base gateway URL and then does one of these things:
-- opens the organization-space onboarding wizard if the user has no memberships yet
-- opens the organization URL gateway so the user can resolve which org they want to enter
+- opens the organization onboarding wizard if the user has no org memberships yet
+- enters the workspace immediately if the user belongs to exactly one organization and that organization has exactly one active project
+- opens project selection if the user belongs to exactly one organization and that organization has multiple active projects
+- opens the organization gateway plus an accessible-organization list if the user belongs to two or more organizations
 - rewrites the browser URL to `https://<base-url>/<organization_id>` only after an active organization and project are chosen or created
 
 If the user typed an organization URL before Google sign-in, the gateway carries that value into the next step after login. A first-time user still lands on the onboarding wizard, but the organization URL field is prefilled with the value they already entered.
@@ -79,16 +82,22 @@ Across the console, protected module pages now wait for a resolved organization 
 
 In deployed Google-login environments, the base URL itself is only the gateway page. The main operator experience is shown only after the browser is on the organization path such as `https://<base-url>/northstar`. Direct organization paths are authoritative, so opening `/<organization_id>` does not inherit a different org from stale browser storage.
 
-#### Organization-space onboarding wizard
+#### Organization onboarding wizard
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Organization URL` | Text box | Enter the URL slug that should appear after the base URL. New organization URLs must use lowercase letters and numbers only, can be at most 16 characters long, and must be globally unique. | `northstar` | The console stores this as the internal `organization_id` and uses it in the org-scoped path. |
 | `Continue` | Button | Moves from the organization URL step to the project step. | None | The console keeps the generated organization id internally and opens the project form. |
 | `Project Name` | Text box | Enter the display name for the first project. | `Live Ops` | The name is shown in the project selector. |
-| `Create Project` | Button | Creates the organization space, first project, owner membership, and project-admin membership. | None | The wizard closes, the new workspace becomes active by default, and the browser URL becomes `/<organization_id>`. |
+| `Create Project` | Button | Creates the organization, first project, and the creator's `owner` role in that organization. | None | The wizard closes, the new workspace becomes active by default, the first project becomes the default project for that org, and the browser URL becomes `/<organization_id>`. |
 
 The console now asks for the org URL directly and generates the internal organization display name from that slug. New organization URLs are limited to lowercase letters and numbers only, with a maximum length of 16 characters, and the chosen URL must not already exist anywhere in the product. It still generates the internal `project_id` automatically from the project name you type. The backend still stores the organization id internally as `tenant_id`, but that internal field is no longer part of the visible login or workspace UI. Google sign-in always returns to the base app URL first; if the user has no memberships, the gateway advances directly into the organization URL onboarding step, reusing any org URL the user already entered before sign-in. Once the session is validated and a workspace exists, the console rewrites the page URL to the active organization path, and the creator is placed into the newly created organization and project automatically.
+
+Gateway validation rules for the org step are:
+- if the typed org does not exist, the user can create it
+- if the typed org already exists and the signed-in Google account belongs to it, the user continues into direct entry or project selection for that org depending on how many active projects it has
+- if the typed org already exists and the signed-in Google account does not belong to it, the gateway must show an explicit error that the org exists but this account is not a member
+- if the user tries to create an organization URL that already exists, creation fails with an explicit already-exists error instead of reusing the existing org
 
 #### Sample onboarding request
 ```json
@@ -125,33 +134,38 @@ The console now asks for the org URL directly and generates the internal organiz
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
+| `Your organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
-| `Existing Project` | Select | Choose a project that already exists inside the selected organization space. | `sandbox` | The selected project becomes the active console context after continue. |
-| `Use Existing Project` | Button | Confirms the selected existing project. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
-| `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization space. | `Growth Sandbox` | The console generates the internal project id automatically. |
-| `Add New Project` or `Create First Project` | Button | Creates a new project inside the selected organization space. | None | The project is created, the creator becomes a project admin, the console switches into it, and the browser URL stays on `/<organization_id>`. |
+| `Existing Project` | Select | Choose a project that already exists inside the selected organization. If multiple active projects exist, the oldest active project is preselected as the default. | `sandbox` | The selected project becomes the active console context after continue. |
+| `Use Existing Project` | Button | Confirms the selected existing project. Available to any member of the selected organization. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
+| `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization. | `Growth Sandbox` | The console generates the internal project id automatically. |
+| `Create New Project` or `Create First Project` | Button | Creates a new project inside the selected organization. Available only to organization `owner` and `admin` users. | None | The project is created, the console switches into it, and the browser URL stays on `/<organization_id>`. |
 
 When the typed organization already exists and the signed-in Google user has access to it, the gateway now stays on `/` and explicitly offers the two choices required for that org:
 - `Use Existing Project`
-- `Add New Project`
+- `Create New Project`
 
 If the same signed-in user wants a different organization instead, they can use `Back`, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
+
+All org members can access all active projects in that organization. Project selection is a workspace choice, not a project-membership permission check.
 
 #### New-project overlay
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Project Name` | Text box | Enter the display name for the new project. | `Growth Sandbox` | The project is created with this name. |
-| `Create Project` | Button | Creates the project in the selected organization space. | None | The project is created, the creator becomes a project admin, and the console switches into it. |
+| `Create Project` | Button | Creates the project in the selected organization. Available only to `owner` and `admin` users. | None | The project is created, it joins the org-wide project list, and the console switches into it. |
 | `Cancel` | Button | Closes the new-project overlay. | None | Returns to the prior workspace selection state. |
 
 As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
 #### Invite redemption behavior
+- Organization invites are email-based and organization-level. The default invited role is `member`.
+- Admins and owners can optionally copy a shareable invite link, but the actual access grant still belongs to the invited Google email.
 - If the browser opens a URL containing `invite_code`, the console stores that invite locally before Google login.
-- After successful Google login, the console redeems the invite automatically by calling `POST /api/v1/project-invites/redeem` first, then switches normal authenticated traffic to the org-scoped path shape `/{organization_id}/v1/...`.
-- On success, the active organization space and project switch to the invite target, and the browser URL becomes `/<organization_id>`.
+- After successful Google login, the console first auto-activates any pending organization invite whose email matches the signed-in Google account, and the explicit invite-redeem call remains idempotent for that same user.
+- On success, the user chooses or creates a project inside the invited org, and the browser URL becomes `/<organization_id>`.
 
 ---
 
@@ -259,7 +273,7 @@ The import source form and imported-data list now wait for a resolved organizati
 | `End Date` | Date | End of the import window. | `2026-03-07` | Request converts to `20260307`. |
 | `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
-| Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation. |
+| Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
 | `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
 | `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |
@@ -819,7 +833,7 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
 | `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
 | `Starter task buttons` | Buttons | Sends a suggested task into the assistant drawer. | `Connector Help` | The conversation starts with that operator task. |
-| `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... · active` | Confirms the active agent session. |
+| `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
 | `Message` | Text area | Ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant returns grounded guidance or executes the supported setup flow. |
 | `Send To Agent` | Button | Sends the current message to the assistant. | None | Conversation thread, preview, and artifacts update. |
@@ -992,8 +1006,8 @@ The `Settings` module is now a tabbed page. The left sidebar opens `Settings` di
 | --- | --- | --- | --- | --- |
 | `Profile` | Tab button | Opens the profile placeholder layout. | None | The profile information and password placeholder cards become visible. |
 | `Organization` | Tab button | Opens the organization workspace tab. | None | Live workspace and session controls become visible. |
-| `Projects` | Tab button | Opens the projects placeholder layout. | None | Project placeholder rows become visible. |
-| `Teams` | Tab button | Opens the teams placeholder layout. | None | Team placeholder rows become visible. |
+| `Projects` | Tab button | Opens the live project-management tab for the active organization. | None | Project rows, default-project marker, create-project action, and delete flow become visible. |
+| `Teams` | Tab button | Opens the live team-management tab for the active organization. | None | Organization member rows, invite controls, and role-management controls become visible. |
 | `Notifications` | Tab button | Opens the notifications tab. | None | Notification placeholder rows become visible. |
 | `Billing` | Tab button | Opens the billing placeholder layout. | None | Billing placeholder rows become visible. |
 
@@ -1021,21 +1035,113 @@ The `Organization` tab holds the live shell controls that still drive workspace 
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Switcher` | Button | Opens the full-screen workspace selector overlay from inside Settings. | None | Lets you switch organization space or project. |
-| `New Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization space after success. |
-| Current workspace card | Read-only summary | Shows the active organization space and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
-| Session state card | Read-only summary | Shows the current login or demo state. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session. |
-| Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops` | Confirms the current authenticated session before you switch workspaces or log out. |
+| `Switcher` | Button | Opens the full-screen workspace selector overlay from inside Settings. | None | Lets you switch organization or project. |
+| `New Project` | Button | Opens the create-project overlay from inside Settings. | None | Creates a new project in the current organization after success. |
+| Current workspace card | Read-only summary | Shows the active organization and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
+| Session state card | Read-only summary | Shows the current login state and the org role that applies across all projects in the active organization. | `Google alice@example.com @ northstar / liveops (owner)` | Confirms the current authenticated session. |
+| Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops (admin)` | Confirms the current authenticated session before you switch workspaces or log out. |
 | `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a Google ID token-backed bearer session. |
 | `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to the organization URL gate so the next sign-in starts from org selection. |
 | `API Key` | Password box | Optional legacy/demo API key entry. This stays hidden when Google login is configured or an OIDC bearer session is active. | `local-demo-key` | Local/demo requests reuse the stored API key in the browser. |
 | Application startup status | Read-only status line | Shows the latest startup or health result from inside Settings. | `Application start completed (mock)` | Confirms whether the backend is reachable from the console. |
 
-### 8.4 Projects, Teams, And Billing
+### 8.4 Projects
 
-The `Projects`, `Teams`, and `Billing` tabs are placeholder layouts only. Their visible rows are present for design and navigation structure, but they do not execute backend actions yet.
+The `Projects` tab manages the active organization's projects. Project access is org-wide, so every org member can enter every active project. The default project is the oldest active project in that organization.
 
-### 8.5 Notifications
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| Project list | Read-only table | Shows every active project in the current organization. | `Live Ops`, `Sandbox` | Confirms which projects exist before switching or deleting. |
+| Default badge | Read-only badge | Marks the oldest active project in the org. | `Default` | Shows which project is auto-preselected when multiple projects exist. |
+| `Create Project` | Button | Opens the create-project form or overlay. Available only to `owner` and `admin` users. | None | A new project can be created inside the current org. |
+| `Project Name` | Text box | Enter the new project's display name. | `Growth Sandbox` | The console generates the internal project id automatically. |
+| `Delete Project` | Row button | Starts the permanent delete flow. Available only to `owner` and `admin` users. | None | Opens the delete confirmation modal for that project. |
+| Delete confirmation text box | Text box | Type the exact confirmation keyword. | `delete` | Enables the final delete action. |
+| Final delete confirmation | Modal warning | Read-only warning in the delete modal. | `This permanently deletes the project and its data. This cannot be recovered.` | Explains that deletion removes project-scoped data permanently. |
+| `Delete Project` | Button | Permanently deletes the project after the confirmation text matches. | None | Project is removed. If it was the current project, the console moves to the next default project or to create-first-project state if no projects remain. |
+
+Project deletion is hard delete only. It removes the selected project's connectors, imports, data layers, workflows, cohorts, predictions, AI agent state, tools, experiments, exports, and project-scoped audit history. Organization metadata and the shared team member list remain intact.
+
+#### Sample project-delete confirmation input
+```json
+{
+  "confirmation": "delete"
+}
+```
+
+#### Sample project-delete result
+```json
+{
+  "organization_id": "northstar",
+  "deleted_project_id": "sandbox",
+  "remaining_projects": [
+    {
+      "organization_id": "northstar",
+      "project_id": "liveops",
+      "name": "Live Ops",
+      "description": "Primary production project",
+      "status": "active",
+      "role": "admin",
+      "is_default": true
+    }
+  ],
+  "next_default_project_id": "liveops"
+}
+```
+
+### 8.5 Teams
+
+The `Teams` tab manages organization-level access. Team membership is shared across every project in the active organization.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
+| `Add Team Member` | Button | Opens the add-member form. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
+| `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
+| `Role` | Select | Choose the starting org role. The default is `member`. | `member` | The invited user will join as `member` unless changed later. |
+| `Add Team Member` submit action | Button | Stores the organization invite. Available only to `owner` and `admin` users. | None | Creates the pending org invite and returns an optional shareable invite link. |
+| `Generate Invite Link` | Row button | Regenerates or retrieves the optional invite link for that member or pending invite row. | None | The link can be shared, but access still depends on the invited Google email. |
+| `Copy Invite Link` | Top-level button | Copies the most recently generated invite link from the invite-link field. | None | The current invite link is placed on the clipboard. |
+| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users. | `admin` | Updates the user's org-level role. |
+| Owner badge | Read-only badge | Marks the organization creator. | `Owner` | Indicates the only role that cannot be reassigned through the normal team-management flow. |
+
+Role contract:
+- `owner`: the creator of the org; also has admin privileges; cannot be reassigned in v1
+- `admin`: can add members, create projects, delete projects, and promote or demote between `admin` and `member`
+- `member`: can enter the org and use all its projects, but cannot manage team or project lifecycle actions
+
+#### Sample add-member input
+```json
+{
+  "email": "teammate@example.com",
+  "role": "member"
+}
+```
+
+#### Sample add-member result
+```json
+{
+  "member": null,
+  "invite": {
+    "organization_id": "northstar",
+    "email": "teammate@example.com",
+    "role": "member",
+    "status": "pending",
+    "invite_url": "/?invite_code=oinv_123&organization_id=northstar"
+  }
+}
+```
+
+When the invited Google account signs in:
+- if the verified email matches the org invite, the user gains org membership automatically
+- the user then selects or creates a project inside that organization
+- if the email does not match, the invite does not grant access
+
+### 8.6 Billing
+
+The `Billing` tab is still a placeholder layout only. Its visible rows are present for design and navigation structure, but they do not execute backend actions yet.
+
+### 8.7 Notifications
 
 The `Notifications` tab is currently a placeholder layout only. Theme mode now lives in the top-right header selector instead of inside Settings.
 

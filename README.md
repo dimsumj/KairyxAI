@@ -151,7 +151,7 @@ Primary backend surface:
 - Local default database: SQLite
 - Local runtime mode: `DATA_BACKEND_MODE=mock`
 - Frontend: React/Vite operator console bundle served by the backend, with source-shell fallback for unbuilt local environments
-- Operator auth: Google login via OIDC, using the returned Google ID token as the bearer JWT for organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, with self-serve organization-space onboarding and legacy header auth kept only as a hidden local/demo compatibility path
+- Operator auth: Google login via OIDC, with the base URL kept as a gateway-only surface, the active app shell mounted on `/{organization_id}`, organization-scoped API paths like `/{organization_id}/v1/...` + `X-Kairyx-Project`, and legacy header auth kept only as a hidden local/demo compatibility path
 - Secrets: `*_ref` resolution via environment variables or Google Secret Manager
 - Local smoke coverage: Playwright-driven operator console smoke script
 
@@ -177,34 +177,59 @@ KairyxAI currently supports three practical shapes:
 3. `Production-shaped SaaS mode`
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
-   - org-space + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - Google login in the frontend via OIDC PKCE, self-serve organization-space onboarding, workspace switching, invite-link redemption support, browser URLs that become `https://<base-url>/<organization_id>` after organization resolution, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
+   - organization + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
+   - Google login in the frontend via OIDC PKCE, self-serve organization onboarding, organization-level email invites, browser URLs that become `https://<base-url>/<organization_id>` after organization resolution, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
 
 ## Workspace Model
 
 The current operator console uses a two-level workspace hierarchy:
 
-- `Organization Space`
+- `Organization`
   - the top-level shared boundary for memberships, governance, and billing-style ownership
 - `Project`
   - the isolation boundary for connectors, imports, cohorts, workflows, experiments, exports, and audit history
 
-In the backend, `tenant` remains the internal organization-space identifier for compatibility. The user-facing console now exposes:
+The frozen v1 workspace and access contract is:
+
+- Google login always comes before workspace entry.
+- `https://<base-url>/` is the gateway only.
+- `https://<base-url>/<organization_id>` is the app shell.
+- After login:
+  - users with `0` organizations go directly to create-organization
+  - users with `1` organization and `1` active project enter that project directly
+  - users with `1` organization and multiple active projects go directly to project selection for that org
+  - users with `2+` organizations choose an organization first, then a project
+- When a typed organization URL already exists:
+  - members can continue into project selection for that organization
+  - non-members see an explicit error that the organization exists but their Google account is not a member
+  - duplicate creation attempts fail instead of silently reusing the existing org
+- Organization roles are exactly `owner`, `admin`, and `member`.
+- The organization creator becomes the only `owner`, and `owner` also has admin privileges.
+- All organization members can access all active projects in that organization.
+- Organization invitations are email-based and organization-level. Optional invite links are convenience wrappers around the same org invite record.
+- The default project for an organization is the oldest active project by `created_at`.
+- Project deletion is permanent, requires an admin or owner, and requires typing `delete` as confirmation.
+- The team member list is shared across projects in the same organization, while project data remains isolated.
+- Project isolation applies to connectors, imports, data layers, workflows, cohorts, predictions, AI agents, tools, experiments, exports, and project-scoped audit history.
+
+In the backend, `tenant` remains the internal organization identifier for compatibility. The user-facing console now exposes:
 
 - a Figma-derived SaaS shell with a responsive sidebar, inline expanding and collapsible section lists, a bottom-left session profile chip with logout, a search-first top bar with a three-mode theme selector, a tighter icon rail when collapsed, collapsed-icon clicks that land on each module's first section and dismiss the temporary popout, hover-safe collapsed popouts that stay reachable while moving into the submenu, and a tabbed Settings page
 - a centered full-screen Google login gate that appears before onboarding or workspace entry
 - a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, including after Google sign-in; the main operator app is shown only after the browser is on `https://<base-url>/<organization_id>`
-- a centered full-screen first-login onboarding gate that opens immediately after Google sign-in when the user has no memberships, asks for the organization URL first and the first project name second, and preserves any organization URL the user already typed before sign-in; new organization URLs are limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
+- a centered full-screen first-login onboarding gate that opens immediately after Google sign-in when the user has no org memberships, asks for the organization URL first and the first project name second, preserves any organization URL the user already typed before sign-in, and fails creation if that organization URL already exists; new organization URLs are limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
 - after creating the first organization and project in the gateway, the user is placed into that new organization and project by default
-- a centered full-screen workspace gate that starts with an organization URL lookup, then lets users choose `Select an existing project to go` or `Add New Project` inside that organization when the org already exists
+- a centered full-screen workspace gate that starts with an organization URL lookup, shows the organizations already associated with the signed-in Google email, automatically enters the workspace when the selected org has only one active project, and otherwise lets users choose `Use Existing Project` or `Create New Project` inside that organization, or `Create First Project` when the organization has none yet
+- an explicit gateway error when the typed organization already exists but the signed-in Google account does not belong to it
 - a base-URL gateway flow where a signed-in user can back out of the existing-project chooser, type a different organization URL, and create that new organization without being forced back into the previously active org; once the first project is created, the browser lands on the new `/{organization_id}` path by default
 - a browser URL that rewrites to `https://<base-url>/<organization_id>` as soon as onboarding or workspace selection resolves an active organization
 - a direct organization path (`/{organization_id}`) that is authoritative for the active workspace and does not inherit another org from stale browser storage
 - a visible startup-status line in the full-screen workspace gate so the user can still see when application startup has completed before entering the app
 - module loaders that now wait for a valid organization/project workspace before loading protected data, so deployed Google-login environments do not replace page content with transient raw membership errors during session handoff or stale workspace recovery
 - mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
-- invite-link redemption support for project access after login
-- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, mixing placeholder management layouts with the live workspace and session controls while leaving appearance control in the top-right header
+- organization-level email invites that pre-authorize a Google account to join the organization as a `member`, plus optional shareable invite links that land the user in the invited org flow after login
+- idempotent invite redemption, so a matching Google login can auto-activate a pending org invite by email and a later invite-link redeem request still succeeds for that same user
+- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
@@ -404,6 +429,7 @@ The Imports page now keeps restart-time load lighter:
 - schema contracts are also loaded on demand
 - import polling continues only while at least one import job is `queued`, `running`, or `stopping`
 - when the control plane is temporarily busy right after restart, import detail reads retry once and then surface a retryable busy message instead of silently failing
+- deleting a `stopped`, `failed`, or `completed` import now also removes that job's temporary raw file objects, job-scoped staging rows, and derived sanitized/curated state tied to the deleted import
 
 ## Key Environment Variables
 
@@ -612,7 +638,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, session, and placeholder account-management layouts
+- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, team, and project management alongside lighter placeholder profile, notification, and billing layouts
 
 ## Current Limitations
 

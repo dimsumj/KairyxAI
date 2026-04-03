@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.api.schemas.organization_members import ProjectDeleteRequest
 from app.api.schemas.projects import (
     ProjectCreateRequest,
     ProjectInviteCreateRequest,
@@ -63,6 +64,43 @@ def create_project(
     )
     _commit_workspace_mutation(repository)
     return {"project": project}
+
+
+@router.post("/projects/{project_id}/permanent-delete", response_model=dict)
+def permanent_delete_project(
+    project_id: str,
+    payload: ProjectDeleteRequest,
+    request: Request,
+    service: ProjectWorkspaceService = Depends(get_project_workspace_service),
+    repository=Depends(get_repository),
+):
+    context = get_governance_context(request)
+    if not context.tenant_id:
+        raise HTTPException(status_code=409, detail="Organization space selection is required.")
+    ensure_org_admin(context)
+    try:
+        result = service.delete_project_permanently(
+            context.tenant_id,
+            project_id,
+            user_id=context.actor_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' was not found in organization space '{context.tenant_id}'.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_audit(
+        repository,
+        context,
+        action_type="project_permanently_deleted",
+        resource_type="project",
+        resource_id=project_id,
+        payload={
+            **result,
+            "confirmation": payload.confirmation,
+        },
+    )
+    _commit_workspace_mutation(repository)
+    return result
 
 
 @router.post("/projects/{project_id}/invites", response_model=dict, status_code=status.HTTP_201_CREATED)

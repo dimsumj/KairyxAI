@@ -36,6 +36,10 @@ class ImportTimeoutError(RuntimeError):
     """Raised when an import run exceeds the configured external-call budget."""
 
 
+class ImportDeletedError(ImportInterruptedError):
+    """Raised when an import job is deleted while work is in flight."""
+
+
 class ImportService:
     def __init__(self, repository, settings, bigquery_service: BigQueryService | None = None):
         self.repository = repository
@@ -75,6 +79,16 @@ class ImportService:
                 return
             if thread is None or existing is thread:
                 _IMPORT_RUN_THREADS.pop(job_id, None)
+
+    def _wait_for_import_run_thread(self, job_id: str, timeout_seconds: float = 5.0) -> bool:
+        thread = self._get_import_run_thread(job_id)
+        if thread is None:
+            return True
+        thread.join(max(0.1, float(timeout_seconds)))
+        if thread.is_alive():
+            return False
+        self._clear_import_run_thread(job_id, thread)
+        return True
 
     def start_job_background(
         self,
@@ -278,6 +292,15 @@ class ImportService:
             return False
         return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
 
+    def _require_live_job_for_progress(self, job_id: str) -> Dict[str, Any]:
+        current_job = self.repository.get_import_job(job_id)
+        if current_job is None:
+            raise ImportDeletedError(f"Import job '{job_id}' was deleted.")
+        status = str(current_job.get("status") or "").lower()
+        if status in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}:
+            raise ImportInterruptedError(self._stop_reason())
+        return current_job
+
     def _should_stop(self, job_id: str) -> bool:
         return self._is_stop_requested(job_id) or is_shutdown_requested()
 
@@ -317,6 +340,8 @@ class ImportService:
         started_at = time.monotonic()
         last_activity_at = started_at
         poll_interval = max(0.05, float(self.settings.import_stop_poll_interval_seconds))
+        startup_grace_seconds = max(poll_interval, min(0.25, resolved_timeout * 0.5))
+        observed_progress = False
 
         while True:
             if self._should_stop(job_id):
@@ -328,10 +353,15 @@ class ImportService:
                     candidate_activity = None
                 if candidate_activity is not None:
                     try:
-                        last_activity_at = max(last_activity_at, float(candidate_activity))
+                        candidate_activity_at = float(candidate_activity)
+                        observed_progress = observed_progress or candidate_activity_at > started_at
+                        last_activity_at = max(last_activity_at, candidate_activity_at)
                     except (TypeError, ValueError):
                         pass
-            remaining = (last_activity_at + resolved_timeout) - time.monotonic()
+            timeout_deadline = last_activity_at + resolved_timeout
+            if not observed_progress:
+                timeout_deadline += startup_grace_seconds
+            remaining = timeout_deadline - time.monotonic()
             if remaining <= 0:
                 raise ImportTimeoutError(
                     f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s without progress. "
@@ -378,9 +408,7 @@ class ImportService:
         shards_created: int,
         page_size: int,
     ) -> Dict[str, Any]:
-        current_job = self.repository.get_import_job(job_id)
-        if current_job is None:
-            raise KeyError(job_id)
+        current_job = self._require_live_job_for_progress(job_id)
         updated = self.repository.update_import_job(
             job_id,
             {
@@ -412,9 +440,7 @@ class ImportService:
         total_manifests: int,
         summary: Dict[str, Any],
     ) -> Dict[str, Any]:
-        current_job = self.repository.get_import_job(job_id)
-        if current_job is None:
-            raise KeyError(job_id)
+        current_job = self._require_live_job_for_progress(job_id)
         current = int(summary.get("raw_normalized_events", 0) or 0)
         total = max(0, int(total_events or 0))
         pct = (current / total * 100.0) if total else 0.0
@@ -1185,6 +1211,23 @@ class ImportService:
                 f"Import job '{job_id}' is locked by prediction jobs: {', '.join(blocking_predictions[:5])}."
             )
 
+        if not self._wait_for_import_run_thread(job_id):
+            raise ResourceLockedError(f"Import job '{job_id}' is still shutting down; retry deleting it in a moment.")
+
+        gcs_service = GcsService()
+        gcs_service.delete_data_for_job(job_id)
+        self.bigquery_service.delete_data_for_job(job_id)
+        self.repository.delete_resource("identity_summary", job_id)
+        for resource in self.repository.list_resources("import_manifest"):
+            payload = dict(resource.get("payload") or {})
+            resource_id = str(resource.get("resource_id") or "")
+            if (
+                str(resource.get("name") or "") == job_id
+                or str(payload.get("job_id") or "") == job_id
+                or resource_id.startswith(f"{job_id}:")
+            ):
+                self.repository.delete_resource("import_manifest", resource_id)
+
         if self.repository.delete_import_job(job_id):
             self.repository.record_action("import_job_deleted", "import_job", job_id, job)
             self._commit_session()
@@ -1485,12 +1528,26 @@ class ImportService:
             )
         except Exception as exc:
             self.rollback_session()
+            failed_job = self._safe_get_import_job(job_id)
+            if isinstance(exc, ImportInterruptedError):
+                if failed_job is None:
+                    logger.info("Import job %s stopped after deletion. reason=%s", job_id, exc)
+                    return {
+                        "id": job_id,
+                        "status": JobStatus.STOPPED.value,
+                        "progress": {"details": {"stop_reason": str(exc)}},
+                    }
+                try:
+                    if self._should_stop(job_id):
+                        return self._mark_stopped(job_id, str(exc) or self._stop_reason())
+                except Exception:
+                    self.rollback_session()
             try:
                 if self._should_stop(job_id):
                     return self._mark_stopped(job_id, self._stop_reason())
             except Exception:
                 self.rollback_session()
-            failed_job = self._safe_get_import_job(job_id) or job
+            failed_job = failed_job or job
             failure_stage = self._failure_stage(failed_job)
             logger.exception("Import job %s failed during %s. error=%s", job_id, failure_stage, exc)
             try:

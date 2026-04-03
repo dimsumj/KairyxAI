@@ -9,6 +9,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+import shutil
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
@@ -1945,6 +1946,25 @@ class BigQueryService:
 
     def delete_prediction_results(self, job_id: str) -> None:
         self.replace_prediction_results(job_id=job_id, rows=[])
+
+    def delete_project_scope(self) -> None:
+        if self.mode == "bigquery":
+            dataset_ids = {
+                ".".join(str(self._target_meta(target)["table_id"]).split(".")[:2])
+                for target in ("events_staging", "events_curated", "player_latest_state", "pipeline_dead_letters", "prediction_results")
+                if str(self._target_meta(target)["table_id"]).count(".") >= 2
+            }
+            for dataset_id in sorted(dataset_ids):
+                self._client.delete_dataset(dataset_id, delete_contents=True, not_found_ok=True)
+            return
+        if self.mode == "redshift":
+            return
+        if self._uses_database_mock_storage():
+            return
+
+        cache_root = Path(self._cache_path).resolve().parent if getattr(self, "_cache_path", "") else None
+        if cache_root and cache_root.exists():
+            shutil.rmtree(cache_root, ignore_errors=True)
 
     def get_local_cache_stats(self) -> Dict[str, Any]:
         if self.mode != "mock":
