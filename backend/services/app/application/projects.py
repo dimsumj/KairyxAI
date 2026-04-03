@@ -13,6 +13,7 @@ from gcs_service import GcsService
 IDENTIFIER_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,63})$")
 PROJECT_ROLES = {"admin", "analyst", "operator"}
 ORG_ROLES = {"owner", "admin", "member"}
+ORG_ADMIN_ROLES = {"owner", "admin"}
 MANAGEABLE_ORG_ROLES = {"admin", "member"}
 
 
@@ -266,16 +267,108 @@ class ProjectWorkspaceService:
         membership_id: int,
         *,
         role: str,
+        actor_user_id: str,
+        actor_org_role: str | None,
+        confirm_owner_transfer: bool = False,
     ) -> Dict[str, Any]:
         tenant_key = self._validate_identifier(tenant_id, label="organization_id")
+        actor_membership = self.repository.get_tenant_membership(tenant_key, actor_user_id)
+        if str((actor_membership or {}).get("status") or "").lower() != "active":
+            raise PermissionError("Organization admin access is required.")
+        actor_role = normalize_org_role((actor_membership or {}).get("role") or actor_org_role)
+        if actor_role not in ORG_ADMIN_ROLES:
+            raise PermissionError("Organization admin access is required.")
+        membership = self.repository.get_tenant_membership_by_id(membership_id)
+        if membership is None or str(membership.get("tenant_id")) != tenant_key:
+            raise KeyError(membership_id)
+        if str(membership.get("status") or "").lower() != "active":
+            raise ValueError("Only active organization members can be updated.")
+        current_role = normalize_org_role(membership.get("role"))
+        if current_role == "owner":
+            if actor_role != "owner":
+                raise PermissionError("Only the organization owner can affect the current owner.")
+            raise ValueError("Transfer organization ownership instead of changing the owner role directly.")
+
+        requested_role = normalize_org_role(role)
+        if requested_role == "owner":
+            if actor_role != "owner":
+                raise PermissionError("Only the organization owner can transfer ownership.")
+            if not confirm_owner_transfer:
+                raise ValueError("confirm_owner_transfer must be true to transfer organization ownership.")
+            return self.transfer_organization_owner(
+                tenant_key,
+                membership_id,
+                actor_user_id=actor_user_id,
+                confirmation=True,
+            )
+
+        updated = self.repository.update_tenant_membership_role(
+            membership_id,
+            role=self._validate_manageable_org_role(requested_role),
+        )
+        return {"member": updated}
+
+    def remove_organization_member(
+        self,
+        tenant_id: str,
+        membership_id: int,
+        *,
+        actor_user_id: str,
+        actor_org_role: str | None,
+    ) -> Dict[str, Any]:
+        tenant_key = self._validate_identifier(tenant_id, label="organization_id")
+        actor_membership = self.repository.get_tenant_membership(tenant_key, actor_user_id)
+        if str((actor_membership or {}).get("status") or "").lower() != "active":
+            raise PermissionError("Organization admin access is required.")
+        actor_role = normalize_org_role((actor_membership or {}).get("role") or actor_org_role)
+        if actor_role not in ORG_ADMIN_ROLES:
+            raise PermissionError("Organization admin access is required.")
         membership = self.repository.get_tenant_membership_by_id(membership_id)
         if membership is None or str(membership.get("tenant_id")) != tenant_key:
             raise KeyError(membership_id)
         current_role = normalize_org_role(membership.get("role"))
         if current_role == "owner":
-            raise ValueError("The organization owner role cannot be changed.")
-        updated = self.repository.update_tenant_membership_role(membership_id, role=self._validate_manageable_org_role(role))
-        return updated
+            raise ValueError("Transfer organization ownership before removing the owner.")
+        removed = self.repository.delete_tenant_membership(membership_id)
+        return {"removed_member": removed}
+
+    def transfer_organization_owner(
+        self,
+        tenant_id: str,
+        membership_id: int,
+        *,
+        actor_user_id: str,
+        confirmation: bool,
+    ) -> Dict[str, Any]:
+        tenant_key = self._validate_identifier(tenant_id, label="organization_id")
+        if not confirmation:
+            raise ValueError("confirmation must be true.")
+        actor_membership = self.repository.get_tenant_membership(tenant_key, actor_user_id)
+        if str((actor_membership or {}).get("status") or "").lower() != "active":
+            raise PermissionError("Organization owner access is required.")
+        if normalize_org_role(actor_membership.get("role")) != "owner":
+            raise PermissionError("Organization owner access is required.")
+        membership = self.repository.get_tenant_membership_by_id(membership_id)
+        if membership is None or str(membership.get("tenant_id")) != tenant_key:
+            raise KeyError(membership_id)
+        if str(membership.get("status") or "").lower() != "active":
+            raise ValueError("The selected organization member is not active.")
+        target_user_id = str(membership.get("user_id") or "").strip()
+        if not target_user_id:
+            raise ValueError("The selected organization member does not have an active user.")
+        target_role = normalize_org_role(membership.get("role"))
+        if target_role == "owner":
+            raise ValueError("The selected organization member already owns this organization.")
+        if target_user_id == str(actor_user_id):
+            raise ValueError("Choose a different organization member to transfer ownership.")
+        new_owner_membership = self.repository.update_tenant_membership_role(membership_id, role="owner")
+        previous_owner_membership = self.repository.update_tenant_membership_role(int(actor_membership["id"]), role="admin")
+        return {
+            "organization_id": tenant_key,
+            "member": new_owner_membership,
+            "new_owner": new_owner_membership,
+            "previous_owner": previous_owner_membership,
+        }
 
     def create_organization_invite(
         self,

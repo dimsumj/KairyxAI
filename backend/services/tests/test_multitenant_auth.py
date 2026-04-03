@@ -293,7 +293,7 @@ def test_org_space_onboarding_project_creation_and_org_invite_redemption(monkeyp
         assert sandbox_project.json()["project_role"] == "operator"
 
 
-def test_organization_member_role_management_and_owner_protection(monkeypatch, tmp_path):
+def test_organization_member_role_management_owner_transfer_and_joined_at(monkeypatch, tmp_path):
     founder_token = _make_token("founder")
     admin_token = _make_token("studio-admin", extra_claims={"email": "studio-admin@example.com", "name": "Studio Admin"})
     member_token = _make_token("studio-member", extra_claims={"email": "studio-member@example.com", "name": "Studio Member"})
@@ -369,6 +369,10 @@ def test_organization_member_role_management_and_owner_protection(monkeypatch, t
         assert members.status_code == 200
         founder_membership = next(item for item in members.json()["items"] if item["user_id"] == "founder")
         admin_membership = next(item for item in members.json()["items"] if item["user_id"] == "studio-admin")
+        member_membership = next(item for item in members.json()["items"] if item["user_id"] == "studio-member")
+        assert founder_membership["joined_at"] == founder_membership["created_at"]
+        assert admin_membership["joined_at"] == admin_membership["created_at"]
+        assert member_membership["joined_at"] == member_membership["created_at"]
 
         promote = client.patch(
             f"/northstar/v1/organization-members/{admin_membership['id']}",
@@ -378,13 +382,145 @@ def test_organization_member_role_management_and_owner_protection(monkeypatch, t
         assert promote.status_code == 200
         assert promote.json()["member"]["role"] == "admin"
 
+        self_demote = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(admin_token, project_id="liveops"),
+            json={"role": "member"},
+        )
+        assert self_demote.status_code == 200
+        assert self_demote.json()["member"]["role"] == "member"
+
+        self_demoted_me = client.get("/northstar/v1/auth/me", headers=_auth_headers(admin_token, project_id="liveops"))
+        assert self_demoted_me.status_code == 200
+        assert self_demoted_me.json()["organization_role"] == "member"
+
+        re_promote = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(founder_token),
+            json={"role": "admin"},
+        )
+        assert re_promote.status_code == 200
+        assert re_promote.json()["member"]["role"] == "admin"
+
         owner_change = client.patch(
             f"/northstar/v1/organization-members/{founder_membership['id']}",
             headers=_auth_headers(founder_token),
             json={"role": "member"},
         )
         assert owner_change.status_code == 400
-        assert "owner" in owner_change.json()["detail"]
+        assert "owner" in owner_change.json()["detail"].lower()
+
+        admin_owner_transfer = client.patch(
+            f"/northstar/v1/organization-members/{member_membership['id']}",
+            headers=_auth_headers(admin_token, project_id="liveops"),
+            json={"role": "owner", "confirm_owner_transfer": True},
+        )
+        assert admin_owner_transfer.status_code == 403
+
+        missing_confirm = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(founder_token),
+            json={"role": "owner"},
+        )
+        assert missing_confirm.status_code == 400
+        assert "confirm" in missing_confirm.json()["detail"].lower()
+
+        transfer = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(founder_token),
+            json={"role": "owner", "confirm_owner_transfer": True},
+        )
+        assert transfer.status_code == 200
+        assert transfer.json()["member"]["role"] == "owner"
+        assert transfer.json()["previous_owner"]["user_id"] == "founder"
+        assert transfer.json()["previous_owner"]["role"] == "admin"
+
+        new_owner_me = client.get("/northstar/v1/auth/me", headers=_auth_headers(admin_token, project_id="liveops"))
+        assert new_owner_me.status_code == 200
+        assert new_owner_me.json()["organization_role"] == "owner"
+
+        former_owner_me = client.get("/northstar/v1/auth/me", headers=_auth_headers(founder_token, project_id="liveops"))
+        assert former_owner_me.status_code == 200
+        assert former_owner_me.json()["organization_role"] == "admin"
+
+        former_owner_cannot_edit_owner = client.patch(
+            f"/northstar/v1/organization-members/{admin_membership['id']}",
+            headers=_auth_headers(founder_token, project_id="liveops"),
+            json={"role": "member"},
+        )
+        assert former_owner_cannot_edit_owner.status_code == 403
+
+
+def test_organization_member_removal_revokes_access(monkeypatch, tmp_path):
+    founder_token = _make_token("founder")
+    member_token = _make_token("studio-member", extra_claims={"email": "studio-member@example.com", "name": "Studio Member"})
+    with _client(monkeypatch, tmp_path) as client:
+        onboard = client.post(
+            "/api/v1/onboarding/organization-space",
+            headers=_auth_headers(founder_token),
+            json={
+                "organization_id": "northstar",
+                "organization_name": "North Star Games",
+                "project_id": "liveops",
+                "project_name": "Live Ops",
+                "project_description": "Primary production project",
+            },
+        )
+        assert onboard.status_code == 201
+
+        add_member = client.post(
+            "/northstar/v1/organization-members",
+            headers=_auth_headers(founder_token),
+            json={
+                "email": "studio-member@example.com",
+                "display_name": "Studio Member",
+                "role": "member",
+            },
+        )
+        assert add_member.status_code == 201
+
+        direct_invite = client.post(
+            "/northstar/v1/organization-invites",
+            headers=_auth_headers(founder_token),
+            json={
+                "email": "invite-only@example.com",
+                "display_name": "Invite Only",
+                "role": "member",
+                "expires_in_days": 7,
+            },
+        )
+        assert direct_invite.status_code == 201
+        assert direct_invite.json()["invite"]["invite_url"].startswith("/?invite_code=")
+
+        redeem = client.post(
+            "/api/v1/organization-invites/redeem",
+            headers=_auth_headers(member_token),
+            json={"invite_code": add_member.json()["invite"]["invite_code"]},
+        )
+        assert redeem.status_code == 200
+
+        members = client.get("/northstar/v1/organization-members", headers=_auth_headers(founder_token))
+        assert members.status_code == 200
+        founder_membership = next(item for item in members.json()["items"] if item["user_id"] == "founder")
+        member_membership = next(item for item in members.json()["items"] if item["user_id"] == "studio-member")
+
+        cannot_delete_owner = client.delete(
+            f"/northstar/v1/organization-members/{founder_membership['id']}",
+            headers=_auth_headers(founder_token),
+        )
+        assert cannot_delete_owner.status_code == 400
+        assert "owner" in cannot_delete_owner.json()["detail"].lower()
+
+        delete_member = client.delete(
+            f"/northstar/v1/organization-members/{member_membership['id']}",
+            headers=_auth_headers(founder_token),
+        )
+        assert delete_member.status_code == 200
+        assert delete_member.json()["removed_member"]["user_id"] == "studio-member"
+
+        member_me = client.get("/northstar/v1/auth/me", headers=_auth_headers(member_token, project_id="liveops"))
+        assert member_me.status_code == 403
+        assert "not a member" in member_me.json()["detail"].lower()
 
 
 def test_project_delete_requires_confirmation_and_reassigns_default(monkeypatch, tmp_path):

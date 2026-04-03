@@ -27,12 +27,10 @@ export function initializeOperatorConsole() {
             const topbarSearchInput = document.getElementById('topbar-search-input');
             const topbarSearchStatus = document.getElementById('topbar-search-status');
             const copilotAgentLauncherBtn = document.getElementById('copilot-agent-launcher-btn');
-            const copilotAgentLauncherContext = document.getElementById('copilot-agent-launcher-context');
             const copilotAgentLauncherBadge = document.getElementById('copilot-agent-launcher-badge');
             const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
             const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
             const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
-            const copilotAgentCurrentContext = document.getElementById('copilot-agent-current-context');
             const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
@@ -55,8 +53,15 @@ export function initializeOperatorConsole() {
             const settingsTeamMemberEmailInput = document.getElementById('settings-team-member-email');
             const settingsTeamMemberRoleSelect = document.getElementById('settings-team-member-role');
             const settingsTeamAddMemberBtn = document.getElementById('settings-team-add-member-btn');
+            const settingsTeamGenerateInviteBtn = document.getElementById('settings-team-generate-invite-btn');
             const settingsTeamInviteLinkInput = document.getElementById('settings-team-invite-link');
             const settingsTeamCopyInviteBtn = document.getElementById('settings-team-copy-invite-btn');
+            const settingsTeamActionModal = document.getElementById('settings-team-action-modal');
+            const settingsTeamActionTitle = document.getElementById('settings-team-action-title');
+            const settingsTeamActionCopy = document.getElementById('settings-team-action-copy');
+            const settingsTeamActionStatus = document.getElementById('settings-team-action-status');
+            const settingsTeamActionCancelBtn = document.getElementById('settings-team-action-cancel-btn');
+            const settingsTeamActionSubmitBtn = document.getElementById('settings-team-action-submit-btn');
             const authStatusText = document.getElementById('auth-status-text');
             const oidcLoginBtn = document.getElementById('oidc-login-btn');
             const oidcLogoutBtn = document.getElementById('oidc-logout-btn');
@@ -172,8 +177,10 @@ export function initializeOperatorConsole() {
                 projects: [],
             };
             let settingsMembersState = [];
+            let settingsMemberRoleDrafts = {};
             let settingsLastInviteLink = '';
             let settingsDeleteProjectCandidate = null;
+            let settingsTeamActionCandidate = null;
             let workspaceOverlayMode = null;
             let workspaceOverlayAllowClose = false;
             let onboardingStep = 1;
@@ -183,6 +190,7 @@ export function initializeOperatorConsole() {
             let googleIdentityScriptPromise = null;
             let googleIdentityButtonClientId = '';
             let rootGatewayBootPending = !getOrganizationIdFromPathname();
+            const SETTINGS_CHANGES_SAVED_MESSAGE = 'Changes are saved.';
             const moduleConfigs = {
                 'data-core': {
                     title: 'Data Core',
@@ -1819,6 +1827,126 @@ export function initializeOperatorConsole() {
                 }];
             }
 
+            function getNormalizedOrganizationRole(value = authSessionState?.organization_role) {
+                return String(value || '').trim().toLowerCase();
+            }
+
+            function isOrganizationOwner() {
+                return getNormalizedOrganizationRole() === 'owner';
+            }
+
+            function getSettingsMemberId(member) {
+                return String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
+            }
+
+            function getSettingsMemberRole(member) {
+                return String(member?.role || 'member').trim().toLowerCase();
+            }
+
+            function getSettingsMemberById(memberId = '') {
+                const normalizedMemberId = String(memberId || '').trim();
+                return settingsMembersState.find((member) => getSettingsMemberId(member) === normalizedMemberId) || null;
+            }
+
+            function getCurrentActorEmail() {
+                return String(authSessionState?.email || '').trim().toLowerCase();
+            }
+
+            function getCurrentActorId() {
+                return String(authSessionState?.actor_id || '').trim();
+            }
+
+            function isCurrentActorMember(member) {
+                const memberEmail = String(member?.email || '').trim().toLowerCase();
+                const memberUserId = String(member?.user_id || '').trim();
+                return Boolean(
+                    (memberEmail && memberEmail === getCurrentActorEmail())
+                    || (memberUserId && memberUserId === getCurrentActorId())
+                );
+            }
+
+            function getSettingsMemberJoinedLabel(member) {
+                const createdAt = member?.joined_at || member?.created_at || '';
+                if (!createdAt) {
+                    return member?.pending ? 'Invite pending' : 'Joined date unavailable';
+                }
+                const parsed = parseIsoDate(createdAt);
+                const pad = (part) => String(part).padStart(2, '0');
+                const formattedDate = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+                return member?.pending
+                    ? `Invited ${formattedDate}`
+                    : `Joined ${formattedDate}`;
+            }
+
+            function getDraftRoleForMember(member) {
+                const memberId = getSettingsMemberId(member);
+                return String(settingsMemberRoleDrafts[memberId] || getSettingsMemberRole(member)).trim().toLowerCase();
+            }
+
+            function setDraftRoleForMember(memberId, role) {
+                const normalizedMemberId = String(memberId || '').trim();
+                if (!normalizedMemberId) {
+                    return;
+                }
+                settingsMemberRoleDrafts = {
+                    ...settingsMemberRoleDrafts,
+                    [normalizedMemberId]: String(role || 'member').trim().toLowerCase(),
+                };
+            }
+
+            function clearDraftRoleForMember(memberId) {
+                const normalizedMemberId = String(memberId || '').trim();
+                if (!normalizedMemberId || !(normalizedMemberId in settingsMemberRoleDrafts)) {
+                    return;
+                }
+                const nextDrafts = { ...settingsMemberRoleDrafts };
+                delete nextDrafts[normalizedMemberId];
+                settingsMemberRoleDrafts = nextDrafts;
+            }
+
+            function canEditMemberRole(member) {
+                if (!canManageOrganizationWorkspace() || member?.pending) {
+                    return false;
+                }
+                const role = getSettingsMemberRole(member);
+                if (role === 'owner') {
+                    return false;
+                }
+                if (isOrganizationOwner()) {
+                    return true;
+                }
+                return Boolean(!isCurrentActorMember(member) || role === 'admin');
+            }
+
+            function canRemoveMember(member) {
+                return Boolean(
+                    canManageOrganizationWorkspace()
+                    && !member?.pending
+                    && getSettingsMemberRole(member) !== 'owner'
+                    && !isCurrentActorMember(member)
+                );
+            }
+
+            function getTeamManagementErrorMessage(action, detail = '', status = 0) {
+                const normalizedDetail = String(detail || '').trim();
+                if (action === 'transfer-owner') {
+                    return normalizedDetail || 'Failed to transfer ownership.';
+                }
+                if (action === 'remove-member') {
+                    if (status === 404 || status === 405) {
+                        return 'Member removal is not available on this deployment yet.';
+                    }
+                    return normalizedDetail || 'Failed to remove member.';
+                }
+                if (action === 'generate-invite') {
+                    if (status === 404 || status === 405) {
+                        return 'Invite link generation is not available on this deployment yet.';
+                    }
+                    return normalizedDetail || 'Failed to generate invite link.';
+                }
+                return normalizedDetail || 'Failed to update team settings.';
+            }
+
             function renderSettingsProjectsPanel() {
                 if (!settingsProjectList || !settingsProjectsStatus) {
                     return;
@@ -1893,14 +2021,19 @@ export function initializeOperatorConsole() {
                 }
                 const organizationId = getCurrentSettingsOrganizationId();
                 const canManage = canManageOrganizationWorkspace();
+                const isOwner = isOrganizationOwner();
                 if (settingsTeamAddMemberBtn) {
                     settingsTeamAddMemberBtn.disabled = !canManage || !accessToken || !organizationId;
+                }
+                if (settingsTeamGenerateInviteBtn) {
+                    settingsTeamGenerateInviteBtn.disabled = !canManage || !accessToken || !organizationId;
                 }
                 if (settingsTeamMemberEmailInput) {
                     settingsTeamMemberEmailInput.disabled = !canManage || !accessToken || !organizationId;
                 }
                 if (settingsTeamMemberRoleSelect) {
                     settingsTeamMemberRoleSelect.disabled = !canManage || !accessToken || !organizationId;
+                    settingsTeamMemberRoleSelect.value = 'member';
                 }
                 if (settingsTeamCopyInviteBtn) {
                     settingsTeamCopyInviteBtn.disabled = !accessToken || !organizationId || !settingsLastInviteLink;
@@ -1912,8 +2045,12 @@ export function initializeOperatorConsole() {
                     ? settingsMembersState
                     : getFallbackSignedInMember();
                 settingsTeamRoleSummary.textContent = canManage
-                    ? 'Owner and administrators can add Google accounts, update admin/member roles, and share invite links.'
-                    : 'Members can view the organization roster. Only owners and administrators can manage access.';
+                    ? (
+                        isOwner
+                            ? 'Owners can add Google accounts, save role changes, remove non-owner members, and transfer ownership from the Save flow.'
+                            : 'Administrators can add Google accounts, save member or administrator role changes, remove non-owner members, and demote themselves to member. Only the owner can transfer ownership.'
+                    )
+                    : 'Members can view the organization roster only. Team access changes are limited to owners and administrators.';
                 if (!accessToken) {
                     settingsTeamMemberList.innerHTML = '<div class="list-empty">Sign in with Google to manage team access.</div>';
                     setWorkspaceTextStatus(settingsTeamStatus, 'Google login required.');
@@ -1925,31 +2062,53 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 settingsTeamMemberList.innerHTML = members.map((member) => {
-                    const memberId = String(member?.id || member?.member_id || member?.user_id || member?.email || '').trim();
-                    const role = String(member?.role || 'member').trim().toLowerCase();
-                    const canChangeRole = canManage && !Boolean(member?.pending) && role !== 'owner';
+                    const memberId = getSettingsMemberId(member);
+                    const role = getSettingsMemberRole(member);
+                    const draftRole = getDraftRoleForMember(member);
+                    const canChangeRole = canEditMemberRole(member);
+                    const canRemove = canRemoveMember(member);
+                    const hasUnsavedRoleChange = canChangeRole && draftRole !== role;
+                    const memberLifecycleLabel = getSettingsMemberJoinedLabel(member);
+                    const isSelf = isCurrentActorMember(member);
+                    const footActions = [];
+                    if (canRemove) {
+                        footActions.push(`<button type="button" class="danger-action" data-settings-member-remove="${escapeHtml(memberId)}">Remove Member</button>`);
+                    }
+                    const roleOptions = [
+                        `<option value="member" ${draftRole === 'member' ? 'selected' : ''}>Member</option>`,
+                        `<option value="admin" ${draftRole === 'admin' ? 'selected' : ''}>Administrator</option>`,
+                    ];
+                    if (role === 'owner') {
+                        roleOptions.push('<option value="owner" selected>Owner</option>');
+                    } else if (isOwner) {
+                        roleOptions.push(`<option value="owner" ${draftRole === 'owner' ? 'selected' : ''}>Owner</option>`);
+                    }
                     return `
                         <div class="settings-entity-card">
                             <div class="settings-entity-card-head">
-                                <div>
-                                    <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
-                                    <div class="settings-entity-meta">${escapeHtml(member?.email || '')}${member?.pending ? ' · Pending invite' : ''}</div>
+                                <div class="settings-entity-supporting">
+                                    <div class="settings-entity-title-row">
+                                        <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
+                                        <span class="settings-member-joined-label">${escapeHtml(memberLifecycleLabel)}</span>
+                                    </div>
+                                    <div class="settings-entity-meta">${escapeHtml(member?.email || 'No Google email recorded')}</div>
+                                    <div class="settings-entity-meta">${member?.pending ? 'Invite pending' : (isSelf ? 'You' : 'Organization member')}</div>
                                 </div>
                                 <div class="settings-project-marker-list">
                                     <span class="pill">${escapeHtml(role)}</span>
                                     <span class="pill">${escapeHtml(member?.status || 'active')}</span>
                                 </div>
                             </div>
-                            <div class="settings-role-editor">
-                                <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
-                                    <option value="member" ${role === 'member' ? 'selected' : ''}>Member</option>
-                                    <option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrator</option>
-                                    ${role === 'owner' ? '<option value="owner" selected>Owner</option>' : ''}
-                                </select>
-                                <div class="settings-entity-card-foot">
-                                    ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}">Save Role</button>` : ''}
-                                    ${canManage ? `<button type="button" class="secondary-action" data-settings-member-invite="${escapeHtml(memberId)}" data-settings-member-email="${escapeHtml(member?.email || '')}" data-settings-member-invite-role="${escapeHtml(role)}">Generate Invite Link</button>` : ''}
+                            <div class="settings-team-grid">
+                                <div class="settings-role-editor">
+                                    <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
+                                        ${roleOptions.join('')}
+                                    </select>
+                                    <div class="settings-team-role-actions">
+                                        ${canChangeRole ? `<button type="button" data-settings-member-save="${escapeHtml(memberId)}" ${hasUnsavedRoleChange ? '' : 'disabled'}>Save</button>` : ''}
+                                    </div>
                                 </div>
+                                ${footActions.length ? `<div class="settings-entity-card-foot"><div class="settings-entity-action-group">${footActions.join('')}</div></div>` : ''}
                             </div>
                         </div>
                     `;
@@ -1957,9 +2116,9 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(
                     settingsTeamStatus,
                     settingsLastInviteLink
-                        ? 'Invite link generated. Copy it below and share it with the teammate.'
+                        ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
                         : (canManage
-                            ? 'Add a Google email to pre-authorize organization access.'
+                            ? 'Add a Google email to pre-authorize organization access. New members join as Member by default.'
                             : 'Team membership is shared across every project in this organization.'),
                     false,
                 );
@@ -1991,6 +2150,43 @@ export function initializeOperatorConsole() {
                 setWorkspaceTextStatus(settingsProjectDeleteStatus, '');
             }
 
+            function openSettingsTeamActionDialog(candidate) {
+                settingsTeamActionCandidate = candidate || null;
+                if (!settingsTeamActionCandidate) {
+                    return;
+                }
+                const actionType = String(settingsTeamActionCandidate.type || '').trim();
+                if (settingsTeamActionTitle) {
+                    settingsTeamActionTitle.textContent = actionType === 'transfer-owner'
+                        ? 'Transfer Ownership'
+                        : 'Remove Member';
+                }
+                if (settingsTeamActionCopy) {
+                    settingsTeamActionCopy.textContent = actionType === 'transfer-owner'
+                        ? `Transfer organization ownership to "${settingsTeamActionCandidate.memberName}"? They will become the new owner and your account will immediately become an administrator.`
+                        : `Remove "${settingsTeamActionCandidate.memberName}" from this organization? They will immediately lose access to every project in this organization.`;
+                }
+                if (settingsTeamActionSubmitBtn) {
+                    settingsTeamActionSubmitBtn.textContent = actionType === 'transfer-owner'
+                        ? 'Transfer Ownership'
+                        : 'Remove Member';
+                    settingsTeamActionSubmitBtn.classList.toggle('danger-action', actionType === 'remove-member');
+                }
+                setWorkspaceTextStatus(settingsTeamActionStatus, '');
+                settingsTeamActionModal?.classList.remove('hidden');
+                settingsTeamActionModal?.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeSettingsTeamActionDialog() {
+                settingsTeamActionCandidate = null;
+                settingsTeamActionModal?.classList.add('hidden');
+                settingsTeamActionModal?.setAttribute('aria-hidden', 'true');
+                setWorkspaceTextStatus(settingsTeamActionStatus, '');
+                if (settingsTeamActionSubmitBtn) {
+                    settingsTeamActionSubmitBtn.classList.remove('danger-action');
+                }
+            }
+
             async function refreshSettingsProjectsPanel({ requery = false } = {}) {
                 const organizationId = getCurrentSettingsOrganizationId();
                 if (!accessToken || !organizationId) {
@@ -2016,6 +2212,7 @@ export function initializeOperatorConsole() {
             async function refreshSettingsTeamsPanel() {
                 const organizationId = getCurrentSettingsOrganizationId();
                 settingsMembersState = [];
+                settingsMemberRoleDrafts = {};
                 settingsLastInviteLink = settingsTeamInviteLinkInput?.value || '';
                 if (!accessToken || !organizationId) {
                     renderSettingsTeamsPanel();
@@ -2532,7 +2729,6 @@ export function initializeOperatorConsole() {
             settingsTeamAddMemberBtn?.addEventListener('click', async () => {
                 const organizationId = getCurrentSettingsOrganizationId();
                 const email = String(settingsTeamMemberEmailInput?.value || '').trim();
-                const role = String(settingsTeamMemberRoleSelect?.value || 'member').trim().toLowerCase();
                 if (!organizationId) {
                     setWorkspaceTextStatus(settingsTeamStatus, 'Select an organization before adding a team member.', true);
                     return;
@@ -2555,7 +2751,7 @@ export function initializeOperatorConsole() {
                         },
                         body: JSON.stringify({
                             email,
-                            role,
+                            role: 'member',
                         }),
                     });
                     const payload = await response.json().catch(() => ({}));
@@ -2563,7 +2759,6 @@ export function initializeOperatorConsole() {
                         throw new Error(payload.detail || 'Failed to add team member.');
                     }
                     settingsTeamMemberEmailInput.value = '';
-                    settingsTeamMemberRoleSelect.value = 'member';
                     const rawInviteUrl = String(
                         payload?.invite?.invite_url
                         || payload?.invite_url
@@ -2574,9 +2769,62 @@ export function initializeOperatorConsole() {
                         settingsTeamInviteLinkInput.value = settingsLastInviteLink;
                     }
                     await refreshSettingsTeamsPanel();
-                    setWorkspaceTextStatus(settingsTeamStatus, `Added ${email} to the organization.`);
+                    setWorkspaceTextStatus(
+                        settingsTeamStatus,
+                        settingsLastInviteLink
+                            ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
+                            : SETTINGS_CHANGES_SAVED_MESSAGE,
+                    );
                 } catch (error) {
                     setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to add team member.', true);
+                }
+            });
+            settingsTeamGenerateInviteBtn?.addEventListener('click', async () => {
+                const organizationId = getCurrentSettingsOrganizationId();
+                const email = String(settingsTeamMemberEmailInput?.value || '').trim();
+                if (!organizationId) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Select an organization before generating an invite link.', true);
+                    return;
+                }
+                if (!canManageOrganizationWorkspace()) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Only organization owners and administrators can generate invite links.', true);
+                    return;
+                }
+                if (!email) {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Enter a Google email address before generating an invite link.', true);
+                    return;
+                }
+                try {
+                    setWorkspaceTextStatus(settingsTeamStatus, 'Generating invite link...');
+                    const response = await fetch(`${getApiBaseUrl(organizationId)}/organization-invites`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            email,
+                            role: 'member',
+                        }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(getTeamManagementErrorMessage('generate-invite', payload.detail, response.status));
+                    }
+                    const rawInviteUrl = String(payload?.invite?.invite_url || payload?.invite_url || '').trim();
+                    settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
+                    if (settingsTeamInviteLinkInput) {
+                        settingsTeamInviteLinkInput.value = settingsLastInviteLink;
+                    }
+                    await refreshSettingsTeamsPanel();
+                    setWorkspaceTextStatus(
+                        settingsTeamStatus,
+                        settingsLastInviteLink
+                            ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
+                            : SETTINGS_CHANGES_SAVED_MESSAGE,
+                    );
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
                 }
             });
             settingsTeamCopyInviteBtn?.addEventListener('click', async () => {
@@ -2592,6 +2840,23 @@ export function initializeOperatorConsole() {
                     setWorkspaceTextStatus(settingsTeamStatus, 'Unable to copy the invite link in this browser.', true);
                 }
             });
+            settingsTeamMemberList?.addEventListener('change', (event) => {
+                const roleSelect = event.target.closest('[data-settings-member-role]');
+                if (!roleSelect) {
+                    return;
+                }
+                const memberId = String(roleSelect.dataset.settingsMemberRole || '').trim();
+                setDraftRoleForMember(memberId, roleSelect.value);
+                const member = getSettingsMemberById(memberId);
+                const saveButton = Array.from(settingsTeamMemberList.querySelectorAll('[data-settings-member-save]')).find((entry) => {
+                    return entry.getAttribute('data-settings-member-save') === memberId;
+                });
+                if (saveButton) {
+                    const hasUnsavedRoleChange = Boolean(member && getDraftRoleForMember(member) !== getSettingsMemberRole(member));
+                    saveButton.disabled = !hasUnsavedRoleChange;
+                }
+                setWorkspaceTextStatus(settingsTeamStatus, '');
+            });
             settingsTeamMemberList?.addEventListener('click', async (event) => {
                 const saveRoleButton = event.target.closest('[data-settings-member-save]');
                 if (saveRoleButton) {
@@ -2600,6 +2865,23 @@ export function initializeOperatorConsole() {
                         return entry.getAttribute('data-settings-member-role') === memberId;
                     });
                     const nextRole = String(roleSelect?.value || 'member').trim().toLowerCase();
+                    const currentMember = getSettingsMemberById(memberId);
+                    if (!currentMember) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
+                        return;
+                    }
+                    if (nextRole === getSettingsMemberRole(currentMember)) {
+                        setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
+                        return;
+                    }
+                    if (nextRole === 'owner') {
+                        openSettingsTeamActionDialog({
+                            type: 'transfer-owner',
+                            memberId,
+                            memberName: String(currentMember.display_name || currentMember.email || memberId).trim(),
+                        });
+                        return;
+                    }
                     try {
                         setWorkspaceTextStatus(settingsTeamStatus, 'Updating member role...');
                         const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-members/${encodeURIComponent(memberId)}`, {
@@ -2614,45 +2896,82 @@ export function initializeOperatorConsole() {
                         if (!response.ok) {
                             throw new Error(payload.detail || 'Failed to update member role.');
                         }
+                        clearDraftRoleForMember(memberId);
+                        await hydrateAuthSession({ syncBrowserPath: false });
                         await refreshSettingsTeamsPanel();
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Member role updated.');
+                        setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
                     } catch (error) {
                         setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to update member role.', true);
                     }
                     return;
                 }
-                const inviteButton = event.target.closest('[data-settings-member-invite]');
-                if (inviteButton) {
-                    const email = String(inviteButton.dataset.settingsMemberEmail || '').trim();
-                    const role = String(inviteButton.dataset.settingsMemberInviteRole || 'member').trim().toLowerCase() || 'member';
-                    if (!email) {
-                        setWorkspaceTextStatus(settingsTeamStatus, 'This member does not have an invite email.', true);
+                const removeMemberButton = event.target.closest('[data-settings-member-remove]');
+                if (removeMemberButton) {
+                    const memberId = String(removeMemberButton.dataset.settingsMemberRemove || '').trim();
+                    const member = getSettingsMemberById(memberId);
+                    if (!member) {
+                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
                         return;
                     }
-                    try {
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Generating invite link...');
-                        const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-invites`, {
-                            method: 'POST',
+                    openSettingsTeamActionDialog({
+                        type: 'remove-member',
+                        memberId,
+                        memberName: String(member.display_name || member.email || memberId).trim(),
+                    });
+                }
+            });
+            settingsTeamActionCancelBtn?.addEventListener('click', () => {
+                closeSettingsTeamActionDialog();
+            });
+            settingsTeamActionModal?.addEventListener('click', (event) => {
+                if (event.target === settingsTeamActionModal || event.target.closest('.settings-dialog-backdrop')) {
+                    closeSettingsTeamActionDialog();
+                }
+            });
+            settingsTeamActionSubmitBtn?.addEventListener('click', async () => {
+                if (!settingsTeamActionCandidate?.memberId || !settingsTeamActionCandidate?.type) {
+                    setWorkspaceTextStatus(settingsTeamActionStatus, 'Select a team action first.', true);
+                    return;
+                }
+                const organizationId = getCurrentSettingsOrganizationId();
+                const actionType = settingsTeamActionCandidate.type;
+                const memberId = settingsTeamActionCandidate.memberId;
+                try {
+                    setWorkspaceTextStatus(
+                        settingsTeamActionStatus,
+                        actionType === 'transfer-owner' ? 'Transferring ownership...' : 'Removing member...',
+                    );
+                    let response;
+                    if (actionType === 'transfer-owner') {
+                        response = await fetch(`${getApiBaseUrl(organizationId)}/organization-members/${encodeURIComponent(memberId)}`, {
+                            method: 'PATCH',
                             headers: {
                                 Authorization: `Bearer ${accessToken}`,
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ email, role }),
+                            body: JSON.stringify({
+                                role: 'owner',
+                                confirm_owner_transfer: true,
+                            }),
                         });
-                        const payload = await response.json().catch(() => ({}));
-                        if (!response.ok) {
-                            throw new Error(payload.detail || 'Failed to generate invite link.');
-                        }
-                        const rawInviteUrl = String(payload?.invite?.invite_url || payload?.invite_url || '').trim();
-                        settingsLastInviteLink = rawInviteUrl ? new URL(rawInviteUrl, window.location.origin).toString() : '';
-                        if (settingsTeamInviteLinkInput) {
-                            settingsTeamInviteLinkInput.value = settingsLastInviteLink;
-                        }
-                        renderSettingsTeamsPanel();
-                        setWorkspaceTextStatus(settingsTeamStatus, 'Invite link generated.');
-                    } catch (error) {
-                        setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
+                    } else {
+                        response = await fetch(`${getApiBaseUrl(organizationId)}/organization-members/${encodeURIComponent(memberId)}`, {
+                            method: 'DELETE',
+                            headers: {
+                                Authorization: `Bearer ${accessToken}`,
+                            },
+                        });
                     }
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(getTeamManagementErrorMessage(actionType, payload.detail, response.status));
+                    }
+                    closeSettingsTeamActionDialog();
+                    await hydrateAuthSession({ syncBrowserPath: false });
+                    await refreshSettingsTeamsPanel();
+                    setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
+                } catch (error) {
+                    setWorkspaceTextStatus(settingsTeamActionStatus, error.message || 'Failed to update team access.', true);
                 }
             });
             topbarSearchForm?.addEventListener('submit', (event) => {
@@ -8241,14 +8560,8 @@ export function initializeOperatorConsole() {
             const copilotAgentSessionStatus = document.getElementById('copilot-agent-session-status');
             const copilotAgentThread = document.getElementById('copilot-agent-thread');
             const copilotAgentMessageInput = document.getElementById('copilot-agent-message-input');
+            const copilotAgentSendBtn = document.getElementById('copilot-agent-send-btn');
             const copilotAgentSendStatus = document.getElementById('copilot-agent-send-status');
-            const copilotAgentClarifications = document.getElementById('copilot-agent-clarifications');
-            const copilotAgentClarificationForm = document.getElementById('copilot-agent-clarification-form');
-            const copilotAgentPreviewSummary = document.getElementById('copilot-agent-preview-summary');
-            const copilotAgentPreviewSteps = document.getElementById('copilot-agent-preview-steps');
-            const copilotAgentPreviewOutput = document.getElementById('copilot-agent-preview-output');
-            const copilotAgentConfirmations = document.getElementById('copilot-agent-confirmations');
-            const copilotAgentArtifacts = document.getElementById('copilot-agent-artifacts');
             const actionHistoryRefreshBtn = document.getElementById('action-history-refresh-btn');
             const actionHistoryStatus = document.getElementById('action-history-status');
             const serviceHealthStatus = document.getElementById('service-health-status');
@@ -8266,13 +8579,39 @@ export function initializeOperatorConsole() {
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
             let copilotAgentLastResponse = null;
+            let copilotAgentLastTurns = [];
             let copilotAgentDrawerOpen = false;
+            let copilotAgentPendingTurn = null;
+            let copilotAgentComposerReady = false;
+            let copilotAgentSessionBootstrapPromise = null;
+            const COPILOT_AGENT_READY_PLACEHOLDER = 'Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up.';
+            const COPILOT_AGENT_LOADING_PLACEHOLDER = 'Getting Agents Ready...';
 
             function setInlineStatus(element, message = '', isError = false) {
                 if (!element) return;
                 element.textContent = message;
                 element.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
             }
+
+            function setCopilotAgentComposerReady(isReady, { placeholder = '' } = {}) {
+                copilotAgentComposerReady = Boolean(isReady);
+                const resolvedPlaceholder = placeholder || (
+                    copilotAgentComposerReady
+                        ? COPILOT_AGENT_READY_PLACEHOLDER
+                        : COPILOT_AGENT_LOADING_PLACEHOLDER
+                );
+                if (copilotAgentMessageInput) {
+                    copilotAgentMessageInput.disabled = !copilotAgentComposerReady;
+                    copilotAgentMessageInput.setAttribute('aria-disabled', copilotAgentComposerReady ? 'false' : 'true');
+                    copilotAgentMessageInput.placeholder = resolvedPlaceholder;
+                }
+                if (copilotAgentSendBtn) {
+                    copilotAgentSendBtn.disabled = !copilotAgentComposerReady;
+                    copilotAgentSendBtn.setAttribute('aria-disabled', copilotAgentComposerReady ? 'false' : 'true');
+                }
+            }
+
+            setCopilotAgentComposerReady(false);
 
             function renderJsonOutput(element, payload, emptyMessage = 'No data available.') {
                 if (!element) return;
@@ -9092,23 +9431,7 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function getCopilotAgentContextLabel() {
-                const moduleConfig = moduleConfigs[activeModuleId];
-                const activeItem = findModuleItem(activeModuleId, activeNavItemId);
-                if (moduleConfig && activeItem && activeItem.label) {
-                    return `${moduleConfig.title} / ${activeItem.label}`;
-                }
-                return moduleConfig?.title || 'Current page';
-            }
-
             function syncCopilotAgentContextChrome() {
-                const label = getCopilotAgentContextLabel();
-                if (copilotAgentLauncherContext) {
-                    copilotAgentLauncherContext.textContent = label;
-                }
-                if (copilotAgentCurrentContext) {
-                    copilotAgentCurrentContext.textContent = `Context: ${label}`;
-                }
             }
 
             function syncCopilotAgentLauncherBadge(count = null) {
@@ -9172,74 +9495,9 @@ export function initializeOperatorConsole() {
                 return rendered.join('');
             }
 
-            function renderCopilotAgentThread(turns = []) {
-                if (!copilotAgentThread) return;
-                if (!Array.isArray(turns) || turns.length === 0) {
-                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
-                    return;
-                }
-                const rows = [];
-                turns.forEach((turn) => {
-                    rows.push(`
-                        <div class="copilot-agent-turn is-user">
-                            <div class="copilot-agent-turn-header">
-                                <strong>User</strong>
-                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
-                            </div>
-                            <div class="copilot-agent-turn-body">${escapeHtml(turn.user_message || '')}</div>
-                        </div>
-                    `);
-                    rows.push(`
-                        <div class="copilot-agent-turn">
-                            <div class="copilot-agent-turn-header">
-                                <div class="copilot-agent-inline-meta">
-                                    <strong>Agent</strong>
-                                    <span class="pill">${escapeHtml(turn.intent || 'task')}</span>
-                                    <span class="pill">${escapeHtml(turn.status || 'active')}</span>
-                                </div>
-                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
-                            </div>
-                            <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
-                        </div>
-                    `);
-                });
-                copilotAgentThread.innerHTML = rows.join('');
-                copilotAgentThread.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
-                    button.addEventListener('click', async () => {
-                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
-                        try {
-                            await navigator.clipboard.writeText(code);
-                            button.textContent = 'Copied';
-                            window.setTimeout(() => {
-                                button.textContent = 'Copy';
-                            }, 1200);
-                        } catch (error) {
-                            button.textContent = 'Copy failed';
-                            window.setTimeout(() => {
-                                button.textContent = 'Copy';
-                            }, 1600);
-                        }
-                    });
-                });
-            }
-
-            function renderCopilotAgentClarifications(items = []) {
-                if (!copilotAgentClarifications || !copilotAgentClarificationForm) return;
+            function renderCopilotAgentClarificationFields(items = []) {
                 const clarifications = Array.isArray(items) ? items : [];
-                if (clarifications.length === 0) {
-                    copilotAgentClarifications.innerHTML = '<div class="list-empty">Missing inputs will be listed here.</div>';
-                    copilotAgentClarificationForm.innerHTML = '';
-                    document.getElementById('copilot-agent-submit-clarifications-btn').disabled = true;
-                    return;
-                }
-                copilotAgentClarifications.innerHTML = clarifications.map((item) => `
-                    <div class="copilot-agent-clarification-item">
-                        <div class="copilot-agent-clarification-label">${escapeHtml(item.label || item.key || 'Input')}</div>
-                        <div>${escapeHtml(item.question || '')}</div>
-                        ${Array.isArray(item.options) && item.options.length ? `<div class="subtle">Options: ${escapeHtml(item.options.join(', '))}</div>` : ''}
-                    </div>
-                `).join('');
-                copilotAgentClarificationForm.innerHTML = clarifications.map((item) => {
+                return clarifications.map((item) => {
                     const key = String(item.key || '');
                     const inputType = String(item.input_type || 'text');
                     if (inputType === 'choice') {
@@ -9268,84 +9526,202 @@ export function initializeOperatorConsole() {
                         </label>
                     `;
                 }).join('');
-                document.getElementById('copilot-agent-submit-clarifications-btn').disabled = false;
             }
 
-            function renderCopilotAgentPreview(preview = null) {
-                if (!copilotAgentPreviewSummary || !copilotAgentPreviewSteps || !copilotAgentPreviewOutput) return;
-                if (!preview) {
-                    copilotAgentPreviewSummary.textContent = 'The agent preview will appear here.';
-                    copilotAgentPreviewSteps.innerHTML = '<div class="list-empty">No preview steps yet.</div>';
-                    renderJsonOutput(copilotAgentPreviewOutput, null, 'Execution preview details will appear here.');
-                    return;
-                }
-                copilotAgentPreviewSummary.textContent = preview.summary || 'Preview ready.';
-                const steps = Array.isArray(preview.steps) ? preview.steps : [];
-                copilotAgentPreviewSteps.innerHTML = steps.length ? steps.map((step) => `
-                    <div class="copilot-agent-preview-step">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-step-title">${escapeHtml(step.title || step.action_type || 'Step')}</span>
-                            <span class="pill">${escapeHtml(step.status || 'pending')}</span>
-                            <span class="pill">${escapeHtml(step.risk_level || 'low')}</span>
+            function renderCopilotAgentInlineCards({ clarifications = [], confirmations = [], artifacts = [] } = {}) {
+                const cards = [];
+                if (clarifications.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Clarifications Needed</span>
+                                <span class="pill">Required</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${clarifications.map((item) => `
+                                    <div class="copilot-agent-clarification-item">
+                                        <div class="copilot-agent-clarification-label">${escapeHtml(item.label || item.key || 'Input')}</div>
+                                        <div>${escapeHtml(item.question || '')}</div>
+                                        ${Array.isArray(item.options) && item.options.length ? `<div class="subtle">Options: ${escapeHtml(item.options.join(', '))}</div>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="copilot-agent-clarification-form">
+                                ${renderCopilotAgentClarificationFields(clarifications)}
+                            </div>
+                            <div class="copilot-agent-confirmation-actions">
+                                <button type="button" data-copilot-agent-submit-clarifications="true">Send Answers</button>
+                            </div>
                         </div>
-                        <div>${escapeHtml(step.summary || '')}</div>
-                    </div>
-                `).join('') : '<div class="list-empty">No preview steps yet.</div>';
-                renderJsonOutput(copilotAgentPreviewOutput, preview, 'Execution preview details will appear here.');
+                    `);
+                }
+                if (confirmations.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card is-warning">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Ready To Confirm</span>
+                                <span class="pill">High Risk</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${confirmations.map((item) => `
+                                    <div class="copilot-agent-confirmation-item">
+                                        <div class="copilot-agent-inline-meta">
+                                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
+                                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
+                                        </div>
+                                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
+                                        <div class="copilot-agent-confirmation-actions">
+                                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `);
+                }
+                if (artifacts.length) {
+                    cards.push(`
+                        <div class="copilot-agent-inline-card">
+                            <div class="copilot-agent-inline-meta">
+                                <span class="copilot-agent-inline-card-title">Artifacts</span>
+                                <span class="pill">${escapeHtml(String(artifacts.length))}</span>
+                            </div>
+                            <div class="copilot-agent-inline-card-items">
+                                ${artifacts.map((item, index) => `
+                                    <div class="copilot-agent-artifact-item">
+                                        <div class="copilot-agent-inline-meta">
+                                            <span class="copilot-agent-artifact-title">${escapeHtml(item.label || item.resource_id || 'Artifact')}</span>
+                                            <span class="pill">${escapeHtml(item.resource_type || 'resource')}</span>
+                                            <span class="pill">${escapeHtml(item.status || 'ready')}</span>
+                                        </div>
+                                        <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
+                                        <div class="copilot-agent-artifact-actions">
+                                            <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `);
+                }
+                return cards.join('');
             }
 
-            function renderCopilotAgentConfirmations(items = []) {
-                if (!copilotAgentConfirmations) return;
-                const confirmations = Array.isArray(items) ? items : [];
-                if (confirmations.length === 0) {
-                    copilotAgentConfirmations.innerHTML = '<div class="list-empty">No confirmations are waiting.</div>';
-                    return;
-                }
-                copilotAgentConfirmations.innerHTML = confirmations.map((item) => `
-                    <div class="copilot-agent-confirmation-item">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
-                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
-                        </div>
-                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
-                        <div class="copilot-agent-confirmation-actions">
-                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
-                        </div>
-                    </div>
-                `).join('');
-                copilotAgentConfirmations.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
+            function bindCopilotAgentThreadActions(artifacts = []) {
+                copilotAgentThread?.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
+                        try {
+                            await navigator.clipboard.writeText(code);
+                            button.textContent = 'Copied';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1200);
+                        } catch (error) {
+                            button.textContent = 'Copy failed';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1600);
+                        }
+                    });
+                });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         await confirmCopilotAgentAction(button.dataset.copilotAgentConfirm);
                     });
                 });
-            }
-
-            function renderCopilotAgentArtifacts(items = []) {
-                if (!copilotAgentArtifacts) return;
-                const artifacts = Array.isArray(items) ? items : [];
-                if (artifacts.length === 0) {
-                    copilotAgentArtifacts.innerHTML = '<div class="list-empty">Created or updated resources will appear here.</div>';
-                    return;
-                }
-                copilotAgentArtifacts.innerHTML = artifacts.map((item, index) => `
-                    <div class="copilot-agent-artifact-item">
-                        <div class="copilot-agent-inline-meta">
-                            <span class="copilot-agent-artifact-title">${escapeHtml(item.label || item.resource_id || 'Artifact')}</span>
-                            <span class="pill">${escapeHtml(item.resource_type || 'resource')}</span>
-                            <span class="pill">${escapeHtml(item.status || 'ready')}</span>
-                        </div>
-                        <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
-                        <div class="copilot-agent-artifact-actions">
-                            <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
-                        </div>
-                    </div>
-                `).join('');
-                copilotAgentArtifacts.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         const artifact = artifacts[Number(button.dataset.copilotAgentArtifactIndex)];
                         await openCopilotAgentArtifact(artifact);
                     });
                 });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-submit-clarifications]').forEach((button) => {
+                    button.addEventListener('click', submitCopilotAgentClarifications);
+                });
+            }
+
+            function renderCopilotAgentPendingTurn(pendingTurn) {
+                if (!pendingTurn) {
+                    return '';
+                }
+                const createdAt = pendingTurn.created_at || new Date().toISOString();
+                const isError = pendingTurn.status === 'error';
+                const assistantBody = isError
+                    ? `<div class="copilot-agent-turn-body">${escapeHtml(pendingTurn.error_message || 'Failed to get an agent response.')}</div>`
+                    : `
+                        <div class="copilot-agent-turn-body">
+                            <span class="copilot-agent-thinking-label">Agent is thinking</span>
+                            <span class="copilot-agent-thinking-dots" aria-hidden="true">
+                                <span></span><span></span><span></span>
+                            </span>
+                        </div>
+                    `;
+                return `
+                    <div class="copilot-agent-turn is-user is-pending">
+                        <div class="copilot-agent-turn-header">
+                            <strong>User</strong>
+                            <span>${escapeHtml(formatDateTime(createdAt))}</span>
+                        </div>
+                        <div class="copilot-agent-turn-body">${escapeHtml(pendingTurn.user_message || '')}</div>
+                    </div>
+                    <div class="copilot-agent-turn ${isError ? 'is-error' : 'is-thinking'}">
+                        <div class="copilot-agent-turn-header">
+                            <div class="copilot-agent-inline-meta">
+                                <strong>Agent</strong>
+                                <span class="pill">${isError ? 'error' : 'thinking'}</span>
+                            </div>
+                            <span>${escapeHtml(formatDateTime(createdAt))}</span>
+                        </div>
+                        ${assistantBody}
+                    </div>
+                `;
+            }
+
+            function renderCopilotAgentThread(turns = [], extras = {}) {
+                if (!copilotAgentThread) return;
+                const rows = [];
+                if (Array.isArray(turns)) {
+                    turns.forEach((turn) => {
+                        rows.push(`
+                            <div class="copilot-agent-turn is-user">
+                                <div class="copilot-agent-turn-header">
+                                    <strong>User</strong>
+                                    <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                                </div>
+                                <div class="copilot-agent-turn-body">${escapeHtml(turn.user_message || '')}</div>
+                            </div>
+                        `);
+                        rows.push(`
+                            <div class="copilot-agent-turn">
+                                <div class="copilot-agent-turn-header">
+                                    <div class="copilot-agent-inline-meta">
+                                        <strong>Agent</strong>
+                                        <span class="pill">${escapeHtml(turn.intent || 'task')}</span>
+                                        <span class="pill">${escapeHtml(turn.status || 'active')}</span>
+                                    </div>
+                                    <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                                </div>
+                                <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
+                            </div>
+                        `);
+                    });
+                }
+                const pendingTurn = renderCopilotAgentPendingTurn(copilotAgentPendingTurn);
+                if (pendingTurn) {
+                    rows.push(pendingTurn);
+                }
+                const inlineCards = renderCopilotAgentInlineCards(extras);
+                if (inlineCards) {
+                    rows.push(inlineCards);
+                }
+                if (!rows.length) {
+                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
+                    return;
+                }
+                copilotAgentThread.innerHTML = rows.join('');
+                bindCopilotAgentThreadActions(extras.artifacts || []);
+                copilotAgentThread.scrollTop = copilotAgentThread.scrollHeight;
             }
 
             async function openCopilotAgentArtifact(artifact) {
@@ -9392,6 +9768,9 @@ export function initializeOperatorConsole() {
                     copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
                     copilotAgentDrawerBackdrop?.classList.add('hidden');
                     copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    setCopilotAgentComposerReady(false, {
+                        placeholder: 'Finish workspace setup to use Ask AI.',
+                    });
                     if (copilotAgentSessionStatus) {
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(authSessionState), true);
                     }
@@ -9424,12 +9803,19 @@ export function initializeOperatorConsole() {
                 copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'false');
                 copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
                 syncCopilotAgentContextChrome();
+                if (copilotAgentComposerReady) {
+                    copilotAgentMessageInput?.focus();
+                }
                 await loadCopilotAgentWorkspace(false);
-                copilotAgentMessageInput?.focus();
+                if (copilotAgentComposerReady) {
+                    copilotAgentMessageInput?.focus();
+                }
             }
 
             function renderCopilotAgentWorkspace(payload = {}, turns = []) {
                 copilotAgentLastResponse = payload || {};
+                copilotAgentPendingTurn = null;
+                copilotAgentLastTurns = Array.isArray(turns) ? turns : [];
                 const sessionState = payload.session_state || {};
                 copilotAgentSessionId = sessionState.session_id || copilotAgentSessionId;
                 if (sessionState.session_id) {
@@ -9438,33 +9824,65 @@ export function initializeOperatorConsole() {
                         `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
                     );
                 }
-                renderCopilotAgentThread(turns);
-                renderCopilotAgentClarifications(payload.clarifications || sessionState.latest_clarifications || []);
-                renderCopilotAgentPreview(payload.execution_preview || sessionState.latest_execution_preview || null);
-                renderCopilotAgentConfirmations(payload.pending_confirmations || []);
-                renderCopilotAgentArtifacts(payload.artifacts || sessionState.latest_artifacts || []);
+                setInlineStatus(copilotAgentSendStatus, '');
+                renderCopilotAgentThread(copilotAgentLastTurns, {
+                    clarifications: payload.clarifications || sessionState.latest_clarifications || [],
+                    confirmations: payload.pending_confirmations || [],
+                    artifacts: payload.artifacts || sessionState.latest_artifacts || [],
+                });
+                setCopilotAgentComposerReady(true);
                 syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
             }
 
             async function ensureCopilotAgentSession(forceNew = false) {
                 if (copilotAgentSessionId && !forceNew) {
-                    return copilotAgentSessionId;
+                    return {
+                        sessionId: copilotAgentSessionId,
+                        payload: null,
+                        created: false,
+                    };
                 }
+                if (copilotAgentSessionBootstrapPromise && !forceNew) {
+                    return copilotAgentSessionBootstrapPromise;
+                }
+                setCopilotAgentComposerReady(false);
                 setInlineStatus(copilotAgentSessionStatus, 'Creating agent session...');
-                const payload = await apiRequest('/copilot/agent/sessions', {
-                    method: 'POST',
-                    body: {
-                        title: 'Insight Copilot Agent',
-                        ui_context: getCopilotAgentUiContext(),
-                    },
-                });
-                copilotAgentSessionId = payload.session_state?.session_id || null;
-                renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
-                return copilotAgentSessionId;
+                const bootstrapPromise = (async () => {
+                    const payload = await apiRequest('/copilot/agent/sessions', {
+                        method: 'POST',
+                        body: {
+                            title: 'Insight Copilot Agent',
+                            ui_context: getCopilotAgentUiContext(),
+                        },
+                    });
+                    copilotAgentSessionId = payload.session_state?.session_id || null;
+                    if (!copilotAgentPendingTurn) {
+                        renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
+                    } else if (payload.session_state?.session_id) {
+                        setCopilotAgentComposerReady(true);
+                        setInlineStatus(
+                            copilotAgentSessionStatus,
+                            `Session ${payload.session_state.session_id} · ${payload.session_state.status || 'active'}${payload.session_state.current_intent ? ` · ${payload.session_state.current_intent}` : ''}`,
+                        );
+                    }
+                    return {
+                        sessionId: copilotAgentSessionId,
+                        payload,
+                        created: true,
+                    };
+                })();
+                copilotAgentSessionBootstrapPromise = bootstrapPromise;
+                try {
+                    return await bootstrapPromise;
+                } finally {
+                    if (copilotAgentSessionBootstrapPromise === bootstrapPromise) {
+                        copilotAgentSessionBootstrapPromise = null;
+                    }
+                }
             }
 
             function buildCopilotAgentClarificationMessage() {
-                const fields = Array.from(copilotAgentClarificationForm?.querySelectorAll('[data-clarification-key]') || []);
+                const fields = Array.from(copilotAgentThread?.querySelectorAll('[data-clarification-key]') || []);
                 if (!fields.length) {
                     return '';
                 }
@@ -9494,40 +9912,70 @@ export function initializeOperatorConsole() {
             }
 
             async function loadCopilotAgentWorkspace(forceNew = false) {
-                try {
-                    if (forceNew || !copilotAgentSessionId) {
+                const needsFreshSession = forceNew || !copilotAgentSessionId;
+                if (needsFreshSession) {
+                    try {
                         await ensureCopilotAgentSession(forceNew);
+                    } catch (error) {
+                        if (isWorkspaceContextError(error)) {
+                            renderCopilotAgentThread([]);
+                            setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                            setCopilotAgentComposerReady(false, {
+                                placeholder: 'Finish workspace setup to use Ask AI.',
+                            });
+                            return;
+                        }
+                        setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
+                        setCopilotAgentComposerReady(false);
                     }
-                    if (!copilotAgentSessionId) {
-                        return;
-                    }
+                    return;
+                }
+                try {
+                    setInlineStatus(copilotAgentSessionStatus, 'Refreshing agent session...');
                     const [sessionPayload, turnsPayload] = await Promise.all([
                         apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}`),
                         apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`),
                     ]);
-                    renderCopilotAgentWorkspace(sessionPayload, turnsPayload.items || []);
+                    if (!copilotAgentPendingTurn) {
+                        renderCopilotAgentWorkspace(sessionPayload, turnsPayload.items || []);
+                    }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         renderCopilotAgentThread([]);
-                        renderCopilotAgentClarifications([]);
-                        renderCopilotAgentPreview(null);
-                        renderCopilotAgentConfirmations([]);
-                        renderCopilotAgentArtifacts([]);
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        setCopilotAgentComposerReady(false, {
+                            placeholder: 'Finish workspace setup to use Ask AI.',
+                        });
                         return;
                     }
                     setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
+                    setCopilotAgentComposerReady(false);
                 }
             }
 
             async function sendCopilotAgentMessage(messageOverride = null) {
+                if (!copilotAgentComposerReady) {
+                    setInlineStatus(copilotAgentSendStatus, 'Wait for the assistant to finish getting ready before sending the first message.', true);
+                    return;
+                }
                 const message = String(messageOverride ?? copilotAgentMessageInput?.value ?? '').trim();
                 if (!message) {
                     setInlineStatus(copilotAgentSendStatus, 'Enter a request for the global assistant.', true);
                     return;
                 }
+                const inputMessage = String(copilotAgentMessageInput?.value ?? '').trim();
+                const shouldClearComposer = Boolean(copilotAgentMessageInput) && message === inputMessage;
                 try {
-                    setInlineStatus(copilotAgentSendStatus, 'Sending request to the global assistant...');
+                    if (shouldClearComposer) {
+                        copilotAgentMessageInput.value = '';
+                    }
+                    setInlineStatus(copilotAgentSendStatus, '');
+                    copilotAgentPendingTurn = {
+                        created_at: new Date().toISOString(),
+                        user_message: message,
+                        status: 'thinking',
+                    };
+                    renderCopilotAgentThread(copilotAgentLastTurns, {});
                     await ensureCopilotAgentSession(false);
                     const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
                         method: 'POST',
@@ -9538,11 +9986,15 @@ export function initializeOperatorConsole() {
                     });
                     const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`);
                     renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
-                    if (copilotAgentMessageInput && message === String(copilotAgentMessageInput.value || '').trim()) {
-                        copilotAgentMessageInput.value = '';
-                    }
-                    setInlineStatus(copilotAgentSendStatus, 'Agent response updated.');
+                    setInlineStatus(copilotAgentSendStatus, '');
                 } catch (error) {
+                    copilotAgentPendingTurn = {
+                        created_at: copilotAgentPendingTurn?.created_at || new Date().toISOString(),
+                        user_message: message,
+                        status: 'error',
+                        error_message: error.message || 'Failed to send agent message.',
+                    };
+                    renderCopilotAgentThread(copilotAgentLastTurns, {});
                     setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to send agent message.', true);
                 }
             }
@@ -9722,21 +10174,22 @@ export function initializeOperatorConsole() {
             });
             document.getElementById('copilot-load-query-log-btn').addEventListener('click', loadCopilotQueryLog);
             document.getElementById('copilot-refresh-meta-btn').addEventListener('click', loadCopilotMeta);
-            document.getElementById('copilot-agent-send-btn').addEventListener('click', () => sendCopilotAgentMessage());
+            copilotAgentSendBtn?.addEventListener('click', () => sendCopilotAgentMessage());
             document.getElementById('copilot-agent-new-session-btn').addEventListener('click', async () => {
                 copilotAgentSessionId = null;
                 copilotAgentLastResponse = null;
+                copilotAgentLastTurns = [];
+                copilotAgentPendingTurn = null;
+                if (copilotAgentMessageInput) {
+                    copilotAgentMessageInput.value = '';
+                }
+                setCopilotAgentComposerReady(false);
                 renderCopilotAgentThread([]);
-                renderCopilotAgentClarifications([]);
-                renderCopilotAgentPreview(null);
-                renderCopilotAgentConfirmations([]);
-                renderCopilotAgentArtifacts([]);
                 syncCopilotAgentLauncherBadge(0);
                 await loadCopilotAgentWorkspace(true);
             });
-            document.getElementById('copilot-agent-submit-clarifications-btn').addEventListener('click', submitCopilotAgentClarifications);
             copilotAgentMessageInput.addEventListener('keydown', (event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                     event.preventDefault();
                     sendCopilotAgentMessage();
                 }
@@ -9745,6 +10198,10 @@ export function initializeOperatorConsole() {
                 button.addEventListener('click', async () => {
                     const starterMessage = button.dataset.agentStarterMessage || '';
                     await setCopilotAgentDrawerOpen(true);
+                    if (!copilotAgentComposerReady) {
+                        setInlineStatus(copilotAgentSendStatus, 'Wait for the assistant to finish getting ready before using a starter prompt.', true);
+                        return;
+                    }
                     copilotAgentMessageInput.value = starterMessage;
                     await sendCopilotAgentMessage(starterMessage);
                 });

@@ -827,23 +827,30 @@ The assistant can:
 - set up low-risk draft cohorts, experiment configs, connectors, and provider connections
 - stop high-risk actions at explicit confirmation
 
+The drawer now behaves like a normal chat room:
+- one transcript from top to bottom
+- one message box at the bottom
+- the first message box stays disabled with `Getting Agents Ready...` only until the first session-create call completes
+- reopening the drawer keeps the existing session usable while the transcript refreshes in the background
+- the user message appears immediately after send
+- the assistant shows a thinking animation until the answer or next required action is ready
+- inline clarification, confirmation, and artifact cards only when they are relevant
+- no persistent side panels for agent workflow state
+
 The `Insight Copilot` page now acts as the advanced/manual fallback for direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` usage.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
-| `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
-| `Starter task buttons` | Buttons | Sends a suggested task into the assistant drawer. | `Connector Help` | The conversation starts with that operator task. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
-| `Message` | Text area | Ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant returns grounded guidance or executes the supported setup flow. |
-| `Send To Agent` | Button | Sends the current message to the assistant. | None | Conversation thread, preview, and artifacts update. |
-| `Clarifications` | Structured form | Fill only the missing inputs requested by the agent, then submit them. | `connection_scope: connector` | The agent continues the task without restarting the session. |
-| `Submit Clarifications` | Button | Sends the structured clarification form back to the agent. | None | The task either moves into preview/execution or asks for the next missing field. |
-| `Execution Preview` | Preview card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary update. |
-| `Pending Confirmations` | Action list | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears instead of auto-running the action. |
-| `Confirm Action` | Button | Explicitly approves a risky prepared action. | None | The held action executes and the conversation updates. |
-| `Artifacts` | Resource list | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| `Message` | Text area | Wait until the placeholder changes from `Getting Agents Ready...` to the normal prompt, then ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant blocks only the initial first message while the first session is created, then returns grounded guidance or executes the supported setup flow. |
+| `Send` | Button | Sends the current message to the assistant after the drawer is ready. The button stays disabled only during initial session bootstrap or when workspace access is blocked. | None | The transcript updates with the latest answer or task state. |
+| Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
+| Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
+| Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
+| `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
+| Inline artifact card | Conditional resource card | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
 | `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 
 #### Supported v1 agent tasks
@@ -1008,7 +1015,7 @@ The `Settings` module is now a tabbed page. The left sidebar opens `Settings` di
 | `Profile` | Tab button | Opens the profile placeholder layout. | None | The profile information and password placeholder cards become visible. |
 | `Organization` | Tab button | Opens the organization workspace tab. | None | Live workspace and session controls become visible. |
 | `Projects` | Tab button | Opens the live project-management tab for the active organization. | None | Project rows, default-project marker, create-project action, and delete flow become visible. |
-| `Teams` | Tab button | Opens the live team-management tab for the active organization. | None | Organization member rows, invite controls, and role-management controls become visible. |
+| `Teams` | Tab button | Opens the live team-management tab for the active organization. | None | Organization member rows, joined dates, invite controls, role-management controls, member removal, and owner-transfer confirmation become visible. |
 | `Notifications` | Tab button | Opens the notifications tab. | None | Notification placeholder rows become visible. |
 | `Billing` | Tab button | Opens the billing placeholder layout. | None | Billing placeholder rows become visible. |
 
@@ -1097,19 +1104,26 @@ The `Teams` tab manages organization-level access. Team membership is shared acr
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
-| `Add Team Member` | Button | Opens the add-member form. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
+| Joined date text | Read-only row text | Read the `Joined YYYY-MM-DD` or `Invited YYYY-MM-DD` label next to each member's name. | `Joined 2026-04-03` | Confirms when the member or pending invite entered the organization roster. |
+| `Add Team Member` | Button | Uses the email field and adds that Google account to the organization as a `member`. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
 | `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
-| `Role` | Select | Choose the starting org role. The default is `member`. | `member` | The invited user will join as `member` unless changed later. |
-| `Add Team Member` submit action | Button | Stores the organization invite. Available only to `owner` and `admin` users. | None | Creates the pending org invite and returns an optional shareable invite link. |
-| `Generate Invite Link` | Row button | Regenerates or retrieves the optional invite link for that member or pending invite row. | None | The link can be shared, but access still depends on the invited Google email. |
+| Default role note | Read-only inline note | Read-only reminder below the email field. | `New team members join as Member by default.` | Confirms that owners and admins promote later from the roster instead of assigning `admin` during add-member creation. |
+| `Generate Invite Link` | Button | Uses the email field to create or refresh an optional organization invite link in the shared invite section. Available only to `owner` and `admin` users. | None | The latest invite link is refreshed in the shared invite card, not on individual member rows. |
 | `Copy Invite Link` | Top-level button | Copies the most recently generated invite link from the invite-link field. | None | The current invite link is placed on the clipboard. |
-| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users. | `admin` | Updates the user's org-level role. |
+| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Owners can also choose `owner` on another non-owner row to start an ownership transfer. Administrators can demote themselves to `member`, but they cannot change any owner row. | `admin` | Stages a role change for that member. |
+| `Save` | Row button | Writes the staged role change for that row. Available only when the row has an unsaved change. | None | The role update is sent and the status line shows `Changes are saved.` on success. |
+| `Remove Member` | Row button | Opens the removal confirmation flow for a non-owner member. Available only to `owner` and `admin` users. | None | Attempts to remove that member from the organization. |
 | Owner badge | Read-only badge | Marks the organization creator. | `Owner` | Indicates the only role that cannot be reassigned through the normal team-management flow. |
 
 Role contract:
-- `owner`: the creator of the org; also has admin privileges; cannot be reassigned in v1
-- `admin`: can add members, create projects, delete projects, and promote or demote between `admin` and `member`
+- `owner`: the creator of the org; also has admin privileges; only the owner can transfer ownership by changing another row to `owner` and confirming the popup
+- `admin`: can add members, create projects, delete projects, remove non-owner members, promote or demote between `admin` and `member`, and can demote themselves to `member`
 - `member`: can enter the org and use all its projects, but cannot manage team or project lifecycle actions
+
+Current UI limitations:
+- new team members are always created as `member`; promote them later from the roster
+- administrators cannot transfer ownership through the UI
+- after an admin demotes themselves to `member`, the page refreshes their org role and removes their management controls immediately
 
 #### Sample add-member input
 ```json

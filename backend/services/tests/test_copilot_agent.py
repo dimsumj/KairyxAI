@@ -45,6 +45,21 @@ def _create_session(client: TestClient, headers: dict[str, str], *, title: str =
     return response.json()["session_state"]["session_id"]
 
 
+def test_copilot_agent_create_session_returns_empty_ready_state(client):
+    headers = _headers("analyst", actor_id="agent_session_reader")
+    response = client.post(
+        "/api/v1/copilot/agent/sessions",
+        headers=headers,
+        json={"title": "Fresh Agent Session", "ui_context": {"active_module_id": "data-core"}},
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["latest_turn"] is None
+    assert payload["pending_confirmations"] == []
+    assert payload["session_state"]["title"] == "Fresh Agent Session"
+    assert payload["session_state"]["ui_context"]["active_module_id"] == "data-core"
+
+
 def _seed_mock_warehouse():
     service = get_shared_bigquery_service()
     service.write_events_staging(

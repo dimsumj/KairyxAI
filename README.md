@@ -129,7 +129,7 @@ Primary backend surface:
 Insight Copilot is the operator-facing analysis layer:
 
 - global AI assistant bubble for grounded product help, contextual samples, dashboard summary, cohort setup, experiment setup, and connection setup from any page
-- structured clarifications, execution preview, artifact deep links, and confirmation gating for risky actions
+- a single-column chat drawer and launcher with no visible page-context subtitle, fast session readiness, immediate user-message rendering after send, an assistant thinking state, inline clarifications, artifact links, and confirmation gating for risky actions
 - manual `query / explain / recommend / report` tools on the Insight Copilot page as the advanced fallback
 - natural-language metric query
 - anomaly explanation
@@ -230,7 +230,7 @@ In the backend, `tenant` remains the internal organization identifier for compat
 - mock-mode imports now kick off in the background and rely on status polling instead of holding the browser request open until the full import run finishes
 - organization-level email invites that pre-authorize a Google account to join the organization as a `member`, plus optional shareable invite links that land the user in the invited org flow after login
 - idempotent invite redemption, so a matching Google login can auto-activate a pending org invite by email and a later invite-link redeem request still succeeds for that same user
-- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
+- a tabbed Settings page with `Profile`, `Organization`, `Projects`, `Teams`, `Notifications`, and `Billing` sections, where `Projects` and `Teams` are the live management surfaces for project creation/deletion and organization membership; the roster now shows `Joined YYYY-MM-DD` metadata next to each member name, row-level Save buttons for role changes, a shared invite-link generator section, member removal, and owner transfer through the same Save flow with confirmation while `Profile`, `Notifications`, and `Billing` remain lighter placeholder layouts
 - a hidden local/demo fallback that still uses default legacy headers internally when Google login is not configured
 
 For authenticated organization-aware traffic, the preferred API shape is:
@@ -575,7 +575,7 @@ For production-shaped deployments, use one of the native backend stacks:
 4. Create or refresh a cohort
 5. Publish or test a workflow
 6. Review experiment summary or integrity
-7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on
+7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on, then answer any inline clarification or confirmation cards directly in the same chat transcript
 8. Open `Insight Copilot` only when you want the manual Query, Explain, Recommend, Report, or Evidence & Logs tools directly
 
 ## API Surface Snapshot
@@ -639,7 +639,7 @@ The repository is already strong in these areas:
 - audit and health surfaces
 - job lifecycle management for imports, predictions, and exports
 - cohort, workflow, experiment, and copilot control-plane coverage
-- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, team, and project management alongside lighter placeholder profile, notification, and billing layouts
+- backend-served React shell with a Figma-based SaaS layout, inline section expansion, an icon-only collapsed rail with right-side section popouts that auto-engages below `1200px` and closes after an icon routes to the module's first section, a bottom-left session profile chip with logout, a search-first top bar with `System`, `Light`, and `Dark` theme buttons, and a tabbed Settings surface for workspace, project, and team management including explicit role-save buttons, `Joined YYYY-MM-DD` roster metadata next to each member name, a shared invite-link generator, member removal, and owner transfer through the role Save flow alongside lighter placeholder profile, notification, and billing layouts
 
 ## Current Limitations
 

@@ -1366,31 +1366,28 @@ WHERE predicted_churn_risk = 'high'
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Add Team Member</h2>
-                        <p>Add a Google account by email. The default organization role is member.</p>
+                        <h2>Invite Team Members</h2>
+                        <p>Add a Google account by email or generate an invite link from this shared section. New organization members always join as members, and owners or administrators can promote them later.</p>
                     </div>
                     <div class="settings-form-grid">
                         <div class="form-group">
                             <label for="settings-team-member-email">Google Email</label>
                             <input id="settings-team-member-email" type="email" placeholder="teammate@example.com">
                         </div>
-                        <div class="form-group">
-                            <label for="settings-team-member-role">Role</label>
-                            <select id="settings-team-member-role">
-                                <option value="member" selected>Member</option>
-                                <option value="admin">Administrator</option>
-                            </select>
-                        </div>
+                    </div>
+                    <div class="settings-inline-note">
+                        New team members join as <strong>Member</strong> by default. Promote them later from the roster if needed.
                     </div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-team-add-member-btn">Add Team Member</button>
+                        <button type="button" id="settings-team-generate-invite-btn" class="secondary-action">Generate Invite Link</button>
                     </div>
                 </div>
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Invite Link</h2>
-                        <p>Create an organization invite link after adding an email, then share it with the teammate if needed.</p>
+                        <p>Create an organization-level invite link for the email entered above, then share it with the teammate if needed.</p>
                     </div>
                     <div class="form-group">
                         <label for="settings-team-invite-link">Latest Invite Link</label>
@@ -1398,6 +1395,21 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-team-copy-invite-btn" class="secondary-action">Copy Invite Link</button>
+                    </div>
+                </div>
+
+                <div id="settings-team-action-modal" class="settings-dialog hidden" aria-hidden="true">
+                    <div class="settings-dialog-backdrop"></div>
+                    <div class="settings-dialog-card" role="dialog" aria-modal="true" aria-labelledby="settings-team-action-title">
+                        <div class="settings-section-heading">
+                            <h2 id="settings-team-action-title">Confirm Team Change</h2>
+                            <p id="settings-team-action-copy">Review this organization team change before continuing.</p>
+                        </div>
+                        <div id="settings-team-action-status" class="settings-status-message subtle"></div>
+                        <div class="settings-form-actions">
+                            <button type="button" id="settings-team-action-cancel-btn" class="secondary-action">Cancel</button>
+                            <button type="button" id="settings-team-action-submit-btn">Continue</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1453,7 +1465,6 @@ WHERE predicted_churn_risk = 'high'
             <span class="copilot-agent-launcher-icon" aria-hidden="true">AI</span>
             <span class="copilot-agent-launcher-copy">
                 <span class="copilot-agent-launcher-title">Ask AI</span>
-                <span id="copilot-agent-launcher-context" class="copilot-agent-launcher-context">Grounded help and safe setup</span>
             </span>
             <span id="copilot-agent-launcher-badge" class="copilot-agent-launcher-badge hidden">0</span>
         </button>
@@ -1462,77 +1473,26 @@ WHERE predicted_churn_risk = 'high'
             <div class="copilot-agent-drawer-header">
                 <div>
                     <div class="copilot-agent-drawer-eyebrow">Global AI Assistant</div>
-                    <h2>Ask questions or let the agent do the work</h2>
+                    <h2>Ask AI</h2>
                     <div id="copilot-agent-session-status" class="subtle">Preparing assistant session...</div>
-                    <div id="copilot-agent-current-context" class="subtle">Context will follow your current page.</div>
                 </div>
                 <div class="inline-actions">
                     <button id="copilot-agent-new-session-btn" type="button">New Session</button>
                     <button id="copilot-agent-close-btn" class="secondary-button" type="button">Close</button>
                 </div>
             </div>
-            <div class="copilot-agent-layout">
-                <div class="copilot-agent-main">
-                    <div class="copilot-agent-starters">
-                        <button type="button" class="secondary-button" data-agent-starter-message="Summarize the dashboard.">Summarize Dashboard</button>
-                        <button type="button" class="secondary-button" data-agent-starter-message="How do I create an Amplitude connector here? Give me a sample payload.">Connector Help</button>
-                        <button type="button" class="secondary-button" data-agent-starter-message="Give me a SQL cohort sample for high-risk players.">SQL Cohort Sample</button>
-                        <button type="button" class="secondary-button" data-agent-starter-message="Set up an A/B test named agent_ab_test for cohort_id: cohort_demo with primary metric: return_rate">Set Up A/B Test</button>
-                    </div>
-                    <div id="copilot-agent-thread" class="copilot-agent-thread">
-                        <div class="list-empty">The assistant conversation will appear here.</div>
-                    </div>
-                    <div class="copilot-agent-composer">
-                        <div class="form-group">
-                            <label for="copilot-agent-message-input">Message</label>
-                            <textarea id="copilot-agent-message-input" style="min-height: 8rem; font-family: monospace;" placeholder="Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up."></textarea>
-                        </div>
-                        <div class="inline-actions">
-                            <button id="copilot-agent-send-btn" type="button">Send To Agent</button>
-                            <span id="copilot-agent-send-status" class="subtle"></span>
-                        </div>
-                    </div>
+            <div class="copilot-agent-body">
+                <div id="copilot-agent-thread" class="copilot-agent-thread" role="log" aria-live="polite">
+                    <div class="list-empty">The assistant conversation will appear here.</div>
                 </div>
-                <div class="copilot-agent-side">
-                    <div class="card copilot-agent-panel">
-                        <div class="module-section-header">
-                            <h2>Clarifications</h2>
-                            <span class="pill">Structured</span>
-                        </div>
-                        <div id="copilot-agent-clarifications" class="copilot-agent-clarifications">
-                            <div class="list-empty">Missing inputs will be listed here.</div>
-                        </div>
-                        <div id="copilot-agent-clarification-form" class="copilot-agent-clarification-form"></div>
-                        <div class="inline-actions">
-                            <button id="copilot-agent-submit-clarifications-btn" type="button">Submit Clarifications</button>
-                        </div>
+                <div class="copilot-agent-composer">
+                    <div class="form-group">
+                        <label class="sr-only" for="copilot-agent-message-input">Message</label>
+                        <textarea id="copilot-agent-message-input" class="copilot-agent-message-input" placeholder="Getting Agents Ready..." disabled></textarea>
                     </div>
-                    <div class="card copilot-agent-panel">
-                        <div class="module-section-header">
-                            <h2>Execution Preview</h2>
-                            <span class="pill">Preview First</span>
-                        </div>
-                        <div id="copilot-agent-preview-summary" class="subtle">The agent preview will appear here.</div>
-                        <div id="copilot-agent-preview-steps" class="copilot-agent-preview-steps"></div>
-                        <pre id="copilot-agent-preview-output" class="json-output">Execution preview details will appear here.</pre>
-                    </div>
-                    <div class="card copilot-agent-panel">
-                        <div class="module-section-header">
-                            <h2>Pending Confirmations</h2>
-                            <span class="pill">High Risk</span>
-                        </div>
-                        <div id="copilot-agent-confirmations" class="copilot-agent-confirmations">
-                            <div class="list-empty">No confirmations are waiting.</div>
-                        </div>
-                    </div>
-                    <div class="card copilot-agent-panel">
-                        <div class="module-section-header">
-                            <h2>Artifacts</h2>
-                            <span class="pill">Deep Links</span>
-                        </div>
-                        <div id="copilot-agent-artifacts" class="copilot-agent-artifacts">
-                            <div class="list-empty">Created or updated resources will appear here.</div>
-                        </div>
+                    <div class="copilot-agent-composer-actions">
+                        <span id="copilot-agent-send-status" class="subtle"></span>
+                        <button id="copilot-agent-send-btn" type="button" disabled>Send</button>
                     </div>
                 </div>
             </div>
