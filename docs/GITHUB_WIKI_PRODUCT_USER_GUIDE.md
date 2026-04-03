@@ -66,7 +66,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, returns to the base app URL, then the console restores the active organization path after session resolution by using the returned Google ID token as the backend bearer JWT. |
+| `Continue with Google` | Button | Opens Google's browser popup sign-in flow before any onboarding or workspace selection is shown. If the account chooser is dismissed, the same button can be used again immediately. | None | Google opens in a browser popup, returns a Google ID token-backed bearer session, and the console keeps the browser on the base app URL until the organization and project are resolved. |
 | Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
 
 Every user now passes through the Google login gate first. After successful sign-in, the console keeps the browser on the base gateway URL and then does one of these things:
@@ -1048,7 +1048,7 @@ The `Organization` tab holds the live shell controls that still drive workspace 
 | Current workspace card | Read-only summary | Shows the active organization and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
 | Session state card | Read-only summary | Shows the current login state and the org role that applies across all projects in the active organization. | `Google alice@example.com @ northstar / liveops (owner)` | Confirms the current authenticated session. |
 | Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops (admin)` | Confirms the current authenticated session before you switch workspaces or log out. |
-| `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a Google ID token-backed bearer session. |
+| `Continue with Google` | Button | Opens Google's browser popup sign-in flow from inside Settings. | None | Google opens in a browser popup and returns with a Google ID token-backed bearer session. |
 | `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to the organization URL gate so the next sign-in starts from org selection. |
 | `API Key` | Password box | Optional legacy/demo API key entry. This stays hidden when Google login is configured or an OIDC bearer session is active. | `local-demo-key` | Local/demo requests reuse the stored API key in the browser. |
 | Application startup status | Read-only status line | Shows the latest startup or health result from inside Settings. | `Application start completed (mock)` | Confirms whether the backend is reachable from the console. |

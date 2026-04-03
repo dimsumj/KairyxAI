@@ -178,7 +178,7 @@ KairyxAI currently supports three practical shapes:
    - shared multi-tenant control plane on Postgres
    - Cloud Run services for `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker`
    - organization + project scoped GCS prefixes, BigQuery datasets, Pub/Sub attributes, and control-plane metadata
-   - Google login in the frontend via OIDC PKCE, self-serve organization onboarding, organization-level email invites, browser URLs that become `https://<base-url>/<organization_id>` after organization resolution, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
+   - Google login in the frontend through a browser popup flow, self-serve organization onboarding, organization-level email invites, browser URLs that become `https://<base-url>/<organization_id>` after organization resolution, and bearer-token operator traffic on `/{organization_id}/v1/...` with `/api/v1` kept for bootstrap flows such as login config, onboarding, and invite redemption
 
 ## Workspace Model
 
@@ -215,7 +215,7 @@ The frozen v1 workspace and access contract is:
 In the backend, `tenant` remains the internal organization identifier for compatibility. The user-facing console now exposes:
 
 - a Figma-derived SaaS shell with a responsive sidebar, inline expanding and collapsible section lists, a bottom-left session profile chip with logout, a search-first top bar with a three-mode theme selector, a tighter icon rail when collapsed, collapsed-icon clicks that land on each module's first section and dismiss the temporary popout, hover-safe collapsed popouts that stay reachable while moving into the submenu, and a tabbed Settings page
-- a centered full-screen Google login gate that appears before onboarding or workspace entry
+- a centered full-screen Google login gate that appears before onboarding or workspace entry, using a Google-rendered `Continue with Google` button so dismissed account pickers can be retried without refreshing the page
 - a base URL (`https://<base-url>/`) that is gateway-only in deployed Google-auth environments, including after Google sign-in; the main operator app is shown only after the browser is on `https://<base-url>/<organization_id>`
 - a centered full-screen first-login onboarding gate that opens immediately after Google sign-in when the user has no org memberships, asks for the organization URL first and the first project name second, preserves any organization URL the user already typed before sign-in, and fails creation if that organization URL already exists; new organization URLs are limited to lowercase letters and numbers only, a maximum length of 16 characters, and a global uniqueness requirement across the product
 - after creating the first organization and project in the gateway, the user is placed into that new organization and project by default
