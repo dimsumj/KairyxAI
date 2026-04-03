@@ -129,7 +129,7 @@ Primary backend surface:
 Insight Copilot is the operator-facing analysis layer:
 
 - global AI assistant bubble for grounded product help, contextual samples, dashboard summary, cohort setup, experiment setup, and connection setup from any page
-- structured clarifications, execution preview, artifact deep links, and confirmation gating for risky actions
+- a single-column chat drawer with a disabled `Getting Agents Ready...` first-message state, immediate user-message rendering after send, an assistant thinking state, inline clarifications, artifact links, and confirmation gating for risky actions
 - manual `query / explain / recommend / report` tools on the Insight Copilot page as the advanced fallback
 - natural-language metric query
 - anomaly explanation
@@ -575,7 +575,7 @@ For production-shaped deployments, use one of the native backend stacks:
 4. Create or refresh a cohort
 5. Publish or test a workflow
 6. Review experiment summary or integrity
-7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on
+7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on, then answer any inline clarification or confirmation cards directly in the same chat transcript
 8. Open `Insight Copilot` only when you want the manual Query, Explain, Recommend, Report, or Evidence & Logs tools directly
 
 ## API Surface Snapshot

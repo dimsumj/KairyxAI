@@ -99,7 +99,7 @@ exercise_copilot_agent() {
     sendButton.click();
     await page.waitForTimeout(900);
 
-    const clarifications = document.getElementById('copilot-agent-clarifications')?.textContent || '';
+    const clarifications = document.getElementById('copilot-agent-thread')?.textContent || '';
     if (!clarifications.toLowerCase().includes('connection')) {
       throw new Error('Expected connection clarification prompt');
     }
@@ -116,8 +116,9 @@ exercise_copilot_agent() {
     sendButton.click();
     await page.waitForTimeout(1200);
 
-    const artifacts = document.getElementById('copilot-agent-artifacts')?.textContent || '';
-    if (!artifacts.includes(connectorName)) {
+    const artifacts = document.getElementById('copilot-agent-thread')?.textContent || '';
+    const artifactButton = document.querySelector('[data-copilot-agent-artifact-index]');
+    if (!artifacts.includes(connectorName) || !artifactButton) {
       throw new Error('Expected connector artifact after safe setup flow');
     }
 
@@ -125,8 +126,9 @@ exercise_copilot_agent() {
     sendButton.click();
     await page.waitForTimeout(900);
 
-    const confirmations = document.getElementById('copilot-agent-confirmations')?.textContent || '';
-    if (!confirmations.toLowerCase().includes('start experiment')) {
+    const confirmations = document.getElementById('copilot-agent-thread')?.textContent || '';
+    const confirmationButton = document.querySelector('[data-copilot-agent-confirm]');
+    if (!confirmations.toLowerCase().includes('start experiment') || !confirmationButton) {
       throw new Error('Expected pending confirmation for experiment start');
     }
 
@@ -135,8 +137,9 @@ exercise_copilot_agent() {
     copilotNav.click();
     await page.waitForTimeout(700);
 
-    const persistedConfirmations = document.getElementById('copilot-agent-confirmations')?.textContent || '';
-    if (!persistedConfirmations.toLowerCase().includes('start experiment')) {
+    const persistedConfirmations = document.getElementById('copilot-agent-thread')?.textContent || '';
+    const persistedConfirmationButton = document.querySelector('[data-copilot-agent-confirm]');
+    if (!persistedConfirmations.toLowerCase().includes('start experiment') || !persistedConfirmationButton) {
       throw new Error('Expected pending confirmation to persist across navigation');
     }
 
