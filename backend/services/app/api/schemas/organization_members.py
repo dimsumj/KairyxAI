@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 MANAGEABLE_ORG_ROLES = {"admin", "member"}
+UPDATABLE_ORG_ROLES = {"owner", "admin", "member"}
 
 
 def _normalize_email(value: str | None) -> str:
@@ -17,6 +18,13 @@ def _normalize_manageable_role(value: str | None) -> str:
     normalized = str(value or "member").strip().lower()
     if normalized not in MANAGEABLE_ORG_ROLES:
         raise ValueError("role must be one of admin or member.")
+    return normalized
+
+
+def _normalize_updatable_role(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in UPDATABLE_ORG_ROLES:
+        raise ValueError("role must be one of owner, admin, or member.")
     return normalized
 
 
@@ -38,11 +46,12 @@ class OrganizationMemberCreateRequest(BaseModel):
 
 class OrganizationMemberUpdateRequest(BaseModel):
     role: str
+    confirm_owner_transfer: bool = False
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, value: str) -> str:
-        return _normalize_manageable_role(value)
+        return _normalize_updatable_role(value)
 
 
 class OrganizationInviteCreateRequest(BaseModel):
@@ -64,7 +73,6 @@ class OrganizationInviteCreateRequest(BaseModel):
 
 class OrganizationInviteRedeemRequest(BaseModel):
     invite_code: str
-
 
 class ProjectDeleteRequest(BaseModel):
     confirmation: str

@@ -2449,6 +2449,12 @@
             align-items: center;
         }
 
+        .settings-member-joined-label {
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
         .settings-dialog {
             position: fixed;
             inset: 0;

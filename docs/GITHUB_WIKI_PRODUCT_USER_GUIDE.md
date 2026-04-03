@@ -1097,27 +1097,26 @@ The `Teams` tab manages organization-level access. Team membership is shared acr
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | Member list | Read-only table | Shows every current organization member plus any pending org invite rows that have not activated yet. | `alice@example.com`, `member` | Confirms who already has access and who is still pending. |
-| Joined date text | Read-only row text | Read the `Joined ...` or `Invited ...` line in each roster card. | `Joined 2026-04-03 10:30` | Confirms when the member or pending invite entered the organization roster. |
+| Joined date text | Read-only row text | Read the `Joined YYYY-MM-DD` or `Invited YYYY-MM-DD` label beside each member's role. | `Joined 2026-04-03` | Confirms when the member or pending invite entered the organization roster. |
 | `Add Team Member` | Button | Uses the email field and adds that Google account to the organization as a `member`. Available only to `owner` and `admin` users. | None | Lets the admin pre-authorize a Google email for org access. |
 | `Google Email` | Text box | Enter the Google account email to invite into the org. | `teammate@example.com` | Creates an org-level invite or pre-authorization record. |
 | Default role note | Read-only inline note | Read-only reminder below the email field. | `New team members join as Member by default.` | Confirms that owners and admins promote later from the roster instead of assigning `admin` during add-member creation. |
-| `Generate Invite Link` | Button | Uses the email field to create or refresh an optional organization invite link in the shared invite section. Available only to `owner` and `admin` users. | None | The latest invite link is refreshed in the top-level invite card. |
+| `Generate Invite Link` | Button | Uses the email field to create or refresh an optional organization invite link in the shared invite section. Available only to `owner` and `admin` users. | None | The latest invite link is refreshed in the shared invite card, not on individual member rows. |
 | `Copy Invite Link` | Top-level button | Copies the most recently generated invite link from the invite-link field. | None | The current invite link is placed on the clipboard. |
-| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Available only to `owner` and `admin` users, and disabled on the current signed-in user or the owner row. | `admin` | Stages a role change for that member. |
-| `Save` | Row button | Writes the selected `admin` or `member` role change for that row. Available only when the row has an unsaved change. | None | The role update is sent and the status line shows `Changes are saved.` on success. |
+| Role selector | Row select | Promote or demote a current member between `admin` and `member`. Owners can also choose `owner` on another non-owner row to start an ownership transfer. Administrators can demote themselves to `member`, but they cannot change any owner row. | `admin` | Stages a role change for that member. |
+| `Save` | Row button | Writes the staged role change for that row. Available only when the row has an unsaved change. | None | The role update is sent and the status line shows `Changes are saved.` on success. |
 | `Remove Member` | Row button | Opens the removal confirmation flow for a non-owner member. Available only to `owner` and `admin` users. | None | Attempts to remove that member from the organization. |
-| `Transfer Ownership` | Row button | Owner-only action that opens the ownership-transfer confirmation popup for a non-owner member. | None | Opens the confirmation popup before the transfer request is sent. |
 | Owner badge | Read-only badge | Marks the organization creator. | `Owner` | Indicates the only role that cannot be reassigned through the normal team-management flow. |
 
 Role contract:
-- `owner`: the creator of the org; also has admin privileges; only the owner sees the ownership-transfer action
-- `admin`: can add members, create projects, delete projects, remove non-owner members, and promote or demote between `admin` and `member`
+- `owner`: the creator of the org; also has admin privileges; only the owner can transfer ownership by changing another row to `owner` and confirming the popup
+- `admin`: can add members, create projects, delete projects, remove non-owner members, promote or demote between `admin` and `member`, and can demote themselves to `member`
 - `member`: can enter the org and use all its projects, but cannot manage team or project lifecycle actions
 
 Current UI limitations:
 - new team members are always created as `member`; promote them later from the roster
 - administrators cannot transfer ownership through the UI
-- the `Remove Member` and `Transfer Ownership` buttons are live UI controls, but they still depend on backend deployment support; if that endpoint is missing, the page now shows an explicit unavailable error instead of failing silently
+- after an admin demotes themselves to `member`, the page refreshes their org role and removes their management controls immediately
 
 #### Sample add-member input
 ```json

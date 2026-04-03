@@ -1868,13 +1868,16 @@ export function initializeOperatorConsole() {
             }
 
             function getSettingsMemberJoinedLabel(member) {
-                const createdAt = member?.created_at || member?.joined_at || member?.updated_at || '';
+                const createdAt = member?.joined_at || member?.created_at || '';
                 if (!createdAt) {
                     return member?.pending ? 'Invite pending' : 'Joined date unavailable';
                 }
+                const parsed = parseIsoDate(createdAt);
+                const pad = (part) => String(part).padStart(2, '0');
+                const formattedDate = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
                 return member?.pending
-                    ? `Invited ${formatDateTime(createdAt)}`
-                    : `Joined ${formatDateTime(createdAt)}`;
+                    ? `Invited ${formattedDate}`
+                    : `Joined ${formattedDate}`;
             }
 
             function getDraftRoleForMember(member) {
@@ -1904,12 +1907,17 @@ export function initializeOperatorConsole() {
             }
 
             function canEditMemberRole(member) {
-                return Boolean(
-                    canManageOrganizationWorkspace()
-                    && !member?.pending
-                    && getSettingsMemberRole(member) !== 'owner'
-                    && !isCurrentActorMember(member)
-                );
+                if (!canManageOrganizationWorkspace() || member?.pending) {
+                    return false;
+                }
+                const role = getSettingsMemberRole(member);
+                if (role === 'owner') {
+                    return false;
+                }
+                if (isOrganizationOwner()) {
+                    return true;
+                }
+                return Boolean(!isCurrentActorMember(member) || role === 'admin');
             }
 
             function canRemoveMember(member) {
@@ -1921,27 +1929,9 @@ export function initializeOperatorConsole() {
                 );
             }
 
-            function canTransferOwnershipToMember(member) {
-                return Boolean(
-                    isOrganizationOwner()
-                    && !member?.pending
-                    && getSettingsMemberRole(member) !== 'owner'
-                    && !isCurrentActorMember(member)
-                );
-            }
-
             function getTeamManagementErrorMessage(action, detail = '', status = 0) {
                 const normalizedDetail = String(detail || '').trim();
                 if (action === 'transfer-owner') {
-                    if (
-                        status === 404
-                        || status === 405
-                        || /owner transfer/i.test(normalizedDetail)
-                        || /confirm_owner_transfer/i.test(normalizedDetail)
-                        || /role must be one of admin or member/i.test(normalizedDetail)
-                    ) {
-                        return 'Owner transfer is not available on this deployment yet.';
-                    }
                     return normalizedDetail || 'Failed to transfer ownership.';
                 }
                 if (action === 'remove-member') {
@@ -2059,8 +2049,8 @@ export function initializeOperatorConsole() {
                 settingsTeamRoleSummary.textContent = canManage
                     ? (
                         isOwner
-                            ? 'Owners can add Google accounts, save admin or member role changes, remove non-owner members, and confirm ownership transfer.'
-                            : 'Administrators can add Google accounts, save admin or member role changes, and remove non-owner members. Only the owner can transfer ownership.'
+                            ? 'Owners can add Google accounts, save role changes, remove non-owner members, and transfer ownership from the Save flow.'
+                            : 'Administrators can add Google accounts, save member or administrator role changes, remove non-owner members, and demote themselves to member. Only the owner can transfer ownership.'
                     )
                     : 'Members can view the organization roster only. Team access changes are limited to owners and administrators.';
                 if (!accessToken) {
@@ -2079,16 +2069,21 @@ export function initializeOperatorConsole() {
                     const draftRole = getDraftRoleForMember(member);
                     const canChangeRole = canEditMemberRole(member);
                     const canRemove = canRemoveMember(member);
-                    const canTransferOwnership = canTransferOwnershipToMember(member);
                     const hasUnsavedRoleChange = canChangeRole && draftRole !== role;
                     const memberLifecycleLabel = getSettingsMemberJoinedLabel(member);
                     const isSelf = isCurrentActorMember(member);
                     const footActions = [];
-                    if (canTransferOwnership) {
-                        footActions.push(`<button type="button" class="secondary-action" data-settings-member-transfer-owner="${escapeHtml(memberId)}">Transfer Ownership</button>`);
-                    }
                     if (canRemove) {
                         footActions.push(`<button type="button" class="danger-action" data-settings-member-remove="${escapeHtml(memberId)}">Remove Member</button>`);
+                    }
+                    const roleOptions = [
+                        `<option value="member" ${draftRole === 'member' ? 'selected' : ''}>Member</option>`,
+                        `<option value="admin" ${draftRole === 'admin' ? 'selected' : ''}>Administrator</option>`,
+                    ];
+                    if (role === 'owner') {
+                        roleOptions.push('<option value="owner" selected>Owner</option>');
+                    } else if (isOwner) {
+                        roleOptions.push(`<option value="owner" ${draftRole === 'owner' ? 'selected' : ''}>Owner</option>`);
                     }
                     return `
                         <div class="settings-entity-card">
@@ -2096,22 +2091,21 @@ export function initializeOperatorConsole() {
                                 <div class="settings-entity-supporting">
                                     <div class="settings-entity-title">${escapeHtml(member?.display_name || member?.email || memberId || 'Team member')}</div>
                                     <div class="settings-entity-meta">${escapeHtml(member?.email || 'No Google email recorded')}</div>
-                                    <div class="settings-entity-meta">${escapeHtml(memberLifecycleLabel)}${member?.pending ? ' · Invite pending' : ''}${isSelf ? ' · You' : ''}</div>
+                                    <div class="settings-entity-meta">${member?.pending ? 'Invite pending' : (isSelf ? 'You' : 'Organization member')}</div>
                                 </div>
                                 <div class="settings-project-marker-list">
                                     <span class="pill">${escapeHtml(role)}</span>
+                                    <span class="settings-member-joined-label">${escapeHtml(memberLifecycleLabel)}</span>
                                     <span class="pill">${escapeHtml(member?.status || 'active')}</span>
                                 </div>
                             </div>
                             <div class="settings-team-grid">
                                 <div class="settings-role-editor">
                                     <select data-settings-member-role="${escapeHtml(memberId)}" ${canChangeRole ? '' : 'disabled'}>
-                                        <option value="member" ${draftRole === 'member' ? 'selected' : ''}>Member</option>
-                                        <option value="admin" ${draftRole === 'admin' ? 'selected' : ''}>Administrator</option>
-                                        ${role === 'owner' ? '<option value="owner" selected>Owner</option>' : ''}
+                                        ${roleOptions.join('')}
                                     </select>
                                     <div class="settings-team-role-actions">
-                                        ${canChangeRole ? `<button type="button" class="secondary-action" data-settings-member-save="${escapeHtml(memberId)}" ${hasUnsavedRoleChange ? '' : 'disabled'}>Save</button>` : ''}
+                                        ${canChangeRole ? `<button type="button" data-settings-member-save="${escapeHtml(memberId)}" ${hasUnsavedRoleChange ? '' : 'disabled'}>Save</button>` : ''}
                                     </div>
                                 </div>
                                 ${footActions.length ? `<div class="settings-entity-card-foot"><div class="settings-entity-action-group">${footActions.join('')}</div></div>` : ''}
@@ -2169,7 +2163,7 @@ export function initializeOperatorConsole() {
                 }
                 if (settingsTeamActionCopy) {
                     settingsTeamActionCopy.textContent = actionType === 'transfer-owner'
-                        ? `Transfer organization ownership to "${settingsTeamActionCandidate.memberName}"? Only the current owner can continue, and some deployments may still block ownership transfer.`
+                        ? `Transfer organization ownership to "${settingsTeamActionCandidate.memberName}"? They will become the new owner and your account will immediately become an administrator.`
                         : `Remove "${settingsTeamActionCandidate.memberName}" from this organization? They will immediately lose access to every project in this organization.`;
                 }
                 if (settingsTeamActionSubmitBtn) {
@@ -2822,13 +2816,13 @@ export function initializeOperatorConsole() {
                     if (settingsTeamInviteLinkInput) {
                         settingsTeamInviteLinkInput.value = settingsLastInviteLink;
                     }
+                    await refreshSettingsTeamsPanel();
                     setWorkspaceTextStatus(
                         settingsTeamStatus,
                         settingsLastInviteLink
                             ? `${SETTINGS_CHANGES_SAVED_MESSAGE} Copy the invite link below if you want to share it.`
                             : SETTINGS_CHANGES_SAVED_MESSAGE,
                     );
-                    renderSettingsTeamsPanel();
                 } catch (error) {
                     setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to generate invite link.', true);
                 }
@@ -2880,6 +2874,14 @@ export function initializeOperatorConsole() {
                         setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
                         return;
                     }
+                    if (nextRole === 'owner') {
+                        openSettingsTeamActionDialog({
+                            type: 'transfer-owner',
+                            memberId,
+                            memberName: String(currentMember.display_name || currentMember.email || memberId).trim(),
+                        });
+                        return;
+                    }
                     try {
                         setWorkspaceTextStatus(settingsTeamStatus, 'Updating member role...');
                         const response = await fetch(`${getApiBaseUrl(getCurrentSettingsOrganizationId())}/organization-members/${encodeURIComponent(memberId)}`, {
@@ -2895,26 +2897,12 @@ export function initializeOperatorConsole() {
                             throw new Error(payload.detail || 'Failed to update member role.');
                         }
                         clearDraftRoleForMember(memberId);
+                        await hydrateAuthSession({ syncBrowserPath: false });
                         await refreshSettingsTeamsPanel();
                         setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
                     } catch (error) {
                         setWorkspaceTextStatus(settingsTeamStatus, error.message || 'Failed to update member role.', true);
                     }
-                    return;
-                }
-                const transferOwnerButton = event.target.closest('[data-settings-member-transfer-owner]');
-                if (transferOwnerButton) {
-                    const memberId = String(transferOwnerButton.dataset.settingsMemberTransferOwner || '').trim();
-                    const member = getSettingsMemberById(memberId);
-                    if (!member) {
-                        setWorkspaceTextStatus(settingsTeamStatus, 'This team member could not be found anymore. Refresh and try again.', true);
-                        return;
-                    }
-                    openSettingsTeamActionDialog({
-                        type: 'transfer-owner',
-                        memberId,
-                        memberName: String(member.display_name || member.email || memberId).trim(),
-                    });
                     return;
                 }
                 const removeMemberButton = event.target.closest('[data-settings-member-remove]');
@@ -2979,6 +2967,7 @@ export function initializeOperatorConsole() {
                         throw new Error(getTeamManagementErrorMessage(actionType, payload.detail, response.status));
                     }
                     closeSettingsTeamActionDialog();
+                    await hydrateAuthSession({ syncBrowserPath: false });
                     await refreshSettingsTeamsPanel();
                     setWorkspaceTextStatus(settingsTeamStatus, SETTINGS_CHANGES_SAVED_MESSAGE);
                 } catch (error) {
