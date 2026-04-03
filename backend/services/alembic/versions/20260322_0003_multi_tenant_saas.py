@@ -40,6 +40,15 @@ def _index_exists(table_name: str, index_name: str) -> bool:
     return any(str(index.get("name")) == index_name for index in inspector.get_indexes(table_name))
 
 
+def _primary_key_constraint_name(table_name: str) -> str | None:
+    if not _table_exists(table_name):
+        return None
+    inspector = sa.inspect(op.get_bind())
+    payload = inspector.get_pk_constraint(table_name) or {}
+    constraint_name = str(payload.get("name") or "").strip()
+    return constraint_name or None
+
+
 def _create_index_if_missing(index_name: str, table_name: str, columns: list[str], *, unique: bool = False) -> None:
     if not _index_exists(table_name, index_name):
         op.create_index(index_name, table_name, columns, unique=unique)
@@ -129,13 +138,15 @@ def upgrade() -> None:
 
     if not _column_exists("field_mappings_v2", "tenant_id"):
         has_connector_name_index = _index_exists("field_mappings_v2", "ix_field_mappings_v2_connector_name")
+        field_mappings_pk_name = _primary_key_constraint_name("field_mappings_v2")
         with op.batch_alter_table("field_mappings_v2", recreate="always", naming_convention=SQLITE_BATCH_NAMING) as batch:
             batch.add_column(sa.Column("id", sa.Integer(), autoincrement=True, nullable=False))
             batch.add_column(sa.Column("tenant_id", sa.String(length=64), nullable=False, server_default=BOOTSTRAP_TENANT_ID))
             batch.add_column(sa.Column("created_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
             batch.add_column(sa.Column("updated_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
             batch.add_column(sa.Column("correlation_id", sa.String(length=128), nullable=False, server_default=""))
-            batch.drop_constraint("pk_field_mappings_v2", type_="primary")
+            if field_mappings_pk_name:
+                batch.drop_constraint(field_mappings_pk_name, type_="primary")
             batch.create_primary_key("pk_field_mappings_v2", ["id"])
             batch.create_index("ix_field_mappings_v2_tenant_id", ["tenant_id"], unique=False)
             if not has_connector_name_index:
@@ -160,13 +171,15 @@ def upgrade() -> None:
 
     if not _column_exists("experiment_configs", "tenant_id"):
         has_config_key_index = _index_exists("experiment_configs", "ix_experiment_configs_config_key")
+        experiment_configs_pk_name = _primary_key_constraint_name("experiment_configs")
         with op.batch_alter_table("experiment_configs", recreate="always", naming_convention=SQLITE_BATCH_NAMING) as batch:
             batch.add_column(sa.Column("id", sa.Integer(), autoincrement=True, nullable=False))
             batch.add_column(sa.Column("tenant_id", sa.String(length=64), nullable=False, server_default=BOOTSTRAP_TENANT_ID))
             batch.add_column(sa.Column("created_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
             batch.add_column(sa.Column("updated_by", sa.String(length=128), nullable=False, server_default=SYSTEM_ACTOR))
             batch.add_column(sa.Column("correlation_id", sa.String(length=128), nullable=False, server_default=""))
-            batch.drop_constraint("pk_experiment_configs", type_="primary")
+            if experiment_configs_pk_name:
+                batch.drop_constraint(experiment_configs_pk_name, type_="primary")
             batch.create_primary_key("pk_experiment_configs", ["id"])
             batch.create_index("ix_experiment_configs_tenant_id", ["tenant_id"], unique=False)
             if not has_config_key_index:

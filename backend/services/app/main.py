@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
@@ -39,7 +40,7 @@ from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
 from app.application.projects import project_role_for_org_role
 from app.application.predictions import PredictionService
-from app.core.db import get_session_factory, init_db, is_runtime_database_fallback_active
+from app.core.db import get_engine, get_session_factory, init_db, is_runtime_database_fallback_active
 from app.core.auth import get_authenticator
 from app.core.api_paths import apply_org_scoped_api_alias, get_external_request_path, get_path_scoped_tenant_id, is_org_slug
 from app.core.errors import is_database_locked_error
@@ -54,6 +55,59 @@ from bigquery_service import clear_shared_bigquery_service_cache, get_shared_big
 
 logger = logging.getLogger(__name__)
 _FRONTEND_SHELL_RESERVED_PATHS = frozenset({"api", "health", "static"})
+
+
+def _safe_session_rollback(session) -> None:
+    try:
+        session.rollback()
+    except Exception:
+        logger.debug("Health snapshot warm-up rollback failed.", exc_info=True)
+
+
+def _run_health_snapshot_warmup(settings) -> None:
+    with request_context(
+        RequestContext(
+            actor_id="system",
+            actor_role="admin",
+            tenant_id=settings.bootstrap_tenant_id,
+            project_id=settings.bootstrap_project_id,
+            correlation_id="health-warmup",
+            platform_admin=True,
+            org_role="owner",
+            project_role="admin",
+            auth_mode="system",
+        )
+    ):
+        session = get_session_factory()()
+        try:
+            repository = SqlAlchemyControlPlaneRepository(session)
+            HealthMonitorService(repository, get_shared_bigquery_service()).snapshot(persist=True)
+            session.commit()
+        except Exception:
+            _safe_session_rollback(session)
+            raise
+        finally:
+            session.close()
+
+
+def _warm_health_snapshot_with_retry(settings) -> None:
+    try:
+        _run_health_snapshot_warmup(settings)
+        return
+    except SQLAlchemyError:
+        logger.warning(
+            "Health snapshot warm-up hit a transient database error; retrying with a fresh connection.",
+            exc_info=True,
+        )
+        get_engine().dispose()
+    except Exception:
+        logger.exception("Health snapshot warm-up failed.")
+        return
+
+    try:
+        _run_health_snapshot_warmup(settings)
+    except Exception:
+        logger.exception("Health snapshot warm-up failed.")
 
 
 def create_app() -> FastAPI:
@@ -201,32 +255,11 @@ def create_app() -> FastAPI:
             finally:
                 session.close()
         if getattr(app.state, "health_warmup_thread", None) is None:
-            def _warm_health_snapshot() -> None:
-                with request_context(
-                    RequestContext(
-                        actor_id="system",
-                        actor_role="admin",
-                        tenant_id=settings.bootstrap_tenant_id,
-                        project_id=settings.bootstrap_project_id,
-                        correlation_id="health-warmup",
-                        platform_admin=True,
-                        org_role="owner",
-                        project_role="admin",
-                        auth_mode="system",
-                    )
-                ):
-                    session = get_session_factory()()
-                    try:
-                        repository = SqlAlchemyControlPlaneRepository(session)
-                        HealthMonitorService(repository, get_shared_bigquery_service()).snapshot(persist=True)
-                        session.commit()
-                    except Exception:
-                        session.rollback()
-                        logger.exception("Health snapshot warm-up failed.")
-                    finally:
-                        session.close()
-
-            thread = threading.Thread(target=_warm_health_snapshot, name="kairyx-health-warmup", daemon=True)
+            thread = threading.Thread(
+                target=lambda: _warm_health_snapshot_with_retry(settings),
+                name="kairyx-health-warmup",
+                daemon=True,
+            )
             app.state.health_warmup_thread = thread
             thread.start()
         scheduler_allowed = settings.scheduler_enabled and (settings.app_env != "prod" or settings.service_role == "scheduler-worker")
