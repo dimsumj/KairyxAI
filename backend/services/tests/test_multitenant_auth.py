@@ -121,7 +121,7 @@ def test_jwt_auth_bootstraps_membership_and_rejects_wrong_tenant(monkeypatch, tm
         assert "tenant_id" not in me.json()
 
         wrong_tenant = client.get("/studio-b/v1/auth/me", headers=_auth_headers(user_token))
-        assert wrong_tenant.status_code == 404
+        assert wrong_tenant.status_code == 403
 
 
 def test_jwt_user_without_membership_can_onboard_but_cannot_access_product_routes(monkeypatch, tmp_path):
