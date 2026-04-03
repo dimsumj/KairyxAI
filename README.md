@@ -429,6 +429,7 @@ The Imports page now keeps restart-time load lighter:
 - schema contracts are also loaded on demand
 - import polling continues only while at least one import job is `queued`, `running`, or `stopping`
 - when the control plane is temporarily busy right after restart, import detail reads retry once and then surface a retryable busy message instead of silently failing
+- deleting a `stopped`, `failed`, or `completed` import now also removes that job's temporary raw file objects, job-scoped staging rows, and derived sanitized/curated state tied to the deleted import
 
 ## Key Environment Variables
 

@@ -273,7 +273,7 @@ The import source form and imported-data list now wait for a resolved organizati
 | `End Date` | Date | End of the import window. | `2026-03-07` | Request converts to `20260307`. |
 | `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
-| Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation. |
+| Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
 | `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
 | `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |

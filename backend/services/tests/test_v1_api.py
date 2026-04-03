@@ -2398,6 +2398,171 @@ def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(c
     release_worker.set()
 
 
+def test_delete_stopped_import_cleans_raw_and_warehouse_state(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+    job_id = import_job["id"]
+
+    gcs_service = GcsService()
+    bigquery_service = get_shared_bigquery_service()
+    processing_started = threading.Event()
+    seeded = {"done": False, "gcs_uri": ""}
+
+    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+        gcs_uri = gcs_service.upload_raw_events(
+            [
+                {
+                    "player_id": "delete-me",
+                    "event_name": "session_start",
+                    "timestamp": "2026-03-01T08:00:00",
+                }
+            ],
+            f"raw/source={self.connector_type}/job={job_id}/part-00001.jsonl",
+        )
+        seeded["gcs_uri"] = gcs_uri
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 1,
+            "events_staged": 1,
+            "last_checkpoint": {"gcs_uri": gcs_uri, "event_count": 1},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": gcs_uri,
+                    "event_count": 1,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                }
+            ],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if not seeded["done"]:
+            bigquery_service.write_events_staging(
+                [
+                    {
+                        "job_id": job_id,
+                        "source": "adjust",
+                        "player_id": "delete-me",
+                        "canonical_user_id": "delete-me",
+                        "event_type": "session_start",
+                        "event_time": "2026-03-01T08:00:00",
+                        "event_properties": {"platform": "ios"},
+                        "user_properties": {"email": "delete-me@example.com"},
+                    }
+                ],
+                job_id=job_id,
+            )
+            bigquery_service.run_events_curation(job_id=job_id)
+            bigquery_service.refresh_player_latest_state(job_id=job_id)
+            with db_module.get_session_factory()() as session:
+                repository = SqlAlchemyControlPlaneRepository(session)
+                repository.upsert_resource(
+                    "identity_summary",
+                    job_id,
+                    status="ready",
+                    name=job_id,
+                    payload={"job_id": job_id, "canonical_user_id_coverage": 100.0},
+                )
+                session.commit()
+            seeded["done"] = True
+        processing_started.set()
+        while True:
+            if callable(progress_callback):
+                progress_callback(
+                    1,
+                    1,
+                    {
+                        "manifests_processed": 1,
+                        "raw_normalized_events": 1,
+                        "events_staging_written": 1,
+                        "pipeline_dead_letters_written": 0,
+                        "flag_counts": {},
+                        "warehouse_stats": {},
+                    },
+                )
+            time.sleep(0.02)
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run?background=true")
+    assert run_import.status_code == 202
+    assert processing_started.wait(timeout=2)
+
+    stop_import = client.post(import_job["links"]["self"] + "/stop")
+    assert stop_import.status_code == 200
+    assert stop_import.json()["status"] == "stopped"
+
+    delete_import = client.delete(import_job["links"]["self"])
+    assert delete_import.status_code == 204
+
+    get_deleted = client.get(import_job["links"]["self"])
+    assert get_deleted.status_code == 404
+
+    with pytest.raises(FileNotFoundError):
+        gcs_service.download_raw_events(seeded["gcs_uri"])
+
+    standardized_rows = [
+        row
+        for row in bigquery_service.get_rows_for_alias("standardized")
+        if str(row.get("job_id") or row.get("job_identifier") or "") == job_id
+    ]
+    curated_rows = [
+        row
+        for row in bigquery_service.get_rows_for_alias("fact_events_unified")
+        if str(row.get("job_id") or row.get("job_identifier") or "") == job_id
+    ]
+    latest_rows = [
+        row
+        for row in bigquery_service.get_rows_for_alias("mart_user_daily")
+        if str(row.get("last_job_id") or row.get("job_id") or "") == job_id
+        or str(row.get("player_id") or row.get("canonical_user_id") or "") == "delete-me"
+    ]
+    assert standardized_rows == []
+    assert curated_rows == []
+    assert latest_rows == []
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        assert repository.get_resource("identity_summary", job_id) is None
+        manifest_resources = [
+            item
+            for item in repository.list_resources("import_manifest")
+            if str(item.get("name") or "") == job_id
+            or str((item.get("payload") or {}).get("job_id") or "") == job_id
+        ]
+        assert manifest_resources == []
+
+
 def test_restart_discards_stopping_import_job(client):
     connector_resp = client.post(
         "/api/v1/connectors",
