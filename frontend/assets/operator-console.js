@@ -8264,6 +8264,7 @@ export function initializeOperatorConsole() {
             let copilotAgentDrawerOpen = false;
             let copilotAgentPendingTurn = null;
             let copilotAgentComposerReady = false;
+            let copilotAgentSessionBootstrapPromise = null;
             const COPILOT_AGENT_READY_PLACEHOLDER = 'Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up.';
             const COPILOT_AGENT_LOADING_PLACEHOLDER = 'Getting Agents Ready...';
 
@@ -9499,6 +9500,9 @@ export function initializeOperatorConsole() {
                 copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'false');
                 copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
                 syncCopilotAgentContextChrome();
+                if (copilotAgentComposerReady) {
+                    copilotAgentMessageInput?.focus();
+                }
                 await loadCopilotAgentWorkspace(false);
                 if (copilotAgentComposerReady) {
                     copilotAgentMessageInput?.focus();
@@ -9529,28 +9533,49 @@ export function initializeOperatorConsole() {
 
             async function ensureCopilotAgentSession(forceNew = false) {
                 if (copilotAgentSessionId && !forceNew) {
-                    return copilotAgentSessionId;
+                    return {
+                        sessionId: copilotAgentSessionId,
+                        payload: null,
+                        created: false,
+                    };
+                }
+                if (copilotAgentSessionBootstrapPromise && !forceNew) {
+                    return copilotAgentSessionBootstrapPromise;
                 }
                 setCopilotAgentComposerReady(false);
                 setInlineStatus(copilotAgentSessionStatus, 'Creating agent session...');
-                const payload = await apiRequest('/copilot/agent/sessions', {
-                    method: 'POST',
-                    body: {
-                        title: 'Insight Copilot Agent',
-                        ui_context: getCopilotAgentUiContext(),
-                    },
-                });
-                copilotAgentSessionId = payload.session_state?.session_id || null;
-                if (!copilotAgentPendingTurn) {
-                    renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
-                } else if (payload.session_state?.session_id) {
-                    setCopilotAgentComposerReady(true);
-                    setInlineStatus(
-                        copilotAgentSessionStatus,
-                        `Session ${payload.session_state.session_id} · ${payload.session_state.status || 'active'}${payload.session_state.current_intent ? ` · ${payload.session_state.current_intent}` : ''}`,
-                    );
+                const bootstrapPromise = (async () => {
+                    const payload = await apiRequest('/copilot/agent/sessions', {
+                        method: 'POST',
+                        body: {
+                            title: 'Insight Copilot Agent',
+                            ui_context: getCopilotAgentUiContext(),
+                        },
+                    });
+                    copilotAgentSessionId = payload.session_state?.session_id || null;
+                    if (!copilotAgentPendingTurn) {
+                        renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
+                    } else if (payload.session_state?.session_id) {
+                        setCopilotAgentComposerReady(true);
+                        setInlineStatus(
+                            copilotAgentSessionStatus,
+                            `Session ${payload.session_state.session_id} · ${payload.session_state.status || 'active'}${payload.session_state.current_intent ? ` · ${payload.session_state.current_intent}` : ''}`,
+                        );
+                    }
+                    return {
+                        sessionId: copilotAgentSessionId,
+                        payload,
+                        created: true,
+                    };
+                })();
+                copilotAgentSessionBootstrapPromise = bootstrapPromise;
+                try {
+                    return await bootstrapPromise;
+                } finally {
+                    if (copilotAgentSessionBootstrapPromise === bootstrapPromise) {
+                        copilotAgentSessionBootstrapPromise = null;
+                    }
                 }
-                return copilotAgentSessionId;
             }
 
             function buildCopilotAgentClarificationMessage() {
@@ -9584,19 +9609,33 @@ export function initializeOperatorConsole() {
             }
 
             async function loadCopilotAgentWorkspace(forceNew = false) {
-                setCopilotAgentComposerReady(false);
-                try {
-                    if (forceNew || !copilotAgentSessionId) {
+                const needsFreshSession = forceNew || !copilotAgentSessionId;
+                if (needsFreshSession) {
+                    try {
                         await ensureCopilotAgentSession(forceNew);
+                    } catch (error) {
+                        if (isWorkspaceContextError(error)) {
+                            renderCopilotAgentThread([]);
+                            setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                            setCopilotAgentComposerReady(false, {
+                                placeholder: 'Finish workspace setup to use Ask AI.',
+                            });
+                            return;
+                        }
+                        setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
+                        setCopilotAgentComposerReady(false);
                     }
-                    if (!copilotAgentSessionId) {
-                        return;
-                    }
+                    return;
+                }
+                try {
+                    setInlineStatus(copilotAgentSessionStatus, 'Refreshing agent session...');
                     const [sessionPayload, turnsPayload] = await Promise.all([
                         apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}`),
                         apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`),
                     ]);
-                    renderCopilotAgentWorkspace(sessionPayload, turnsPayload.items || []);
+                    if (!copilotAgentPendingTurn) {
+                        renderCopilotAgentWorkspace(sessionPayload, turnsPayload.items || []);
+                    }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         renderCopilotAgentThread([]);
@@ -9857,6 +9896,7 @@ export function initializeOperatorConsole() {
                     const starterMessage = button.dataset.agentStarterMessage || '';
                     await setCopilotAgentDrawerOpen(true);
                     if (!copilotAgentComposerReady) {
+                        setInlineStatus(copilotAgentSendStatus, 'Wait for the assistant to finish getting ready before using a starter prompt.', true);
                         return;
                     }
                     copilotAgentMessageInput.value = starterMessage;
