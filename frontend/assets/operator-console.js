@@ -8241,6 +8241,7 @@ export function initializeOperatorConsole() {
             const copilotAgentSessionStatus = document.getElementById('copilot-agent-session-status');
             const copilotAgentThread = document.getElementById('copilot-agent-thread');
             const copilotAgentMessageInput = document.getElementById('copilot-agent-message-input');
+            const copilotAgentSendBtn = document.getElementById('copilot-agent-send-btn');
             const copilotAgentSendStatus = document.getElementById('copilot-agent-send-status');
             const actionHistoryRefreshBtn = document.getElementById('action-history-refresh-btn');
             const actionHistoryStatus = document.getElementById('action-history-status');
@@ -8262,12 +8263,35 @@ export function initializeOperatorConsole() {
             let copilotAgentLastTurns = [];
             let copilotAgentDrawerOpen = false;
             let copilotAgentPendingTurn = null;
+            let copilotAgentComposerReady = false;
+            const COPILOT_AGENT_READY_PLACEHOLDER = 'Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up.';
+            const COPILOT_AGENT_LOADING_PLACEHOLDER = 'Getting Agents Ready...';
 
             function setInlineStatus(element, message = '', isError = false) {
                 if (!element) return;
                 element.textContent = message;
                 element.style.color = isError ? 'var(--red)' : 'var(--text-secondary)';
             }
+
+            function setCopilotAgentComposerReady(isReady, { placeholder = '' } = {}) {
+                copilotAgentComposerReady = Boolean(isReady);
+                const resolvedPlaceholder = placeholder || (
+                    copilotAgentComposerReady
+                        ? COPILOT_AGENT_READY_PLACEHOLDER
+                        : COPILOT_AGENT_LOADING_PLACEHOLDER
+                );
+                if (copilotAgentMessageInput) {
+                    copilotAgentMessageInput.disabled = !copilotAgentComposerReady;
+                    copilotAgentMessageInput.setAttribute('aria-disabled', copilotAgentComposerReady ? 'false' : 'true');
+                    copilotAgentMessageInput.placeholder = resolvedPlaceholder;
+                }
+                if (copilotAgentSendBtn) {
+                    copilotAgentSendBtn.disabled = !copilotAgentComposerReady;
+                    copilotAgentSendBtn.setAttribute('aria-disabled', copilotAgentComposerReady ? 'false' : 'true');
+                }
+            }
+
+            setCopilotAgentComposerReady(false);
 
             function renderJsonOutput(element, payload, emptyMessage = 'No data available.') {
                 if (!element) return;
@@ -9440,6 +9464,9 @@ export function initializeOperatorConsole() {
                     copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
                     copilotAgentDrawerBackdrop?.classList.add('hidden');
                     copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    setCopilotAgentComposerReady(false, {
+                        placeholder: 'Finish workspace setup to use Ask AI.',
+                    });
                     if (copilotAgentSessionStatus) {
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(authSessionState), true);
                     }
@@ -9473,7 +9500,9 @@ export function initializeOperatorConsole() {
                 copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
                 syncCopilotAgentContextChrome();
                 await loadCopilotAgentWorkspace(false);
-                copilotAgentMessageInput?.focus();
+                if (copilotAgentComposerReady) {
+                    copilotAgentMessageInput?.focus();
+                }
             }
 
             function renderCopilotAgentWorkspace(payload = {}, turns = []) {
@@ -9488,11 +9517,13 @@ export function initializeOperatorConsole() {
                         `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
                     );
                 }
+                setInlineStatus(copilotAgentSendStatus, '');
                 renderCopilotAgentThread(copilotAgentLastTurns, {
                     clarifications: payload.clarifications || sessionState.latest_clarifications || [],
                     confirmations: payload.pending_confirmations || [],
                     artifacts: payload.artifacts || sessionState.latest_artifacts || [],
                 });
+                setCopilotAgentComposerReady(true);
                 syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
             }
 
@@ -9500,6 +9531,7 @@ export function initializeOperatorConsole() {
                 if (copilotAgentSessionId && !forceNew) {
                     return copilotAgentSessionId;
                 }
+                setCopilotAgentComposerReady(false);
                 setInlineStatus(copilotAgentSessionStatus, 'Creating agent session...');
                 const payload = await apiRequest('/copilot/agent/sessions', {
                     method: 'POST',
@@ -9512,6 +9544,7 @@ export function initializeOperatorConsole() {
                 if (!copilotAgentPendingTurn) {
                     renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
                 } else if (payload.session_state?.session_id) {
+                    setCopilotAgentComposerReady(true);
                     setInlineStatus(
                         copilotAgentSessionStatus,
                         `Session ${payload.session_state.session_id} · ${payload.session_state.status || 'active'}${payload.session_state.current_intent ? ` · ${payload.session_state.current_intent}` : ''}`,
@@ -9551,6 +9584,7 @@ export function initializeOperatorConsole() {
             }
 
             async function loadCopilotAgentWorkspace(forceNew = false) {
+                setCopilotAgentComposerReady(false);
                 try {
                     if (forceNew || !copilotAgentSessionId) {
                         await ensureCopilotAgentSession(forceNew);
@@ -9567,13 +9601,21 @@ export function initializeOperatorConsole() {
                     if (isWorkspaceContextError(error)) {
                         renderCopilotAgentThread([]);
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        setCopilotAgentComposerReady(false, {
+                            placeholder: 'Finish workspace setup to use Ask AI.',
+                        });
                         return;
                     }
                     setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
+                    setCopilotAgentComposerReady(false);
                 }
             }
 
             async function sendCopilotAgentMessage(messageOverride = null) {
+                if (!copilotAgentComposerReady) {
+                    setInlineStatus(copilotAgentSendStatus, 'Wait for the assistant to finish getting ready before sending the first message.', true);
+                    return;
+                }
                 const message = String(messageOverride ?? copilotAgentMessageInput?.value ?? '').trim();
                 if (!message) {
                     setInlineStatus(copilotAgentSendStatus, 'Enter a request for the global assistant.', true);
@@ -9790,10 +9832,16 @@ export function initializeOperatorConsole() {
             });
             document.getElementById('copilot-load-query-log-btn').addEventListener('click', loadCopilotQueryLog);
             document.getElementById('copilot-refresh-meta-btn').addEventListener('click', loadCopilotMeta);
-            document.getElementById('copilot-agent-send-btn').addEventListener('click', () => sendCopilotAgentMessage());
+            copilotAgentSendBtn?.addEventListener('click', () => sendCopilotAgentMessage());
             document.getElementById('copilot-agent-new-session-btn').addEventListener('click', async () => {
                 copilotAgentSessionId = null;
                 copilotAgentLastResponse = null;
+                copilotAgentLastTurns = [];
+                copilotAgentPendingTurn = null;
+                if (copilotAgentMessageInput) {
+                    copilotAgentMessageInput.value = '';
+                }
+                setCopilotAgentComposerReady(false);
                 renderCopilotAgentThread([]);
                 syncCopilotAgentLauncherBadge(0);
                 await loadCopilotAgentWorkspace(true);
@@ -9808,6 +9856,9 @@ export function initializeOperatorConsole() {
                 button.addEventListener('click', async () => {
                     const starterMessage = button.dataset.agentStarterMessage || '';
                     await setCopilotAgentDrawerOpen(true);
+                    if (!copilotAgentComposerReady) {
+                        return;
+                    }
                     copilotAgentMessageInput.value = starterMessage;
                     await sendCopilotAgentMessage(starterMessage);
                 });

@@ -2657,7 +2657,8 @@
         }
 
         .copilot-agent-thread {
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: 0.85rem;
             padding: 1rem;
             border-radius: 1rem;
