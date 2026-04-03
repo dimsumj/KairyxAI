@@ -26,6 +26,14 @@ export function initializeOperatorConsole() {
             const topbarSearchForm = document.getElementById('topbar-search-form');
             const topbarSearchInput = document.getElementById('topbar-search-input');
             const topbarSearchStatus = document.getElementById('topbar-search-status');
+            const copilotAgentLauncherBtn = document.getElementById('copilot-agent-launcher-btn');
+            const copilotAgentLauncherContext = document.getElementById('copilot-agent-launcher-context');
+            const copilotAgentLauncherBadge = document.getElementById('copilot-agent-launcher-badge');
+            const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
+            const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
+            const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
+            const copilotAgentCurrentContext = document.getElementById('copilot-agent-current-context');
+            const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
             const settingsAuthCopy = document.getElementById('settings-auth-copy');
@@ -220,7 +228,7 @@ export function initializeOperatorConsole() {
                 },
                 'insight-copilot': {
                     title: 'Insight Copilot',
-                    subtitle: 'Use the chat-plus-preview operator agent for summaries and safe setup tasks, then fall back to the manual query, explain, recommend, and report tools when needed.',
+                    subtitle: 'Use the global AI assistant bubble for grounded help, summaries, and safe setup tasks, then use the manual query, explain, recommend, and report tools here when you need direct control.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M8 15h8M8 11h8M10 19h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -228,30 +236,11 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
-                        { id: 'insight-copilot-agent', label: 'Agent Workspace', pageId: 'insight-copilot', targetId: 'copilot-agent-section' },
                         { id: 'insight-copilot-query', label: 'Query', pageId: 'insight-copilot', targetId: 'copilot-query-section' },
                         { id: 'insight-copilot-explain', label: 'Explain', pageId: 'insight-copilot', targetId: 'copilot-explain-section' },
                         { id: 'insight-copilot-recommend', label: 'Recommend', pageId: 'insight-copilot', targetId: 'copilot-recommend-section' },
                         { id: 'insight-copilot-report', label: 'Report', pageId: 'insight-copilot', targetId: 'copilot-report-section' },
                         { id: 'insight-copilot-evidence', label: 'Evidence & Logs', pageId: 'insight-copilot', targetId: 'copilot-evidence-section' },
-                    ],
-                },
-                'help': {
-                    title: 'Help',
-                    subtitle: 'Read the current v1 manual, follow the end-to-end operator path, and copy sample SQL or JSON payloads that match the live UI.',
-                    icon: `
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
-                            <path d="M9.5 9.5a2.5 2.5 0 1 1 4.28 1.77c-.76.75-1.78 1.32-1.78 2.73" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
-                            <circle cx="12" cy="17" r="1" fill="currentColor"></circle>
-                        </svg>
-                    `,
-                    items: [
-                        { id: 'help-overview', label: 'Overview', pageId: 'help', targetId: 'help-overview-section' },
-                        { id: 'help-quickstart', label: 'Quick Start', pageId: 'help', targetId: 'help-quickstart-section' },
-                        { id: 'help-roles', label: 'Role Guide', pageId: 'help', targetId: 'help-roles-section' },
-                        { id: 'help-samples', label: 'Samples', pageId: 'help', targetId: 'help-samples-section' },
-                        { id: 'help-common-issues', label: 'Common Issues', pageId: 'help', targetId: 'help-issues-section' },
                     ],
                 },
                 'settings': {
@@ -1280,6 +1269,7 @@ export function initializeOperatorConsole() {
                 const gated = Boolean(workspaceOverlayMode) || isWorkspaceSelectionRequired();
                 syncWorkspaceBootClass();
                 document.body.classList.toggle('workspace-gated', gated);
+                syncCopilotAgentAvailability();
             }
 
             function syncWorkspaceBootClass() {
@@ -1674,6 +1664,7 @@ export function initializeOperatorConsole() {
                 if (moduleId === 'settings') {
                     syncSettingsTabState(item.id);
                 }
+                syncCopilotAgentContextChrome();
                 activatePage(item.pageId, { reload: reloadPage });
                 scrollToModuleItem(item, scrollBehavior, { forcePageTop });
                 if (closeSidebar) {
@@ -7383,6 +7374,7 @@ export function initializeOperatorConsole() {
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
             let copilotAgentLastResponse = null;
+            let copilotAgentDrawerOpen = false;
 
             function setInlineStatus(element, message = '', isError = false) {
                 if (!element) return;
@@ -8208,10 +8200,90 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function getCopilotAgentContextLabel() {
+                const moduleConfig = moduleConfigs[activeModuleId];
+                const activeItem = findModuleItem(activeModuleId, activeNavItemId);
+                if (moduleConfig && activeItem && activeItem.label) {
+                    return `${moduleConfig.title} / ${activeItem.label}`;
+                }
+                return moduleConfig?.title || 'Current page';
+            }
+
+            function syncCopilotAgentContextChrome() {
+                const label = getCopilotAgentContextLabel();
+                if (copilotAgentLauncherContext) {
+                    copilotAgentLauncherContext.textContent = label;
+                }
+                if (copilotAgentCurrentContext) {
+                    copilotAgentCurrentContext.textContent = `Context: ${label}`;
+                }
+            }
+
+            function syncCopilotAgentLauncherBadge(count = null) {
+                if (!copilotAgentLauncherBadge) return;
+                const resolvedCount = Number(
+                    count ?? copilotAgentLastResponse?.session_state?.pending_confirmation_count ?? 0,
+                );
+                copilotAgentLauncherBadge.textContent = String(resolvedCount);
+                copilotAgentLauncherBadge.classList.toggle('hidden', resolvedCount <= 0);
+            }
+
+            function renderCopilotAgentMessageBody(message, { rich = false } = {}) {
+                const raw = String(message || '').trim();
+                if (!raw) {
+                    return '<div class="subtle">No message content.</div>';
+                }
+                if (!rich) {
+                    return escapeHtml(raw);
+                }
+                const segments = raw.split(/(```[\s\S]*?```)/g).filter(Boolean);
+                const rendered = segments.map((segment, segmentIndex) => {
+                    if (segment.startsWith('```') && segment.endsWith('```')) {
+                        const match = /^```([^\n`]*)\n?([\s\S]*?)```$/m.exec(segment);
+                        const language = (match?.[1] || '').trim();
+                        const code = String(match?.[2] || '').replace(/\s+$/, '');
+                        const encoded = encodeURIComponent(code);
+                        return `
+                            <div class="copilot-agent-code-block">
+                                <div class="copilot-agent-code-header">
+                                    <span>${escapeHtml(language || 'text')}</span>
+                                    <button type="button" class="secondary-button" data-copilot-copy-code="${encoded}" data-copilot-copy-index="${segmentIndex}">Copy</button>
+                                </div>
+                                <pre><code>${escapeHtml(code)}</code></pre>
+                            </div>
+                        `;
+                    }
+                    const lines = segment.split('\n');
+                    const blocks = [];
+                    let bullets = [];
+                    const flushBullets = () => {
+                        if (!bullets.length) return;
+                        blocks.push(`<ul>${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`);
+                        bullets = [];
+                    };
+                    lines.forEach((line) => {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                            flushBullets();
+                            return;
+                        }
+                        if (/^[-*]\s+/.test(trimmed)) {
+                            bullets.push(trimmed.replace(/^[-*]\s+/, ''));
+                            return;
+                        }
+                        flushBullets();
+                        blocks.push(`<p>${escapeHtml(trimmed)}</p>`);
+                    });
+                    flushBullets();
+                    return blocks.join('');
+                });
+                return rendered.join('');
+            }
+
             function renderCopilotAgentThread(turns = []) {
                 if (!copilotAgentThread) return;
                 if (!Array.isArray(turns) || turns.length === 0) {
-                    copilotAgentThread.innerHTML = '<div class="list-empty">The operator agent conversation will appear here.</div>';
+                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
                     return;
                 }
                 const rows = [];
@@ -8235,11 +8307,28 @@ export function initializeOperatorConsole() {
                                 </div>
                                 <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
                             </div>
-                            <div class="copilot-agent-turn-body">${escapeHtml(turn.assistant_message || '')}</div>
+                            <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
                         </div>
                     `);
                 });
                 copilotAgentThread.innerHTML = rows.join('');
+                copilotAgentThread.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
+                        try {
+                            await navigator.clipboard.writeText(code);
+                            button.textContent = 'Copied';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1200);
+                        } catch (error) {
+                            button.textContent = 'Copy failed';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1600);
+                        }
+                    });
+                });
             }
 
             function renderCopilotAgentClarifications(items = []) {
@@ -8396,6 +8485,57 @@ export function initializeOperatorConsole() {
                 activateModule('data-core', 'data-core-connectors');
             }
 
+            function syncCopilotAgentAvailability() {
+                const available = !shouldBlockProtectedAppData();
+                if (copilotAgentLauncherBtn) {
+                    copilotAgentLauncherBtn.classList.toggle('hidden', !available);
+                    copilotAgentLauncherBtn.disabled = !available;
+                    copilotAgentLauncherBtn.setAttribute('aria-hidden', available ? 'false' : 'true');
+                    copilotAgentLauncherBtn.setAttribute('aria-expanded', copilotAgentDrawerOpen ? 'true' : 'false');
+                }
+                if (!available) {
+                    copilotAgentDrawerOpen = false;
+                    document.body.classList.remove('copilot-agent-drawer-open');
+                    copilotAgentDrawer?.classList.add('hidden');
+                    copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
+                    copilotAgentDrawerBackdrop?.classList.add('hidden');
+                    copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    if (copilotAgentSessionStatus) {
+                        setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(authSessionState), true);
+                    }
+                }
+                syncCopilotAgentContextChrome();
+                syncCopilotAgentLauncherBadge();
+            }
+
+            async function setCopilotAgentDrawerOpen(open) {
+                const nextState = Boolean(open);
+                if (!nextState) {
+                    copilotAgentDrawerOpen = false;
+                    document.body.classList.remove('copilot-agent-drawer-open');
+                    copilotAgentDrawer?.classList.add('hidden');
+                    copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
+                    copilotAgentDrawerBackdrop?.classList.add('hidden');
+                    copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'false');
+                    return;
+                }
+                if (shouldBlockProtectedAppData()) {
+                    syncCopilotAgentAvailability();
+                    return;
+                }
+                copilotAgentDrawerOpen = true;
+                document.body.classList.add('copilot-agent-drawer-open');
+                copilotAgentDrawer?.classList.remove('hidden');
+                copilotAgentDrawer?.setAttribute('aria-hidden', 'false');
+                copilotAgentDrawerBackdrop?.classList.remove('hidden');
+                copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'false');
+                copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
+                syncCopilotAgentContextChrome();
+                await loadCopilotAgentWorkspace(false);
+                copilotAgentMessageInput?.focus();
+            }
+
             function renderCopilotAgentWorkspace(payload = {}, turns = []) {
                 copilotAgentLastResponse = payload || {};
                 const sessionState = payload.session_state || {};
@@ -8411,6 +8551,7 @@ export function initializeOperatorConsole() {
                 renderCopilotAgentPreview(payload.execution_preview || sessionState.latest_execution_preview || null);
                 renderCopilotAgentConfirmations(payload.pending_confirmations || []);
                 renderCopilotAgentArtifacts(payload.artifacts || sessionState.latest_artifacts || []);
+                syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
             }
 
             async function ensureCopilotAgentSession(forceNew = false) {
@@ -8483,18 +8624,18 @@ export function initializeOperatorConsole() {
                         setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         return;
                     }
-                    setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load agent workspace.', true);
+                    setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
                 }
             }
 
             async function sendCopilotAgentMessage(messageOverride = null) {
                 const message = String(messageOverride ?? copilotAgentMessageInput?.value ?? '').trim();
                 if (!message) {
-                    setInlineStatus(copilotAgentSendStatus, 'Enter a request for the operator agent.', true);
+                    setInlineStatus(copilotAgentSendStatus, 'Enter a request for the global assistant.', true);
                     return;
                 }
                 try {
-                    setInlineStatus(copilotAgentSendStatus, 'Sending request to the operator agent...');
+                    setInlineStatus(copilotAgentSendStatus, 'Sending request to the global assistant...');
                     await ensureCopilotAgentSession(false);
                     const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
                         method: 'POST',
@@ -8534,7 +8675,7 @@ export function initializeOperatorConsole() {
                     const payload = await apiRequest(`/copilot/agent/actions/${encodeURIComponent(actionId)}/confirm`, {
                         method: 'POST',
                         body: {
-                            note: 'Confirmed from the Insight Copilot agent workspace.',
+                            note: 'Confirmed from the global AI assistant.',
                         },
                     });
                     const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(payload.session_state.session_id)}/turns`);
@@ -8605,7 +8746,7 @@ export function initializeOperatorConsole() {
             }
 
             async function loadInsightCopilot() {
-                await Promise.all([loadCopilotMeta(), loadCopilotAgentWorkspace(false)]);
+                await loadCopilotMeta();
             }
 
             audienceCreateCohortBtn.addEventListener('click', createAudienceCohort);
@@ -8698,6 +8839,7 @@ export function initializeOperatorConsole() {
                 renderCopilotAgentPreview(null);
                 renderCopilotAgentConfirmations([]);
                 renderCopilotAgentArtifacts([]);
+                syncCopilotAgentLauncherBadge(0);
                 await loadCopilotAgentWorkspace(true);
             });
             document.getElementById('copilot-agent-submit-clarifications-btn').addEventListener('click', submitCopilotAgentClarifications);
@@ -8710,9 +8852,27 @@ export function initializeOperatorConsole() {
             document.querySelectorAll('[data-agent-starter-message]').forEach((button) => {
                 button.addEventListener('click', async () => {
                     const starterMessage = button.dataset.agentStarterMessage || '';
+                    await setCopilotAgentDrawerOpen(true);
                     copilotAgentMessageInput.value = starterMessage;
                     await sendCopilotAgentMessage(starterMessage);
                 });
+            });
+            copilotAgentLauncherBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(!copilotAgentDrawerOpen);
+            });
+            copilotAgentCloseBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(false);
+            });
+            copilotAgentDrawerBackdrop?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(false);
+            });
+            copilotOpenGlobalAgentBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(true);
+            });
+            document.addEventListener('keydown', async (event) => {
+                if (event.key === 'Escape' && copilotAgentDrawerOpen) {
+                    await setCopilotAgentDrawerOpen(false);
+                }
             });
             document.getElementById('templates-refresh-btn').addEventListener('click', loadScenarioTemplates);
             document.getElementById('template-instantiate-btn').addEventListener('click', instantiateScenarioTemplate);
@@ -8768,6 +8928,7 @@ export function initializeOperatorConsole() {
                 checkBackendStatus();
                 setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
                 activateModule('data-core');
+                syncCopilotAgentAvailability();
             });
 
             // Theme mode logic

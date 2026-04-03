@@ -170,6 +170,51 @@ def test_copilot_agent_connection_clarification_loop_and_safe_execution(client):
     assert len(turns.json()["items"]) == 2
 
 
+def test_copilot_agent_support_answers_with_page_context_and_samples(client):
+    headers = _headers("analyst", actor_id="agent_analyst")
+    session_id = _create_session(client, headers, title="Agent Support Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "How do I create an Amplitude connector here? Give me a sample payload.",
+            "ui_context": {"active_module_id": "data-core", "active_page_id": "connectors"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_state"]["status"] == "active"
+    assert payload["session_state"]["current_intent"] == "help_support"
+    assert payload["clarifications"] == []
+    assert payload["completed_actions"] == []
+    assert "Data Core -> Connectors" in payload["assistant_message"]
+    assert "demo_api_key" in payload["assistant_message"]
+    assert "```json" in payload["assistant_message"]
+
+
+def test_copilot_agent_unsupported_requests_fall_back_to_grounded_help(client):
+    headers = _headers("analyst", actor_id="agent_analyst")
+    session_id = _create_session(client, headers, title="Agent Unsupported Fallback Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "What should I do next here?",
+            "ui_context": {"active_module_id": "audience-engine", "active_page_id": "audience-engine"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_state"]["status"] == "active"
+    assert payload["session_state"]["current_intent"] == "help_support"
+    assert payload["clarifications"] == []
+    assert payload["completed_actions"] == []
+    assert "Audience Engine" in payload["assistant_message"]
+    assert "Set up a cohort" in payload["assistant_message"]
+
+
 def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
     _seed_mock_warehouse()
     headers = _headers("operator", actor_id="agent_operator")

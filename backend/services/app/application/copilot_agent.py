@@ -18,6 +18,7 @@ from app.application.cohorts import CohortService
 from app.application.connectors import ConnectorService
 from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
+from app.application.copilot_help_catalog import build_help_support_answer
 from app.application.health_monitor import HealthMonitorService
 from app.application.provider_connections import ProviderConnectionService
 from app.application.secret_refs import redact_secret_values
@@ -223,7 +224,7 @@ class GeminiCopilotAgentModel:
             "task": "Classify the operator request and extract structured slots for the Kytrics/Kairyx control plane.",
             "instructions": [
                 "Return JSON only.",
-                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
+                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
                 "Fill slots only when explicitly present or strongly implied.",
                 "Do not invent SQL, identifiers, or credentials.",
             ],
@@ -326,8 +327,36 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         slots["sql"] = sql
     selected_cohort_id = str(ui_context.get("selected_cohort_id") or "").strip()
     current_experiment_id = str(ui_context.get("current_experiment_id") or "").strip()
+    is_help_support_request = any(
+        phrase in lowered
+        for phrase in (
+            "how do i",
+            "how to ",
+            "how can i",
+            "what does this page",
+            "what does this do",
+            "what is this page",
+            "give me a sample",
+            "show me a sample",
+            "show me an example",
+            "sample payload",
+            "example payload",
+            "why is this failing",
+            "why did this fail",
+            "not working",
+            "troubleshoot",
+            "where do i",
+            "where can i",
+            "where should i",
+            "which page",
+            "what page",
+            "how do i use this",
+        )
+    )
     if "permanent delete" in lowered or re.search(r"\bdelete\b", lowered):
         return {"intent": "unsupported", "slots": slots, "notes": ["Destructive delete flows are out of scope for the v1 agent."]}
+    if is_help_support_request:
+        return {"intent": "help_support", "slots": slots}
     if re.search(r"\bactivate\b", lowered) and "cohort" in lowered:
         slots.setdefault("cohort_id", extract_resource_id(normalized, prefix="cohort_") or selected_cohort_id or None)
         return {"intent": "activate_cohort", "slots": slots}
@@ -387,10 +416,13 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         elif "list" in lowered or "members" in lowered:
             slots["cohort_type"] = "list"
         return {"intent": "setup_cohort", "slots": slots}
-    return {"intent": "unsupported", "slots": slots, "notes": ["The agent supports summaries plus cohort, experiment, and connection setup in v1."]}
+    return {"intent": "unsupported", "slots": slots}
 
 
 def deterministic_agent_message(payload: Dict[str, Any]) -> str:
+    support_answer = str(payload.get("support_answer") or "").strip()
+    if support_answer:
+        return support_answer
     clarifications = payload.get("clarifications") or []
     completed_actions = payload.get("completed_actions") or []
     pending_confirmations = payload.get("pending_confirmations") or []
@@ -511,7 +543,11 @@ class CopilotAgentService:
             "pending_confirmations": pending_confirmations,
             "artifacts": artifacts or collect_artifacts_from_actions(completed_actions, pending_confirmations),
         }
-        response_payload["assistant_message"] = self.model_adapter.compose_message(response_payload)
+        assistant_message = str(plan.get("assistant_message") or "").strip()
+        if assistant_message:
+            response_payload["assistant_message"] = assistant_message
+        else:
+            response_payload["assistant_message"] = self.model_adapter.compose_message(response_payload)
 
         turn_payload = {
             "turn_id": f"cpat_{uuid.uuid4().hex[:20]}",
@@ -678,17 +714,12 @@ class CopilotAgentService:
         clarifications: List[Dict[str, Any]] = []
         actions: List[Dict[str, Any]] = []
         notes: List[str] = [str(item) for item in parsed.get("notes") or [] if str(item).strip()]
-        if intent == "unsupported":
-            clarifications.append(
-                {
-                    "key": "supported_scope",
-                    "label": "Task",
-                    "question": "I can summarize the dashboard or help set up a cohort, experiment, or connection. What do you want to do?",
-                    "required": True,
-                    "input_type": "text",
-                    "options": ["summarize dashboard", "set up a cohort", "set up an experiment", "set up a connection"],
-                }
-            )
+        assistant_message = ""
+        if intent in {"help_support", "unsupported"}:
+            intent = "help_support"
+            assistant_message = build_help_support_answer(message, ui_context=ui_context)
+            if notes:
+                assistant_message = f"{notes[0]}\n\n{assistant_message}"
         elif intent == "summarize_dashboard":
             actions.append(
                 {
@@ -781,6 +812,7 @@ class CopilotAgentService:
             "execution_preview": execution_preview,
             "notes": notes,
             "user_message": message,
+            "assistant_message": assistant_message,
         }
 
     def _connection_clarifications(self, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1489,6 +1521,8 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
 def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: List[str]) -> str:
     if clarifications:
         return "Collect the missing details before executing any changes."
+    if intent == "help_support":
+        return "Provide grounded product guidance, sample payloads, and troubleshooting without changing control-plane state."
     if intent == "summarize_dashboard":
         return "Read the current workspace state and return an operator summary with risks and next steps."
     if intent == "setup_connection":

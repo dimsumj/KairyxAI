@@ -8,7 +8,7 @@ The current repository already implements a working v1 control plane for:
 - `Audience Engine`: cohort lifecycle, refresh, versions, metrics, compare, and activation controls
 - `Action Orchestrator`: workflows, triggers, delivery diagnostics, policy guards, and activation callbacks
 - `Experiment Hub`: config, assignment, exposure, outcome, integrity, summary, and rollout suggestion
-- `Insight Copilot`: operator agent workspace, query, explain, recommend, report, anomaly, and evidence-oriented reporting
+- `Insight Copilot`: global AI assistant for grounded help, samples, summaries, and safe setup work, plus manual query, explain, recommend, report, anomaly, and evidence-oriented reporting
 
 ## Product Vision
 
@@ -128,8 +128,9 @@ Primary backend surface:
 
 Insight Copilot is the operator-facing analysis layer:
 
-- chat-plus-preview operator agent for dashboard summary, cohort setup, experiment setup, and connection setup
+- global AI assistant bubble for grounded product help, contextual samples, dashboard summary, cohort setup, experiment setup, and connection setup from any page
 - structured clarifications, execution preview, artifact deep links, and confirmation gating for risky actions
+- manual `query / explain / recommend / report` tools on the Insight Copilot page as the advanced fallback
 - natural-language metric query
 - anomaly explanation
 - action recommendation drafts
@@ -538,7 +539,6 @@ For production-shaped deployments, use one of the native backend stacks:
    - `Action Orchestrator`
    - `Experiment Hub`
    - `Insight Copilot`
-   - `Help`
 
 ### Typical local flow
 
@@ -548,8 +548,8 @@ For production-shaped deployments, use one of the native backend stacks:
 4. Create or refresh a cohort
 5. Publish or test a workflow
 6. Review experiment summary or integrity
-7. Ask Copilot for explanation or a report
-   - or use the agent workspace to summarize the dashboard and draft cohorts, experiments, or connections
+7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on
+8. Open `Insight Copilot` only when you want the manual Query, Explain, Recommend, Report, or Evidence & Logs tools directly
 
 ## API Surface Snapshot
 
@@ -593,7 +593,7 @@ There is also a lightweight liveness endpoint at:
 PWCLI=/path/to/playwright_cli.sh BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
 ```
 
-The smoke script now checks the Insight Copilot agent workspace shell, a clarification loop, one safe setup action, and a risky follow-up that stops at confirmation.
+The smoke script now checks the global AI assistant launcher and drawer, a grounded help answer, a clarification loop, one safe setup action, and a risky follow-up that remains pending across navigation.
 
 ### Lightweight frontend checks
 

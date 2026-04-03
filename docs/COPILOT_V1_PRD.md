@@ -11,6 +11,7 @@ The operator workflow in KairyxAI still has too many manual steps between "under
 ### 1.2 Goal (v1)
 Upgrade `Insight Copilot` into a constrained `chat-plus-preview operator agent` that can:
 - summarize the current workspace state across modules
+- answer grounded product-help questions and return sample payloads for the current page
 - collect missing inputs through structured clarifications
 - preview the exact control-plane actions it plans to take
 - execute low-risk setup work on behalf of the operator
@@ -50,8 +51,10 @@ This upgrade does not replace the existing analytical tools. It adds an operator
 
 ## 3. Functional Scope (v1)
 
-### 3.1 Operator Agent Workspace
-The primary Copilot surface is now a chat-first operator workspace with:
+### 3.1 Global Assistant Surface
+The primary Copilot surface is now a global chat-first assistant with:
+- persistent bottom-right launcher
+- right-side drawer on desktop and full-screen sheet on mobile
 - conversation thread
 - suggested starter tasks
 - structured clarification prompts
@@ -59,7 +62,7 @@ The primary Copilot surface is now a chat-first operator workspace with:
 - pending confirmation banner
 - result artifact links into the relevant module
 
-The existing manual `query / explain / recommend / report` tools remain on the same Insight Copilot page below the agent workspace so existing workflows do not regress.
+The assistant is available from every app page after workspace resolution and keeps one shared session alive across SPA navigation. The existing manual `query / explain / recommend / report` tools remain on the Insight Copilot page as the advanced/manual fallback.
 
 ### 3.2 Deterministic Agent Loop
 Every agent turn follows the same constrained lifecycle:
@@ -93,7 +96,20 @@ The output must include:
 - top risks
 - suggested next steps
 
-### 3.4 Connection Setup
+### 3.4 Grounded Product Help
+The agent supports read-only `help_support` behavior for questions such as:
+- `How do I use this page?`
+- `Where do I do X?`
+- `Give me a sample payload`
+- `Why is this failing?`
+
+Behavior:
+- use current module/page context plus selected resource ids when present
+- answer from a structured help catalog instead of open-ended freeform generation
+- return inline SQL, JSON, or prompt samples when relevant
+- fall back to product-help guidance when an unsupported request is not actionable
+
+### 3.5 Connection Setup
 The agent supports `set up a connection` for both upstream connectors and downstream provider connections.
 
 Supported connector types in v1:
@@ -116,7 +132,7 @@ Behavior:
 - run connector health check when the target is a connector and a health check is available
 - redact secret values from stored action parameters and response payloads
 
-### 3.5 Cohort Setup
+### 3.6 Cohort Setup
 The agent supports `set up a cohort` for:
 - SQL cohorts
 - rule cohorts
@@ -130,7 +146,7 @@ Behavior:
 - create the cohort in `draft` by default
 - optionally update an existing draft cohort when the target cohort id is provided and the request explicitly indicates update behavior
 
-### 3.6 Experiment Setup
+### 3.7 Experiment Setup
 The agent supports `set up an A/B test` or `set up an experiment`.
 
 Collected or defaulted fields:
@@ -149,7 +165,7 @@ Behavior:
 - persist it in a non-running state
 - keep experiment start as a separate confirmed action
 
-### 3.7 Retained Manual Copilot Tools
+### 3.8 Retained Manual Copilot Tools
 The analytical Copilot endpoints remain in scope and visible in the UI:
 - natural-language metric query
 - anomaly explanation
@@ -341,7 +357,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 6. Experiment setup saves a non-running config linked to a cohort and returns a linked artifact.
 7. Risky actions such as cohort activation and experiment start stop at confirmation and only execute after an explicit confirm call.
 8. Permission failures do not bypass governance, and cross-project session access is denied.
-9. The Insight Copilot page keeps the manual analytical controls available below the new agent workspace.
+9. The global assistant is available from every app page after workspace resolution, and the Insight Copilot page keeps the manual analytical controls as the advanced/manual fallback.
 
 ---
 
@@ -367,10 +383,11 @@ This lets the agent narrow scope without forcing the user to restate context tha
 **Goal**: keep the agent deterministic and governable.
 
 **Delivered Scope**
-1. Intent parsing for dashboard summary, cohort setup, experiment setup, connection setup, and specific confirmation-gated follow-ups
+1. Intent parsing for dashboard summary, grounded help support, cohort setup, experiment setup, connection setup, and specific confirmation-gated follow-ups
 2. Structured slot extraction from natural language, named fields, JSON blocks, SQL blocks, and UI context
 3. Explicit action registry with fixed permission requirements and risk levels
-4. Gemini-backed parsing and composition with deterministic fallback
+4. Runtime help catalog for grounded product guidance, sample payloads, and troubleshooting notes
+5. Gemini-backed parsing and composition with deterministic fallback
 
 **Acceptance Criteria (DoD)**
 - Unsupported intents are redirected into the supported scope
@@ -412,19 +429,21 @@ This lets the agent narrow scope without forcing the user to restate context tha
 ---
 
 ### P0-5 Frontend Copilot Upgrade
-**Goal**: make Insight Copilot the operator entry point for guided setup and summary tasks.
+**Goal**: make the global AI assistant the operator entry point for guided setup, grounded help, and summary tasks.
 
 **Delivered Scope**
-1. Chat-plus-preview workspace at the top of the Insight Copilot page
-2. Starter prompts for the supported v1 tasks
-3. Structured clarification rendering
-4. Execution preview rendering
-5. Pending confirmation rendering
-6. Artifact deep links into the relevant module
-7. Retained manual `query / explain / recommend / report` controls below the workspace
+1. Global assistant launcher and drawer that remain available from every in-app page
+2. Shared session persistence across SPA navigation
+3. Starter prompts for the supported v1 tasks and help flows
+4. Structured clarification rendering
+5. Execution preview rendering
+6. Pending confirmation rendering
+7. Artifact deep links into the relevant module
+8. Retained manual `query / explain / recommend / report` controls on the Insight Copilot page
+9. Removal of the static Help module from visible navigation
 
 **Acceptance Criteria (DoD)**
-- The user can complete a safe setup flow without leaving the Insight Copilot page
+- The user can ask for help, samples, or safe setup work without leaving the current module
 - The user can see what the agent plans to do before execution
 - Manual analytical tools remain available for broader Copilot workflows
 

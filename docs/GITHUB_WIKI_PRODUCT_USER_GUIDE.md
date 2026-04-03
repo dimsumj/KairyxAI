@@ -44,7 +44,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Action Orchestrator` and create a workflow.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Go to `Insight Copilot` to use the agent workspace for dashboard summary, cohort setup, experiment setup, or connection setup, then use the manual query, explain, recommend, and report tools when needed.
+9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to switch between light mode and dark mode, manage login state, review application startup status, use the shell-level `Switcher` and `New Project` shortcuts, or view the placeholder account-management layouts.
 
 ### 2.3 Deployment Surface Notes
@@ -801,23 +801,35 @@ WHERE predicted_churn_risk = 'high'
 
 ## 7) Insight Copilot
 
-### 7.1 Agent Workspace
+### 7.1 Global AI Assistant
 
-The top of `Insight Copilot` is now the primary operator agent surface. Use it first when you want the system to collect missing inputs and perform low-risk setup work on your behalf.
+The bottom-right `Ask AI` bubble is now the primary AI surface. It stays available while you move across `Data Core`, `Audience Engine`, `Action Orchestrator`, `Experiment Hub`, and the manual `Insight Copilot` page.
+
+The assistant can:
+- answer grounded product-help questions for the page you are currently viewing
+- give sample SQL, JSON payloads, and example prompts
+- summarize the current dashboard
+- set up low-risk draft cohorts, experiment configs, connectors, and provider connections
+- stop high-risk actions at explicit confirmation
+
+The `Insight Copilot` page now acts as the advanced/manual fallback for direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` usage.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Starter task buttons` | Buttons | Sends a suggested task into the agent workspace. | `Summarize Dashboard` | The conversation starts with that operator task. |
+| `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
+| `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
+| `Starter task buttons` | Buttons | Sends a suggested task into the assistant drawer. | `Connector Help` | The conversation starts with that operator task. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... · active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
-| `Message` | Text area | Ask for a dashboard summary or a setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `Set up a connection` | The agent classifies the request and either asks for missing inputs or executes safe steps. |
-| `Send To Agent` | Button | Sends the current message to the agent. | None | Conversation thread, preview, and artifacts update. |
+| `Message` | Text area | Ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Use `Ctrl+Enter` or `Cmd+Enter` to send quickly. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant returns grounded guidance or executes the supported setup flow. |
+| `Send To Agent` | Button | Sends the current message to the assistant. | None | Conversation thread, preview, and artifacts update. |
 | `Clarifications` | Structured form | Fill only the missing inputs requested by the agent, then submit them. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | `Submit Clarifications` | Button | Sends the structured clarification form back to the agent. | None | The task either moves into preview/execution or asks for the next missing field. |
 | `Execution Preview` | Preview card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary update. |
 | `Pending Confirmations` | Action list | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action. | None | The held action executes and the conversation updates. |
 | `Artifacts` | Resource list | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 
 #### Supported v1 agent tasks
 
@@ -825,6 +837,7 @@ The top of `Insight Copilot` is now the primary operator agent surface. Use it f
 - `Set up a cohort`
 - `Set up an A/B test`
 - `Set up a connection`
+- grounded product help such as `How do I use this page?`, `Where do I do X?`, `Give me a sample payload`, or `Why is this failing?`
 
 The v1 agent executes only low-risk reads and draft/setup actions automatically. It does not auto-run destructive deletes. Cohort activation, experiment start/stop, experiment decision logging, and similar risky follow-up actions are held for explicit confirmation.
 
@@ -1032,23 +1045,7 @@ The `Notifications` tab is currently a placeholder layout only. Theme mode now l
 
 ---
 
-## 9) Help Page
-The `Help` module is a built-in quick reference. It does not contain action buttons that mutate backend state. Use it for:
-- recommended end-to-end operator order
-- role guide
-- copy-paste audience definition samples
-- workflow and experiment sample JSON
-- copilot example prompts
-- common issue troubleshooting
-
-Recommended use:
-1. Open `Help` when you need starter payloads.
-2. Copy a sample payload into the relevant form in another module.
-3. Return to the target module and execute the live action there.
-
----
-
-## 10) Representative End-To-End Example
+## 9) Representative End-To-End Example
 
 ### Goal
 Create a high-risk churn cohort, bind it to a workflow, measure it with an experiment, and review the result in Copilot.
@@ -1079,14 +1076,17 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 6. In the workflow table, click `Publish`.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.
-9. In `Insight Copilot`, run:
+9. Open the global `Ask AI` bubble and run:
+   - `Summarize the dashboard.`
+   - or `How do I create an Amplitude connector here? Give me a sample payload.`
+10. If you need the raw analytical tools, open `Insight Copilot` and run:
    - `Question`: `how many high risk users do we have in 7d?`
    - Click `Run Query`.
-10. Review the latest Copilot response and, if needed, generate a recommendation or report.
+11. Review the latest Copilot response and, if needed, generate a recommendation or report.
 
 ---
 
-## 11) Current Known UI Caveats
+## 10) Current Known UI Caveats
 - `Data Core -> Governance -> Save Limits` is currently a placeholder and is not wired in the frontend JavaScript.
 - `Webhook URL` and `Webhook Token` on the churn export panel are mainly relevant when the provider is `webhook`.
 - Some lists and selectors require prior data. Examples:
@@ -1097,7 +1097,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 
 ---
 
-## 12) Documentation Maintenance Rule
+## 11) Documentation Maintenance Rule
 When any user-facing function, button label, form field, workflow, or sample payload changes:
 1. Update this file.
 2. Update `README.md`.
