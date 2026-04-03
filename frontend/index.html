@@ -1554,7 +1554,6 @@ WHERE predicted_churn_risk = 'high'
                         <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Open the gateway at the base URL, then continue into the main app at your organization path.</p>
                         <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
                     </div>
-                    <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close hidden">Close</button>
                 </div>
 
                 <div id="workspace-login-panel" class="workspace-panel">
@@ -1665,9 +1664,12 @@ WHERE predicted_churn_risk = 'high'
                     <div class="workspace-helper-text">Create another project inside the selected organization space.</div>
                     <div id="workspace-create-project-status" class="workspace-panel-status"></div>
                     <div class="workspace-modal-actions">
-                        <button type="button" id="workspace-create-project-cancel-btn">Cancel</button>
+                        <button type="button" id="workspace-create-project-cancel-btn" class="workspace-cancel-action">Cancel</button>
                         <button type="button" id="workspace-create-project-submit-btn">Create Project</button>
                     </div>
+                </div>
+                <div class="workspace-modal-footer">
+                    <button type="button" id="workspace-modal-close-btn" class="workspace-modal-close workspace-cancel-action hidden">Close</button>
                 </div>
             </div>
         </div>

@@ -351,16 +351,8 @@
         }
 
         .workspace-modal-close {
-            position: absolute;
-            top: 0;
-            right: 0;
-            background: transparent;
-            color: #4b5563;
-            border: 1px solid #d9e2ec;
-            flex: 0 0 auto;
-            max-width: none;
-            min-width: auto;
-            padding: 0.75rem 1rem;
+            flex: 1 1 14rem;
+            max-width: 18rem;
         }
 
         .workspace-panel-status {
@@ -375,6 +367,12 @@
             display: flex;
             gap: 0.75rem;
             flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 1rem;
+        }
+
+        .workspace-modal-footer {
+            display: flex;
             justify-content: center;
             margin-top: 1rem;
         }
@@ -574,9 +572,15 @@
             background: #245bd1;
         }
 
+        .workspace-modal .workspace-cancel-action,
+        .workspace-modal-close {
+            background: #dc2626;
+            color: #ffffff;
+        }
+
+        .workspace-modal .workspace-cancel-action:hover,
         .workspace-modal-close:hover {
-            background: #f3f4f6;
-            color: #1f2937;
+            background: #b91c1c;
         }
 
         .workspace-modal button.hidden {

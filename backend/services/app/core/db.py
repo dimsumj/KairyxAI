@@ -9,7 +9,7 @@ from typing import Generator
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, event
+from sqlalchemy import Integer, create_engine, event, func, select, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -207,7 +207,48 @@ def _run_control_plane_migrations() -> None:
 
 def _initialize_schema() -> None:
     _run_control_plane_migrations()
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _align_postgres_identity_sequences(engine)
+
+
+def _align_postgres_identity_sequences(engine: Engine, *, tables=None) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    target_tables = list(tables or Base.metadata.sorted_tables)
+    if not target_tables:
+        return
+    with engine.begin() as connection:
+        for table in target_tables:
+            primary_key_columns = list(table.primary_key.columns)
+            if len(primary_key_columns) != 1:
+                continue
+            primary_key_column = primary_key_columns[0]
+            if primary_key_column.name != "id" or not isinstance(primary_key_column.type, Integer):
+                continue
+            qualified_table_name = ".".join(
+                [part for part in (table.schema, table.name) if part]
+            )
+            sequence_name = connection.execute(
+                text("SELECT pg_get_serial_sequence(:table_name, :column_name)"),
+                {
+                    "table_name": qualified_table_name,
+                    "column_name": primary_key_column.name,
+                },
+            ).scalar_one_or_none()
+            if not sequence_name:
+                continue
+            max_identifier = connection.execute(
+                select(func.coalesce(func.max(primary_key_column), 0)).select_from(table)
+            ).scalar_one()
+            next_identifier = int(max_identifier or 0) + 1
+            connection.execute(
+                text("SELECT setval(:sequence_name, :next_identifier, false)"),
+                {
+                    "sequence_name": sequence_name,
+                    "next_identifier": next_identifier,
+                },
+            )
 
 
 def init_db() -> None:

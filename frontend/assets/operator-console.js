@@ -175,6 +175,7 @@ export function initializeOperatorConsole() {
             let settingsLastInviteLink = '';
             let settingsDeleteProjectCandidate = null;
             let workspaceOverlayMode = null;
+            let workspaceOverlayAllowClose = false;
             let onboardingStep = 1;
             let onboardingResult = null;
             let onboardingFromWorkspaceSelection = false;
@@ -560,12 +561,14 @@ export function initializeOperatorConsole() {
                 if (!showChooser) {
                     return;
                 }
-                const normalizedInputTenantId = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
-                const normalizedSelectedTenantId = normalizeOrganizationUrl(workspaceModalOrgSelect.value || authSessionState?.organization_id || '');
-                const resolvedTenantId = normalizedInputTenantId || normalizedSelectedTenantId || '';
-                if (resolvedTenantId && items.some((item) => item.organization_id === resolvedTenantId)) {
-                    workspaceModalOrgSelect.value = resolvedTenantId;
-                }
+                const resolvedTenantId = normalizeOrganizationUrl(
+                    workspaceOrgUrlInput?.value
+                    || workspaceSelectionContext.organizationId
+                    || workspaceModalOrgSelect.value
+                    || ''
+                );
+                const matchingOrganization = items.find((item) => item.organization_id === resolvedTenantId);
+                workspaceModalOrgSelect.value = matchingOrganization ? matchingOrganization.organization_id : '';
             }
 
             function syncWorkspaceSelectionOrgInput(tenantId = '') {
@@ -581,7 +584,7 @@ export function initializeOperatorConsole() {
             }
 
             function syncWorkspaceSelectedOrgContext() {
-                const organizationId = workspaceSelectionContext.organizationId
+                const organizationId = getRequestedWorkspaceOrganizationId()
                     || workspaceModalOrgSelect.value
                     || authSessionState?.organization_id
                     || '';
@@ -659,6 +662,17 @@ export function initializeOperatorConsole() {
                 const organizationId = preserveOrganization ? workspaceSelectionContext.organizationId : '';
                 const organization = preserveOrganization ? workspaceSelectionContext.organization : null;
                 setWorkspaceSelectionContext({ organizationId, organization, projects: [] });
+            }
+
+            function getRequestedWorkspaceOrganizationId() {
+                return normalizeOrganizationUrl(
+                    workspaceOrgUrlInput?.value
+                    || onboardingOrganizationIdInput?.value
+                    || onboardingOrganizationNameInput?.value
+                    || workspaceSelectionContext.organizationId
+                    || readGatewayOrganizationHint()
+                    || ''
+                );
             }
 
             function getWorkspaceSelectionProjects() {
@@ -1024,6 +1038,15 @@ export function initializeOperatorConsole() {
                 const normalizedOrganizationId = normalizeNewOrganizationId(organizationId);
                 onboardingFromWorkspaceSelection = true;
                 setWorkspaceSelectionSwitchAccountVisible(false);
+                setWorkspaceSelectionContext({
+                    organizationId: normalizedOrganizationId,
+                    organization: {
+                        organization_id: normalizedOrganizationId,
+                        name: normalizedOrganizationId,
+                        status: 'pending',
+                    },
+                    projects: [],
+                });
                 workspaceOrgUrlInput.value = normalizedOrganizationId;
                 persistGatewayOrganizationHint(normalizedOrganizationId);
                 onboardingOrganizationNameInput.value = normalizedOrganizationId;
@@ -1214,7 +1237,7 @@ export function initializeOperatorConsole() {
             }
 
             function buildFallbackWorkspaceSession(errorMessage = '') {
-                const organizationId = getWorkspaceOrganizationHint();
+                const organizationId = getRequestedWorkspaceOrganizationId() || getWorkspaceOrganizationHint();
                 return {
                     organization_id: organizationId || null,
                     project_id: null,
@@ -1540,7 +1563,7 @@ export function initializeOperatorConsole() {
             function setWorkspaceSelectionStage(stage = 'org') {
                 let normalizedStage = stage === 'project' ? 'project' : 'org';
                 const pathTenantId = getOrganizationIdFromPathname();
-                const selectedTenantId = workspaceSelectionContext.organizationId
+                const selectedTenantId = getRequestedWorkspaceOrganizationId()
                     || workspaceModalOrgSelect.value
                     || authSessionState?.organization_id
                     || pathTenantId
@@ -1603,7 +1626,7 @@ export function initializeOperatorConsole() {
             }
 
             function refreshWorkspaceSelectionCopy() {
-                const selectedTenantId = workspaceSelectionContext.organizationId
+                const selectedTenantId = getRequestedWorkspaceOrganizationId()
                     || workspaceModalOrgSelect.value
                     || authSessionState?.organization_id
                     || '';
@@ -1629,12 +1652,7 @@ export function initializeOperatorConsole() {
             }
 
             function resolveGatewaySelectionStage(payload = authSessionState) {
-                const requestedOrganizationId = normalizeOrganizationUrl(
-                    workspaceSelectionContext.organizationId
-                    || workspaceOrgUrlInput?.value
-                    || readGatewayOrganizationHint()
-                    || ''
-                );
+                const requestedOrganizationId = getRequestedWorkspaceOrganizationId();
                 const accessibleOrganizations = Array.isArray(payload?.accessible_organizations) ? payload.accessible_organizations : [];
                 if (requestedOrganizationId && accessibleOrganizations.some((item) => normalizeOrganizationUrl(item?.organization_id || '') === requestedOrganizationId)) {
                     return 'project';
@@ -1645,11 +1663,12 @@ export function initializeOperatorConsole() {
                 return 'org';
             }
 
-            function openWorkspaceOverlay(mode, { allowClose = false, selectionStage = null } = {}) {
+            function openWorkspaceOverlay(mode, { allowClose = workspaceOverlayAllowClose, selectionStage = null } = {}) {
                 workspaceOverlayMode = mode;
+                workspaceOverlayAllowClose = Boolean(allowClose);
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
-                workspaceModalCloseBtn.classList.toggle('hidden', !allowClose);
+                workspaceModalCloseBtn.classList.toggle('hidden', !workspaceOverlayAllowClose);
                 if (mode === 'login') {
                     const invitePending = Boolean(readPendingInvite());
                     workspaceModalEyebrow.textContent = 'Google Login';
@@ -1698,6 +1717,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 workspaceOverlayMode = null;
+                workspaceOverlayAllowClose = false;
                 workspaceOverlay.classList.add('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'true');
                 syncWorkspaceGateClass();
@@ -1730,7 +1750,11 @@ export function initializeOperatorConsole() {
             function applyAuthSessionPayload(payload) {
                 authSessionState = payload || null;
                 const pathTenantId = getOrganizationIdFromPathname();
-                const selectedTenantId = pathTenantId || payload?.organization_id || getStoredWorkspaceSelection().tenantId || '';
+                const selectedTenantId = pathTenantId
+                    || (isGatewayRootPath() ? getRequestedWorkspaceOrganizationId() : '')
+                    || payload?.organization_id
+                    || getStoredWorkspaceSelection().tenantId
+                    || '';
                 const selectedProjectId = payload?.project_id || getStoredWorkspaceSelection().projectId || '';
                 populateWorkspaceSelect(orgSpaceSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
                 populateWorkspaceSelect(workspaceModalOrgSelect, payload?.accessible_organizations || [], selectedTenantId, 'Select an organization space', 'organization_id');
@@ -3122,7 +3146,23 @@ export function initializeOperatorConsole() {
                     ? sessionView.accessible_organizations
                     : [];
                 const pathOrganizationId = getOrganizationIdFromPathname();
+                const requestedGatewayOrganizationId = getRequestedWorkspaceOrganizationId();
                 if (isGatewayRootPath() && accessToken) {
+                    if (requestedGatewayOrganizationId && (workspaceOverlayMode === 'selection' || workspaceOverlayMode === 'onboarding')) {
+                        if (workspaceOverlayMode === 'onboarding') {
+                            openWorkspaceOverlay('onboarding');
+                            return;
+                        }
+                        openWorkspaceOverlay('selection', { selectionStage: 'org' });
+                        syncWorkspaceSelectionOrgInput(requestedGatewayOrganizationId);
+                        setWorkspaceTextStatus(
+                            workspaceSelectionStatus,
+                            accessibleOrganizations.some((item) => normalizeOrganizationUrl(item?.organization_id || '') === requestedGatewayOrganizationId)
+                                ? 'Continue to open this organization, or choose another one.'
+                                : 'Enter an existing organization URL, or continue with this new one to create it.',
+                        );
+                        return;
+                    }
                     if (accessibleOrganizations.length === 0) {
                         onboardingFromWorkspaceSelection = false;
                         onboardingResult = null;
@@ -4334,8 +4374,13 @@ export function initializeOperatorConsole() {
             workspaceOpenSwitcherBtn.addEventListener('click', () => {
                 setWorkspaceSelectionSwitchAccountVisible(false);
                 clearWorkspaceSelectionContext();
+                persistGatewayOrganizationHint('');
+                workspaceModalOrgSelect.value = '';
+                workspaceModalProjectSelect.value = '';
+                syncWorkspaceSelectionOrgInput('');
+                syncBrowserOrganizationPath('');
                 openWorkspaceOverlay('selection', { allowClose: true, selectionStage: 'org' });
-                setWorkspaceTextStatus(workspaceSelectionStatus, '');
+                setWorkspaceTextStatus(workspaceSelectionStatus, 'Choose one of your organizations below, or type an organization URL to open.');
             });
             workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
             orgSpaceSelect.addEventListener('change', async () => {
