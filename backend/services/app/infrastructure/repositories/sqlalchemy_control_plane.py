@@ -295,6 +295,21 @@ class SqlAlchemyControlPlaneRepository:
         self.session.flush()
         return self._tenant_membership_to_dict(row)
 
+    def delete_tenant_membership(self, membership_id: int) -> Dict[str, Any]:
+        row = self.session.get(TenantMembershipModel, int(membership_id))
+        if row is None:
+            raise KeyError(membership_id)
+        payload = self._tenant_membership_to_dict(row)
+        self.session.execute(
+            delete(ProjectMembershipModel).where(
+                ProjectMembershipModel.tenant_id == str(row.tenant_id),
+                ProjectMembershipModel.user_id == str(row.user_id),
+            )
+        )
+        self.session.delete(row)
+        self.session.flush()
+        return payload
+
     def list_organization_members(self, tenant_id: str) -> List[Dict[str, Any]]:
         rows = self.session.execute(
             select(TenantMembershipModel)
@@ -314,6 +329,7 @@ class SqlAlchemyControlPlaneRepository:
                     "email": user.email if user else None,
                     "display_name": (user.display_name if user else None) or (user.email if user else None) or row.user_id,
                     "pending": str(row.status or "").lower() != "active",
+                    "joined_at": row.created_at.isoformat() if row.created_at else None,
                 }
             )
         pending_invites = self.session.execute(
@@ -343,6 +359,7 @@ class SqlAlchemyControlPlaneRepository:
                     "invite_code": invite.invite_code,
                     "created_at": invite.created_at.isoformat(),
                     "updated_at": invite.updated_at.isoformat(),
+                    "joined_at": None,
                 }
             )
         return members
@@ -1394,6 +1411,7 @@ class SqlAlchemyControlPlaneRepository:
             "user_id": row.user_id,
             "role": row.role,
             "status": row.status,
+            "joined_at": row.created_at.isoformat(),
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
         }

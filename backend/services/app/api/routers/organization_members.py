@@ -81,21 +81,62 @@ def update_organization_member_role(
             context.tenant_id,
             member_id,
             role=payload.role,
+            actor_user_id=context.actor_id,
+            actor_org_role=context.org_role,
+            confirm_owner_transfer=payload.confirm_owner_transfer,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Organization member '{member_id}' was not found.")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     record_audit(
         repository,
         context,
-        action_type="organization_member_role_updated",
+        action_type="organization_owner_transferred" if member.get("previous_owner") else "organization_member_role_updated",
         resource_type="organization_member",
         resource_id=str(member_id),
         payload=member,
     )
     _commit_workspace_mutation(repository)
-    return {"member": member}
+    return member
+
+
+@router.delete("/organization-members/{member_id}", response_model=dict)
+def remove_organization_member(
+    member_id: int,
+    request: Request,
+    service: ProjectWorkspaceService = Depends(get_project_workspace_service),
+    repository=Depends(get_repository),
+):
+    context = get_governance_context(request)
+    if not context.tenant_id:
+        raise HTTPException(status_code=409, detail="Organization space selection is required.")
+    ensure_org_admin(context)
+    try:
+        member = service.remove_organization_member(
+            context.tenant_id,
+            member_id,
+            actor_user_id=context.actor_id,
+            actor_org_role=context.org_role,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Organization member '{member_id}' was not found.")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_audit(
+        repository,
+        context,
+        action_type="organization_member_removed",
+        resource_type="organization_member",
+        resource_id=str(member_id),
+        payload=member,
+    )
+    _commit_workspace_mutation(repository)
+    return member
 
 
 @router.post("/organization-invites", response_model=dict, status_code=status.HTTP_201_CREATED)

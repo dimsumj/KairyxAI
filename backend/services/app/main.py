@@ -498,17 +498,17 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
                 memberships_by_tenant = {str(item["tenant_id"]): item for item in tenant_memberships}
 
             if not memberships_by_tenant:
-                if not allow_missing_tenant:
-                    if requested_tenant:
-                        if repository.get_tenant(requested_tenant) is None:
-                            raise HTTPException(
-                                status_code=404,
-                                detail=f"Organization space '{requested_tenant}' was not found.",
-                            )
+                if requested_tenant:
+                    if repository.get_tenant(requested_tenant) is None:
                         raise HTTPException(
-                            status_code=403,
-                            detail=f"Organization space '{requested_tenant}' exists, but this Google account is not a member.",
+                            status_code=404,
+                            detail=f"Organization space '{requested_tenant}' was not found.",
                         )
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Organization space '{requested_tenant}' exists, but this Google account is not a member.",
+                    )
+                if not allow_missing_tenant:
                     raise HTTPException(status_code=403, detail="No organization space membership is active for this user.")
                 session.commit()
                 return GovernanceContext(

@@ -2424,6 +2424,18 @@
             letter-spacing: -0.02em;
         }
 
+        .settings-entity-title-row {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            align-items: center;
+        }
+
+        .settings-entity-supporting {
+            display: grid;
+            gap: 0.35rem;
+        }
+
         .settings-entity-meta {
             color: var(--text-secondary);
             font-size: 0.88rem;
@@ -2435,6 +2447,31 @@
             gap: 0.45rem;
             flex-wrap: wrap;
             align-items: center;
+        }
+
+        .settings-entity-action-group {
+            display: inline-flex;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .settings-team-grid {
+            display: grid;
+            gap: 0.95rem;
+        }
+
+        .settings-team-role-actions {
+            display: inline-flex;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .settings-member-joined-label {
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
         }
 
         .settings-dialog {
