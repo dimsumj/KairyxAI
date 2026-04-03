@@ -881,16 +881,40 @@ export function initializeOperatorConsole() {
                 return isGoogleProvider();
             }
 
+            function shouldRenderGoogleIdentityButtons() {
+                return Boolean(isGoogleLoginConfigured() && isGoogleProvider() && !accessToken);
+            }
+
             function ensureGoogleLoginButtonContainer(button, container, id) {
                 if (!button || !container || container.parentElement) {
                     return container;
                 }
                 container.id = id;
                 container.classList.add('hidden');
+                container.style.display = 'flex';
+                container.style.justifyContent = 'center';
                 container.style.alignItems = 'center';
+                container.style.width = '100%';
                 container.style.minHeight = '40px';
                 button.insertAdjacentElement('afterend', container);
                 return container;
+            }
+
+            function syncGoogleIdentityButtonVisibility() {
+                const usingGoogleLogin = isGoogleLoginConfigured();
+                const usingOidc = Boolean(accessToken);
+                const useRenderedButtons = shouldRenderGoogleIdentityButtons();
+                oidcLoginBtn?.classList.toggle('hidden', !usingGoogleLogin || usingOidc || useRenderedButtons);
+                workspaceGoogleLoginBtn?.classList.toggle('hidden', !usingGoogleLogin || usingOidc || useRenderedButtons);
+                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
+                    if (!container) {
+                        return;
+                    }
+                    container.classList.toggle('hidden', !useRenderedButtons);
+                    if (!useRenderedButtons) {
+                        container.innerHTML = '';
+                    }
+                });
             }
 
             function loadGoogleIdentityScript() {
@@ -981,14 +1005,11 @@ export function initializeOperatorConsole() {
                 }
                 containers.forEach((container, index) => {
                     if (!container) return;
-                    if (container.classList.contains('hidden')) {
-                        return;
-                    }
                     container.innerHTML = '';
                     window.google.accounts.id.renderButton(container, {
                         theme: 'outline',
                         size: index === 0 ? 'large' : 'large',
-                        text: 'signin_with',
+                        text: 'continue_with',
                         shape: 'pill',
                     });
                 });
@@ -998,11 +1019,7 @@ export function initializeOperatorConsole() {
                 if (!isGoogleLoginConfigured() || accessToken || !isGoogleProvider()) {
                     return;
                 }
-                oidcLoginBtn?.classList.remove('hidden');
-                workspaceGoogleLoginBtn?.classList.remove('hidden');
-                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
-                    container?.classList.add('hidden');
-                });
+                syncGoogleIdentityButtonVisibility();
             }
 
             function isAuthenticatedWorkspaceReady() {
@@ -1483,18 +1500,10 @@ export function initializeOperatorConsole() {
                     legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
                 }
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
-                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
-                if (workspaceGoogleLoginBtn) {
-                    workspaceGoogleLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
-                }
-                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
-                    if (!container) return;
-                    container.classList.add('hidden');
-                    container.innerHTML = '';
-                });
+                syncGoogleIdentityButtonVisibility();
                 if (usingGoogleLogin && !usingOidc && isGoogleProvider()) {
                     ensureGoogleIdentityButtons().catch((error) => {
                         const message = error.message || 'Google Sign-In is unavailable.';
@@ -3716,15 +3725,15 @@ export function initializeOperatorConsole() {
                         refreshWorkspaceLoginStatus(resolvedOrganizationId);
                     }
                     await ensureGoogleIdentityButtons();
+                    syncGoogleIdentityButtonVisibility();
                     disableGoogleAutoSelect();
-                    setAuthStatus('Choose a Google account to continue.');
+                    setAuthStatus('Use the Google button to continue.');
                     setWorkspaceTextStatus(
                         workspaceLoginStatus,
                         resolvedOrganizationId
-                            ? `Choose the Google account you want to use for "${resolvedOrganizationId}".`
-                            : 'Choose the Google account you want to use.',
+                            ? `Use the Google button to continue with "${resolvedOrganizationId}".`
+                            : 'Use the Google button to continue.',
                     );
-                    window.google.accounts.id.prompt();
                     return;
                 }
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
