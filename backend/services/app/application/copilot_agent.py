@@ -477,7 +477,11 @@ class CopilotAgentService:
         }
         self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status="active", name=payload["title"], payload=payload)
         self.repository.record_resource_event(SESSION_RESOURCE_TYPE, session_id, event_type="session_created", payload=payload)
-        return self.get_session(session_id)
+        return {
+            "session_state": self._session_state(payload),
+            "pending_confirmations": [],
+            "latest_turn": None,
+        }
 
     def get_session(self, session_id: str) -> Dict[str, Any]:
         payload = self._get_session_payload(session_id)

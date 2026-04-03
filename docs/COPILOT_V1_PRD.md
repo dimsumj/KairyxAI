@@ -57,7 +57,8 @@ The primary Copilot surface is now a global chat-first assistant with:
 - right-side drawer on desktop and full-screen sheet on mobile
 - conversation thread
 - bottom composer with a standard `Send` action
-- an initial disabled composer state that shows `Getting Agents Ready...` until the session is ready
+- an initial disabled composer state that shows `Getting Agents Ready...` only until the first session-create call returns
+- reuse of the existing session on drawer reopen so transcript refresh does not block the composer
 - optimistic user-message rendering plus an inline assistant thinking state after send
 - inline clarification cards that appear only when required
 - inline confirmation and artifact cards inside the transcript instead of side panels

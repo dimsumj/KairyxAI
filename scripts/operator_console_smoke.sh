@@ -85,6 +85,11 @@ exercise_copilot_agent() {
     const sendButton = document.getElementById('copilot-agent-send-btn');
     const status = document.getElementById('copilot-agent-session-status');
     if (!textarea || !sendButton || !status) throw new Error('Missing copilot agent controls');
+    await page.waitForFunction(() => {
+      const input = document.getElementById('copilot-agent-message-input');
+      const send = document.getElementById('copilot-agent-send-btn');
+      return !!input && !!send && !input.disabled && !send.disabled;
+    }, { timeout: 5000 });
 
     textarea.value = 'How do I create an Amplitude connector here? Give me a sample payload.';
     sendButton.click();

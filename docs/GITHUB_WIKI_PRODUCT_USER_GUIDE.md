@@ -830,7 +830,8 @@ The assistant can:
 The drawer now behaves like a normal chat room:
 - one transcript from top to bottom
 - one message box at the bottom
-- the first message box stays disabled with `Getting Agents Ready...` until the agent session is ready
+- the first message box stays disabled with `Getting Agents Ready...` only until the first session-create call completes
+- reopening the drawer keeps the existing session usable while the transcript refreshes in the background
 - the user message appears immediately after send
 - the assistant shows a thinking animation until the answer or next required action is ready
 - inline clarification, confirmation, and artifact cards only when they are relevant
@@ -844,8 +845,8 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | `Current context` | Read-only label | Shows the page context sent with every turn. | `Data Core / Connectors` | Help answers and safe setup tasks are biased toward the current page. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
-| `Message` | Text area | Wait until the placeholder changes from `Getting Agents Ready...` to the normal prompt, then ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant keeps the first message blocked until the session is ready, then returns grounded guidance or executes the supported setup flow. |
-| `Send` | Button | Sends the current message to the assistant after the drawer is ready. The button stays disabled during initial session bootstrap. | None | The transcript updates with the latest answer or task state. |
+| `Message` | Text area | Wait until the placeholder changes from `Getting Agents Ready...` to the normal prompt, then ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant blocks only the initial first message while the first session is created, then returns grounded guidance or executes the supported setup flow. |
+| `Send` | Button | Sends the current message to the assistant after the drawer is ready. The button stays disabled only during initial session bootstrap or when workspace access is blocked. | None | The transcript updates with the latest answer or task state. |
 | Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
