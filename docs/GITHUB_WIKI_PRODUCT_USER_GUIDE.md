@@ -830,7 +830,9 @@ The assistant can:
 The drawer now behaves like a normal chat room:
 - one transcript from top to bottom
 - one message box at the bottom
-- inline clarification, preview, confirmation, and artifact cards only when they are relevant
+- the user message appears immediately after send
+- the assistant shows a thinking animation until the answer or next required action is ready
+- inline clarification, confirmation, and artifact cards only when they are relevant
 - no persistent side panels for agent workflow state
 
 The `Insight Copilot` page now acts as the advanced/manual fallback for direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` usage.
@@ -843,8 +845,8 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
 | `Message` | Text area | Ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant returns grounded guidance or executes the supported setup flow. |
 | `Send` | Button | Sends the current message to the assistant. | None | The transcript updates with the latest answer or task state. |
+| Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
-| Inline execution preview | Conditional card | Read-only. Shows what the agent plans to do before or while it executes safe steps. | None | Step list, risk level, and summary appear in the transcript. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
 | Inline artifact card | Conditional resource card | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |

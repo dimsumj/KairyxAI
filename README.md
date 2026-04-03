@@ -129,7 +129,7 @@ Primary backend surface:
 Insight Copilot is the operator-facing analysis layer:
 
 - global AI assistant bubble for grounded product help, contextual samples, dashboard summary, cohort setup, experiment setup, and connection setup from any page
-- a single-column chat drawer with inline clarifications, execution preview, artifact links, and confirmation gating for risky actions
+- a single-column chat drawer with immediate user messages, an assistant thinking state, inline clarifications, artifact links, and confirmation gating for risky actions
 - manual `query / explain / recommend / report` tools on the Insight Copilot page as the advanced fallback
 - natural-language metric query
 - anomaly explanation

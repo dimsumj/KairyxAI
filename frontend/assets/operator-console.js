@@ -8259,7 +8259,9 @@ export function initializeOperatorConsole() {
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
             let copilotAgentLastResponse = null;
+            let copilotAgentLastTurns = [];
             let copilotAgentDrawerOpen = false;
+            let copilotAgentPendingTurn = null;
 
             function setInlineStatus(element, message = '', isError = false) {
                 if (!element) return;
@@ -9198,33 +9200,8 @@ export function initializeOperatorConsole() {
                 }).join('');
             }
 
-            function renderCopilotAgentInlineCards({ clarifications = [], preview = null, confirmations = [], artifacts = [] } = {}) {
+            function renderCopilotAgentInlineCards({ clarifications = [], confirmations = [], artifacts = [] } = {}) {
                 const cards = [];
-                if (preview) {
-                    const steps = Array.isArray(preview.steps) ? preview.steps : [];
-                    cards.push(`
-                        <div class="copilot-agent-inline-card">
-                            <div class="copilot-agent-inline-meta">
-                                <span class="copilot-agent-inline-card-title">Execution Preview</span>
-                                <span class="pill">${escapeHtml(preview.risk_level || 'low')}</span>
-                                <span class="pill">${escapeHtml(preview.readiness || 'ready')}</span>
-                            </div>
-                            <div class="copilot-agent-inline-card-copy">
-                                <div>${escapeHtml(preview.summary || 'Preview ready.')}</div>
-                                ${steps.length ? `<div class="copilot-agent-preview-steps">${steps.map((step) => `
-                                    <div class="copilot-agent-preview-step">
-                                        <div class="copilot-agent-inline-meta">
-                                            <span class="copilot-agent-step-title">${escapeHtml(step.title || step.action_type || 'Step')}</span>
-                                            <span class="pill">${escapeHtml(step.status || 'pending')}</span>
-                                            <span class="pill">${escapeHtml(step.risk_level || 'low')}</span>
-                                        </div>
-                                        <div>${escapeHtml(step.summary || '')}</div>
-                                    </div>
-                                `).join('')}</div>` : ''}
-                            </div>
-                        </div>
-                    `);
-                }
                 if (clarifications.length) {
                     cards.push(`
                         <div class="copilot-agent-inline-card">
@@ -9336,6 +9313,43 @@ export function initializeOperatorConsole() {
                 });
             }
 
+            function renderCopilotAgentPendingTurn(pendingTurn) {
+                if (!pendingTurn) {
+                    return '';
+                }
+                const createdAt = pendingTurn.created_at || new Date().toISOString();
+                const isError = pendingTurn.status === 'error';
+                const assistantBody = isError
+                    ? `<div class="copilot-agent-turn-body">${escapeHtml(pendingTurn.error_message || 'Failed to get an agent response.')}</div>`
+                    : `
+                        <div class="copilot-agent-turn-body">
+                            <span class="copilot-agent-thinking-label">Agent is thinking</span>
+                            <span class="copilot-agent-thinking-dots" aria-hidden="true">
+                                <span></span><span></span><span></span>
+                            </span>
+                        </div>
+                    `;
+                return `
+                    <div class="copilot-agent-turn is-user is-pending">
+                        <div class="copilot-agent-turn-header">
+                            <strong>User</strong>
+                            <span>${escapeHtml(formatDateTime(createdAt))}</span>
+                        </div>
+                        <div class="copilot-agent-turn-body">${escapeHtml(pendingTurn.user_message || '')}</div>
+                    </div>
+                    <div class="copilot-agent-turn ${isError ? 'is-error' : 'is-thinking'}">
+                        <div class="copilot-agent-turn-header">
+                            <div class="copilot-agent-inline-meta">
+                                <strong>Agent</strong>
+                                <span class="pill">${isError ? 'error' : 'thinking'}</span>
+                            </div>
+                            <span>${escapeHtml(formatDateTime(createdAt))}</span>
+                        </div>
+                        ${assistantBody}
+                    </div>
+                `;
+            }
+
             function renderCopilotAgentThread(turns = [], extras = {}) {
                 if (!copilotAgentThread) return;
                 const rows = [];
@@ -9364,6 +9378,10 @@ export function initializeOperatorConsole() {
                             </div>
                         `);
                     });
+                }
+                const pendingTurn = renderCopilotAgentPendingTurn(copilotAgentPendingTurn);
+                if (pendingTurn) {
+                    rows.push(pendingTurn);
                 }
                 const inlineCards = renderCopilotAgentInlineCards(extras);
                 if (inlineCards) {
@@ -9460,6 +9478,8 @@ export function initializeOperatorConsole() {
 
             function renderCopilotAgentWorkspace(payload = {}, turns = []) {
                 copilotAgentLastResponse = payload || {};
+                copilotAgentPendingTurn = null;
+                copilotAgentLastTurns = Array.isArray(turns) ? turns : [];
                 const sessionState = payload.session_state || {};
                 copilotAgentSessionId = sessionState.session_id || copilotAgentSessionId;
                 if (sessionState.session_id) {
@@ -9468,9 +9488,8 @@ export function initializeOperatorConsole() {
                         `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
                     );
                 }
-                renderCopilotAgentThread(turns, {
+                renderCopilotAgentThread(copilotAgentLastTurns, {
                     clarifications: payload.clarifications || sessionState.latest_clarifications || [],
-                    preview: payload.execution_preview || sessionState.latest_execution_preview || null,
                     confirmations: payload.pending_confirmations || [],
                     artifacts: payload.artifacts || sessionState.latest_artifacts || [],
                 });
@@ -9490,7 +9509,14 @@ export function initializeOperatorConsole() {
                     },
                 });
                 copilotAgentSessionId = payload.session_state?.session_id || null;
-                renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
+                if (!copilotAgentPendingTurn) {
+                    renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
+                } else if (payload.session_state?.session_id) {
+                    setInlineStatus(
+                        copilotAgentSessionStatus,
+                        `Session ${payload.session_state.session_id} · ${payload.session_state.status || 'active'}${payload.session_state.current_intent ? ` · ${payload.session_state.current_intent}` : ''}`,
+                    );
+                }
                 return copilotAgentSessionId;
             }
 
@@ -9553,8 +9579,19 @@ export function initializeOperatorConsole() {
                     setInlineStatus(copilotAgentSendStatus, 'Enter a request for the global assistant.', true);
                     return;
                 }
+                const inputMessage = String(copilotAgentMessageInput?.value ?? '').trim();
+                const shouldClearComposer = Boolean(copilotAgentMessageInput) && message === inputMessage;
                 try {
-                    setInlineStatus(copilotAgentSendStatus, 'Sending request to the global assistant...');
+                    if (shouldClearComposer) {
+                        copilotAgentMessageInput.value = '';
+                    }
+                    setInlineStatus(copilotAgentSendStatus, '');
+                    copilotAgentPendingTurn = {
+                        created_at: new Date().toISOString(),
+                        user_message: message,
+                        status: 'thinking',
+                    };
+                    renderCopilotAgentThread(copilotAgentLastTurns, {});
                     await ensureCopilotAgentSession(false);
                     const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
                         method: 'POST',
@@ -9565,11 +9602,15 @@ export function initializeOperatorConsole() {
                     });
                     const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`);
                     renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
-                    if (copilotAgentMessageInput && message === String(copilotAgentMessageInput.value || '').trim()) {
-                        copilotAgentMessageInput.value = '';
-                    }
-                    setInlineStatus(copilotAgentSendStatus, 'Agent response updated.');
+                    setInlineStatus(copilotAgentSendStatus, '');
                 } catch (error) {
+                    copilotAgentPendingTurn = {
+                        created_at: copilotAgentPendingTurn?.created_at || new Date().toISOString(),
+                        user_message: message,
+                        status: 'error',
+                        error_message: error.message || 'Failed to send agent message.',
+                    };
+                    renderCopilotAgentThread(copilotAgentLastTurns, {});
                     setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to send agent message.', true);
                 }
             }
