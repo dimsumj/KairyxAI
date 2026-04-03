@@ -92,7 +92,12 @@ def upgrade() -> None:
         sa.text(
             """
             INSERT INTO tenants_v1 (tenant_id, name, status, created_at, updated_at)
-            SELECT :tenant_id, :name, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            SELECT
+                CAST(:tenant_id AS VARCHAR(64)),
+                CAST(:name AS VARCHAR(255)),
+                'active',
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM tenants_v1

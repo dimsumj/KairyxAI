@@ -26,6 +26,14 @@ export function initializeOperatorConsole() {
             const topbarSearchForm = document.getElementById('topbar-search-form');
             const topbarSearchInput = document.getElementById('topbar-search-input');
             const topbarSearchStatus = document.getElementById('topbar-search-status');
+            const copilotAgentLauncherBtn = document.getElementById('copilot-agent-launcher-btn');
+            const copilotAgentLauncherContext = document.getElementById('copilot-agent-launcher-context');
+            const copilotAgentLauncherBadge = document.getElementById('copilot-agent-launcher-badge');
+            const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
+            const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
+            const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
+            const copilotAgentCurrentContext = document.getElementById('copilot-agent-current-context');
+            const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
             const settingsAuthCopy = document.getElementById('settings-auth-copy');
@@ -220,7 +228,7 @@ export function initializeOperatorConsole() {
                 },
                 'insight-copilot': {
                     title: 'Insight Copilot',
-                    subtitle: 'Run query, explain, recommend, and report flows against curated evidence with query logs, anomaly tracking, and archived reports.',
+                    subtitle: 'Use the global AI assistant bubble for grounded help, summaries, and safe setup tasks, then use the manual query, explain, recommend, and report tools here when you need direct control.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M8 15h8M8 11h8M10 19h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -233,24 +241,6 @@ export function initializeOperatorConsole() {
                         { id: 'insight-copilot-recommend', label: 'Recommend', pageId: 'insight-copilot', targetId: 'copilot-recommend-section' },
                         { id: 'insight-copilot-report', label: 'Report', pageId: 'insight-copilot', targetId: 'copilot-report-section' },
                         { id: 'insight-copilot-evidence', label: 'Evidence & Logs', pageId: 'insight-copilot', targetId: 'copilot-evidence-section' },
-                    ],
-                },
-                'help': {
-                    title: 'Help',
-                    subtitle: 'Read the current v1 manual, follow the end-to-end operator path, and copy sample SQL or JSON payloads that match the live UI.',
-                    icon: `
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
-                            <path d="M9.5 9.5a2.5 2.5 0 1 1 4.28 1.77c-.76.75-1.78 1.32-1.78 2.73" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path>
-                            <circle cx="12" cy="17" r="1" fill="currentColor"></circle>
-                        </svg>
-                    `,
-                    items: [
-                        { id: 'help-overview', label: 'Overview', pageId: 'help', targetId: 'help-overview-section' },
-                        { id: 'help-quickstart', label: 'Quick Start', pageId: 'help', targetId: 'help-quickstart-section' },
-                        { id: 'help-roles', label: 'Role Guide', pageId: 'help', targetId: 'help-roles-section' },
-                        { id: 'help-samples', label: 'Samples', pageId: 'help', targetId: 'help-samples-section' },
-                        { id: 'help-common-issues', label: 'Common Issues', pageId: 'help', targetId: 'help-issues-section' },
                     ],
                 },
                 'settings': {
@@ -1279,6 +1269,7 @@ export function initializeOperatorConsole() {
                 const gated = Boolean(workspaceOverlayMode) || isWorkspaceSelectionRequired();
                 syncWorkspaceBootClass();
                 document.body.classList.toggle('workspace-gated', gated);
+                syncCopilotAgentAvailability();
             }
 
             function syncWorkspaceBootClass() {
@@ -1673,6 +1664,7 @@ export function initializeOperatorConsole() {
                 if (moduleId === 'settings') {
                     syncSettingsTabState(item.id);
                 }
+                syncCopilotAgentContextChrome();
                 activatePage(item.pageId, { reload: reloadPage });
                 scrollToModuleItem(item, scrollBehavior, { forcePageTop });
                 if (closeSidebar) {
@@ -7354,6 +7346,17 @@ export function initializeOperatorConsole() {
             const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
             const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
             const copilotReportsList = document.getElementById('copilot-reports-list');
+            const copilotAgentSessionStatus = document.getElementById('copilot-agent-session-status');
+            const copilotAgentThread = document.getElementById('copilot-agent-thread');
+            const copilotAgentMessageInput = document.getElementById('copilot-agent-message-input');
+            const copilotAgentSendStatus = document.getElementById('copilot-agent-send-status');
+            const copilotAgentClarifications = document.getElementById('copilot-agent-clarifications');
+            const copilotAgentClarificationForm = document.getElementById('copilot-agent-clarification-form');
+            const copilotAgentPreviewSummary = document.getElementById('copilot-agent-preview-summary');
+            const copilotAgentPreviewSteps = document.getElementById('copilot-agent-preview-steps');
+            const copilotAgentPreviewOutput = document.getElementById('copilot-agent-preview-output');
+            const copilotAgentConfirmations = document.getElementById('copilot-agent-confirmations');
+            const copilotAgentArtifacts = document.getElementById('copilot-agent-artifacts');
             const actionHistoryRefreshBtn = document.getElementById('action-history-refresh-btn');
             const actionHistoryStatus = document.getElementById('action-history-status');
             const serviceHealthStatus = document.getElementById('service-health-status');
@@ -7369,6 +7372,9 @@ export function initializeOperatorConsole() {
             let selectedWorkflowId = null;
             let selectedTemplateId = null;
             let cachedSavedQueries = [];
+            let copilotAgentSessionId = null;
+            let copilotAgentLastResponse = null;
+            let copilotAgentDrawerOpen = false;
 
             function setInlineStatus(element, message = '', isError = false) {
                 if (!element) return;
@@ -8184,6 +8190,502 @@ export function initializeOperatorConsole() {
                 await loadExperimentWorkspace();
             }
 
+            function getCopilotAgentUiContext() {
+                return {
+                    active_module_id: activeModuleId,
+                    active_page_id: activePageId,
+                    selected_cohort_id: selectedAudienceCohortId || null,
+                    selected_workflow_id: selectedWorkflowId || null,
+                    current_experiment_id: getCurrentExperimentId(),
+                };
+            }
+
+            function getCopilotAgentContextLabel() {
+                const moduleConfig = moduleConfigs[activeModuleId];
+                const activeItem = findModuleItem(activeModuleId, activeNavItemId);
+                if (moduleConfig && activeItem && activeItem.label) {
+                    return `${moduleConfig.title} / ${activeItem.label}`;
+                }
+                return moduleConfig?.title || 'Current page';
+            }
+
+            function syncCopilotAgentContextChrome() {
+                const label = getCopilotAgentContextLabel();
+                if (copilotAgentLauncherContext) {
+                    copilotAgentLauncherContext.textContent = label;
+                }
+                if (copilotAgentCurrentContext) {
+                    copilotAgentCurrentContext.textContent = `Context: ${label}`;
+                }
+            }
+
+            function syncCopilotAgentLauncherBadge(count = null) {
+                if (!copilotAgentLauncherBadge) return;
+                const resolvedCount = Number(
+                    count ?? copilotAgentLastResponse?.session_state?.pending_confirmation_count ?? 0,
+                );
+                copilotAgentLauncherBadge.textContent = String(resolvedCount);
+                copilotAgentLauncherBadge.classList.toggle('hidden', resolvedCount <= 0);
+            }
+
+            function renderCopilotAgentMessageBody(message, { rich = false } = {}) {
+                const raw = String(message || '').trim();
+                if (!raw) {
+                    return '<div class="subtle">No message content.</div>';
+                }
+                if (!rich) {
+                    return escapeHtml(raw);
+                }
+                const segments = raw.split(/(```[\s\S]*?```)/g).filter(Boolean);
+                const rendered = segments.map((segment, segmentIndex) => {
+                    if (segment.startsWith('```') && segment.endsWith('```')) {
+                        const match = /^```([^\n`]*)\n?([\s\S]*?)```$/m.exec(segment);
+                        const language = (match?.[1] || '').trim();
+                        const code = String(match?.[2] || '').replace(/\s+$/, '');
+                        const encoded = encodeURIComponent(code);
+                        return `
+                            <div class="copilot-agent-code-block">
+                                <div class="copilot-agent-code-header">
+                                    <span>${escapeHtml(language || 'text')}</span>
+                                    <button type="button" class="secondary-button" data-copilot-copy-code="${encoded}" data-copilot-copy-index="${segmentIndex}">Copy</button>
+                                </div>
+                                <pre><code>${escapeHtml(code)}</code></pre>
+                            </div>
+                        `;
+                    }
+                    const lines = segment.split('\n');
+                    const blocks = [];
+                    let bullets = [];
+                    const flushBullets = () => {
+                        if (!bullets.length) return;
+                        blocks.push(`<ul>${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`);
+                        bullets = [];
+                    };
+                    lines.forEach((line) => {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                            flushBullets();
+                            return;
+                        }
+                        if (/^[-*]\s+/.test(trimmed)) {
+                            bullets.push(trimmed.replace(/^[-*]\s+/, ''));
+                            return;
+                        }
+                        flushBullets();
+                        blocks.push(`<p>${escapeHtml(trimmed)}</p>`);
+                    });
+                    flushBullets();
+                    return blocks.join('');
+                });
+                return rendered.join('');
+            }
+
+            function renderCopilotAgentThread(turns = []) {
+                if (!copilotAgentThread) return;
+                if (!Array.isArray(turns) || turns.length === 0) {
+                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
+                    return;
+                }
+                const rows = [];
+                turns.forEach((turn) => {
+                    rows.push(`
+                        <div class="copilot-agent-turn is-user">
+                            <div class="copilot-agent-turn-header">
+                                <strong>User</strong>
+                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                            </div>
+                            <div class="copilot-agent-turn-body">${escapeHtml(turn.user_message || '')}</div>
+                        </div>
+                    `);
+                    rows.push(`
+                        <div class="copilot-agent-turn">
+                            <div class="copilot-agent-turn-header">
+                                <div class="copilot-agent-inline-meta">
+                                    <strong>Agent</strong>
+                                    <span class="pill">${escapeHtml(turn.intent || 'task')}</span>
+                                    <span class="pill">${escapeHtml(turn.status || 'active')}</span>
+                                </div>
+                                <span>${escapeHtml(formatDateTime(turn.created_at))}</span>
+                            </div>
+                            <div class="copilot-agent-turn-body rich-text">${renderCopilotAgentMessageBody(turn.assistant_message || '', { rich: true })}</div>
+                        </div>
+                    `);
+                });
+                copilotAgentThread.innerHTML = rows.join('');
+                copilotAgentThread.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
+                        try {
+                            await navigator.clipboard.writeText(code);
+                            button.textContent = 'Copied';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1200);
+                        } catch (error) {
+                            button.textContent = 'Copy failed';
+                            window.setTimeout(() => {
+                                button.textContent = 'Copy';
+                            }, 1600);
+                        }
+                    });
+                });
+            }
+
+            function renderCopilotAgentClarifications(items = []) {
+                if (!copilotAgentClarifications || !copilotAgentClarificationForm) return;
+                const clarifications = Array.isArray(items) ? items : [];
+                if (clarifications.length === 0) {
+                    copilotAgentClarifications.innerHTML = '<div class="list-empty">Missing inputs will be listed here.</div>';
+                    copilotAgentClarificationForm.innerHTML = '';
+                    document.getElementById('copilot-agent-submit-clarifications-btn').disabled = true;
+                    return;
+                }
+                copilotAgentClarifications.innerHTML = clarifications.map((item) => `
+                    <div class="copilot-agent-clarification-item">
+                        <div class="copilot-agent-clarification-label">${escapeHtml(item.label || item.key || 'Input')}</div>
+                        <div>${escapeHtml(item.question || '')}</div>
+                        ${Array.isArray(item.options) && item.options.length ? `<div class="subtle">Options: ${escapeHtml(item.options.join(', '))}</div>` : ''}
+                    </div>
+                `).join('');
+                copilotAgentClarificationForm.innerHTML = clarifications.map((item) => {
+                    const key = String(item.key || '');
+                    const inputType = String(item.input_type || 'text');
+                    if (inputType === 'choice') {
+                        return `
+                            <label class="copilot-agent-form-row">
+                                <span>${escapeHtml(item.label || key)}</span>
+                                <select data-clarification-key="${escapeHtml(key)}" data-clarification-type="${escapeHtml(inputType)}" ${item.required ? 'required' : ''}>
+                                    <option value="">Select...</option>
+                                    ${(item.options || []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}
+                                </select>
+                            </label>
+                        `;
+                    }
+                    if (inputType === 'code') {
+                        return `
+                            <label class="copilot-agent-form-row">
+                                <span>${escapeHtml(item.label || key)}</span>
+                                <textarea data-clarification-key="${escapeHtml(key)}" data-clarification-type="${escapeHtml(inputType)}" ${item.required ? 'required' : ''} style="min-height: 7rem; font-family: monospace;"></textarea>
+                            </label>
+                        `;
+                    }
+                    return `
+                        <label class="copilot-agent-form-row">
+                            <span>${escapeHtml(item.label || key)}</span>
+                            <input type="text" data-clarification-key="${escapeHtml(key)}" data-clarification-type="${escapeHtml(inputType)}" ${item.required ? 'required' : ''}>
+                        </label>
+                    `;
+                }).join('');
+                document.getElementById('copilot-agent-submit-clarifications-btn').disabled = false;
+            }
+
+            function renderCopilotAgentPreview(preview = null) {
+                if (!copilotAgentPreviewSummary || !copilotAgentPreviewSteps || !copilotAgentPreviewOutput) return;
+                if (!preview) {
+                    copilotAgentPreviewSummary.textContent = 'The agent preview will appear here.';
+                    copilotAgentPreviewSteps.innerHTML = '<div class="list-empty">No preview steps yet.</div>';
+                    renderJsonOutput(copilotAgentPreviewOutput, null, 'Execution preview details will appear here.');
+                    return;
+                }
+                copilotAgentPreviewSummary.textContent = preview.summary || 'Preview ready.';
+                const steps = Array.isArray(preview.steps) ? preview.steps : [];
+                copilotAgentPreviewSteps.innerHTML = steps.length ? steps.map((step) => `
+                    <div class="copilot-agent-preview-step">
+                        <div class="copilot-agent-inline-meta">
+                            <span class="copilot-agent-step-title">${escapeHtml(step.title || step.action_type || 'Step')}</span>
+                            <span class="pill">${escapeHtml(step.status || 'pending')}</span>
+                            <span class="pill">${escapeHtml(step.risk_level || 'low')}</span>
+                        </div>
+                        <div>${escapeHtml(step.summary || '')}</div>
+                    </div>
+                `).join('') : '<div class="list-empty">No preview steps yet.</div>';
+                renderJsonOutput(copilotAgentPreviewOutput, preview, 'Execution preview details will appear here.');
+            }
+
+            function renderCopilotAgentConfirmations(items = []) {
+                if (!copilotAgentConfirmations) return;
+                const confirmations = Array.isArray(items) ? items : [];
+                if (confirmations.length === 0) {
+                    copilotAgentConfirmations.innerHTML = '<div class="list-empty">No confirmations are waiting.</div>';
+                    return;
+                }
+                copilotAgentConfirmations.innerHTML = confirmations.map((item) => `
+                    <div class="copilot-agent-confirmation-item">
+                        <div class="copilot-agent-inline-meta">
+                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
+                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
+                        </div>
+                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
+                        <div class="copilot-agent-confirmation-actions">
+                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
+                        </div>
+                    </div>
+                `).join('');
+                copilotAgentConfirmations.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        await confirmCopilotAgentAction(button.dataset.copilotAgentConfirm);
+                    });
+                });
+            }
+
+            function renderCopilotAgentArtifacts(items = []) {
+                if (!copilotAgentArtifacts) return;
+                const artifacts = Array.isArray(items) ? items : [];
+                if (artifacts.length === 0) {
+                    copilotAgentArtifacts.innerHTML = '<div class="list-empty">Created or updated resources will appear here.</div>';
+                    return;
+                }
+                copilotAgentArtifacts.innerHTML = artifacts.map((item, index) => `
+                    <div class="copilot-agent-artifact-item">
+                        <div class="copilot-agent-inline-meta">
+                            <span class="copilot-agent-artifact-title">${escapeHtml(item.label || item.resource_id || 'Artifact')}</span>
+                            <span class="pill">${escapeHtml(item.resource_type || 'resource')}</span>
+                            <span class="pill">${escapeHtml(item.status || 'ready')}</span>
+                        </div>
+                        <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
+                        <div class="copilot-agent-artifact-actions">
+                            <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
+                        </div>
+                    </div>
+                `).join('');
+                copilotAgentArtifacts.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const artifact = artifacts[Number(button.dataset.copilotAgentArtifactIndex)];
+                        await openCopilotAgentArtifact(artifact);
+                    });
+                });
+            }
+
+            async function openCopilotAgentArtifact(artifact) {
+                if (!artifact) return;
+                const resourceType = String(artifact.resource_type || '');
+                if (resourceType === 'cohort') {
+                    activateModule('audience-engine', 'audience-engine-cohorts');
+                    await loadAudienceEngine();
+                    const cohortId = artifact.focus?.cohort_id || artifact.resource_id;
+                    if (cohortId) {
+                        await loadAudienceCohortDetails(cohortId);
+                    }
+                    return;
+                }
+                if (resourceType === 'experiment') {
+                    const experimentId = artifact.focus?.experiment_id || artifact.resource_id;
+                    if (experimentId) {
+                        document.getElementById('experiment-id-input').value = experimentId;
+                    }
+                    activateModule('experiment-hub', 'experiment-hub-summary');
+                    await loadExperimentWorkspace();
+                    return;
+                }
+                if (resourceType === 'saved_query') {
+                    activateModule('audience-engine', 'audience-engine-sql');
+                    await loadAudienceEngine();
+                    return;
+                }
+                activateModule('data-core', 'data-core-connectors');
+            }
+
+            function syncCopilotAgentAvailability() {
+                const available = !shouldBlockProtectedAppData();
+                if (copilotAgentLauncherBtn) {
+                    copilotAgentLauncherBtn.classList.toggle('hidden', !available);
+                    copilotAgentLauncherBtn.disabled = !available;
+                    copilotAgentLauncherBtn.setAttribute('aria-hidden', available ? 'false' : 'true');
+                    copilotAgentLauncherBtn.setAttribute('aria-expanded', copilotAgentDrawerOpen ? 'true' : 'false');
+                }
+                if (!available) {
+                    copilotAgentDrawerOpen = false;
+                    document.body.classList.remove('copilot-agent-drawer-open');
+                    copilotAgentDrawer?.classList.add('hidden');
+                    copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
+                    copilotAgentDrawerBackdrop?.classList.add('hidden');
+                    copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    if (copilotAgentSessionStatus) {
+                        setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(authSessionState), true);
+                    }
+                }
+                syncCopilotAgentContextChrome();
+                syncCopilotAgentLauncherBadge();
+            }
+
+            async function setCopilotAgentDrawerOpen(open) {
+                const nextState = Boolean(open);
+                if (!nextState) {
+                    copilotAgentDrawerOpen = false;
+                    document.body.classList.remove('copilot-agent-drawer-open');
+                    copilotAgentDrawer?.classList.add('hidden');
+                    copilotAgentDrawer?.setAttribute('aria-hidden', 'true');
+                    copilotAgentDrawerBackdrop?.classList.add('hidden');
+                    copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'true');
+                    copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'false');
+                    return;
+                }
+                if (shouldBlockProtectedAppData()) {
+                    syncCopilotAgentAvailability();
+                    return;
+                }
+                copilotAgentDrawerOpen = true;
+                document.body.classList.add('copilot-agent-drawer-open');
+                copilotAgentDrawer?.classList.remove('hidden');
+                copilotAgentDrawer?.setAttribute('aria-hidden', 'false');
+                copilotAgentDrawerBackdrop?.classList.remove('hidden');
+                copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'false');
+                copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
+                syncCopilotAgentContextChrome();
+                await loadCopilotAgentWorkspace(false);
+                copilotAgentMessageInput?.focus();
+            }
+
+            function renderCopilotAgentWorkspace(payload = {}, turns = []) {
+                copilotAgentLastResponse = payload || {};
+                const sessionState = payload.session_state || {};
+                copilotAgentSessionId = sessionState.session_id || copilotAgentSessionId;
+                if (sessionState.session_id) {
+                    setInlineStatus(
+                        copilotAgentSessionStatus,
+                        `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
+                    );
+                }
+                renderCopilotAgentThread(turns);
+                renderCopilotAgentClarifications(payload.clarifications || sessionState.latest_clarifications || []);
+                renderCopilotAgentPreview(payload.execution_preview || sessionState.latest_execution_preview || null);
+                renderCopilotAgentConfirmations(payload.pending_confirmations || []);
+                renderCopilotAgentArtifacts(payload.artifacts || sessionState.latest_artifacts || []);
+                syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
+            }
+
+            async function ensureCopilotAgentSession(forceNew = false) {
+                if (copilotAgentSessionId && !forceNew) {
+                    return copilotAgentSessionId;
+                }
+                setInlineStatus(copilotAgentSessionStatus, 'Creating agent session...');
+                const payload = await apiRequest('/copilot/agent/sessions', {
+                    method: 'POST',
+                    body: {
+                        title: 'Insight Copilot Agent',
+                        ui_context: getCopilotAgentUiContext(),
+                    },
+                });
+                copilotAgentSessionId = payload.session_state?.session_id || null;
+                renderCopilotAgentWorkspace(payload, payload.latest_turn ? [payload.latest_turn] : []);
+                return copilotAgentSessionId;
+            }
+
+            function buildCopilotAgentClarificationMessage() {
+                const fields = Array.from(copilotAgentClarificationForm?.querySelectorAll('[data-clarification-key]') || []);
+                if (!fields.length) {
+                    return '';
+                }
+                const lines = [];
+                for (const field of fields) {
+                    const key = field.dataset.clarificationKey || '';
+                    const type = field.dataset.clarificationType || 'text';
+                    const value = String(field.value || '').trim();
+                    if (!value) {
+                        if (field.required) {
+                            field.focus();
+                            throw new Error(`Missing clarification for ${key}.`);
+                        }
+                        continue;
+                    }
+                    if (type === 'code' && key === 'sql') {
+                        lines.push(`sql:\n\`\`\`sql\n${value}\n\`\`\``);
+                        continue;
+                    }
+                    if (type === 'code' && (key === 'definition_json' || key === 'members')) {
+                        lines.push(`${key}:\n\`\`\`json\n${value}\n\`\`\``);
+                        continue;
+                    }
+                    lines.push(`${key}: ${value}`);
+                }
+                return lines.join('\n');
+            }
+
+            async function loadCopilotAgentWorkspace(forceNew = false) {
+                try {
+                    if (forceNew || !copilotAgentSessionId) {
+                        await ensureCopilotAgentSession(forceNew);
+                    }
+                    if (!copilotAgentSessionId) {
+                        return;
+                    }
+                    const [sessionPayload, turnsPayload] = await Promise.all([
+                        apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}`),
+                        apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`),
+                    ]);
+                    renderCopilotAgentWorkspace(sessionPayload, turnsPayload.items || []);
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        renderCopilotAgentThread([]);
+                        renderCopilotAgentClarifications([]);
+                        renderCopilotAgentPreview(null);
+                        renderCopilotAgentConfirmations([]);
+                        renderCopilotAgentArtifacts([]);
+                        setInlineStatus(copilotAgentSessionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        return;
+                    }
+                    setInlineStatus(copilotAgentSessionStatus, error.message || 'Failed to load the global assistant.', true);
+                }
+            }
+
+            async function sendCopilotAgentMessage(messageOverride = null) {
+                const message = String(messageOverride ?? copilotAgentMessageInput?.value ?? '').trim();
+                if (!message) {
+                    setInlineStatus(copilotAgentSendStatus, 'Enter a request for the global assistant.', true);
+                    return;
+                }
+                try {
+                    setInlineStatus(copilotAgentSendStatus, 'Sending request to the global assistant...');
+                    await ensureCopilotAgentSession(false);
+                    const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
+                        method: 'POST',
+                        body: {
+                            message,
+                            ui_context: getCopilotAgentUiContext(),
+                        },
+                    });
+                    const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`);
+                    renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
+                    if (copilotAgentMessageInput && message === String(copilotAgentMessageInput.value || '').trim()) {
+                        copilotAgentMessageInput.value = '';
+                    }
+                    setInlineStatus(copilotAgentSendStatus, 'Agent response updated.');
+                } catch (error) {
+                    setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to send agent message.', true);
+                }
+            }
+
+            async function submitCopilotAgentClarifications() {
+                try {
+                    const message = buildCopilotAgentClarificationMessage();
+                    if (!message) {
+                        setInlineStatus(copilotAgentSendStatus, 'There are no clarification values to submit.', true);
+                        return;
+                    }
+                    await sendCopilotAgentMessage(message);
+                } catch (error) {
+                    setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to submit clarifications.', true);
+                }
+            }
+
+            async function confirmCopilotAgentAction(actionId) {
+                if (!actionId) return;
+                try {
+                    setInlineStatus(copilotAgentSendStatus, 'Confirming agent action...');
+                    const payload = await apiRequest(`/copilot/agent/actions/${encodeURIComponent(actionId)}/confirm`, {
+                        method: 'POST',
+                        body: {
+                            note: 'Confirmed from the global AI assistant.',
+                        },
+                    });
+                    const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(payload.session_state.session_id)}/turns`);
+                    renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
+                    setInlineStatus(copilotAgentSendStatus, 'Agent action confirmed.');
+                } catch (error) {
+                    setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to confirm agent action.', true);
+                }
+            }
+
             function renderCopilotMetaList(container, items = [], label) {
                 renderSimpleTable(
                     container,
@@ -8328,6 +8830,50 @@ export function initializeOperatorConsole() {
             });
             document.getElementById('copilot-load-query-log-btn').addEventListener('click', loadCopilotQueryLog);
             document.getElementById('copilot-refresh-meta-btn').addEventListener('click', loadCopilotMeta);
+            document.getElementById('copilot-agent-send-btn').addEventListener('click', () => sendCopilotAgentMessage());
+            document.getElementById('copilot-agent-new-session-btn').addEventListener('click', async () => {
+                copilotAgentSessionId = null;
+                copilotAgentLastResponse = null;
+                renderCopilotAgentThread([]);
+                renderCopilotAgentClarifications([]);
+                renderCopilotAgentPreview(null);
+                renderCopilotAgentConfirmations([]);
+                renderCopilotAgentArtifacts([]);
+                syncCopilotAgentLauncherBadge(0);
+                await loadCopilotAgentWorkspace(true);
+            });
+            document.getElementById('copilot-agent-submit-clarifications-btn').addEventListener('click', submitCopilotAgentClarifications);
+            copilotAgentMessageInput.addEventListener('keydown', (event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    sendCopilotAgentMessage();
+                }
+            });
+            document.querySelectorAll('[data-agent-starter-message]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const starterMessage = button.dataset.agentStarterMessage || '';
+                    await setCopilotAgentDrawerOpen(true);
+                    copilotAgentMessageInput.value = starterMessage;
+                    await sendCopilotAgentMessage(starterMessage);
+                });
+            });
+            copilotAgentLauncherBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(!copilotAgentDrawerOpen);
+            });
+            copilotAgentCloseBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(false);
+            });
+            copilotAgentDrawerBackdrop?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(false);
+            });
+            copilotOpenGlobalAgentBtn?.addEventListener('click', async () => {
+                await setCopilotAgentDrawerOpen(true);
+            });
+            document.addEventListener('keydown', async (event) => {
+                if (event.key === 'Escape' && copilotAgentDrawerOpen) {
+                    await setCopilotAgentDrawerOpen(false);
+                }
+            });
             document.getElementById('templates-refresh-btn').addEventListener('click', loadScenarioTemplates);
             document.getElementById('template-instantiate-btn').addEventListener('click', instantiateScenarioTemplate);
             document.getElementById('service-health-refresh-btn').addEventListener('click', loadServiceHealthStatus);
@@ -8382,6 +8928,7 @@ export function initializeOperatorConsole() {
                 checkBackendStatus();
                 setInterval(checkBackendStatus, HEALTH_CHECK_INTERVAL_MS);
                 activateModule('data-core');
+                syncCopilotAgentAvailability();
             });
 
             // Theme mode logic

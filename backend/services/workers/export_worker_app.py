@@ -9,8 +9,10 @@ from fastapi import FastAPI, HTTPException, Request
 from app.application.exports import ExportService
 from app.core.db import init_db, session_scope
 from app.core.request_context import RequestContext, request_context
-from app.core.settings import get_settings
+from app.core.settings import get_settings, validate_runtime_settings
+from app.core.worker_auth import require_worker_auth
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
+from workers.queue_runtime import start_queue_poller, stop_queue_poller
 
 
 app = FastAPI(title="KairyxAI Export Worker")
@@ -30,14 +32,18 @@ def health_live() -> dict:
     return {"status": "ok", "service": "export-worker"}
 
 
-@app.post("/pubsub/push")
-async def handle_pubsub_push(request: Request) -> dict:
-    envelope = await request.json()
-    payload = _decode_pubsub_envelope(envelope)
-    job_id = str(payload.get("job_id") or "").strip()
-    if not job_id:
-        raise HTTPException(status_code=400, detail="Pub/Sub payload is missing job_id.")
+@app.on_event("startup")
+def _startup() -> None:
+    validate_runtime_settings(get_settings())
+    start_queue_poller(app, service_role="export-worker", handler=_handle_queue_payload)
 
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    stop_queue_poller(app)
+
+
+def _run_export_job(job_id: str) -> dict:
     init_db()
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
@@ -64,3 +70,21 @@ async def handle_pubsub_push(request: Request) -> dict:
             repository = SqlAlchemyControlPlaneRepository(session)
             result = ExportService(repository, get_settings()).run_job(job_id)
     return {"status": "ok", "job_id": job_id, "result": result}
+
+
+def _handle_queue_payload(payload: dict, _attributes: dict | None = None) -> None:
+    job_id = str(payload.get("job_id") or "").strip()
+    if not job_id:
+        raise ValueError("Queue payload is missing job_id.")
+    _run_export_job(job_id)
+
+
+@app.post("/pubsub/push")
+async def handle_pubsub_push(request: Request) -> dict:
+    require_worker_auth(request)
+    envelope = await request.json()
+    payload = _decode_pubsub_envelope(envelope)
+    job_id = str(payload.get("job_id") or "").strip()
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Pub/Sub payload is missing job_id.")
+    return _run_export_job(job_id)

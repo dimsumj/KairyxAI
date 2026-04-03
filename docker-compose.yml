@@ -1,0 +1,98 @@
+name: kairyxai
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: kairyx
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kairyx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  operator-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kairyxai:local
+    env_file:
+      - deploy/docker/compose.env
+    environment:
+      SERVICE_ROLE: operator-api
+      SCHEDULER_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8080"
+
+  import-worker:
+    image: kairyxai:local
+    pull_policy: never
+    env_file:
+      - deploy/docker/compose.env
+    environment:
+      SERVICE_ROLE: import-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18081:8080"
+
+  prediction-worker:
+    image: kairyxai:local
+    pull_policy: never
+    env_file:
+      - deploy/docker/compose.env
+    environment:
+      SERVICE_ROLE: prediction-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18082:8080"
+
+  export-worker:
+    image: kairyxai:local
+    pull_policy: never
+    env_file:
+      - deploy/docker/compose.env
+    environment:
+      SERVICE_ROLE: export-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18083:8080"
+
+  scheduler-worker:
+    image: kairyxai:local
+    pull_policy: never
+    env_file:
+      - deploy/docker/compose.env
+    environment:
+      SERVICE_ROLE: scheduler-worker
+      SCHEDULER_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18084:8080"
+
+volumes:
+  postgres_data:

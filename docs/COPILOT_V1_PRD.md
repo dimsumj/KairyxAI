@@ -3,20 +3,32 @@
 ## 1. Background and Goals
 
 ### 1.1 Background
-The growth team still has many manual steps in the chain of "look at the numbers -> find the cause -> decide the action":
-- Metric definitions are inconsistent
-- Anomaly diagnosis is slow and cross-team communication is expensive
-- Analysis conclusions are hard to turn directly into executable actions
+The operator workflow in KairyxAI still has too many manual steps between "understand the current state" and "prepare the next controlled action":
+- Operators need to move across Data Core, Audience Engine, Experiment Hub, workflow health, and Copilot reporting to build a single tenant-level picture
+- Low-risk setup work such as connector configuration, cohort draft creation, and experiment draft creation still requires form-by-form navigation
+- The existing Copilot `query / explain / recommend / report` flows help with analysis, but they do not collect missing inputs or complete safe control-plane work
 
 ### 1.2 Goal (v1)
-Build an analytical copilot that can answer metric questions, explain anomalies, and recommend actions, forming the minimum closed loop from insight to action:
+Upgrade `Insight Copilot` into a constrained `chat-plus-preview operator agent` that can:
+- summarize the current workspace state across modules
+- answer grounded product-help questions and return sample payloads for the current page
+- collect missing inputs through structured clarifications
+- preview the exact control-plane actions it plans to take
+- execute low-risk setup work on behalf of the operator
+- hold high-risk actions behind explicit confirmation
 
-**Metric query -> anomaly explanation -> action recommendation -> one-click cohort draft generation**
+The v1 closed loop becomes:
+
+**operator request -> intent + slot extraction -> clarifications -> execution preview -> safe action execution -> artifact handoff**
+
+This upgrade does not replace the existing analytical tools. It adds an operator agent above them while keeping the manual `query / explain / recommend / report` controls available.
 
 ### 1.3 Non-Goals (Not Included in v1)
-- Autonomous execution of high-risk operational actions; v1 gives recommendations only and does not auto-send
-- Full BI replacement
-- Complex causal-inference platform
+- Autonomous execution of high-risk operational actions without confirmation
+- Destructive delete flows, even where the underlying APIs already exist
+- Workflow publish, workflow run, live sends, or any action that can directly trigger downstream delivery
+- A general-purpose browser-driving agent or DOM automation layer
+- Full BI replacement or open-ended autonomous analysis outside the supported action registry
 
 ---
 
@@ -29,330 +41,410 @@ Build an analytical copilot that can answer metric questions, explain anomalies,
 - Marketing and acquisition leads
 
 ### 2.2 High-Frequency Scenarios
-1. Fast metric query: current value and trend of a metric
-2. Anomaly diagnosis: why a metric dropped today or this week
-3. Operational recommendation: who should receive what action next
-4. Review summary: automatic daily or weekly report generation
+1. Summarize the current dashboard and surface the top risks plus next steps
+2. Set up an upstream connector or downstream provider connection with only the missing fields requested
+3. Set up a draft cohort using SQL, rules, or a supplied member list
+4. Set up a draft A/B test linked to a cohort and guardrail metrics
+5. Prepare a risky follow-up such as cohort activation or experiment start, then stop at confirmation
 
 ---
 
 ## 3. Functional Scope (v1)
 
-## 3.1 NL2Metric (Natural-Language Metric Query)
-### Capabilities
-- Support natural-language queries for metrics
-- Support common slices such as platform, country, channel, version, and time window
-- Output metric-definition context, including definition, time range, and filters
+### 3.1 Global Assistant Surface
+The primary Copilot surface is now a global chat-first assistant with:
+- persistent bottom-right launcher
+- right-side drawer on desktop and full-screen sheet on mobile
+- conversation thread
+- suggested starter tasks
+- structured clarification prompts
+- execution preview card
+- pending confirmation banner
+- result artifact links into the relevant module
 
-### Examples
-- "Paid conversion rate for iOS users in the US over the last 7 days"
-- "How much did D1 retention change this week compared with last week?"
+The assistant is available from every app page after workspace resolution and keeps one shared session alive across SPA navigation. The existing manual `query / explain / recommend / report` tools remain on the Insight Copilot page as the advanced/manual fallback.
 
-### Output
-- Metric value
-- Period-over-period comparison when available
-- Read-only SQL summary
-- Metric-definition notes
+### 3.2 Deterministic Agent Loop
+Every agent turn follows the same constrained lifecycle:
+1. classify intent
+2. extract structured slots
+3. merge relevant UI context such as active module, selected cohort, or current experiment
+4. request clarifications if required fields are missing
+5. build an execution preview
+6. validate RBAC and project scope
+7. execute only allowed low-risk actions
+8. summarize results and return artifact links
 
-## 3.2 Anomaly Explain
-### Capabilities
-- Automatically identify anomalies in key metrics, including drops, lifts, and volatility
-- Output top drivers, typically 2 to 5
-- Estimate impact scope in affected users and revenue impact
+The agent does not call arbitrary code paths. It only uses the explicit action registry defined in the backend.
 
-### Example Drivers
-- Traffic drop in a specific country
-- Conversion decline in a specific app version
-- Lower traffic quality from a specific campaign
+### 3.3 Dashboard Summary
+The agent supports `summarize dashboard` as a read-only cross-module action.
 
-### Output
-- Anomaly summary
-- Ranked driver list
-- Supporting evidence snippets
-- Confidence level
+The summary aggregates:
+- Copilot overview
+- recent reports
+- recent anomalies
+- cohort state
+- workflow publication state
+- experiment state
+- import blockers
+- platform health alerts
 
-## 3.3 Action Recommendation
-### Capabilities
-- Generate executable recommendations based on anomalies and segmentation context
-- Map recommendations to existing action types such as push, email, in-app, and experiment
-- Generate a cohort draft with one click
+The output must include:
+- a headline summary
+- key counts
+- top risks
+- suggested next steps
 
-### Output
-- Recommended action
-- Target audience definition
-- Expected directional impact
-- Risk notes such as frequency disturbance and budget risk
+### 3.4 Grounded Product Help
+The agent supports read-only `help_support` behavior for questions such as:
+- `How do I use this page?`
+- `Where do I do X?`
+- `Give me a sample payload`
+- `Why is this failing?`
 
-## 3.4 Auto Report
-### Capabilities
-- Generate daily and weekly reports using fixed templates
-- Include core metrics, anomalies, recommended actions, and follow-up items
+Behavior:
+- use current module/page context plus selected resource ids when present
+- answer from a structured help catalog instead of open-ended freeform generation
+- return inline SQL, JSON, or prompt samples when relevant
+- fall back to product-help guidance when an unsupported request is not actionable
+
+### 3.5 Connection Setup
+The agent supports `set up a connection` for both upstream connectors and downstream provider connections.
+
+Supported connector types in v1:
+- `amplitude`
+- `adjust`
+- `appsflyer`
+- `bigquery`
+- `google`
+
+Supported provider connection types in v1:
+- `braze`
+- `sendgrid`
+- `webhook`
+- `simulator`
+
+Behavior:
+- first disambiguate `connector` vs `provider_connection`
+- ask only for the required provider-specific fields
+- create the connection through the existing control-plane services
+- run connector health check when the target is a connector and a health check is available
+- redact secret values from stored action parameters and response payloads
+
+### 3.6 Cohort Setup
+The agent supports `set up a cohort` for:
+- SQL cohorts
+- rule cohorts
+- list cohorts
+
+Behavior:
+- request `cohort_type` if missing
+- collect SQL, rule definition JSON, or member list JSON depending on the chosen type
+- for SQL cohorts, run a SQL preview first
+- save the supporting query when applicable
+- create the cohort in `draft` by default
+- optionally update an existing draft cohort when the target cohort id is provided and the request explicitly indicates update behavior
+
+### 3.7 Experiment Setup
+The agent supports `set up an A/B test` or `set up an experiment`.
+
+Collected or defaulted fields:
+- `experiment_id`
+- `cohort_id`
+- `primary_metric`
+- `guardrail_metrics`
+- `min_sample_size`
+- `min_runtime_hours`
+- `holdout_pct`
+- `b_variant_pct`
+
+Behavior:
+- require a linked cohort
+- save the experiment config through the existing Experiment Hub service
+- persist it in a non-running state
+- keep experiment start as a separate confirmed action
+
+### 3.8 Retained Manual Copilot Tools
+The analytical Copilot endpoints remain in scope and visible in the UI:
+- natural-language metric query
+- anomaly explanation
+- action recommendation drafts
+- daily and weekly reports
+
+These manual tools remain valuable for open analytical work that is broader than the operator agent's constrained setup scope.
 
 ---
 
-## 4. Unified Output Template
-Every Copilot response must use a structured output:
-1. **Conclusion** (one sentence)
-2. **Key Evidence** (up to 3 items)
-3. **Impact Scope** (users affected / revenue impact)
-4. **Recommended Action** (executable)
-5. **Confidence** (`high / medium / low`)
-6. **Metric Definition and Time Window** (mandatory)
+## 4. Unified Output Contract
+
+### 4.1 Agent Message Response
+Every agent message response returns a structured payload with:
+- `assistant_message`
+- `session_state`
+- `clarifications`
+- `execution_preview`
+- `completed_actions`
+- `pending_confirmations`
+- `artifacts`
+
+### 4.2 Session State
+The session state must expose:
+- `session_id`
+- `title`
+- `status`
+- `current_intent`
+- `last_user_message`
+- `ui_context`
+- `latest_execution_preview`
+- `latest_artifacts`
+- `latest_clarifications`
+- `pending_confirmation_count`
+
+### 4.3 Execution Preview
+The execution preview must show:
+- normalized intent
+- human-readable title
+- preview summary
+- overall risk level
+- readiness
+- missing fields
+- blockers
+- ordered preview steps with action type, title, summary, confirmation flag, and status
+
+### 4.4 Artifacts
+Completed actions may return deep-linkable artifacts such as:
+- cohort
+- experiment
+- connector
+- provider connection
+- saved query
 
 ---
 
 ## 5. Data and System Dependencies
 
-## 5.1 Read-Only Data Inputs
-- `mart_user_daily`
-- `fact_events_unified`
-- `cohort metadata`
-- `experiment summary` when available
+### 5.1 Core Services Used By The Agent
+The operator agent reuses the existing control-plane services instead of introducing a separate backend:
+- `CopilotService`
+- `CohortService`
+- `ExperimentConfigService`
+- `ConnectorService`
+- `ProviderConnectionService`
+- `SqlWorkspaceService`
+- `HealthMonitorService`
 
-## 5.2 Relationship to Other Modules
-- Depends on Data Core for unified, governed metrics
-- Calls Audience Engine to generate cohort drafts
-- Can call Experiment Hub to create experiment drafts when needed
+### 5.2 Resource Persistence
+Agent state is persisted in the generic control-plane resource store with dedicated resource types:
+- `copilot_agent_session`
+- `copilot_agent_turn`
+- `copilot_agent_action_run`
+- `copilot_agent_confirmation_request`
+
+This keeps the agent aligned with existing persistence, audit, tenant scoping, and project scoping rules.
+
+### 5.3 Model Adapter
+The model layer is intentionally narrow:
+- provider-agnostic model adapter interface
+- Gemini-backed implementation first
+- structured JSON output for intent parsing and response composition
+- deterministic parser and deterministic response fallback when Gemini is unavailable or malformed
+
+### 5.4 UI Context Inputs
+The frontend may pass lightweight context with each turn, including:
+- active module
+- active page
+- selected cohort id
+- current experiment id
+
+This lets the agent narrow scope without forcing the user to restate context that is already visible in the console.
 
 ---
 
 ## 6. Safety and Governance
 
-1. Every conclusion must be traceable to data evidence
-2. When uncertain, Copilot must degrade gracefully to "low confidence + more data required"
-3. High-risk actions are not auto-executed; manual confirmation is required by default
-4. Outputs must not expose restricted fields and must follow RBAC and masking rules
+1. The agent must use the explicit action registry and must not execute arbitrary code paths.
+2. Low-risk actions may auto-execute only after all required fields are present.
+3. High-risk actions must stop in `awaiting_confirmation` until the operator confirms them.
+4. Tenant and project scope must be enforced through the existing governance context and control-plane repository boundaries.
+5. RBAC failures must fail closed and explain which permission blocked the step.
+6. Secrets included in connection setup must be redacted from action parameters stored in the session history.
+7. Every prepared or completed agent action must be auditable through the existing repository audit path.
+8. Destructive delete flows remain out of scope for the v1 agent, even when the actor has the underlying permission.
+
+### 6.1 Auto-Executable Low-Risk Actions
+- `summarize_dashboard`
+- `upsert_connector`
+- `check_connector_health`
+- `upsert_provider_connection`
+- `preview_sql`
+- `save_query`
+- `create_cohort_sql`
+- `create_cohort_definition`
+- `update_cohort_definition`
+- `save_experiment_config`
+
+### 6.2 Confirmation-Gated Actions
+- `activate_cohort`
+- `pause_cohort`
+- `archive_cohort`
+- `restore_cohort`
+- `start_experiment`
+- `stop_experiment`
+- `record_experiment_decision`
+
+### 6.3 Current Role Expectations
+- `admin` can execute the full scope
+- `operator` can run the operator agent plus the supported setup and confirmation actions
+- `analyst` can use read-oriented agent flows such as dashboard summary, but write actions remain blocked by permission checks
 
 ---
 
 ## 7. Default Configuration (v1)
-- Anomaly-detection windows: dual-window `7d / 14d`
-- Maximum number of returned drivers: 5
-- Auto-report frequency: once daily by default and configurable
-- Evidence requirement: every recommendation must include at least one verifiable evidence point
+- Dashboard summary defaults to the current workspace scope unless UI context narrows it further
+- New agent sessions default to an active status and store the latest preview, clarifications, and artifacts
+- Connection setup auto-generates a name when the user does not provide one
+- Connector health check is attempted automatically after connector creation, but failure to run the health check does not roll back the connector
+- SQL cohort setup uses a SQL preview before cohort creation and saves the query as a reusable artifact
+- New cohorts default to `draft`
+- Cohort refresh mode defaults to `manual`, unless the request explicitly implies daily refresh
+- New experiments default to `enabled = false`
+- Experiment defaults are:
+  - `primary_metric = return_rate`
+  - `guardrail_metrics = [engagement_rate, policy_block_rate]`
+  - `min_sample_size = 20`
+  - `min_runtime_hours = 24`
+  - `holdout_pct = 0.10`
+  - `b_variant_pct = 0.50`
 
 ---
 
 ## 8. API Draft (v1)
 
-- `POST /copilot/query`
-  - Input: natural-language question, time window, filter conditions
-  - Output: structured insight result
+### 8.1 Agent Endpoints
+- `POST /api/v1/copilot/agent/sessions`
+  - create a new operator agent session
 
-- `POST /copilot/explain`
-  - Input: metric name, time window, slice dimensions
-  - Output: anomaly explanation plus drivers
+- `GET /api/v1/copilot/agent/sessions/{session_id}`
+  - read the current session state, latest turn, and pending confirmations
 
-- `POST /copilot/recommend`
-  - Input: insight result ID or metric context
-  - Output: action recommendation plus cohort-draft definition
+- `GET /api/v1/copilot/agent/sessions/{session_id}/turns`
+  - list all recorded turns for the session
 
-- `POST /copilot/report`
-  - Input: daily or weekly report parameters
-  - Output: structured report content
+- `POST /api/v1/copilot/agent/sessions/{session_id}/messages`
+  - send a new message into the agent loop
+
+- `POST /api/v1/copilot/agent/actions/{action_id}/confirm`
+  - confirm and execute a prepared high-risk action
+
+### 8.2 Retained Manual Endpoints
+- `POST /api/v1/copilot/query`
+- `POST /api/v1/copilot/explain`
+- `POST /api/v1/copilot/recommend`
+- `POST /api/v1/copilot/report`
+- `GET /api/v1/copilot/overview`
+- `GET /api/v1/copilot/metrics`
 
 ---
 
 ## 9. Acceptance Criteria (DoD)
 
-1. Support at least 20 high-frequency metric-query intents
-2. Anomaly explanation can output at least 2 verifiable drivers
-3. Every recommendation includes metric definition, evidence, and confidence
-4. Supports one-click cohort draft generation and successful persistence
-5. Daily report templates can be generated stably and used by operations and PMs
+1. Operators can start a Copilot agent session and the backend persists session, turn, action, and confirmation resources.
+2. When a request is missing required fields, the agent returns structured clarifications instead of making up values.
+3. `Summarize dashboard` returns a tenant-and-project-scoped summary with counts, risks, and next steps.
+4. Connection setup can create a connector or provider connection and return a linked artifact.
+5. SQL cohort setup previews SQL, saves the supporting query, and creates a draft cohort without auto-activation.
+6. Experiment setup saves a non-running config linked to a cohort and returns a linked artifact.
+7. Risky actions such as cohort activation and experiment start stop at confirmation and only execute after an explicit confirm call.
+8. Permission failures do not bypass governance, and cross-project session access is denied.
+9. The global assistant is available from every app page after workspace resolution, and the Insight Copilot page keeps the manual analytical controls as the advanced/manual fallback.
 
 ---
 
-## 10. P0 Implementation Priority (Detailed)
+## 10. P0 Implementation Priority (Delivered v1 Scope)
 
-### P0-1 Metric Query Capability (NL2Metric)
-**Goal**: let Copilot answer high-frequency business questions reliably on top of unified definitions.
+### P0-1 Agent Session And Turn Orchestration
+**Goal**: persist a durable operator workflow instead of a single stateless text response.
 
-**Detailed Scope**
-1. Build a `metric registry` with at least 20 metrics
-   - Fields: `metric_id`, `name`, `definition`, `sql_template`, `supported_dimensions`, `default_window`
-2. Build a query parser
-   - Parse natural language into metric, time window, dimension filters, and comparison type
-3. Build an execution layer
-   - Generate SQL from the registry and query `mart_user_daily` / `fact_events_unified`
-4. Build an output layer
-   - Return structured result with conclusion, evidence, metric definition, and SQL summary
-
-**Interfaces and Artifacts**
-- `POST /copilot/query`
-- Table: `copilot_query_logs`
+**Delivered Scope**
+1. Session creation and retrieval
+2. Turn persistence with user message, assistant message, preview, clarifications, and artifacts
+3. Action-run persistence and confirmation-request persistence
+4. Session state updates after each turn
 
 **Acceptance Criteria (DoD)**
-- 20 high-frequency query intents can be hit reliably
-- Every result contains metric definition and time window
-- Query failures return explicit reasons instead of vague errors
+- Each turn is replayable from the resource store
+- Pending confirmations are discoverable from the session
+- Session state reflects the latest preview and unresolved clarifications
 
 ---
 
-### P0-2 Anomaly Explain
-**Goal**: explain key metric movement with verifiable drivers instead of only saying that a metric moved.
+### P0-2 Constrained Intent Parsing And Action Registry
+**Goal**: keep the agent deterministic and governable.
 
-**Detailed Scope**
-1. Anomaly-detection jobs
-   - Calculate baselines and deviation for key metrics every day using 7-day and 14-day windows
-2. Driver decomposition
-   - Automatically decompose by dimension: `platform / country / version / channel / campaign`
-3. Explanation output
-   - Return top 2 to 5 drivers, evidence values for each, and estimated impact
-4. Confidence rating
-   - Assign `high / medium / low` confidence based on sample size and stability
-
-**Interfaces and Artifacts**
-- `POST /copilot/explain`
-- Tables: `anomaly_events`, `anomaly_driver_logs`
+**Delivered Scope**
+1. Intent parsing for dashboard summary, grounded help support, cohort setup, experiment setup, connection setup, and specific confirmation-gated follow-ups
+2. Structured slot extraction from natural language, named fields, JSON blocks, SQL blocks, and UI context
+3. Explicit action registry with fixed permission requirements and risk levels
+4. Runtime help catalog for grounded product guidance, sample payloads, and troubleshooting notes
+5. Gemini-backed parsing and composition with deterministic fallback
 
 **Acceptance Criteria (DoD)**
-- Every anomaly outputs at least 2 verifiable drivers
-- Every driver includes numeric evidence
-- The explanation can be reproduced by metric and time window
+- Unsupported intents are redirected into the supported scope
+- The agent never invents identifiers, credentials, or SQL when those are required inputs
+- Only registered actions can be prepared or executed
 
 ---
 
-### P0-3 Recommendation + Cohort Draft
-**Goal**: turn analysis conclusions directly into executable actions and target audiences.
+### P0-3 Safe Setup Execution
+**Goal**: complete low-risk control-plane work directly from Copilot.
 
-**Detailed Scope**
-1. Recommendation template engine
-   - Input: anomaly type plus metric context
-   - Output: action type such as push, email, in-app, or experiment plus risk notes
-2. Cohort draft generation
-   - Bind the recommendation to a cohort definition using rule or SQL
-   - Write the output into a cohort draft without activating it automatically
-3. Executable linkage
-   - Support one-click handoff into Audience Engine for cohort management
-
-**Interfaces and Artifacts**
-- `POST /copilot/recommend`
-- Tables: `copilot_recommendations`, `cohort_drafts`
+**Delivered Scope**
+1. Connector and provider connection setup
+2. SQL preview and saved query creation for SQL cohorts
+3. Draft cohort creation and safe draft updates
+4. Draft experiment config creation
 
 **Acceptance Criteria (DoD)**
-- Recommendations can be materialized into cohort drafts
-- Recommendations contain target audience, action, and risk notes
-- High-risk actions are never auto-executed
+- Successful safe actions return completed action records and deep-linkable artifacts
+- Default behavior preserves draft or non-running status for newly created cohorts and experiments
+- Secret-bearing connection fields are redacted from stored action parameters
 
 ---
 
-### P0-4 Auto Report
-**Goal**: let operations teams and PMs receive a consistent, actionable analytical summary every day.
+### P0-4 Confirmation Gating And Governance
+**Goal**: preserve operator control for risky actions.
 
-**Detailed Scope**
-1. Report template
-   - Modules: core metrics, anomalies, recommended actions, and follow-up items
-2. Scheduled execution
-   - Generate reports automatically at a fixed daily time
-3. Report archival
-   - Persist report content, generation time, data window, and generation status
-
-**Interfaces and Artifacts**
-- `POST /copilot/report`
-- Table: `copilot_reports`
+**Delivered Scope**
+1. Prepared high-risk actions stored in `awaiting_confirmation`
+2. Explicit confirm endpoint for risky execution
+3. Permission checks on both prepare and confirm paths
+4. Tenant and project scoping through the existing governance model
 
 **Acceptance Criteria (DoD)**
-- Daily reports can be generated reliably every day
-- Report structure is fixed and fields are complete
-- Failed report runs can be retried and reasons are recorded
+- High-risk actions do not execute before confirmation
+- Cross-project access to another session returns not found
+- Roles without write permissions can still use read-safe agent flows while blocked from writes
 
 ---
 
-### P0-5 Governance and Traceability
-**Goal**: guarantee that Copilot output is trustworthy, auditable, and controllable.
+### P0-5 Frontend Copilot Upgrade
+**Goal**: make the global AI assistant the operator entry point for guided setup, grounded help, and summary tasks.
 
-**Detailed Scope**
-1. Evidence-chain recording
-   - Every output links to `query_id`, `metric_id`, `time_window`, and `data_sources`
-2. Access control and masking
-   - Filter fields by RBAC; PII is masked by default
-3. Audit log
-   - Record query, explanation, recommendation, report generation, and manual confirmation actions
-4. Risk protection
-   - Force warnings for low-confidence conclusions
-   - Require manual confirmation for high-risk recommendations
-
-**Interfaces and Artifacts**
-- Table: `copilot_audit_logs`
-- Config: `copilot_safety_config`
+**Delivered Scope**
+1. Global assistant launcher and drawer that remain available from every in-app page
+2. Shared session persistence across SPA navigation
+3. Starter prompts for the supported v1 tasks and help flows
+4. Structured clarification rendering
+5. Execution preview rendering
+6. Pending confirmation rendering
+7. Artifact deep links into the relevant module
+8. Retained manual `query / explain / recommend / report` controls on the Insight Copilot page
+9. Removal of the static Help module from visible navigation
 
 **Acceptance Criteria (DoD)**
-- Any Copilot conclusion can be traced back to data evidence
-- Unauthorized fields are not visible
-- High-risk actions have audit records and confirmation chains
+- The user can ask for help, samples, or safe setup work without leaving the current module
+- The user can see what the agent plans to do before execution
+- Manual analytical tools remain available for broader Copilot workflows
 
 ---
-
-## 11. Current Gap Register (Based on the 2026-03 Repository State Review)
-
-### 11.1 Already Implemented
-- `query / explain / recommend / report` APIs already exist
-- Query logs, anomalies, reports, and weekly-report resources already exist
-- Structured output, evidence envelope, and cohort-draft generation already exist
-
-### 11.2 Remaining Gaps
-
-#### Gap-C1 Copilot operator console is not yet hardened
-- Current state:
-  - Copilot pages are already available in the single-page operator console
-- Remaining work:
-  - Dedicated Playwright / E2E contract coverage is still missing
-  - Query, explain, anomaly, and report views still depend on a single-page static-console structure
-
-#### Gap-C2 Auto Report operations workflow is still lightweight
-- Current state:
-  - Daily and weekly report resources plus retry behavior already exist
-- Remaining work:
-  - Report subscription, review, failure triage, and operational consumption are not yet independently productized
-  - The frontend still lacks a mature report-management console
-
-#### Gap-C3 Recommendation remains recommendation-only rather than outcome-driven auto-optimization
-- Current state:
-  - Copilot can already recommend actions and generate cohort drafts
-- Remaining work:
-  - There is still no stable loop of "real outcome -> update recommendation templates automatically / auto-tune strategy"
-  - Recommendations still depend on the measurement maturity of Experiment and Action
-
-#### Gap-C4 The evidence loop still depends on downstream measurement maturity
-- Current state:
-  - `experiment_summary`, `cohort_snapshot`, and workflow summaries can already act as evidence inputs
-- Remaining work:
-  - When real provider outcome, return, or conversion signals are incomplete, the Copilot evidence chain still degrades
-  - The Action and Experiment real measurement pipeline must mature further
-
-#### Gap-C5 Production access boundary is incomplete
-- Current state:
-  - Minimal RBAC and masking already exist
-- Remaining work:
-  - Formal authN, tenant boundaries, and production-grade access control are still missing
-  - The current Copilot data-access boundary should not yet be considered production-ready
-
-### 11.3 Next-Phase Ownership Held by This Document
-- Copilot pages and contract hardening under `Phase 1 Frontend Hardening`
-- Evidence-feedback dependencies for Copilot under `Phase 4 Activation And Measurement`
-- Copilot access boundaries and governance under `Phase 5 Production Readiness`
-
-### 11.4 V1 Backlog
-
-#### P0 Finish-Up
-1. `Auto Report Ops Workflow`
-   - Complete subscription, review, failure triage, and operational consumption for daily and weekly reports
-   - Make reports not just generatable, but reliably consumable
-2. `Evidence Loop Hardening`
-   - Strengthen Copilot dependence on real provider outcomes, experiment summaries, and workflow summaries
-   - Reduce evidence degradation when measurement is incomplete
-3. `Recommendation Traceability`
-   - Bind recommendation templates, cohort drafts, and experiment suggestions more explicitly to outcome evidence
-   - Keep the system in recommendation mode and do not auto-execute high-risk actions
-
-#### P1
-1. `Copilot Console Hardening`
-   - Add dedicated Playwright / E2E coverage for query, explain, anomaly, and report pages
-   - Build a more stable operator console instead of a single-page static layout
-2. `Outcome-Driven Recommendation Refresh`
-   - Iterate recommendation templates and ranking based on real outcome data
-   - Keep humans in the loop and do not auto-execute directly
-3. `Production Access Boundary`
-   - Complete formal authN, tenant boundaries, and production-grade access control
-   - Make Copilot data access conform to production requirements

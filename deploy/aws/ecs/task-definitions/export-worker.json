@@ -1,0 +1,61 @@
+{
+  "family": "kairyx-export-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "executionRoleArn": "arn:aws:iam::<account-id>:role/kairyx-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::<account-id>:role/kairyx-export-worker",
+  "containerDefinitions": [
+    {
+      "name": "export-worker",
+      "image": "<image-uri>",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "APP_ENV", "value": "prod" },
+        { "name": "SERVICE_ROLE", "value": "export-worker" },
+        { "name": "DATA_BACKEND_MODE", "value": "aws" },
+        { "name": "WAREHOUSE_BACKEND", "value": "redshift" },
+        { "name": "OBJECT_STORAGE_BACKEND", "value": "s3" },
+        { "name": "MESSAGE_BACKEND", "value": "eventbridge_sqs" },
+        { "name": "SECRET_BACKEND", "value": "aws_secrets_manager" },
+        { "name": "AWS_REGION", "value": "<aws-region>" },
+        { "name": "REDSHIFT_WORKGROUP_NAME", "value": "kairyx" },
+        { "name": "REDSHIFT_DATABASE", "value": "dev" },
+        { "name": "REDSHIFT_SCHEMA", "value": "kairyx" },
+        { "name": "S3_BUCKET_NAME", "value": "kairyx-data-prod" },
+        { "name": "EVENTBRIDGE_BUS_NAME", "value": "kairyx" },
+        { "name": "SQS_EXPORT_QUEUE_URL", "value": "https://sqs.<aws-region>.amazonaws.com/<account-id>/kairyx-export" },
+        { "name": "IMPORT_COMMAND_TOPIC", "value": "kairyx-import-jobs" },
+        { "name": "PREDICTION_COMMAND_TOPIC", "value": "kairyx-prediction-jobs" },
+        { "name": "EXPORT_COMMAND_TOPIC", "value": "kairyx-export-jobs" },
+        { "name": "PUBSUB_TOPIC_NAME", "value": "kairyx-raw-shards" },
+        { "name": "PORT", "value": "8080" }
+      ],
+      "secrets": [
+        {
+          "name": "CONTROL_PLANE_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/control-plane-database-url"
+        },
+        {
+          "name": "WORKER_SHARED_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:<aws-region>:<account-id>:secret:kairyx/worker-shared-token"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/kairyx/export-worker",
+          "awslogs-region": "<aws-region>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

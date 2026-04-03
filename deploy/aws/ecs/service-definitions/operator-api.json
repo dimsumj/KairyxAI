@@ -1,0 +1,23 @@
+{
+  "serviceName": "kairyx-operator-api",
+  "cluster": "arn:aws:ecs:<aws-region>:<account-id>:cluster/<cluster-name>",
+  "taskDefinition": "kairyx-operator-api",
+  "launchType": "FARGATE",
+  "desiredCount": 2,
+  "platformVersion": "LATEST",
+  "enableExecuteCommand": true,
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:<aws-region>:<account-id>:targetgroup/kairyx-operator-api/<target-group-id>",
+      "containerName": "operator-api",
+      "containerPort": 8080
+    }
+  ],
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-aaaaaaaa", "subnet-bbbbbbbb"],
+      "securityGroups": ["sg-operatorapi"],
+      "assignPublicIp": "DISABLED"
+    }
+  }
+}

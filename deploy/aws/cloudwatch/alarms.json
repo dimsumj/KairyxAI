@@ -1,0 +1,65 @@
+{
+  "alarms": [
+    {
+      "name": "kairyx-import-queue-backlog-age",
+      "metric": "ApproximateAgeOfOldestMessage",
+      "namespace": "AWS/SQS",
+      "threshold": 300,
+      "comparisonOperator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "kairyx-import"
+      }
+    },
+    {
+      "name": "kairyx-prediction-queue-backlog-age",
+      "metric": "ApproximateAgeOfOldestMessage",
+      "namespace": "AWS/SQS",
+      "threshold": 300,
+      "comparisonOperator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "kairyx-prediction"
+      }
+    },
+    {
+      "name": "kairyx-export-queue-backlog-age",
+      "metric": "ApproximateAgeOfOldestMessage",
+      "namespace": "AWS/SQS",
+      "threshold": 300,
+      "comparisonOperator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "kairyx-export"
+      }
+    },
+    {
+      "name": "kairyx-scheduler-dlq-depth",
+      "metric": "ApproximateNumberOfMessagesVisible",
+      "namespace": "AWS/SQS",
+      "threshold": 0,
+      "comparisonOperator": "GreaterThanThreshold",
+      "dimensions": {
+        "QueueName": "kairyx-scheduler-dlq"
+      }
+    },
+    {
+      "name": "kairyx-redshift-query-errors",
+      "metric": "QueriesFailed",
+      "namespace": "AWS/Redshift-Serverless",
+      "threshold": 1,
+      "comparisonOperator": "GreaterThanOrEqualToThreshold",
+      "dimensions": {
+        "WorkgroupName": "kairyx"
+      }
+    },
+    {
+      "name": "kairyx-ecs-operator-api-restarts",
+      "metric": "RestartCount",
+      "namespace": "ECS/ContainerInsights",
+      "threshold": 1,
+      "comparisonOperator": "GreaterThanOrEqualToThreshold",
+      "dimensions": {
+        "ServiceName": "kairyx-operator-api",
+        "ClusterName": "<cluster-name>"
+      }
+    }
+  ]
+}

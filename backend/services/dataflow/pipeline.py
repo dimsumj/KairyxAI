@@ -60,7 +60,7 @@ class DataflowNormalizationRunner:
         self._local_identity_store_degraded = False
 
     def _blob_name_from_gcs_uri(self, gcs_uri: str) -> str:
-        return gcs_uri.replace(f"gs://{self.gcs_service.bucket_name}/", "")
+        return self.gcs_service.resolve_blob_name(gcs_uri)
 
     def _resolve_canonical_user_id(self, source: str, player_id: Any) -> str:
         player_text = str(player_id or "unknown_user")

@@ -1,0 +1,16 @@
+{
+  "serviceName": "kairyx-scheduler-worker",
+  "cluster": "arn:aws:ecs:<aws-region>:<account-id>:cluster/<cluster-name>",
+  "taskDefinition": "kairyx-scheduler-worker",
+  "launchType": "FARGATE",
+  "desiredCount": 1,
+  "platformVersion": "LATEST",
+  "enableExecuteCommand": true,
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-aaaaaaaa", "subnet-bbbbbbbb"],
+      "securityGroups": ["sg-schedulerworker"],
+      "assignPublicIp": "DISABLED"
+    }
+  }
+}

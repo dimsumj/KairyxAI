@@ -7,13 +7,16 @@ spec:
     spec:
       serviceAccountName: import-worker
       containers:
-        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/import-worker:latest
-          command: ["uvicorn"]
-          args: ["workers.import_worker_app:app", "--host", "0.0.0.0", "--port", "8080"]
+        - image: us-docker.pkg.dev/PROJECT_ID/kairyx/kairyxai@sha256:REPLACE_WITH_IMAGE_DIGEST
           env:
             - name: APP_ENV
               value: prod
             - name: SERVICE_ROLE
               value: import-worker
+            - name: WORKER_SHARED_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: worker-shared-token
+                  key: latest
           ports:
             - containerPort: 8080

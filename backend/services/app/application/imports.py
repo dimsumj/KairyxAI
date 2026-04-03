@@ -268,7 +268,12 @@ class ImportService:
         return updated
 
     def _is_stop_requested(self, job_id: str) -> bool:
-        job = self.repository.get_import_job(job_id)
+        try:
+            with session_scope() as session:
+                repository = SqlAlchemyControlPlaneRepository(session)
+                job = repository.get_import_job(job_id)
+        except Exception:
+            return False
         if job is None:
             return False
         return str(job.get("status") or "").lower() in {JobStatus.STOPPING.value, JobStatus.STOPPED.value}
@@ -288,6 +293,7 @@ class ImportService:
         operation: str,
         callback,
         timeout_seconds: float | None = None,
+        activity_timestamp_getter=None,
     ) -> Any:
         result_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
 
@@ -308,16 +314,28 @@ class ImportService:
             0.1,
             float(timeout_seconds if timeout_seconds is not None else self.settings.import_network_timeout_seconds),
         )
-        deadline = time.monotonic() + resolved_timeout
+        started_at = time.monotonic()
+        last_activity_at = started_at
         poll_interval = max(0.05, float(self.settings.import_stop_poll_interval_seconds))
 
         while True:
             if self._should_stop(job_id):
                 raise ImportInterruptedError(self._stop_reason())
-            remaining = deadline - time.monotonic()
+            if callable(activity_timestamp_getter):
+                try:
+                    candidate_activity = activity_timestamp_getter()
+                except Exception:
+                    candidate_activity = None
+                if candidate_activity is not None:
+                    try:
+                        last_activity_at = max(last_activity_at, float(candidate_activity))
+                    except (TypeError, ValueError):
+                        pass
+            remaining = (last_activity_at + resolved_timeout) - time.monotonic()
             if remaining <= 0:
                 raise ImportTimeoutError(
-                    f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s."
+                    f"{operation.replace('_', ' ')} timed out after {resolved_timeout:.1f}s without progress. "
+                    f"Increase IMPORT_NETWORK_TIMEOUT_SECONDS for slower connectors."
                 )
             try:
                 state, payload = result_queue.get(timeout=min(poll_interval, remaining))
@@ -984,7 +1002,11 @@ class ImportService:
             "source_name": (job.get("spec") or {}).get("source_name"),
             "processing_contract": {
                 "mode": "manifest-driven",
-                "runtime_path": "gcp" if self.settings.data_backend_mode == "gcp" else "local_demo",
+                "runtime_path": (
+                    "gcp"
+                    if self.settings.data_backend_mode == "gcp"
+                    else ("aws" if self.settings.data_backend_mode == "aws" else "local_demo")
+                ),
                 "checkpoint_unit": "shard",
                 "replay_unit": "shard",
                 "canonical_aliases": self._canonical_aliases(),
@@ -1349,6 +1371,7 @@ class ImportService:
         self._commit_session()
         try:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
+            stage_progress = {"last_activity_at": time.monotonic()}
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
             connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
@@ -1364,6 +1387,17 @@ class ImportService:
                 pubsub_service=raw_pubsub,
             )
             ingestion_service.local_shard_event_count = page_size
+
+            def _stage_progress_callback(current_events: int, shards_created: int, manifest: Dict[str, Any]) -> Dict[str, Any]:
+                stage_progress["last_activity_at"] = time.monotonic()
+                return self._update_stage_progress(
+                    job_id,
+                    connector_record,
+                    current_events,
+                    shards_created,
+                    page_size,
+                )
+
             staged = self._interruptible_call(
                 job_id,
                 operation="fetch_and_stage_events",
@@ -1373,14 +1407,9 @@ class ImportService:
                     job_id=job_id,
                     page_size=page_size,
                     should_stop=lambda: self._should_stop(job_id),
-                    progress_callback=lambda current_events, shards_created, _: self._update_stage_progress(
-                        job_id,
-                        connector_record,
-                        current_events,
-                        shards_created,
-                        page_size,
-                    ),
+                    progress_callback=_stage_progress_callback,
                 ),
+                activity_timestamp_getter=lambda: stage_progress["last_activity_at"],
             )
             if staged.get("stopped"):
                 return self._mark_stopped(job_id, staged.get("stop_reason") or self._stop_reason())

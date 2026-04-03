@@ -211,12 +211,11 @@ Enable at least:
 ### 7.3 Create Artifact Registry
 1. Create one Docker repository in the production region, for example `kairyx`.
 2. Grant the build identity permission to push images.
-3. Decide whether you will:
-   - reuse one shared image digest for all Cloud Run services, or
-   - keep the current repo convention and push the same build under role-specific tags
+3. Reuse one shared immutable image digest for all Cloud Run services.
+4. Promote that digest across environments instead of rebuilding separate role-specific images.
 
 Inference from the repo:
-- One shared immutable image is operationally cleaner because all five services use the same Dockerfile and differ only by command, args, and env vars.
+- One shared immutable image is operationally cleaner because all five services use the same repo-root Dockerfile and differ only by `SERVICE_ROLE` plus role-specific env.
 
 ### 7.4 Create The Production VPC
 1. Create a dedicated production VPC and subnet in the same region.
@@ -243,6 +242,7 @@ Inference from the repo:
 
 Recommended secret names:
 - `control-plane-db-url`
+- `worker-shared-token`
 - `oidc-client-secret` if your IdP flow requires it outside the app
 - `provider-sendgrid-api-key`
 - `provider-braze-api-key`
@@ -282,10 +282,11 @@ Recommended secret names:
 5. For Cloud Scheduler authenticated HTTP, grant the scheduler caller service account `roles/run.invoker` on `scheduler-worker`.
 
 ### 7.10 Build The Production Image
-1. Build the container from `backend/services/Dockerfile`.
+1. Build the container from the repo-root `Dockerfile`.
 2. Tag it with the release identifier, not `latest`.
 3. Push the image to Artifact Registry.
 4. Record the immutable digest used for the release.
+5. Deploy that same digest to every Cloud Run service.
 
 ### 7.11 Prepare Runtime Configuration
 1. Create one production env file or secret map per service role.
@@ -297,6 +298,7 @@ Recommended secret names:
    - `SCHEDULER_ENABLED=false` for `operator-api`
    - `SCHEDULER_ENABLED=true` for `scheduler-worker`
 5. Ensure `CONTROL_PLANE_DATABASE_URL` points to the production Postgres instance.
+6. Set `WORKER_SHARED_TOKEN` on every worker service.
 
 ### 7.12 Deploy `operator-api`
 Configure the service with:
@@ -328,17 +330,18 @@ Recommended probe settings:
 
 ### 7.13 Deploy The Workers
 
-Deploy each worker as a separate Cloud Run service using the same image but a different command/args entrypoint:
-- `import-worker`: `workers.import_worker_app:app`
-- `prediction-worker`: `workers.prediction_worker_app:app`
-- `export-worker`: `workers.export_worker_app:app`
-- `scheduler-worker`: `workers.scheduler_worker_app:app`
+Deploy each worker as a separate Cloud Run service using the same image digest and the role-aware entrypoint driven by `SERVICE_ROLE`:
+- `import-worker`: `SERVICE_ROLE=import-worker`
+- `prediction-worker`: `SERVICE_ROLE=prediction-worker`
+- `export-worker`: `SERVICE_ROLE=export-worker`
+- `scheduler-worker`: `SERVICE_ROLE=scheduler-worker`
 
 Recommended worker settings:
 - no unauthenticated access
 - startup CPU boost enabled
 - startup probe on `/health/live`
 - liveness probe on `/health/live`
+- `WORKER_SHARED_TOKEN` injected through a secret reference
 
 Worker-specific sizing:
 - `import-worker`
@@ -367,9 +370,9 @@ Recommended subscriptions:
 
 Recommended settings per worker subscription:
 - push endpoint
-  - `import-worker`: `https://import-worker-.../pubsub/push`
-  - `prediction-worker`: `https://prediction-worker-.../pubsub/push`
-  - `export-worker`: `https://export-worker-.../pubsub/push`
+  - `import-worker`: `https://import-worker-.../pubsub/push?token=WORKER_SHARED_TOKEN`
+  - `prediction-worker`: `https://prediction-worker-.../pubsub/push?token=WORKER_SHARED_TOKEN`
+  - `export-worker`: `https://export-worker-.../pubsub/push?token=WORKER_SHARED_TOKEN`
 - authentication enabled
 - push auth service account: `pubsub-push-invoker`
 - audience set to the target Cloud Run URL
@@ -377,7 +380,7 @@ Recommended settings per worker subscription:
 - retry backoff: start with `min 10s`, `max 600s`
 
 ### 7.15 Create The Scheduler Job
-1. Create one Cloud Scheduler HTTP job pointed at `scheduler-worker` `/run`.
+1. Create one Cloud Scheduler HTTP job pointed at `scheduler-worker` `/run?token=WORKER_SHARED_TOKEN`.
 2. Use OIDC auth, not unauthenticated calls.
 3. Use service account `scheduler-invoker`.
 4. Set the audience to the scheduler-worker URL.

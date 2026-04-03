@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.application.audit import AuditService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
+from app.application.copilot_agent import CopilotAgentService
 from app.application.connectors import ConnectorService
 from app.application.control_loop import ControlLoopService
 from app.application.experiments import ExperimentConfigService
@@ -95,6 +96,13 @@ def get_copilot_service(
     settings: Settings = Depends(get_settings_dependency),
 ) -> CopilotService:
     return CopilotService(repository, settings)
+
+
+def get_copilot_agent_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
+) -> CopilotAgentService:
+    return CopilotAgentService(repository, settings)
 
 
 def get_health_monitor_service(

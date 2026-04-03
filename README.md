@@ -8,7 +8,7 @@ The current repository already implements a working v1 control plane for:
 - `Audience Engine`: cohort lifecycle, refresh, versions, metrics, compare, and activation controls
 - `Action Orchestrator`: workflows, triggers, delivery diagnostics, policy guards, and activation callbacks
 - `Experiment Hub`: config, assignment, exposure, outcome, integrity, summary, and rollout suggestion
-- `Insight Copilot`: query, explain, recommend, report, anomaly, and evidence-oriented reporting
+- `Insight Copilot`: global AI assistant for grounded help, samples, summaries, and safe setup work, plus manual query, explain, recommend, report, anomaly, and evidence-oriented reporting
 
 ## Product Vision
 
@@ -128,6 +128,9 @@ Primary backend surface:
 
 Insight Copilot is the operator-facing analysis layer:
 
+- global AI assistant bubble for grounded product help, contextual samples, dashboard summary, cohort setup, experiment setup, and connection setup from any page
+- structured clarifications, execution preview, artifact deep links, and confirmation gating for risky actions
+- manual `query / explain / recommend / report` tools on the Insight Copilot page as the advanced fallback
 - natural-language metric query
 - anomaly explanation
 - action recommendation drafts
@@ -137,6 +140,7 @@ Insight Copilot is the operator-facing analysis layer:
 Primary backend surface:
 
 - `/api/v1/copilot`
+- `/api/v1/copilot/agent`
 
 ## Architecture Overview
 
@@ -256,6 +260,7 @@ Google-friendly env aliases are also supported for deployment templates:
 
 ```text
 KairyxAI/
+|-- Dockerfile               # repo-root multi-stage image build
 |-- backend/services/
 |   |-- app/
 |   |   |-- api/            # FastAPI routers and schemas
@@ -266,6 +271,11 @@ KairyxAI/
 |   |-- cloudrun/           # Cloud Run service manifests
 |   |-- main_service.py     # backend entrypoint shim for local demo
 |   `-- requirements.txt
+|-- deploy/
+|   |-- aws/ecs/            # ECS task and service templates
+|   `-- docker/             # shared Compose environment defaults
+|-- docker-compose.yml      # single-host baseline for API + workers + Postgres
+|-- docker/                 # container entrypoint scripts
 |-- frontend/
 |   |-- app/                # React/Vite app entry and source files
 |   |-- dist/               # built frontend bundle served by the backend
@@ -400,6 +410,10 @@ The Imports page now keeps restart-time load lighter:
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `DATA_BACKEND_MODE` | Data runtime mode | `mock` |
+| `WAREHOUSE_BACKEND` | Warehouse backend (`mock`, `bigquery`, `redshift`) | derived from `DATA_BACKEND_MODE` |
+| `OBJECT_STORAGE_BACKEND` | Object storage backend (`mock`, `gcs`, `s3`) | derived from `DATA_BACKEND_MODE` |
+| `MESSAGE_BACKEND` | Async messaging backend (`mock`, `pubsub`, `eventbridge_sqs`) | derived from `DATA_BACKEND_MODE` |
+| `SECRET_BACKEND` | Secret backend (`env`, `gcp_secret_manager`, `aws_secrets_manager`) | derived from `DATA_BACKEND_MODE` |
 | `CONTROL_PLANE_DATABASE_URL` | Control-plane database URL | local SQLite path |
 | `KAIRYX_LOCAL_DB_PATH` | Local runtime/checkpoint DB | local SQLite path |
 | `APP_ENV` | Runtime environment (`local`, `prod`) | `local` |
@@ -418,9 +432,24 @@ The Imports page now keeps restart-time load lighter:
 | `CORS_ALLOWED_ORIGINS` | Explicit browser origins allowed in production | `*` |
 | `BOOTSTRAP_TENANT_ID` | Default bootstrap tenant id | `default` |
 | `SERVICE_ROLE` | Runtime role (`operator-api`, `scheduler-worker`, etc.) | `operator-api` |
+| `WORKER_SHARED_TOKEN` | Shared bearer or query token for worker-only endpoints such as `/pubsub/push` and `/run` | empty |
+| `AWS_REGION` | AWS region for ECS, S3, SQS, EventBridge, Secrets Manager, and Redshift | empty |
+| `REDSHIFT_WORKGROUP_NAME` | Redshift Serverless workgroup name | empty |
+| `REDSHIFT_DATABASE` | Redshift database name | empty |
+| `REDSHIFT_SCHEMA` | Redshift schema used by the warehouse adapter | `public` |
+| `REDSHIFT_SECRET_ARN` | Optional Secrets Manager secret ARN for Redshift Data API auth | empty |
+| `S3_BUCKET_NAME` | S3 bucket for raw shards, manifests, exports, and migration landing files | empty |
+| `EVENTBRIDGE_BUS_NAME` | EventBridge bus used for job dispatch | `default` |
+| `SQS_IMPORT_QUEUE_URL` | Import worker queue URL | empty |
+| `SQS_PREDICTION_QUEUE_URL` | Prediction worker queue URL | empty |
+| `SQS_EXPORT_QUEUE_URL` | Export worker queue URL | empty |
+| `SQS_SCHEDULER_QUEUE_URL` | Scheduler worker queue URL | empty |
 | `SCHEDULER_ENABLED` | Enables background control loop | `true` |
+| `PORT` | Container listen port for the role-aware entrypoint | `8080` |
+| `WEB_CONCURRENCY` | Gunicorn worker count for `operator-api` containers | `4` |
+| `GUNICORN_TIMEOUT` | Gunicorn request timeout in seconds for `operator-api` containers | `300` |
 | `SQLITE_BUSY_TIMEOUT_SECONDS` | SQLite busy timeout | `15` |
-| `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import network timeout | `60` |
+| `IMPORT_NETWORK_TIMEOUT_SECONDS` | Import inactivity timeout during fetch/stage | `300` |
 | `PREDICTION_NETWORK_TIMEOUT_SECONDS` | Prediction network timeout | `20` |
 | `MAX_SQL_PREVIEW_ROWS_PER_TENANT` | Tenant limit for SQL preview rows | `1000` |
 | `MAX_IMPORT_JOBS_PER_TENANT` | Tenant limit for active imports | `10` |
@@ -435,17 +464,68 @@ The production entrypoint is `app.main:app`. `backend/services/main_service.py` 
 
 Production deployment assets in this repository now include:
 
-- [backend/services/Dockerfile](backend/services/Dockerfile)
+- [Dockerfile](Dockerfile)
+- [docker-compose.yml](docker-compose.yml)
+- [deploy/docker/compose.env](deploy/docker/compose.env)
 - [backend/services/.env.example](backend/services/.env.example)
 - [backend/services/cloudrun/operator-api.yaml](backend/services/cloudrun/operator-api.yaml)
 - [backend/services/cloudrun/import-worker.yaml](backend/services/cloudrun/import-worker.yaml)
 - [backend/services/cloudrun/prediction-worker.yaml](backend/services/cloudrun/prediction-worker.yaml)
 - [backend/services/cloudrun/export-worker.yaml](backend/services/cloudrun/export-worker.yaml)
 - [backend/services/cloudrun/scheduler-worker.yaml](backend/services/cloudrun/scheduler-worker.yaml)
-- [docs/RUNBOOKS_MULTITENANT_GCP.md](docs/RUNBOOKS_MULTITENANT_GCP.md)
+- [deploy/aws/ecs/task-definitions/operator-api.json](deploy/aws/ecs/task-definitions/operator-api.json)
+- [deploy/aws/ecs/service-definitions/operator-api.json](deploy/aws/ecs/service-definitions/operator-api.json)
+- [deploy/aws/cloudwatch/alarms.json](deploy/aws/cloudwatch/alarms.json)
+- [docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md](docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md)
+- [docs/AWS_DATA_STACK_MIGRATION_RUNBOOK.md](docs/AWS_DATA_STACK_MIGRATION_RUNBOOK.md)
+- [docs/PORTABLE_DOCKER_DEPLOYMENT_RUNBOOK.md](docs/PORTABLE_DOCKER_DEPLOYMENT_RUNBOOK.md)
 - [docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md](docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 
-For a more production-shaped warehouse path, also expect GCP-related configuration for BigQuery, GCS, and ADC credentials.
+The same image digest is now intended to serve all five runtime roles through `SERVICE_ROLE`.
+
+### Portable image roles
+
+| `SERVICE_ROLE` | Runtime |
+| --- | --- |
+| `operator-api` | public API + frontend shell |
+| `import-worker` | import worker with HTTP compatibility plus SQS polling in AWS mode |
+| `prediction-worker` | prediction worker with HTTP compatibility plus SQS polling in AWS mode |
+| `export-worker` | export worker with HTTP compatibility plus SQS polling in AWS mode |
+| `scheduler-worker` | control-loop worker with HTTP compatibility plus scheduler-queue polling in AWS mode |
+
+### Docker build
+
+Build the portable image from the repository root:
+
+```bash
+docker build -t kairyxai:local .
+```
+
+### Docker Compose baseline
+
+The repository includes a single-host baseline for `postgres` plus the five KairyxAI runtime roles:
+
+```bash
+docker compose up --build
+```
+
+Default local ports:
+
+- `operator-api`: `http://127.0.0.1:8000`
+- `import-worker`: `http://127.0.0.1:18081`
+- `prediction-worker`: `http://127.0.0.1:18082`
+- `export-worker`: `http://127.0.0.1:18083`
+- `scheduler-worker`: `http://127.0.0.1:18084`
+
+Worker endpoints require `WORKER_SHARED_TOKEN`. Use either:
+
+- `Authorization: Bearer <WORKER_SHARED_TOKEN>`
+- `?token=<WORKER_SHARED_TOKEN>`
+
+For production-shaped deployments, use one of the native backend stacks:
+
+- GCP: `bigquery + gcs + pubsub + gcp_secret_manager`
+- AWS: `redshift + s3 + eventbridge_sqs + aws_secrets_manager`
 
 ## How to Use the Product Locally
 
@@ -459,7 +539,6 @@ For a more production-shaped warehouse path, also expect GCP-related configurati
    - `Action Orchestrator`
    - `Experiment Hub`
    - `Insight Copilot`
-   - `Help`
 
 ### Typical local flow
 
@@ -469,7 +548,8 @@ For a more production-shaped warehouse path, also expect GCP-related configurati
 4. Create or refresh a cohort
 5. Publish or test a workflow
 6. Review experiment summary or integrity
-7. Ask Copilot for explanation or a report
+7. Use the global AI assistant bubble for help, samples, dashboard summary, or safe setup execution from the page you are already on
+8. Open `Insight Copilot` only when you want the manual Query, Explain, Recommend, Report, or Evidence & Logs tools directly
 
 ## API Surface Snapshot
 
@@ -490,6 +570,7 @@ Common resources include:
 - `/api/v1/exports`
 - `/api/v1/experiments`
 - `/api/v1/copilot`
+- `/api/v1/copilot/agent`
 - `/api/v1/audit`
 - `/api/v1/templates`
 
@@ -503,7 +584,7 @@ There is also a lightweight liveness endpoint at:
 ### Backend tests
 
 ```bash
-.venv/bin/pytest backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
+.venv/bin/pytest backend/services/tests/test_copilot_agent.py backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
 ```
 
 ### Frontend/operator smoke
@@ -511,6 +592,8 @@ There is also a lightweight liveness endpoint at:
 ```bash
 PWCLI=/path/to/playwright_cli.sh BASE_URL=http://127.0.0.1:8000 ./scripts/operator_console_smoke.sh
 ```
+
+The smoke script now checks the global AI assistant launcher and drawer, a grounded help answer, a clarification loop, one safe setup action, and a risky follow-up that remains pending across navigation.
 
 ### Lightweight frontend checks
 

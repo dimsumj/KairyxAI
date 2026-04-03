@@ -13,6 +13,8 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 
 from app.core.request_context import get_request_context
+from provider_backends import resolve_warehouse_backend
+from redshift_warehouse import RedshiftWarehouseService
 from runtime_paths import normalize_env_text, resolve_runtime_file_path
 
 INT64_MAX = 2**63 - 1
@@ -58,12 +60,12 @@ def _normalize_mock_storage_backend(raw_value: Any) -> str:
 
 
 def _shared_service_cache_key() -> tuple[Any, ...]:
-    mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
+    backend = resolve_warehouse_backend()
     tenant_scope = _tenant_scope_key()
     project_scope = _project_scope_key()
-    if mode == "gcp":
+    if backend == "bigquery":
         return (
-            mode,
+            backend,
             tenant_scope,
             project_scope,
             normalize_env_text(os.getenv("BIGQUERY_PROJECT_ID", "")),
@@ -75,8 +77,18 @@ def _shared_service_cache_key() -> tuple[Any, ...]:
             normalize_env_text(os.getenv("BIGQUERY_PIPELINE_DEAD_LETTERS_TABLE_ID", "")),
             normalize_env_text(os.getenv("BIGQUERY_PREDICTION_RESULTS_TABLE_ID", "")),
         )
+    if backend == "redshift":
+        return (
+            backend,
+            tenant_scope,
+            project_scope,
+            normalize_env_text(os.getenv("AWS_REGION", "")),
+            normalize_env_text(os.getenv("REDSHIFT_WORKGROUP_NAME", "")),
+            normalize_env_text(os.getenv("REDSHIFT_DATABASE", "")),
+            normalize_env_text(os.getenv("REDSHIFT_SCHEMA", "public")),
+        )
     return (
-        mode,
+        backend,
         tenant_scope,
         project_scope,
         _normalize_mock_storage_backend(os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")),
@@ -124,14 +136,17 @@ class BigQueryService:
         self._lock = threading.RLock()
         self._query_state_lock = threading.RLock()
         self._active_queries = 0
-        self.mode = normalize_env_text(os.getenv("DATA_BACKEND_MODE", "mock")).lower()
-        self._mock_storage_backend = "gcp"
-        if self.mode not in {"mock", "gcp"}:
-            raise ValueError("DATA_BACKEND_MODE must be 'mock' or 'gcp'.")
+        self.mode = resolve_warehouse_backend()
+        self._mock_storage_backend = self.mode
+        if self.mode not in {"mock", "bigquery", "redshift"}:
+            raise ValueError("WAREHOUSE_BACKEND must resolve to 'mock', 'bigquery', or 'redshift'.")
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             self._init_gcp_backend()
             print(f"BigQueryService initialized in GCP mode (table: {self._table_id}).")
+        elif self.mode == "redshift":
+            self._init_redshift_backend()
+            print(f"BigQueryService initialized in Redshift mode (schema: {self._redshift.schema}).")
         else:
             self._init_mock_backend()
             if self._mock_storage_backend == "database":
@@ -177,6 +192,14 @@ class BigQueryService:
         self._bigquery = bigquery
         self._client = bigquery.Client(project=project_id)
 
+    def _init_redshift_backend(self):
+        self._redshift = RedshiftWarehouseService()
+        self._table_id = self._redshift.table_id("events_staging")
+        self._curated_table_id = self._redshift.table_id("events_curated")
+        self._player_latest_state_table_id = self._redshift.table_id("player_latest_state")
+        self._dead_letter_table_id = self._redshift.table_id("pipeline_dead_letters")
+        self._prediction_results_table_id = self._redshift.table_id("prediction_results")
+
     def _init_mock_backend(self):
         self._mock_storage_backend = _normalize_mock_storage_backend(
             os.getenv("KAIRYX_MOCK_STORAGE_BACKEND", "local_files")
@@ -205,12 +228,14 @@ class BigQueryService:
         os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
 
     def get_mock_state_backend(self) -> str:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             return "gcp"
+        if self.mode == "redshift":
+            return "redshift"
         return self._mock_storage_backend
 
     def is_mock_state_persistent(self) -> bool:
-        if self.mode == "gcp":
+        if self.mode in {"bigquery", "redshift"}:
             return True
         if self._mock_storage_backend != "database":
             return False
@@ -524,13 +549,17 @@ class BigQueryService:
             return
 
         meta = self._target_meta(target)
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             self._load_rows_to_gcp_table(
                 prepared_events,
                 meta["table_id"],
                 self._bigquery.WriteDisposition.WRITE_APPEND,
             )
             print(f"Wrote {len(prepared_events)} rows to BigQuery table {meta['table_id']}.")
+            return
+        if self.mode == "redshift":
+            self._redshift.append_rows(target, prepared_events)
+            print(f"Wrote {len(prepared_events)} rows to Redshift table {meta['table_id']}.")
             return
 
         if self._uses_database_mock_storage():
@@ -566,12 +595,15 @@ class BigQueryService:
         prepared_rows = [_sanitize_for_storage(dict(row)) for row in rows]
         meta = self._target_meta(target)
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             self._load_rows_to_gcp_table(
                 prepared_rows,
                 meta["table_id"],
                 self._bigquery.WriteDisposition.WRITE_TRUNCATE,
             )
+            return
+        if self.mode == "redshift":
+            self._redshift.replace_rows(target, prepared_rows)
             return
 
         if self._uses_database_mock_storage():
@@ -690,11 +722,16 @@ class BigQueryService:
             return []
 
     def _load_all_rows_from_target(self, target: str) -> List[Dict[str, Any]]:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             table_id = self._target_meta(target)["table_id"]
             try:
                 rows = [dict(row.items()) for row in self._client.query(f"SELECT * FROM `{table_id}`").result()]
                 return rows
+            except Exception:
+                return []
+        if self.mode == "redshift":
+            try:
+                return self._redshift.fetch_payload_rows(target)
             except Exception:
                 return []
         return self._get_local_rows(target)
@@ -966,7 +1003,7 @@ class BigQueryService:
         if not normalized_job_id:
             return []
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             query = f"""
                 SELECT CAST(player_id AS STRING) AS player_id, CAST(canonical_user_id AS STRING) AS canonical_user_id
                 FROM `{self._curated_table_id}`
@@ -991,6 +1028,12 @@ class BigQueryService:
                 rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
             except Exception:
                 rows = []
+        elif self.mode == "redshift":
+            rows = [
+                row
+                for row in (self._load_all_rows_from_target("events_curated") + self._load_all_rows_from_target("events_staging"))
+                if str(row.get("job_id") or row.get("job_identifier") or "") == normalized_job_id
+            ]
         else:
             rows = []
             for table in (self._curated_table, self._table):
@@ -1197,7 +1240,7 @@ class BigQueryService:
         try:
             resolved_query = query
             aliases = self.get_v1_table_aliases()
-            if self.mode == "gcp":
+            if self.mode == "bigquery":
                 for alias, target in aliases.items():
                     table_id = self._target_meta(target)["table_id"]
                     resolved_query = re.sub(rf"\b{re.escape(alias)}\b", f"`{table_id}`", resolved_query)
@@ -1207,6 +1250,25 @@ class BigQueryService:
                 return {
                     "sql": query,
                     "resolved_sql": resolved_query,
+                    "aliases": aliases,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "truncated": len(rows) >= max(1, int(limit)),
+                    "estimated_scan_rows": estimated_scan_rows,
+                    "timeout_seconds": int(timeout_seconds),
+                    "scan_limit_rows": int(max_scan_rows),
+                }
+            if self.mode == "redshift":
+                for alias, target in aliases.items():
+                    table_id = self._target_meta(target)["table_id"]
+                    resolved_query = re.sub(rf"\b{re.escape(alias)}\b", table_id, resolved_query)
+                preview_query = resolved_query
+                if " limit " not in lowered:
+                    preview_query = f"{resolved_query.rstrip(';')} LIMIT {max(1, int(limit))}"
+                rows = self._redshift._run_statement(preview_query, timeout_seconds=max(1, int(timeout_seconds)), fetch=True)
+                return {
+                    "sql": query,
+                    "resolved_sql": preview_query,
                     "aliases": aliases,
                     "rows": rows,
                     "row_count": len(rows),
@@ -1464,7 +1526,7 @@ class BigQueryService:
             }
 
     def get_player_events_curated(self, player_id: Any, limit: int = 1000, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             rows = self._query_rows_by_identity_gcp(
                 self._curated_table_id,
                 player_id,
@@ -1472,6 +1534,16 @@ class BigQueryService:
                 job_id=job_id,
             )
             return rows
+        if self.mode == "redshift":
+            rows = [
+                row
+                for row in self._load_all_rows_from_target("events_curated")
+                if self._preferred_player_identity(row) == str(player_id)
+                or str(row.get("canonical_user_id") or "") == str(player_id)
+            ]
+            if job_id:
+                rows = [row for row in rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
+            return rows[: max(1, int(limit))]
 
         player_df = self._get_local_events_for_identity(player_id, job_id=job_id, target="events_curated")
         if player_df is None or player_df.empty:
@@ -1479,11 +1551,26 @@ class BigQueryService:
         return player_df.head(max(1, int(limit))).to_dict(orient="records")
 
     def get_events_for_player(self, player_id: Any, job_id: Optional[str] = None) -> Optional[pd.DataFrame]:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             curated_rows = self._query_rows_by_identity_gcp(self._curated_table_id, player_id, job_id=job_id)
             if curated_rows:
                 return pd.DataFrame(curated_rows)
             staging_rows = self._query_rows_by_identity_gcp(self._table_id, player_id, job_id=job_id)
+            if staging_rows:
+                return pd.DataFrame(staging_rows)
+            return None
+        if self.mode == "redshift":
+            curated_rows = self.get_player_events_curated(player_id, limit=5000, job_id=job_id)
+            if curated_rows:
+                return pd.DataFrame(curated_rows)
+            staging_rows = [
+                row
+                for row in self._load_all_rows_from_target("events_staging")
+                if self._preferred_player_identity(row) == str(player_id)
+                or str(row.get("canonical_user_id") or "") == str(player_id)
+            ]
+            if job_id:
+                staging_rows = [row for row in staging_rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
             if staging_rows:
                 return pd.DataFrame(staging_rows)
             return None
@@ -1497,7 +1584,7 @@ class BigQueryService:
         if job_id:
             return self.get_import_roster_player_ids(job_id)
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             queries = [
                 f"""
                     SELECT DISTINCT COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) AS player_id
@@ -1526,6 +1613,16 @@ class BigQueryService:
                         return rows
                 except Exception:
                     continue
+            return []
+        if self.mode == "redshift":
+            seen: List[str] = []
+            for target in ("player_latest_state", "events_curated", "events_staging"):
+                for row in self._load_all_rows_from_target(target):
+                    value = self._preferred_player_identity(row)
+                    if value is not None:
+                        seen.append(value)
+                if seen:
+                    return list(dict.fromkeys(seen))
             return []
 
         for target in ("player_latest_state", "events_curated", "events_staging"):
@@ -1578,8 +1675,19 @@ class BigQueryService:
             }
 
     def get_player_latest_state(self, player_id: Any, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             rows = self._query_rows_by_identity_gcp(self._player_latest_state_table_id, player_id, limit=1, job_id=job_id)
+            if rows:
+                return rows[0]
+        elif self.mode == "redshift":
+            rows = [
+                row
+                for row in self._load_all_rows_from_target("player_latest_state")
+                if self._preferred_player_identity(row) == str(player_id)
+                or str(row.get("canonical_user_id") or "") == str(player_id)
+            ]
+            if job_id:
+                rows = [row for row in rows if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)]
             if rows:
                 return rows[0]
         else:
@@ -1593,7 +1701,7 @@ class BigQueryService:
         return self._build_latest_state_from_events(player_id, player_df, job_id=job_id)
 
     def get_pipeline_dead_letters(self, job_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             query = f"SELECT * FROM `{self._dead_letter_table_id}`"
             if job_id:
                 query += " WHERE CAST(job_id AS STRING) = @job_id OR CAST(job_identifier AS STRING) = @job_id"
@@ -1608,6 +1716,15 @@ class BigQueryService:
                 )
             rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
             return rows
+        if self.mode == "redshift":
+            rows = self._load_all_rows_from_target("pipeline_dead_letters")
+            if job_id:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("job_id") or row.get("job_identifier") or "") == str(job_id)
+                ]
+            return rows[: max(1, int(limit))]
 
         table = self._get_mock_table("pipeline_dead_letters")
         if table.empty:
@@ -1779,7 +1896,7 @@ class BigQueryService:
             row_copy.setdefault("prediction_job_id", resolved_job_id)
             prepared_rows.append(row_copy)
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             job_config = self._bigquery.QueryJobConfig(
                 query_parameters=[
                     self._bigquery.ScalarQueryParameter("job_id", "STRING", resolved_job_id)
@@ -1792,6 +1909,10 @@ class BigQueryService:
                 ).result()
             except Exception:
                 pass
+            self._append_rows(prepared_rows, target="prediction_results")
+            return
+        if self.mode == "redshift":
+            self._redshift.delete_rows_for_job("prediction_results", resolved_job_id, prediction_job=True)
             self._append_rows(prepared_rows, target="prediction_results")
             return
 
@@ -1882,7 +2003,7 @@ class BigQueryService:
         page_size = max(1, int(page_size))
         offset = (page - 1) * page_size
 
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             job_config = self._bigquery.QueryJobConfig(
                 query_parameters=[
                     self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id))
@@ -1898,6 +2019,15 @@ class BigQueryService:
             )
             total = int(next(iter(self._client.query(count_query, job_config=job_config).result()))["total"])
             items = [self._deserialize_prediction_row(dict(row.items())) for row in self._client.query(row_query, job_config=job_config).result()]
+            items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
+            return {"page": page, "page_size": page_size, "total": total, "items": items}
+        if self.mode == "redshift":
+            items = [
+                self._deserialize_prediction_row(row)
+                for row in self._load_all_rows_from_target("prediction_results")
+                if str(row.get("prediction_job_id") or "") == str(job_id)
+            ]
+            total = len(items)
             items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
             return {"page": page, "page_size": page_size, "total": total, "items": items}
 
@@ -1940,7 +2070,7 @@ class BigQueryService:
         return parsed
 
     def delete_data_for_job(self, job_identifier: str):
-        if self.mode == "gcp":
+        if self.mode == "bigquery":
             job_config = self._bigquery.QueryJobConfig(
                 query_parameters=[
                     self._bigquery.ScalarQueryParameter("job_identifier", "STRING", job_identifier)
@@ -1961,6 +2091,13 @@ class BigQueryService:
             self.run_events_curation()
             self.refresh_player_latest_state()
             print(f"Deleted rows from BigQuery for job '{job_identifier}'.")
+            return
+        if self.mode == "redshift":
+            self._redshift.delete_rows_for_job("events_staging", job_identifier)
+            self._redshift.delete_rows_for_job("pipeline_dead_letters", job_identifier)
+            self.run_events_curation()
+            self.refresh_player_latest_state()
+            print(f"Deleted rows from Redshift for job '{job_identifier}'.")
             return
 
         with self._lock:
