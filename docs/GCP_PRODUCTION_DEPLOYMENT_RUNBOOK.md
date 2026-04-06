@@ -198,10 +198,50 @@ Use resource-level permissions where possible instead of project-wide owner/edit
 
 ## 7) Step-By-Step Deployment
 
+Use the following sample values as placeholders while reading the examples in this section:
+
+```bash
+export GCP_PROJECT_ID="kairyx-prod"
+export GCP_PROJECT_NUMBER="123456789012"
+export GCP_REGION="us-central1"
+export GCP_ZONE="us-central1-a"
+export GCP_ARTIFACT_REGISTRY_REPOSITORY="kairyx"
+export GCP_IMAGE_NAME="kairyxai"
+export GCP_RELEASE_TAG="2026-04-06-r1"
+export GCP_NETWORK="kairyx-prod-vpc"
+export GCP_SUBNET="kairyx-prod-serverless"
+export GCP_SQL_INSTANCE="kairyx-prod-db"
+export GCP_SQL_DATABASE="kairyx"
+export GCP_SQL_USER="kairyx_app"
+export GCP_SQL_CONNECTION_NAME="${GCP_PROJECT_ID}:${GCP_REGION}:${GCP_SQL_INSTANCE}"
+export GCS_BUCKET_NAME="kairyx-prod-data"
+export IMPORT_COMMAND_TOPIC="kairyx-import-jobs"
+export PREDICTION_COMMAND_TOPIC="kairyx-prediction-jobs"
+export EXPORT_COMMAND_TOPIC="kairyx-export-jobs"
+export RAW_SHARD_TOPIC="kairyx-raw-shards"
+```
+
+Replace them with your real values before running anything.
+
 ### 7.1 Create The Production Project
 1. Create a dedicated production GCP project.
 2. Set billing, organization policies, labels, and deletion protection rules.
 3. Set the default region that will host Cloud Run, Cloud SQL, Artifact Registry, and Scheduler.
+
+Example:
+
+```bash
+gcloud projects create "${GCP_PROJECT_ID}" --name="KairyxAI Production"
+
+gcloud config set project "${GCP_PROJECT_ID}"
+
+gcloud beta billing projects link "${GCP_PROJECT_ID}" \
+  --billing-account="REPLACE_WITH_BILLING_ACCOUNT_ID"
+```
+
+After project creation:
+- enable required org labels and policies using your organization’s standard platform tooling
+- confirm the project number because some later IAM bindings use the Pub/Sub service agent derived from it
 
 ### 7.2 Enable Required APIs
 Enable at least:
@@ -222,6 +262,29 @@ Enable at least:
 - `iam.googleapis.com`
 - `iamcredentials.googleapis.com`
 
+Example:
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com \
+  sqladmin.googleapis.com \
+  secretmanager.googleapis.com \
+  pubsub.googleapis.com \
+  cloudscheduler.googleapis.com \
+  monitoring.googleapis.com \
+  logging.googleapis.com \
+  bigquery.googleapis.com \
+  storage.googleapis.com \
+  compute.googleapis.com \
+  servicenetworking.googleapis.com \
+  vpcaccess.googleapis.com \
+  iam.googleapis.com \
+  iamcredentials.googleapis.com \
+  --project="${GCP_PROJECT_ID}"
+```
+
 ### 7.3 Create Artifact Registry
 1. Create one Docker repository in the production region, for example `kairyx`.
 2. Grant the build identity permission to push images.
@@ -231,11 +294,48 @@ Enable at least:
 Inference from the repo:
 - One shared immutable image is operationally cleaner because all five services use the same repo-root Dockerfile and differ only by `SERVICE_ROLE` plus role-specific env.
 
+Example:
+
+```bash
+gcloud artifacts repositories create "${GCP_ARTIFACT_REGISTRY_REPOSITORY}" \
+  --project="${GCP_PROJECT_ID}" \
+  --repository-format=docker \
+  --location="${GCP_REGION}" \
+  --description="KairyxAI runtime images"
+```
+
 ### 7.4 Create The Production VPC
 1. Create a dedicated production VPC and subnet in the same region.
 2. Configure Private Service Access for Cloud SQL private IP.
 3. Prefer Direct VPC egress for Cloud Run to reach private IP resources.
 4. Use Serverless VPC Access only if organization policy or network design requires it.
+
+Example:
+
+```bash
+gcloud compute networks create "${GCP_NETWORK}" \
+  --project="${GCP_PROJECT_ID}" \
+  --subnet-mode=custom
+
+gcloud compute networks subnets create "${GCP_SUBNET}" \
+  --project="${GCP_PROJECT_ID}" \
+  --network="${GCP_NETWORK}" \
+  --region="${GCP_REGION}" \
+  --range="10.20.0.0/24"
+
+gcloud compute addresses create google-managed-services-"${GCP_NETWORK}" \
+  --project="${GCP_PROJECT_ID}" \
+  --global \
+  --purpose=VPC_PEERING \
+  --prefix-length=16 \
+  --network="${GCP_NETWORK}"
+
+gcloud services vpc-peerings connect \
+  --project="${GCP_PROJECT_ID}" \
+  --service=servicenetworking.googleapis.com \
+  --ranges=google-managed-services-"${GCP_NETWORK}" \
+  --network="${GCP_NETWORK}"
+```
 
 ### 7.5 Provision Cloud SQL PostgreSQL
 1. Create a regional PostgreSQL instance with HA enabled.
@@ -253,6 +353,36 @@ Inference from the repo:
    - database `kairyx`
    - least-privilege application user
 6. Store the connection URL in Secret Manager.
+
+Example:
+
+```bash
+gcloud sql instances create "${GCP_SQL_INSTANCE}" \
+  --project="${GCP_PROJECT_ID}" \
+  --database-version=POSTGRES_16 \
+  --region="${GCP_REGION}" \
+  --availability-type=REGIONAL \
+  --tier=db-custom-4-16384 \
+  --storage-type=SSD \
+  --storage-size=200GB \
+  --network="projects/${GCP_PROJECT_ID}/global/networks/${GCP_NETWORK}" \
+  --no-assign-ip \
+  --backup-start-time=03:00 \
+  --enable-point-in-time-recovery \
+  --maintenance-window-day=7 \
+  --maintenance-window-hour=4 \
+  --deletion-protection
+
+gcloud sql databases create "${GCP_SQL_DATABASE}" \
+  --project="${GCP_PROJECT_ID}" \
+  --instance="${GCP_SQL_INSTANCE}"
+
+gcloud sql users create "${GCP_SQL_USER}" \
+  --project="${GCP_PROJECT_ID}" \
+  --instance="${GCP_SQL_INSTANCE}"
+```
+
+Set the database user's password through your approved admin workflow before building `CONTROL_PLANE_DATABASE_URL`.
 
 Recommended secret names:
 - `control-plane-db-url`
@@ -311,6 +441,18 @@ printf '%s' 'postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/k
 3. Apply labels for environment, owner, data-classification, and product.
 4. Grant BigQuery access only to the service accounts that need it.
 
+Example:
+
+```bash
+bq --location="${GCP_REGION}" mk \
+  --dataset \
+  --label=environment:prod \
+  --label=product:kairyx \
+  "${GCP_PROJECT_ID}:kairyx_platform"
+```
+
+If you use multiple datasets for tenant or workload separation, repeat that pattern with your actual dataset naming convention.
+
 ### 7.7 Create Cloud Storage Buckets
 1. Create regional buckets in the same region as the runtime.
 2. Use uniform bucket-level access.
@@ -321,12 +463,52 @@ printf '%s' 'postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/k
 4. Enable soft delete for business-critical buckets.
 5. If you create a separate short-lived staging bucket, document whether soft delete is disabled there for cost reasons.
 
+Example:
+
+```bash
+gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
+  --project="${GCP_PROJECT_ID}" \
+  --location="${GCP_REGION}" \
+  --uniform-bucket-level-access
+```
+
+Example prefix layout after the bucket exists:
+
+```text
+gs://kairyx-prod-data/tenants/default/raw/
+gs://kairyx-prod-data/tenants/default/exports/
+gs://kairyx-prod-data/tenants/default/backups/
+```
+
 ### 7.8 Create Secret Manager Secrets
 1. Create production-only secrets in Secret Manager.
 2. Use least-privilege secret IAM.
 3. Prefer stable secret IDs and rotate by adding versions.
 4. For this repo, use `gsm://SECRET_NAME` references when you want the code to resolve the latest version automatically.
 5. If you need strict release control for a high-risk secret, use a full Secret Manager version path because the current secret resolver also accepts `projects/.../secrets/.../versions/...`.
+
+Example:
+
+```bash
+printf '%s' 'replace-me-with-a-long-random-worker-token' \
+  | gcloud secrets create worker-shared-token \
+      --project="${GCP_PROJECT_ID}" \
+      --data-file=-
+
+printf '%s' 'replace-me-with-sendgrid-key' \
+  | gcloud secrets create provider-sendgrid-api-key \
+      --project="${GCP_PROJECT_ID}" \
+      --data-file=-
+```
+
+If a secret already exists:
+
+```bash
+printf '%s' 'new-secret-value' \
+  | gcloud secrets versions add worker-shared-token \
+      --project="${GCP_PROJECT_ID}" \
+      --data-file=-
+```
 
 ### 7.9 Create Service Accounts And IAM Bindings
 1. Create the runtime service accounts listed in Section 6.
@@ -336,6 +518,34 @@ printf '%s' 'postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/k
    - `scheduler-invoker` on `scheduler-worker`
 4. For Pub/Sub authenticated push, grant the Pub/Sub service agent `roles/iam.serviceAccountTokenCreator` on the push auth service account.
 5. For Cloud Scheduler authenticated HTTP, grant the scheduler caller service account `roles/run.invoker` on `scheduler-worker`.
+
+Example:
+
+```bash
+for sa in operator-api import-worker prediction-worker export-worker scheduler-worker pubsub-push-invoker scheduler-invoker; do
+  gcloud iam service-accounts create "${sa}" \
+    --project="${GCP_PROJECT_ID}" \
+    --display-name="${sa}"
+done
+```
+
+Example role bindings:
+
+```bash
+gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
+  --member="serviceAccount:operator-api@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/cloudsql.client"
+
+gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
+  --member="serviceAccount:operator-api@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
+  --member="serviceAccount:operator-api@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/pubsub.publisher"
+```
+
+Apply the Cloud Run service-level `roles/run.invoker` bindings after the worker services exist. The later Pub/Sub and Scheduler steps show where those bindings fit operationally.
 
 ### 7.10 Build The Production Image
 Use the checked-in deploy script:
