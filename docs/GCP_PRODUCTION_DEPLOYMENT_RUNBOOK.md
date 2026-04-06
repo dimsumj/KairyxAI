@@ -263,6 +263,48 @@ Recommended secret names:
 - provider callback signing secrets
 - connector credentials per integration
 
+### 7.5.1 Build `CONTROL_PLANE_DATABASE_URL`
+For the current Cloud Run deployment path in this repository, use the Cloud SQL Unix socket form:
+
+```text
+postgresql+psycopg://DB_USER:DB_PASSWORD@/DB_NAME?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
+```
+
+Example:
+
+```text
+postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/kairyx-prod:us-central1:kairyx-prod-db
+```
+
+How to fill it in:
+- `DB_USER`: the least-privilege Postgres application user you created for KairyxAI
+- `DB_PASSWORD`: the password for that user
+- `DB_NAME`: usually `kairyx`
+- `PROJECT_ID`: the GCP project that owns the Cloud SQL instance
+- `REGION`: the Cloud SQL region, for example `us-central1`
+- `INSTANCE_NAME`: the Cloud SQL instance name, for example `kairyx-prod-db`
+
+Important details:
+- Use the `/cloudsql/PROJECT:REGION:INSTANCE` host form for this repo’s Cloud Run path.
+- Do not use SQLite in production.
+- If the password contains characters such as `@`, `:`, `/`, or `?`, URL-encode the password before building the URL.
+
+Store that URL in Secret Manager and reference the secret ID through `CONTROL_PLANE_DATABASE_URL_SECRET`.
+
+Example secret creation:
+
+```bash
+printf '%s' 'postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/kairyx-prod:us-central1:kairyx-prod-db' \
+  | gcloud secrets create control-plane-db-url --data-file=-
+```
+
+If the secret already exists, add a new version instead:
+
+```bash
+printf '%s' 'postgresql+psycopg://kairyx_app:REPLACE_ME@/kairyx?host=/cloudsql/kairyx-prod:us-central1:kairyx-prod-db' \
+  | gcloud secrets versions add control-plane-db-url --data-file=-
+```
+
 ### 7.6 Create BigQuery Datasets
 1. Create the control datasets or dataset prefixes used by the product in the production project.
 2. Keep tenant isolation at the dataset or dataset-prefix level according to the multi-tenant PRD.
