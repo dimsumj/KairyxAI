@@ -501,6 +501,8 @@ Production deployment assets in this repository now include:
 - [backend/services/cloudrun/export-worker.yaml](backend/services/cloudrun/export-worker.yaml)
 - [backend/services/cloudrun/scheduler-worker.yaml](backend/services/cloudrun/scheduler-worker.yaml)
 - [deploy/gcp/deploy_cloud_run.sh](deploy/gcp/deploy_cloud_run.sh)
+- [deploy/gcp/dev.env.example](deploy/gcp/dev.env.example)
+- [deploy/gcp/qa.env.example](deploy/gcp/qa.env.example)
 - [deploy/aws/ecs/task-definitions/operator-api.json](deploy/aws/ecs/task-definitions/operator-api.json)
 - [deploy/aws/ecs/service-definitions/operator-api.json](deploy/aws/ecs/service-definitions/operator-api.json)
 - [deploy/aws/cloudwatch/alarms.json](deploy/aws/cloudwatch/alarms.json)

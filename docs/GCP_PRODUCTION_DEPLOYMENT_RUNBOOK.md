@@ -24,6 +24,9 @@ It is written for the repository state as of `2026-04-06` and assumes the produc
 - Keep Cloud Run, Cloud SQL, Pub/Sub subscriptions, Artifact Registry, and Cloud Scheduler in the same region unless there is a strict business reason not to.
 - Use private connectivity from Cloud Run to Cloud SQL.
 - Use one dedicated production project, separate from staging and development.
+- For internal `dev` and `qa`, either:
+  - use separate non-prod projects, or
+  - keep one shared non-prod project and set `GCP_SERVICE_PREFIX` so service names do not collide, for example `dev-operator-api` and `qa-operator-api`.
 
 ### 2.2 Public Versus Private Services
 - `operator-api`
@@ -295,6 +298,8 @@ Recommended secret names:
 ### 7.10 Build The Production Image
 Use the checked-in deploy script:
 - `deploy/gcp/deploy_cloud_run.sh`
+- `deploy/gcp/dev.env.example`
+- `deploy/gcp/qa.env.example`
 
 What the script does:
 1. load one operator-provided env file
@@ -307,6 +312,15 @@ The script intentionally does not provision the full GCP foundation. It assumes 
 
 ### 7.11 Prepare Runtime Configuration
 Create one deploy env file, for example `deploy/gcp/production.env`, and pass it to the script.
+
+Checked-in non-prod templates:
+- `deploy/gcp/dev.env.example`
+- `deploy/gcp/qa.env.example`
+
+Recommended usage:
+- production: copy the production example from this runbook into a private env file that is not committed
+- dev: start from `deploy/gcp/dev.env.example`
+- qa: start from `deploy/gcp/qa.env.example`
 
 Required deploy-script variables:
 
@@ -333,6 +347,8 @@ Recommended optional deploy-script variables:
 
 | Variable | Meaning |
 | --- | --- |
+| `GCP_DEPLOYMENT_TIER` | Optional deploy profile: `prod`, `qa`, or `dev`; defaults to `prod` |
+| `GCP_SERVICE_PREFIX` | Optional service-name prefix such as `dev` or `qa` |
 | `GCP_SECRET_PROJECT_ID` | Secret project used by app-resolved `gsm://` refs; defaults to `GCP_PROJECT_ID` |
 | `GOOGLE_OIDC_CLIENT_ID` | Optional alias; defaults to `OIDC_CLIENT_ID` |
 | `GOOGLE_OIDC_HOSTED_DOMAIN` | Optional hosted-domain restriction |
@@ -356,6 +372,14 @@ Recommended optional deploy-script variables:
 | `BOOTSTRAP_PROJECT_ID` | Defaults to `default` |
 | `BOOTSTRAP_PROJECT_NAME` | Defaults to `Default Project` |
 | `GCP_EXTRA_ENV_FILE` | Optional YAML fragment appended to the generated Cloud Run env-vars file |
+
+Tier defaults built into the script:
+
+| Tier | Use case | Service naming | Sizing intent |
+| --- | --- | --- | --- |
+| `prod` | Production traffic | no prefix by default | current production-sized defaults |
+| `qa` | Internal validation, staging-like verification | usually `qa-` prefix | reduced but production-shaped capacity |
+| `dev` | Internal development, smoke tests, feature checks | usually `dev-` prefix | smallest shared-test capacity |
 
 Example `deploy/gcp/production.env`:
 
@@ -395,6 +419,23 @@ BOOTSTRAP_PROJECT_ID=default
 BOOTSTRAP_PROJECT_NAME=Default Project
 ```
 
+Example non-prod usage:
+
+```bash
+cp deploy/gcp/dev.env.example deploy/gcp/dev.env
+bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/dev.env
+
+cp deploy/gcp/qa.env.example deploy/gcp/qa.env
+bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/qa.env
+```
+
+What the non-prod templates already do:
+- set `GCP_DEPLOYMENT_TIER=dev` or `qa`
+- set `GCP_SERVICE_PREFIX=dev` or `qa`
+- use environment-specific topic names and bucket names
+- keep `APP_ENV=prod` semantics so runtime validation stays production-shaped
+- keep the default service-account names unless you explicitly override `OPERATOR_API_SERVICE_ACCOUNT`, `IMPORT_WORKER_SERVICE_ACCOUNT`, `PREDICTION_WORKER_SERVICE_ACCOUNT`, `EXPORT_WORKER_SERVICE_ACCOUNT`, or `SCHEDULER_WORKER_SERVICE_ACCOUNT`
+
 Secrets expected by the script:
 - `CONTROL_PLANE_DATABASE_URL_SECRET` and `WORKER_SHARED_TOKEN_SECRET` must be secret IDs that Cloud Run can inject at deploy time.
 - In practice, keep those secrets in the same project you deploy Cloud Run into.
@@ -405,6 +446,13 @@ Run the deploy script from the repository root:
 
 ```bash
 bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/production.env
+```
+
+For non-prod internal environments:
+
+```bash
+bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/dev.env
+bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/qa.env
 ```
 
 The script deploys the following Cloud Run defaults for `operator-api`:
@@ -526,6 +574,14 @@ gcloud pubsub subscriptions create kairyx-import-jobs-sub \
 
 Repeat that pattern for `prediction-worker` and `export-worker`.
 
+If you set `GCP_SERVICE_PREFIX`, resolve the prefixed service names instead:
+- `dev-import-worker`
+- `qa-import-worker`
+- `dev-prediction-worker`
+- `qa-prediction-worker`
+- `dev-export-worker`
+- `qa-export-worker`
+
 ### 7.15 Create The Scheduler Job
 1. Create one Cloud Scheduler HTTP job pointed at `scheduler-worker` `/run?token=WORKER_SHARED_TOKEN`.
 2. Use OIDC auth, not unauthenticated calls.
@@ -563,6 +619,8 @@ gcloud scheduler jobs create http kairyx-scheduler-worker \
   --max-backoff=300s \
   --max-doublings=3
 ```
+
+If you set `GCP_SERVICE_PREFIX`, use the prefixed scheduler service name, for example `dev-scheduler-worker` or `qa-scheduler-worker`.
 
 ### 7.16 Run Schema Migration
 1. Run Alembic against production Cloud SQL.

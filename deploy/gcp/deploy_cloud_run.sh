@@ -33,6 +33,8 @@ Required env file values:
   GCS_BUCKET_NAME
 
 Optional deployment values:
+  GCP_DEPLOYMENT_TIER
+  GCP_SERVICE_PREFIX
   GCP_SECRET_PROJECT_ID
   GOOGLE_OIDC_CLIENT_ID
   GOOGLE_OIDC_HOSTED_DOMAIN
@@ -61,6 +63,8 @@ Optional deployment values:
 Notes:
   - The script expects Cloud Run-injected secrets to live in the same GCP project as the deploy target.
   - Use GCP_RUN_NETWORK + GCP_RUN_SUBNET for Direct VPC egress, or GCP_VPC_CONNECTOR for Serverless VPC Access.
+  - GCP_DEPLOYMENT_TIER defaults to prod. Use dev or qa for lighter internal-test sizing.
+  - GCP_SERVICE_PREFIX lets one project host multiple KairyxAI environments, for example dev-operator-api and qa-operator-api.
 EOF
 }
 
@@ -97,6 +101,152 @@ env_file_line() {
 default_service_account() {
   local service_name="$1"
   printf '%s@%s.iam.gserviceaccount.com' "$service_name" "$GCP_PROJECT_ID"
+}
+
+normalize_service_prefix() {
+  local prefix="${GCP_SERVICE_PREFIX:-}"
+  if [[ -z "$prefix" ]]; then
+    printf ''
+    return
+  fi
+  if [[ "$prefix" == *- ]]; then
+    printf '%s' "$prefix"
+    return
+  fi
+  printf '%s-' "$prefix"
+}
+
+resolve_deployment_tier() {
+  local tier="${GCP_DEPLOYMENT_TIER:-prod}"
+  case "$tier" in
+    prod|qa|dev)
+      printf '%s' "$tier"
+      ;;
+    *)
+      die "GCP_DEPLOYMENT_TIER must be one of: prod, qa, dev"
+      ;;
+  esac
+}
+
+service_name_for_role() {
+  local service_role="$1"
+  printf '%s%s' "${SERVICE_PREFIX}" "${service_role}"
+}
+
+tier_setting() {
+  local service_role="$1"
+  local field="$2"
+
+  case "${DEPLOYMENT_TIER}:${service_role}:${field}" in
+    prod:operator-api:cpu) printf '2' ;;
+    prod:operator-api:memory) printf '4Gi' ;;
+    prod:operator-api:concurrency) printf '40' ;;
+    prod:operator-api:min) printf '2' ;;
+    prod:operator-api:max) printf '20' ;;
+    prod:operator-api:timeout) printf '300' ;;
+
+    prod:import-worker:cpu) printf '2' ;;
+    prod:import-worker:memory) printf '4Gi' ;;
+    prod:import-worker:concurrency) printf '1' ;;
+    prod:import-worker:min) printf '1' ;;
+    prod:import-worker:max) printf '20' ;;
+    prod:import-worker:timeout) printf '3600' ;;
+
+    prod:prediction-worker:cpu) printf '2' ;;
+    prod:prediction-worker:memory) printf '8Gi' ;;
+    prod:prediction-worker:concurrency) printf '1' ;;
+    prod:prediction-worker:min) printf '0' ;;
+    prod:prediction-worker:max) printf '10' ;;
+    prod:prediction-worker:timeout) printf '3600' ;;
+
+    prod:export-worker:cpu) printf '2' ;;
+    prod:export-worker:memory) printf '4Gi' ;;
+    prod:export-worker:concurrency) printf '1' ;;
+    prod:export-worker:min) printf '0' ;;
+    prod:export-worker:max) printf '20' ;;
+    prod:export-worker:timeout) printf '1800' ;;
+
+    prod:scheduler-worker:cpu) printf '1' ;;
+    prod:scheduler-worker:memory) printf '1Gi' ;;
+    prod:scheduler-worker:concurrency) printf '1' ;;
+    prod:scheduler-worker:min) printf '1' ;;
+    prod:scheduler-worker:max) printf '2' ;;
+    prod:scheduler-worker:timeout) printf '300' ;;
+
+    qa:operator-api:cpu) printf '1' ;;
+    qa:operator-api:memory) printf '2Gi' ;;
+    qa:operator-api:concurrency) printf '20' ;;
+    qa:operator-api:min) printf '1' ;;
+    qa:operator-api:max) printf '5' ;;
+    qa:operator-api:timeout) printf '300' ;;
+
+    qa:import-worker:cpu) printf '1' ;;
+    qa:import-worker:memory) printf '2Gi' ;;
+    qa:import-worker:concurrency) printf '1' ;;
+    qa:import-worker:min) printf '0' ;;
+    qa:import-worker:max) printf '5' ;;
+    qa:import-worker:timeout) printf '3600' ;;
+
+    qa:prediction-worker:cpu) printf '1' ;;
+    qa:prediction-worker:memory) printf '4Gi' ;;
+    qa:prediction-worker:concurrency) printf '1' ;;
+    qa:prediction-worker:min) printf '0' ;;
+    qa:prediction-worker:max) printf '4' ;;
+    qa:prediction-worker:timeout) printf '3600' ;;
+
+    qa:export-worker:cpu) printf '1' ;;
+    qa:export-worker:memory) printf '2Gi' ;;
+    qa:export-worker:concurrency) printf '1' ;;
+    qa:export-worker:min) printf '0' ;;
+    qa:export-worker:max) printf '5' ;;
+    qa:export-worker:timeout) printf '1800' ;;
+
+    qa:scheduler-worker:cpu) printf '1' ;;
+    qa:scheduler-worker:memory) printf '1Gi' ;;
+    qa:scheduler-worker:concurrency) printf '1' ;;
+    qa:scheduler-worker:min) printf '0' ;;
+    qa:scheduler-worker:max) printf '1' ;;
+    qa:scheduler-worker:timeout) printf '300' ;;
+
+    dev:operator-api:cpu) printf '1' ;;
+    dev:operator-api:memory) printf '1Gi' ;;
+    dev:operator-api:concurrency) printf '10' ;;
+    dev:operator-api:min) printf '0' ;;
+    dev:operator-api:max) printf '3' ;;
+    dev:operator-api:timeout) printf '300' ;;
+
+    dev:import-worker:cpu) printf '1' ;;
+    dev:import-worker:memory) printf '1Gi' ;;
+    dev:import-worker:concurrency) printf '1' ;;
+    dev:import-worker:min) printf '0' ;;
+    dev:import-worker:max) printf '3' ;;
+    dev:import-worker:timeout) printf '3600' ;;
+
+    dev:prediction-worker:cpu) printf '1' ;;
+    dev:prediction-worker:memory) printf '2Gi' ;;
+    dev:prediction-worker:concurrency) printf '1' ;;
+    dev:prediction-worker:min) printf '0' ;;
+    dev:prediction-worker:max) printf '2' ;;
+    dev:prediction-worker:timeout) printf '3600' ;;
+
+    dev:export-worker:cpu) printf '1' ;;
+    dev:export-worker:memory) printf '1Gi' ;;
+    dev:export-worker:concurrency) printf '1' ;;
+    dev:export-worker:min) printf '0' ;;
+    dev:export-worker:max) printf '3' ;;
+    dev:export-worker:timeout) printf '1800' ;;
+
+    dev:scheduler-worker:cpu) printf '1' ;;
+    dev:scheduler-worker:memory) printf '1Gi' ;;
+    dev:scheduler-worker:concurrency) printf '1' ;;
+    dev:scheduler-worker:min) printf '0' ;;
+    dev:scheduler-worker:max) printf '1' ;;
+    dev:scheduler-worker:timeout) printf '300' ;;
+
+    *)
+      die "No deployment tier setting found for ${DEPLOYMENT_TIER}/${service_role}/${field}"
+      ;;
+  esac
 }
 
 configure_network_flags() {
@@ -243,18 +393,24 @@ build_secret_bindings() {
 deploy_service() {
   local service_name="$1"
   local service_role="$2"
-  local cpu="$3"
-  local memory="$4"
-  local concurrency="$5"
-  local min_instances="$6"
-  local max_instances="$7"
-  local timeout="$8"
-  local scheduler_enabled="$9"
-  local allow_flag="${10}"
-  local service_account="${11}"
+  local scheduler_enabled="$3"
+  local allow_flag="$4"
+  local service_account="$5"
+  local cpu
+  local memory
+  local concurrency
+  local min_instances
+  local max_instances
+  local timeout
   local env_file
   local url
 
+  cpu="$(tier_setting "${service_role}" cpu)"
+  memory="$(tier_setting "${service_role}" memory)"
+  concurrency="$(tier_setting "${service_role}" concurrency)"
+  min_instances="$(tier_setting "${service_role}" min)"
+  max_instances="$(tier_setting "${service_role}" max)"
+  timeout="$(tier_setting "${service_role}" timeout)"
   env_file="$(mktemp)"
   write_env_vars_file "${env_file}" "${service_role}" "${scheduler_enabled}"
   build_secret_bindings "${service_role}"
@@ -302,6 +458,8 @@ main() {
   load_env_file "${env_file}"
   validate_configuration
   configure_network_flags
+  DEPLOYMENT_TIER="$(resolve_deployment_tier)"
+  SERVICE_PREFIX="$(normalize_service_prefix)"
 
   gcloud config set project "${GCP_PROJECT_ID}" >/dev/null
 
@@ -313,11 +471,11 @@ main() {
 
   build_image
 
-  deploy_service "operator-api" "operator-api" "2" "4Gi" "40" "2" "20" "300" "false" "--allow-unauthenticated" "${OPERATOR_API_SERVICE_ACCOUNT}"
-  deploy_service "import-worker" "import-worker" "2" "4Gi" "1" "1" "20" "3600" "false" "--no-allow-unauthenticated" "${IMPORT_WORKER_SERVICE_ACCOUNT}"
-  deploy_service "prediction-worker" "prediction-worker" "2" "8Gi" "1" "0" "10" "3600" "false" "--no-allow-unauthenticated" "${PREDICTION_WORKER_SERVICE_ACCOUNT}"
-  deploy_service "export-worker" "export-worker" "2" "4Gi" "1" "0" "20" "1800" "false" "--no-allow-unauthenticated" "${EXPORT_WORKER_SERVICE_ACCOUNT}"
-  deploy_service "scheduler-worker" "scheduler-worker" "1" "1Gi" "1" "1" "2" "300" "true" "--no-allow-unauthenticated" "${SCHEDULER_WORKER_SERVICE_ACCOUNT}"
+  deploy_service "$(service_name_for_role operator-api)" "operator-api" "false" "--allow-unauthenticated" "${OPERATOR_API_SERVICE_ACCOUNT}"
+  deploy_service "$(service_name_for_role import-worker)" "import-worker" "false" "--no-allow-unauthenticated" "${IMPORT_WORKER_SERVICE_ACCOUNT}"
+  deploy_service "$(service_name_for_role prediction-worker)" "prediction-worker" "false" "--no-allow-unauthenticated" "${PREDICTION_WORKER_SERVICE_ACCOUNT}"
+  deploy_service "$(service_name_for_role export-worker)" "export-worker" "false" "--no-allow-unauthenticated" "${EXPORT_WORKER_SERVICE_ACCOUNT}"
+  deploy_service "$(service_name_for_role scheduler-worker)" "scheduler-worker" "true" "--no-allow-unauthenticated" "${SCHEDULER_WORKER_SERVICE_ACCOUNT}"
 
   cat <<EOF
 
@@ -325,6 +483,12 @@ Deployment finished.
 
 Image:
   ${IMAGE_REFERENCE}
+
+Deployment tier:
+  ${DEPLOYMENT_TIER}
+
+Service prefix:
+  ${SERVICE_PREFIX:-<none>}
 
 Next steps:
   1. Create or update Pub/Sub push subscriptions for import-worker, prediction-worker, and export-worker.
