@@ -64,8 +64,10 @@ The source of truth for that roadmap lives in:
 Data Core owns the upstream control plane:
 
 - connector configuration and health
+- dataset-level BigQuery connector discovery, including connector table listing
 - field mapping and mapping governance
 - import jobs, replay, backfill, and quality gates
+- BigQuery table imports for external prediction scores and churn lists, with materialization into prediction jobs or list cohorts
 - identity stitching and source-of-truth decisions
 - SQL workspace and read-only warehouse access
 - prediction jobs and prediction result availability
@@ -589,6 +591,8 @@ Common resources include:
 
 - `/api/v1/health`
 - `/api/v1/connectors`
+- `/api/v1/connectors/{connector_name}/health`
+- `/api/v1/connectors/{connector_name}/tables`
 - `/api/v1/mappings`
 - `/api/v1/imports`
 - `/api/v1/predictions`
@@ -609,12 +613,19 @@ There is also a lightweight liveness endpoint at:
 - `/api/v1/health/live`
 - `/health/live`
 
+BigQuery dataset imports are now API-backed through the same control plane:
+
+- `POST /api/v1/connectors` with `type="bigquery"` requires `config.project_id` and `config.dataset_id`, with optional `config.location`
+- `POST /api/v1/imports` accepts `table_name`, `resource_kind`, and `column_mapping` for BigQuery connectors
+- `resource_kind="external_prediction_scores"` materializes a linked external prediction job and writes native prediction results
+- `resource_kind="churn_list"` materializes a list cohort and can activate it immediately
+
 ## Validation and Local Development
 
 ### Backend tests
 
 ```bash
-.venv/bin/pytest backend/services/tests/test_copilot_agent.py backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
+.venv/bin/pytest backend/services/tests/test_bigquery_table_imports.py backend/services/tests/test_copilot_agent.py backend/services/tests/test_multitenant_auth.py backend/services/tests/test_v1_api.py backend/services/tests/test_v1_closed_loop.py -q
 ```
 
 ### Frontend/operator smoke

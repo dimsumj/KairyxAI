@@ -32,6 +32,8 @@ class PredictionModelTrainRequest(BaseModel):
 
 class PredictionResultItem(BaseModel):
     user_id: str
+    canonical_user_id: str | None = None
+    email: str | None = None
     churn_state: str
     predicted_churn_risk: str
     churn_reason: str
