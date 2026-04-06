@@ -6219,7 +6219,15 @@ export function initializeOperatorConsole() {
                         <input type="text" id="bigquery_project_id" placeholder="Enter your GCP Project ID">
                     </div>
                     <div class="form-group">
-                        <p style="font-size: 0.8rem; color: var(--subtle-text);">Note: For authentication, ensure your backend service has Application Default Credentials (ADC) configured (e.g., by running 'gcloud auth application-default login') or that a service account is correctly set up in your server environment.</p>
+                        <label for="bigquery_dataset_id">BigQuery Dataset ID</label>
+                        <input type="text" id="bigquery_dataset_id" placeholder="growth_inputs">
+                    </div>
+                    <div class="form-group">
+                        <label for="bigquery_location">BigQuery Location (optional)</label>
+                        <input type="text" id="bigquery_location" placeholder="US">
+                    </div>
+                    <div class="form-group">
+                        <p style="font-size: 0.8rem; color: var(--subtle-text);">Authentication still uses backend-side credentials. Use Application Default Credentials (ADC) or a server-side secret reference for service account JSON.</p>
                     </div>`,
                 sendgrid: `
                     <div class="form-group">
@@ -6288,7 +6296,9 @@ export function initializeOperatorConsole() {
                     };
                 } else if (type === 'bigquery') {
                     payload = {
-                        project_id: document.getElementById('bigquery_project_id').value
+                        project_id: document.getElementById('bigquery_project_id').value,
+                        dataset_id: document.getElementById('bigquery_dataset_id').value,
+                        location: document.getElementById('bigquery_location').value || undefined,
                     };
                 } else if (type === 'sendgrid') {
                     payload = {

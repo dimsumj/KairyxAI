@@ -5,6 +5,7 @@ from typing import Any, Dict
 from .amplitude_connector import AmplitudeConnector
 from .adjust_connector import AdjustConnector
 from .appsflyer_connector import AppsFlyerConnector
+from .bigquery_connector import BigQueryConnector
 
 
 def create_connector(connector_type: str, config: Dict[str, Any]):
@@ -15,4 +16,6 @@ def create_connector(connector_type: str, config: Dict[str, Any]):
         return AdjustConnector(config)
     if ctype == "appsflyer":
         return AppsFlyerConnector(config)
+    if ctype == "bigquery":
+        return BigQueryConnector(config)
     raise ValueError(f"Unsupported connector type: {connector_type}")

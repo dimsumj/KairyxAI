@@ -16,9 +16,15 @@ from app.core.deps import get_import_service
 class ImportJobCreateRequest(BaseModel):
     source_name: str | None = None
     connector_id: str | None = None
-    start_date: str
-    end_date: str
+    start_date: str | None = None
+    end_date: str | None = None
     page_size: int | None = None
+    table_name: str | None = None
+    resource_kind: str | None = None
+    column_mapping: dict[str, str] | None = None
+    where_sql: str | None = None
+    activate_cohort: bool = False
+    cohort_name: str | None = None
 
 
 class ImportBackfillRequest(BaseModel):
@@ -52,7 +58,18 @@ def create_import(request: ImportJobCreateRequest, http_request: Request, servic
     if not source_ref:
         raise HTTPException(status_code=409, detail="source_name or connector_id is required.")
     try:
-        job = service.create_job(source_ref, request.start_date, request.end_date, request.page_size)
+        job = service.create_job(
+            source_ref,
+            request.start_date,
+            request.end_date,
+            request.page_size,
+            table_name=request.table_name,
+            resource_kind=request.resource_kind,
+            column_mapping=request.column_mapping,
+            where_sql=request.where_sql,
+            activate_cohort=request.activate_cohort,
+            cohort_name=request.cohort_name,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Connector '{source_ref}' not found.")
     except ValueError as exc:

@@ -270,8 +270,8 @@ The import source form and imported-data list now wait for a resolved organizati
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Import Source` | Select | Choose the configured ingestion source. | `amplitude` | Import request uses that connector/source. |
-| `Start Date` | Date | Beginning of the import window. | `2026-03-01` | Request converts to `20260301`. |
-| `End Date` | Date | End of the import window. | `2026-03-07` | Request converts to `20260307`. |
+| `Start Date` | Date | Beginning of the import window for event connectors. For BigQuery table imports, this filter is optional and only applies when a mapped timestamp field is provided. | `2026-03-01` | Request converts to `20260301`. |
+| `End Date` | Date | End of the import window for event connectors. For BigQuery table imports, this filter is optional and only applies when a mapped timestamp field is provided. | `2026-03-07` | Request converts to `20260307`. |
 | `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
@@ -326,6 +326,77 @@ The import source form and imported-data list now wait for a resolved organizati
 - In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
+#### BigQuery table import API
+The current browser import form remains event-connector oriented. BigQuery dataset table imports are available through the same `/api/v1/imports` API, but the dedicated table-import controls are not yet exposed in the browser form.
+
+#### Sample BigQuery external prediction import request
+```json
+{
+  "source_name": "Warehouse Scores",
+  "table_name": "prediction_scores",
+  "resource_kind": "external_prediction_scores",
+  "column_mapping": {
+    "canonical_user_id": "player_id",
+    "user_id": "player_id",
+    "email": "email",
+    "predicted_churn_risk": "risk",
+    "score": "score",
+    "score_timestamp": "scored_at"
+  },
+  "start_date": "2026-04-01",
+  "end_date": "2026-04-03"
+}
+```
+
+#### Sample BigQuery churn-list import request
+```json
+{
+  "source_name": "Warehouse Lists",
+  "table_name": "churned_users",
+  "resource_kind": "churn_list",
+  "activate_cohort": true,
+  "cohort_name": "vip_churn_list",
+  "column_mapping": {
+    "canonical_user_id": "player_id",
+    "user_id": "player_id",
+    "email": "email",
+    "reason": "reason",
+    "segment": "segment",
+    "as_of_timestamp": "as_of"
+  }
+}
+```
+
+#### Sample BigQuery import completion detail
+```json
+{
+  "id": "imp_20260406_101500",
+  "status": "completed",
+  "progress": {
+    "details": {
+      "rows_seen": 3,
+      "rows_loaded": 2,
+      "duplicate_rows": 1,
+      "linked_prediction_job_id": "pred_20260406_101700",
+      "bigquery_table_import": {
+        "table_name": "prediction_scores",
+        "resource_kind": "external_prediction_scores",
+        "row_count": 3,
+        "duplicate_rows": 1
+      }
+    }
+  }
+}
+```
+
+BigQuery table import behavior:
+- `resource_kind="external_prediction_scores"` requires `canonical_user_id` and either `predicted_churn_risk` or `score`.
+- `resource_kind="churn_list"` requires `canonical_user_id` and can materialize a list cohort directly.
+- `score_timestamp` or `as_of_timestamp` only becomes required when `start_date` and `end_date` are supplied.
+- Duplicate rows are suppressed by `canonical_user_id`; later rows win and duplicate counts are recorded in the import detail.
+- Completed prediction imports create a linked external prediction job and native prediction results.
+- Completed churn-list imports can create and activate a linked list cohort.
+
 ### 3.3 Connectors
 Use this page to register upstream ingestion sources and downstream service credentials.
 
@@ -341,13 +412,13 @@ Use this page to register upstream ingestion sources and downstream service cred
 
 #### Connector-specific fields
 
-| Connector type | Fields | Sample input |
+| Connector type | Fields / API payload | Sample input |
 | --- | --- | --- |
 | `Amplitude` | `Amplitude API Key`, `Amplitude Secret Key` | `api_key=amp_public_123`, `secret_key=amp_secret_456` |
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
 | `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
-| `BigQuery` | `Google Cloud Project ID` | `project_id=my-prod-project` |
+| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`; API also supports secret-ref based service account config | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
@@ -360,6 +431,42 @@ Use this page to register upstream ingestion sources and downstream service cred
   "tenant_id": "default",
   "project_id": "default",
   "created_by": "admin"
+}
+```
+
+#### BigQuery connector API
+Once a BigQuery connector is saved with both `project_id` and `dataset_id`, operators can use the connector health and dataset-discovery routes directly.
+
+#### Sample BigQuery connector request
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "config": {
+    "project_id": "warehouse-project",
+    "dataset_id": "growth_inputs",
+    "location": "US"
+  }
+}
+```
+
+#### Sample BigQuery table listing output
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "items": [
+    {
+      "table_name": "prediction_scores",
+      "table_type": "table",
+      "row_count": 120034
+    },
+    {
+      "table_name": "churned_users_view",
+      "table_type": "view",
+      "row_count": null
+    }
+  ]
 }
 ```
 
