@@ -3,7 +3,7 @@
 ## 1) Purpose
 This runbook describes how to deploy the current KairyxAI multi-tenant SaaS stack to production on Google Cloud Platform (GCP).
 
-It is written for the repository state as of `2026-03-22` and assumes the production topology defined in the multi-tenant production-readiness PRD:
+It is written for the repository state as of `2026-04-06` and assumes the production topology defined in the multi-tenant production-readiness PRD:
 - `operator-api` on Cloud Run
 - `import-worker` on Cloud Run
 - `prediction-worker` on Cloud Run
@@ -49,7 +49,7 @@ It is written for the repository state as of `2026-03-22` and assumes the produc
 | --- | --- | --- | --- |
 | Cloud Run | Yes | Host API and workers | 5 services, regional |
 | Artifact Registry | Yes | Store container images | 1 Docker repo in the production region |
-| Cloud Build | Yes | Build and push images | 1 build pipeline per release |
+| Cloud Build | Optional | Alternative build system if you do not build from a workstation or CI runner with Docker | Use only if your release process prefers managed remote builds |
 | Cloud SQL for PostgreSQL | Yes | Control-plane system of record | Regional HA instance |
 | Pub/Sub | Yes | Import, prediction, and export command delivery | 4 primary topics plus DLQ topics |
 | Cloud Scheduler | Yes | Trigger `scheduler-worker` | 1 production cron job |
@@ -116,11 +116,16 @@ The following runtime settings are required by the current code in production:
 | `SERVICE_ROLE` | One of `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, `scheduler-worker` |
 | `CONTROL_PLANE_DATABASE_URL` | Postgres URL, not SQLite |
 | `DATA_BACKEND_MODE` | `gcp` |
+| `WAREHOUSE_BACKEND` | `bigquery` |
+| `OBJECT_STORAGE_BACKEND` | `gcs` |
+| `MESSAGE_BACKEND` | `pubsub` |
+| `SECRET_BACKEND` | `gcp_secret_manager` |
 | `KAIRYX_PLATFORM_SURFACE` | Unset |
 | `KAIRYX_MOCK_STORAGE_BACKEND` | Unset or `local_files`, never `database` |
 | `KAIRYX_RUNTIME_DIR` | Unset unless you have a separate non-demo operational need |
 | `LEGACY_HEADER_AUTH_ENABLED` | `false` |
 | `CORS_ALLOWED_ORIGINS` | Explicit production origins, never `*` |
+| `WORKER_SHARED_TOKEN` | Required on worker services and used in Pub/Sub / Scheduler callback URLs |
 | `OIDC_ISSUER` | Real production issuer |
 | `OIDC_AUDIENCE` | Real production audience |
 | `OIDC_JWKS_URL` | Real JWKS URL unless you intentionally use local signing secret mode |
@@ -132,6 +137,7 @@ The following runtime settings are required by the current code in production:
 | `GOOGLE_OIDC_HOSTED_DOMAIN` | Optional Google hosted-domain hint |
 | `GCP_PROJECT_ID` | Production project ID |
 | `GCP_SECRET_PROJECT_ID` | Production secret project ID |
+| `GCS_BUCKET_NAME` | Production Cloud Storage bucket for raw shards and exports |
 | `IMPORT_COMMAND_TOPIC` | Production import command topic |
 | `PREDICTION_COMMAND_TOPIC` | Production prediction command topic |
 | `EXPORT_COMMAND_TOPIC` | Production export command topic |
@@ -152,6 +158,11 @@ The production Cloud Run path must also stay off the Vercel demo adapter:
 - do not set `KAIRYX_PLATFORM_SURFACE=vercel_demo`
 - do not rely on runtime SQLite fallback
 - do not use database-backed mock storage
+
+Important repository note:
+- `backend/services/.env.example` currently defaults to the AWS-native backend stack.
+- Do not copy that file into GCP production unchanged.
+- The GCP deploy script in this repository explicitly overrides the backend selectors to `bigquery + gcs + pubsub + gcp_secret_manager`.
 
 ---
 
@@ -282,26 +293,121 @@ Recommended secret names:
 5. For Cloud Scheduler authenticated HTTP, grant the scheduler caller service account `roles/run.invoker` on `scheduler-worker`.
 
 ### 7.10 Build The Production Image
-1. Build the container from the repo-root `Dockerfile`.
-2. Tag it with the release identifier, not `latest`.
-3. Push the image to Artifact Registry.
-4. Record the immutable digest used for the release.
-5. Deploy that same digest to every Cloud Run service.
+Use the checked-in deploy script:
+- `deploy/gcp/deploy_cloud_run.sh`
+
+What the script does:
+1. load one operator-provided env file
+2. build the repo-root Docker image
+3. push the tagged image to Artifact Registry
+4. resolve the pushed tag to an immutable digest
+5. deploy `operator-api`, `import-worker`, `prediction-worker`, `export-worker`, and `scheduler-worker` from that same digest
+
+The script intentionally does not provision the full GCP foundation. It assumes your project, Artifact Registry repository, Cloud SQL instance, VPC path, service accounts, Secret Manager secrets, Pub/Sub topics, and Scheduler caller identity already exist.
 
 ### 7.11 Prepare Runtime Configuration
-1. Create one production env file or secret map per service role.
-2. Inject secrets through Cloud Run secret references where possible.
-3. Set the required env vars from Section 5.
-4. Explicitly set:
-   - `LEGACY_HEADER_AUTH_ENABLED=false`
-   - `DATA_BACKEND_MODE=gcp`
-   - `SCHEDULER_ENABLED=false` for `operator-api`
-   - `SCHEDULER_ENABLED=true` for `scheduler-worker`
-5. Ensure `CONTROL_PLANE_DATABASE_URL` points to the production Postgres instance.
-6. Set `WORKER_SHARED_TOKEN` on every worker service.
+Create one deploy env file, for example `deploy/gcp/production.env`, and pass it to the script.
+
+Required deploy-script variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `GCP_PROJECT_ID` | Target deploy project |
+| `GCP_REGION` | Cloud Run and Artifact Registry region |
+| `GCP_ARTIFACT_REGISTRY_REPOSITORY` | Artifact Registry Docker repository name |
+| `GCP_IMAGE_NAME` | Image name inside Artifact Registry |
+| `GCP_RELEASE_TAG` | Release tag to build and push |
+| `GCP_CLOUD_SQL_CONNECTION_NAME` | `PROJECT:REGION:INSTANCE` Cloud SQL connection name |
+| `CONTROL_PLANE_DATABASE_URL_SECRET` | Secret Manager secret ID injected into `CONTROL_PLANE_DATABASE_URL` |
+| `WORKER_SHARED_TOKEN_SECRET` | Secret Manager secret ID injected into worker `WORKER_SHARED_TOKEN` |
+| `CORS_ALLOWED_ORIGINS` | Production console origins |
+| `OIDC_ISSUER` | Production OIDC issuer |
+| `OIDC_AUDIENCE` | Production OIDC audience |
+| `OIDC_JWKS_URL` | Production JWKS URL |
+| `OIDC_CLIENT_ID` | Browser/client OIDC client ID |
+| `OIDC_AUTHORIZE_URL` | Authorize URL for the IdP |
+| `OIDC_TOKEN_URL` | Token URL for the IdP |
+| `GCS_BUCKET_NAME` | Runtime raw-shard/export bucket |
+
+Recommended optional deploy-script variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `GCP_SECRET_PROJECT_ID` | Secret project used by app-resolved `gsm://` refs; defaults to `GCP_PROJECT_ID` |
+| `GOOGLE_OIDC_CLIENT_ID` | Optional alias; defaults to `OIDC_CLIENT_ID` |
+| `GOOGLE_OIDC_HOSTED_DOMAIN` | Optional hosted-domain restriction |
+| `OIDC_LOGOUT_URL` | Optional logout URL |
+| `API_ACCESS_KEY_SECRET` | Optional Secret Manager secret ID injected into `API_ACCESS_KEY` |
+| `OIDC_JWT_SIGNING_SECRET_SECRET` | Optional Secret Manager secret ID injected into `OIDC_JWT_SIGNING_SECRET` |
+| `GCP_RUN_NETWORK` and `GCP_RUN_SUBNET` | Preferred Direct VPC egress path for private Cloud SQL |
+| `GCP_VPC_CONNECTOR` | Alternative to Direct VPC egress if your org requires Serverless VPC Access |
+| `GCP_VPC_EGRESS` | VPC egress mode; defaults to `private-ranges-only` |
+| `OPERATOR_API_SERVICE_ACCOUNT` | Optional override; defaults to `operator-api@PROJECT_ID.iam.gserviceaccount.com` |
+| `IMPORT_WORKER_SERVICE_ACCOUNT` | Optional override |
+| `PREDICTION_WORKER_SERVICE_ACCOUNT` | Optional override |
+| `EXPORT_WORKER_SERVICE_ACCOUNT` | Optional override |
+| `SCHEDULER_WORKER_SERVICE_ACCOUNT` | Optional override |
+| `IMPORT_COMMAND_TOPIC` | Defaults to `kairyx-import-jobs` |
+| `PREDICTION_COMMAND_TOPIC` | Defaults to `kairyx-prediction-jobs` |
+| `EXPORT_COMMAND_TOPIC` | Defaults to `kairyx-export-jobs` |
+| `PUBSUB_TOPIC_NAME` | Defaults to `kairyx-raw-shards` |
+| `BOOTSTRAP_TENANT_ID` | Defaults to `default` |
+| `BOOTSTRAP_TENANT_NAME` | Defaults to `Default Tenant` |
+| `BOOTSTRAP_PROJECT_ID` | Defaults to `default` |
+| `BOOTSTRAP_PROJECT_NAME` | Defaults to `Default Project` |
+| `GCP_EXTRA_ENV_FILE` | Optional YAML fragment appended to the generated Cloud Run env-vars file |
+
+Example `deploy/gcp/production.env`:
+
+```bash
+GCP_PROJECT_ID=kairyx-prod
+GCP_REGION=us-central1
+GCP_ARTIFACT_REGISTRY_REPOSITORY=kairyx
+GCP_IMAGE_NAME=kairyxai
+GCP_RELEASE_TAG=2026-04-06-r1
+GCP_CLOUD_SQL_CONNECTION_NAME=kairyx-prod:us-central1:kairyx-prod-db
+GCP_RUN_NETWORK=prod-vpc
+GCP_RUN_SUBNET=prod-serverless
+
+CONTROL_PLANE_DATABASE_URL_SECRET=control-plane-db-url
+WORKER_SHARED_TOKEN_SECRET=worker-shared-token
+
+CORS_ALLOWED_ORIGINS=https://console.example.com
+OIDC_ISSUER=https://accounts.google.com
+OIDC_AUDIENCE=your-google-client-id.apps.googleusercontent.com
+OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs
+OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth
+OIDC_TOKEN_URL=https://oauth2.googleapis.com/token
+OIDC_LOGOUT_URL=
+GOOGLE_OIDC_HOSTED_DOMAIN=
+
+GCP_SECRET_PROJECT_ID=kairyx-prod
+GCS_BUCKET_NAME=kairyx-prod-data
+IMPORT_COMMAND_TOPIC=kairyx-import-jobs
+PREDICTION_COMMAND_TOPIC=kairyx-prediction-jobs
+EXPORT_COMMAND_TOPIC=kairyx-export-jobs
+PUBSUB_TOPIC_NAME=kairyx-raw-shards
+BOOTSTRAP_TENANT_ID=default
+BOOTSTRAP_TENANT_NAME=Default Tenant
+BOOTSTRAP_PROJECT_ID=default
+BOOTSTRAP_PROJECT_NAME=Default Project
+```
+
+Secrets expected by the script:
+- `CONTROL_PLANE_DATABASE_URL_SECRET` and `WORKER_SHARED_TOKEN_SECRET` must be secret IDs that Cloud Run can inject at deploy time.
+- In practice, keep those secrets in the same project you deploy Cloud Run into.
+- `GCP_SECRET_PROJECT_ID` is still useful for app-resolved `gsm://...` connector/provider refs, but Cloud Run deploy-time secret injection should stay simple and same-project.
 
 ### 7.12 Deploy `operator-api`
-Configure the service with:
+Run the deploy script from the repository root:
+
+```bash
+bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/production.env
+```
+
+The script deploys the following Cloud Run defaults for `operator-api`:
 - public ingress
 - service account `operator-api`
 - CPU `2`
@@ -311,10 +417,12 @@ Configure the service with:
 - max instances `20`
 - timeout `300s`
 - startup CPU boost enabled
-- startup probe on `/health/live`
-- liveness probe on `/health/live`
 - explicit `APP_ENV=prod`
 - explicit `CORS_ALLOWED_ORIGINS`
+
+Recommended post-deploy hardening:
+- add startup and liveness probes on `/health/live`
+- capture those probe settings either in the checked-in Cloud Run YAML manifests or a follow-up `gcloud run services update`
 
 Recommended probe settings:
 - startup probe
@@ -330,7 +438,7 @@ Recommended probe settings:
 
 ### 7.13 Deploy The Workers
 
-Deploy each worker as a separate Cloud Run service using the same image digest and the role-aware entrypoint driven by `SERVICE_ROLE`:
+The script deploys each worker as a separate Cloud Run service using the same image digest and the role-aware entrypoint driven by `SERVICE_ROLE`:
 - `import-worker`: `SERVICE_ROLE=import-worker`
 - `prediction-worker`: `SERVICE_ROLE=prediction-worker`
 - `export-worker`: `SERVICE_ROLE=export-worker`
@@ -339,9 +447,8 @@ Deploy each worker as a separate Cloud Run service using the same image digest a
 Recommended worker settings:
 - no unauthenticated access
 - startup CPU boost enabled
-- startup probe on `/health/live`
-- liveness probe on `/health/live`
 - `WORKER_SHARED_TOKEN` injected through a secret reference
+- add startup and liveness probes on `/health/live` as a follow-up hardening step if you want parity with the production YAML pattern in Section 9
 
 Worker-specific sizing:
 - `import-worker`
@@ -368,6 +475,18 @@ Recommended subscriptions:
 - one dead-letter topic per worker subscription
 - exponential backoff retry policy instead of immediate redelivery
 
+Example topic creation:
+
+```bash
+gcloud pubsub topics create kairyx-raw-shards --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-import-jobs --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-prediction-jobs --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-export-jobs --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-import-jobs-dlq --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-prediction-jobs-dlq --project="${GCP_PROJECT_ID}"
+gcloud pubsub topics create kairyx-export-jobs-dlq --project="${GCP_PROJECT_ID}"
+```
+
 Recommended settings per worker subscription:
 - push endpoint
   - `import-worker`: `https://import-worker-.../pubsub/push?token=WORKER_SHARED_TOKEN`
@@ -378,6 +497,34 @@ Recommended settings per worker subscription:
 - audience set to the target Cloud Run URL
 - dead-letter max delivery attempts: start with `10`
 - retry backoff: start with `min 10s`, `max 600s`
+
+Example push-subscription creation:
+
+```bash
+PROJECT_NUMBER="$(gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectNumber)')"
+PUBSUB_SERVICE_AGENT="service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "pubsub-push-invoker@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --member="serviceAccount:${PUBSUB_SERVICE_AGENT}" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="${GCP_PROJECT_ID}"
+
+IMPORT_WORKER_URL="$(gcloud run services describe import-worker --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
+
+gcloud pubsub subscriptions create kairyx-import-jobs-sub \
+  --project="${GCP_PROJECT_ID}" \
+  --topic="kairyx-import-jobs" \
+  --push-endpoint="${IMPORT_WORKER_URL}/pubsub/push?token=REPLACE_WITH_WORKER_SHARED_TOKEN" \
+  --push-auth-service-account="pubsub-push-invoker@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --push-auth-token-audience="${IMPORT_WORKER_URL}" \
+  --dead-letter-topic="kairyx-import-jobs-dlq" \
+  --max-delivery-attempts=10 \
+  --min-retry-delay=10s \
+  --max-retry-delay=600s
+```
+
+Repeat that pattern for `prediction-worker` and `export-worker`.
 
 ### 7.15 Create The Scheduler Job
 1. Create one Cloud Scheduler HTTP job pointed at `scheduler-worker` `/run?token=WORKER_SHARED_TOKEN`.
@@ -395,6 +542,27 @@ Recommended retry policy:
 - min backoff `10s`
 - max backoff `300s`
 - max doublings `3`
+
+Example job creation:
+
+```bash
+SCHEDULER_WORKER_URL="$(gcloud run services describe scheduler-worker --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format='value(status.url)')"
+
+gcloud scheduler jobs create http kairyx-scheduler-worker \
+  --project="${GCP_PROJECT_ID}" \
+  --location="${GCP_REGION}" \
+  --schedule="*/1 * * * *" \
+  --time-zone="Etc/UTC" \
+  --uri="${SCHEDULER_WORKER_URL}/run?token=REPLACE_WITH_WORKER_SHARED_TOKEN" \
+  --http-method=POST \
+  --oidc-service-account-email="scheduler-invoker@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --oidc-token-audience="${SCHEDULER_WORKER_URL}" \
+  --max-retry-attempts=5 \
+  --max-retry-duration=300s \
+  --min-backoff=10s \
+  --max-backoff=300s \
+  --max-doublings=3
+```
 
 ### 7.16 Run Schema Migration
 1. Run Alembic against production Cloud SQL.
@@ -532,6 +700,14 @@ spec:
               value: operator-api
             - name: DATA_BACKEND_MODE
               value: gcp
+            - name: WAREHOUSE_BACKEND
+              value: bigquery
+            - name: OBJECT_STORAGE_BACKEND
+              value: gcs
+            - name: MESSAGE_BACKEND
+              value: pubsub
+            - name: SECRET_BACKEND
+              value: gcp_secret_manager
             - name: LEGACY_HEADER_AUTH_ENABLED
               value: "false"
             - name: SCHEDULER_ENABLED
