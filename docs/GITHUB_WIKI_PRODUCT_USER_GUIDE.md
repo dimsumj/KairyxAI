@@ -1,6 +1,6 @@
 # KairyxAI Product User Guide
 
-> GitHub Wiki source document. Keep this file aligned with the live operator console, `README.md`, and any user-facing product changes.
+> GitHub Wiki source document. Keep this file aligned with the live operator console, `README.md`, and any user-facing product changes. `README.md` is intentionally brief; this guide is the canonical detailed reference for modules, controls, workflows, sample input, and representative output.
 
 ## 1) What This Guide Covers
 This guide explains how to use the current KairyxAI operator console module by module.
