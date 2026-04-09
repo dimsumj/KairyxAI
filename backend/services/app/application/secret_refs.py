@@ -15,6 +15,11 @@ SENSITIVE_FIELDS = {
     "signing_secret",
     "webhook_token",
 }
+REDACTED_ONLY_FIELDS = {
+    "service_account_info_json",
+    "service_account_json",
+}
+REDACTED_FIELDS = SENSITIVE_FIELDS | REDACTED_ONLY_FIELDS
 SECRET_METADATA_SUFFIX = "_configured"
 
 
@@ -38,7 +43,7 @@ def redact_secret_values(payload: Any) -> Any:
     if isinstance(payload, dict):
         redacted: Dict[str, Any] = {}
         for key, value in payload.items():
-            if key in SENSITIVE_FIELDS:
+            if key in REDACTED_FIELDS:
                 redacted[key] = None
                 redacted[f"{key}{SECRET_METADATA_SUFFIX}"] = value not in (None, "", False)
                 continue

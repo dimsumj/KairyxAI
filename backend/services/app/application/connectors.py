@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from connectors.bigquery_connector import BigQueryConnector
 from typing import Any, Dict, List
 
 from connectors import create_connector
@@ -81,6 +82,26 @@ class ConnectorService:
         dataset_id = str((config or {}).get("dataset_id") or "").strip()
         if not project_id or not dataset_id:
             raise ValueError("BigQuery connectors require project_id and dataset_id.")
+        raw_service_account = (config or {}).get("service_account_json")
+        if raw_service_account in (None, ""):
+            raw_service_account = (config or {}).get("service_account_info_json")
+        if raw_service_account in (None, ""):
+            return
+        service_account_info = BigQueryConnector.parse_service_account_info(raw_service_account)
+        missing_fields = [
+            field_name
+            for field_name in ("client_email", "private_key", "token_uri")
+            if not str(service_account_info.get(field_name) or "").strip()
+        ]
+        if missing_fields:
+            raise ValueError(
+                "BigQuery service account JSON is missing required fields: "
+                + ", ".join(missing_fields)
+                + "."
+            )
+        service_account_type = str(service_account_info.get("type") or "").strip()
+        if service_account_type and service_account_type != "service_account":
+            raise ValueError("BigQuery service account JSON must use type 'service_account'.")
 
     @staticmethod
     def _to_response(connector_record: Dict[str, Any]) -> Dict[str, Any]:

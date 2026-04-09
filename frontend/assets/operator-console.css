@@ -1159,9 +1159,29 @@
             background: transparent;
         }
 
+        .card-eyebrow {
+            margin: 0 0 0.45rem 0;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f766e;
+        }
+
+        #operator-hub-connectors-entry {
+            border: 1px solid rgba(15, 118, 110, 0.16);
+            background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(255, 255, 255, 0.92));
+        }
+
         #connector-list .card {
             display: flex;
             justify-content: space-between;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        #connector-list .connector-empty-state {
+            justify-content: flex-start;
         }
 
         @media (max-width: 960px) {

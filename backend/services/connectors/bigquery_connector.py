@@ -172,9 +172,26 @@ class BigQueryConnector:
         credentials = None
         raw_service_account = self.config.get("service_account_json") or self.config.get("service_account_info_json")
         if raw_service_account:
-            credentials = service_account.Credentials.from_service_account_info(json.loads(str(raw_service_account)))
+            credentials = service_account.Credentials.from_service_account_info(
+                self.parse_service_account_info(raw_service_account)
+            )
         self._client = bigquery.Client(project=self.project_id, location=self.location or None, credentials=credentials)
         return self._client
+
+    @staticmethod
+    def parse_service_account_info(raw_value: Any) -> Dict[str, Any]:
+        if isinstance(raw_value, dict):
+            return dict(raw_value)
+        text = str(raw_value or "").strip()
+        if not text:
+            raise ValueError("BigQuery service account JSON is required.")
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("BigQuery service account JSON must be valid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("BigQuery service account JSON must decode to an object.")
+        return payload
 
     @staticmethod
     def _validate_identifier(value: str | None, *, field_name: str) -> str:

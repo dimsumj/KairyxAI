@@ -11,6 +11,7 @@ Own connector configuration, health checks, freshness, and latest-ingestion stat
 - Support connector deletion
 - Support health checks
 - Show freshness, `last_ingestion_status`, and `last_ingestion_at`
+- Surface connector setup as the first-run entry action from the main workbench and the first item inside Data Core navigation
 
 ### Ownership Notes
 - In the current repository, connector control-plane functionality and source freshness belong to Data Core
@@ -29,6 +30,7 @@ After connecting a Data Lake or database such as BigQuery, allow users to query 
 - Support configuring and validating BigQuery connections, with Snowflake and Redshift as future expansion targets
 - Support selecting project, dataset, and table or view
 - Support read-only mode with least privilege
+- BigQuery browser setup must accept tenant-provided service account credentials via upload or paste instead of assuming shared backend credentials for connector reads
 
 #### FR-4.1.2 SQL Query Workspace
 - Provide an executable SQL workspace with templates and parameters

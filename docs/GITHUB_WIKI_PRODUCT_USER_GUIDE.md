@@ -179,6 +179,7 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
+| `Connect Data Source` | Button | Opens the connector setup flow from the main workbench so operators can configure data access before imports or prediction. | None | Routes to `Connectors` and opens the connector form. |
 | `Prediction Target` | Select | Choose whether to run prediction by `Source` or by explicit `Import`. | `Source` | The audience selector switches between source-level and import-level options. |
 | `Select Source` / `Select Import` | Select | In `Source` mode, choose a source such as `Amplitude 1`. In `Import` mode, choose a specific completed import. | `Amplitude 1` | Source mode resolves to the latest completed import for that source when the job starts; import mode uses the selected import directly. |
 | `Prediction Engine` | Select | Choose the prediction execution mode. | `AI + Cloud` | The request uses the selected prediction mode. |
@@ -404,7 +405,8 @@ Use this page to register upstream ingestion sources and downstream service cred
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Add New Connector` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Connect Data Source` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Display Name` | Text box | Sets the connector name shown in the saved connector list and used by downstream flows. | `Warehouse Scores` | The connector is saved under this name. |
 | `Select Connector Source` | Select | Chooses which connector form to render. | `Amplitude` | Connector-specific fields appear. |
 | `Save Connector` | Button | Saves the connector after the required fields are filled. | None | Connector is created and shown in the saved connector list. |
 | `Cancel` | Button | Resets the form and returns to the empty state. | None | Dynamic fields disappear and the add card returns. |
@@ -418,7 +420,7 @@ Use this page to register upstream ingestion sources and downstream service cred
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
 | `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
-| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`; API also supports secret-ref based service account config | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US` |
+| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json` and `service_account_json_ref` | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
@@ -435,7 +437,7 @@ Use this page to register upstream ingestion sources and downstream service cred
 ```
 
 #### BigQuery connector API
-Once a BigQuery connector is saved with both `project_id` and `dataset_id`, operators can use the connector health and dataset-discovery routes directly.
+Once a BigQuery connector is saved with `project_id`, `dataset_id`, and tenant-scoped service account credentials, operators can use the connector health and dataset-discovery routes directly. Connector responses redact the saved credential payload and expose only the `*_configured` metadata flag.
 
 #### Sample BigQuery connector request
 ```json
@@ -445,7 +447,8 @@ Once a BigQuery connector is saved with both `project_id` and `dataset_id`, oper
   "config": {
     "project_id": "warehouse-project",
     "dataset_id": "growth_inputs",
-    "location": "US"
+    "location": "US",
+    "service_account_json_ref": "gsm://tenant-connectors/warehouse-scores"
   }
 }
 ```

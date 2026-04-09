@@ -140,6 +140,19 @@
         <div class="content-scroll">
         <section id="operator-hub" class="page active">
             <h1>Churn Rescue Workbench</h1>
+            <div class="card" id="operator-hub-connectors-entry">
+                <div>
+                    <p class="card-eyebrow">Start Here</p>
+                    <h2 style="margin-bottom: 0.5rem;">Connect your data sources first</h2>
+                    <p style="margin: 0; color: var(--text-secondary);">
+                        Connectors unlock imports, BigQuery table access, predictions, and downstream activation. BigQuery setup now uses tenant-provided credentials instead of shared backend credentials.
+                    </p>
+                </div>
+                <div class="inline-actions" style="margin-top: 1rem;">
+                    <button id="operator-hub-connectors-btn" type="button">Connect Data Source</button>
+                    <span id="operator-hub-connectors-summary" class="subtle">Checking connector status...</span>
+                </div>
+            </div>
             <div class="card" id="operator-hub-controls">
                 <p>Select a source or a completed import and run churn prediction on that audience. Source mode resolves to the latest completed import when the job starts.</p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
@@ -451,15 +464,20 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
+            <p id="connectors-page-summary" class="subtle">Connect your first source or provider to unlock imports, BigQuery access, predictions, and exports.</p>
             <div id="connector-list">
                 <!-- Saved connectors will be dynamically added here -->
             </div>
             <div class="card" id="add-connector-card">
-                <button id="add-connector-btn">Add New Connector</button>
+                <button id="add-connector-btn">Connect Data Source</button>
             </div>
 
             <div id="add-connector-form-container" class="card" style="display: none;">
-                <h2>Add New Connector</h2>
+                <h2>Connect Data Source</h2>
+                <div class="form-group">
+                    <label for="connector-display-name">Display Name</label>
+                    <input type="text" id="connector-display-name" placeholder="e.g. Warehouse Scores">
+                </div>
                 <div class="form-group">
                     <label for="connector-type">Select Connector Source</label>
                     <select id="connector-type">

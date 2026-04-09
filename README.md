@@ -85,7 +85,8 @@ This repository already contains a working v1 control plane with:
 - SQLAlchemy and Alembic control-plane persistence
 - mock-first local development
 - organization- and project-aware operator flows
-- BigQuery dataset connectors with dataset validation, table discovery, and API-first table imports for external prediction scores and churn lists
+- connector-first Data Core onboarding, including a `Connect Data Source` entry point from the main workbench
+- BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery, and API-first table imports for external prediction scores and churn lists
 
 The remaining work is mostly production hardening, deeper provider-backed execution, and continued frontend productization rather than basic product existence.
 

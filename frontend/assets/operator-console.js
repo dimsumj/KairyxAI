@@ -204,9 +204,9 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
+                        { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
                         { id: 'data-core-churn-rescue', label: 'Churn Rescue', pageId: 'operator-hub' },
                         { id: 'data-core-imports', label: 'Imports', pageId: 'player-cohorts' },
-                        { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
                         { id: 'data-core-mappings', label: 'Mappings', pageId: 'data-sandbox' },
                         { id: 'data-core-audit-trail', label: 'Audit Trail', pageId: 'action-history' },
                         { id: 'data-core-templates', label: 'Templates', pageId: 'scenario-templates' },
@@ -2999,14 +2999,18 @@ export function initializeOperatorConsole() {
 
 
             // Connectors Page Logic
+            const operatorHubConnectorsBtn = document.getElementById('operator-hub-connectors-btn');
+            const operatorHubConnectorsSummary = document.getElementById('operator-hub-connectors-summary');
             const addConnectorBtn = document.getElementById('add-connector-btn');
             const addConnectorCard = document.getElementById('add-connector-card');
             const addConnectorFormContainer = document.getElementById('add-connector-form-container');
             const cancelBtn = document.getElementById('cancel-add-connector-btn');
+            const connectorDisplayNameInput = document.getElementById('connector-display-name');
             const connectorTypeSelect = document.getElementById('connector-type');
             const connectorFieldsDiv = document.getElementById('connector-fields');
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
+            const connectorsPageSummary = document.getElementById('connectors-page-summary');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -3039,6 +3043,90 @@ export function initializeOperatorConsole() {
             let mockStorageEnabled = false;
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
+
+            function renderConnectorEntrySummary(message = '') {
+                const configuredCount = cachedConnectors.length;
+                const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
+                const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
+                const summaryText = message || (
+                    configuredCount === 0
+                        ? 'No connectors configured yet. Start with BigQuery or an ingestion source.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                );
+                if (operatorHubConnectorsSummary) {
+                    operatorHubConnectorsSummary.textContent = summaryText;
+                }
+                if (connectorsPageSummary && !message) {
+                    connectorsPageSummary.textContent = configuredCount === 0
+                        ? 'Connect your first source or provider to unlock imports, BigQuery access, predictions, and exports.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
+                }
+            }
+
+            function setConnectorFormVisible(isVisible, { connectorType = '' } = {}) {
+                addConnectorCard.style.display = isVisible ? 'none' : 'block';
+                addConnectorFormContainer.style.display = isVisible ? 'block' : 'none';
+                if (!isVisible) {
+                    connectorTypeSelect.value = '';
+                    connectorDisplayNameInput.value = '';
+                    connectorDisplayNameInput.dataset.suggestedName = '';
+                    connectorFieldsDiv.innerHTML = '';
+                    saveConnectorBtn.style.display = 'none';
+                    return;
+                }
+                const normalizedType = String(connectorType || '').trim();
+                if (normalizedType) {
+                    connectorTypeSelect.value = normalizedType;
+                    connectorTypeSelect.dispatchEvent(new Event('change'));
+                } else {
+                    connectorTypeSelect.value = '';
+                    connectorFieldsDiv.innerHTML = '';
+                    saveConnectorBtn.style.display = 'none';
+                }
+                connectorDisplayNameInput.focus();
+            }
+
+            function openConnectorWorkspace(options = {}) {
+                activateModule('data-core', 'data-core-connectors');
+                setConnectorFormVisible(true, options);
+            }
+
+            function syncConnectorDisplayName(type) {
+                const normalizedType = String(type || '').trim();
+                if (!connectorDisplayNameInput) {
+                    return;
+                }
+                if (!normalizedType) {
+                    connectorDisplayNameInput.dataset.suggestedName = '';
+                    return;
+                }
+                const suggestedName = nextConnectorName(normalizedType);
+                const previousSuggestedName = connectorDisplayNameInput.dataset.suggestedName || '';
+                const currentName = connectorDisplayNameInput.value.trim();
+                if (!currentName || currentName === previousSuggestedName) {
+                    connectorDisplayNameInput.value = suggestedName;
+                }
+                connectorDisplayNameInput.dataset.suggestedName = suggestedName;
+            }
+
+            function syncBigQueryCredentialMode() {
+                const modeSelect = document.getElementById('bigquery_credentials_entry_mode');
+                const uploadGroup = document.getElementById('bigquery_credentials_upload_group');
+                const pasteGroup = document.getElementById('bigquery_credentials_paste_group');
+                if (!modeSelect || !uploadGroup || !pasteGroup) {
+                    return;
+                }
+                const selectedMode = String(modeSelect.value || 'upload').toLowerCase();
+                uploadGroup.style.display = selectedMode === 'upload' ? 'block' : 'none';
+                pasteGroup.style.display = selectedMode === 'paste' ? 'block' : 'none';
+            }
+
+            async function readConnectorFileAsText(file) {
+                if (!file) {
+                    return '';
+                }
+                return file.text();
+            }
 
             function readStoredVersion(key) {
                 try {
@@ -5282,6 +5370,7 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                renderConnectorEntrySummary();
                 return cachedConnectors;
             }
 
@@ -5674,12 +5763,12 @@ export function initializeOperatorConsole() {
                 return healthStateRequest;
             }
 
-            async function createConnectorRecord(type, config) {
-                const name = nextConnectorName(type);
+            async function createConnectorRecord(type, config, name = null) {
+                const resolvedName = String(name || '').trim() || nextConnectorName(type);
                 const connector = await apiRequest('/connectors', {
                     method: 'POST',
                     body: {
-                        name,
+                        name: resolvedName,
                         type,
                         config,
                     },
@@ -6158,6 +6247,8 @@ export function initializeOperatorConsole() {
                             connectorListDiv.appendChild(card);
                             card.appendChild(deleteButton);
                         });
+                    } else {
+                        connectorListDiv.innerHTML = '<div class="card connector-empty-state"><p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p></div>';
                     }
                 } catch (error) {
                     console.error('Error loading saved connectors:', error);
@@ -6227,7 +6318,24 @@ export function initializeOperatorConsole() {
                         <input type="text" id="bigquery_location" placeholder="US">
                     </div>
                     <div class="form-group">
-                        <p style="font-size: 0.8rem; color: var(--subtle-text);">Authentication still uses backend-side credentials. Use Application Default Credentials (ADC) or a server-side secret reference for service account JSON.</p>
+                        <label for="bigquery_credentials_entry_mode">How do you want to enter service account credentials?</label>
+                        <select id="bigquery_credentials_entry_mode">
+                            <option value="upload" selected>Upload JSON file</option>
+                            <option value="paste">Paste JSON text</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="bigquery_credentials_upload_group">
+                        <label for="bigquery_service_account_file">Service Account JSON File</label>
+                        <input type="file" id="bigquery_service_account_file" accept=".json,application/json">
+                    </div>
+                    <div class="form-group" id="bigquery_credentials_paste_group" style="display: none;">
+                        <label for="bigquery_service_account_json">Service Account JSON</label>
+                        <textarea id="bigquery_service_account_json" rows="8" placeholder='{"type":"service_account","client_email":"...","private_key":"..."}'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <p style="font-size: 0.8rem; color: var(--subtle-text); margin-bottom: 0;">
+                            BigQuery connections now use tenant-provided credentials for this connector. Credentials are redacted in API responses after save.
+                        </p>
                     </div>`,
                 sendgrid: `
                     <div class="form-group">
@@ -6245,17 +6353,16 @@ export function initializeOperatorConsole() {
                     </div>`
             };
 
+            operatorHubConnectorsBtn?.addEventListener('click', () => {
+                openConnectorWorkspace();
+            });
+
             addConnectorBtn.addEventListener('click', () => {
-                addConnectorCard.style.display = 'none';
-                addConnectorFormContainer.style.display = 'block';
+                setConnectorFormVisible(true);
             });
 
             cancelBtn.addEventListener('click', () => {
-                addConnectorFormContainer.style.display = 'none';
-                addConnectorCard.style.display = 'block';
-                connectorTypeSelect.value = '';
-                connectorFieldsDiv.innerHTML = '';
-                saveConnectorBtn.style.display = 'none';
+                setConnectorFormVisible(false);
             });
 
             connectorTypeSelect.addEventListener('change', (e) => {
@@ -6263,14 +6370,21 @@ export function initializeOperatorConsole() {
                 if (type && connectorFields[type]) {
                     connectorFieldsDiv.innerHTML = connectorFields[type];
                     saveConnectorBtn.style.display = 'inline-block';
+                    syncConnectorDisplayName(type);
+                    if (type === 'bigquery') {
+                        document.getElementById('bigquery_credentials_entry_mode')?.addEventListener('change', syncBigQueryCredentialMode);
+                        syncBigQueryCredentialMode();
+                    }
                 } else {
                     connectorFieldsDiv.innerHTML = '';
                     saveConnectorBtn.style.display = 'none';
+                    syncConnectorDisplayName('');
                 }
             });
 
             saveConnectorBtn.addEventListener('click', async () => {
                 const type = connectorTypeSelect.value;
+                const connectorName = String(connectorDisplayNameInput.value || '').trim() || nextConnectorName(type);
                 let payload = {};
 
                 if (type === 'amplitude') {
@@ -6295,10 +6409,21 @@ export function initializeOperatorConsole() {
                         model_name: document.getElementById('model_name').value || null
                     };
                 } else if (type === 'bigquery') {
+                    const credentialMode = String(document.getElementById('bigquery_credentials_entry_mode')?.value || 'upload').toLowerCase();
+                    const selectedFile = document.getElementById('bigquery_service_account_file')?.files?.[0] || null;
+                    const pastedServiceAccountJson = String(document.getElementById('bigquery_service_account_json')?.value || '').trim();
+                    const serviceAccountJson = credentialMode === 'paste'
+                        ? pastedServiceAccountJson
+                        : await readConnectorFileAsText(selectedFile);
+                    if (!serviceAccountJson) {
+                        alert('BigQuery requires a tenant service account JSON file or pasted JSON text.');
+                        return;
+                    }
                     payload = {
                         project_id: document.getElementById('bigquery_project_id').value,
                         dataset_id: document.getElementById('bigquery_dataset_id').value,
                         location: document.getElementById('bigquery_location').value || undefined,
+                        service_account_json: serviceAccountJson,
                     };
                 } else if (type === 'sendgrid') {
                     payload = {
@@ -6314,7 +6439,7 @@ export function initializeOperatorConsole() {
                 if (!type) return;
 
                 try {
-                    const connector = await createConnectorRecord(type, payload);
+                    const connector = await createConnectorRecord(type, payload, connectorName);
                     alert(`${formatConnectorLabel(connector.type)} connector '${connector.name}' saved.`);
 
                     loadSavedConnectors(); // Refresh the list of connectors
@@ -7413,7 +7538,7 @@ export function initializeOperatorConsole() {
 
                     if (!sources || sources.length === 0) {
                         setImportSourceFormVisible(false);
-                        ensureConfigMessage('Please configure a data source in the Connectors section first.');
+                        ensureConfigMessage('Use Connect Data Source to configure a source before starting imports.');
                         setInlineStatus(importSourceStatus, '');
                     } else {
                         sourceSelect.innerHTML = ''; // Clear existing options
@@ -7984,7 +8109,7 @@ export function initializeOperatorConsole() {
                 const source = document.getElementById('cohort-source-select').value;
 
                 if (!source) {
-                    alert('No data source is available. Please configure one in the Connectors section.');
+                    alert('No data source is available. Use Connect Data Source to configure one first.');
                     return;
                 }
 
