@@ -65,6 +65,8 @@ Notes:
   - Use GCP_RUN_NETWORK + GCP_RUN_SUBNET for Direct VPC egress, or GCP_VPC_CONNECTOR for Serverless VPC Access.
   - GCP_DEPLOYMENT_TIER defaults to prod. Use dev or qa for lighter internal-test sizing.
   - GCP_SERVICE_PREFIX lets one project host multiple KairyxAI environments, for example dev-operator-api and qa-operator-api.
+  - For a fresh internal dev project, run deploy/gcp/bootstrap_dev_foundation.sh before the first deploy.
+  - For the dev tier, run deploy/gcp/configure_dev_eventing.sh after deploy to wire Pub/Sub push subscriptions and Cloud Scheduler.
 EOF
 }
 
@@ -491,8 +493,10 @@ Service prefix:
   ${SERVICE_PREFIX:-<none>}
 
 Next steps:
-  1. Create or update Pub/Sub push subscriptions for import-worker, prediction-worker, and export-worker.
-  2. Create or update the Cloud Scheduler HTTP job that targets scheduler-worker /run?token=...
+  1. If this deploy is for a fresh dev project and foundation bootstrap has not been run yet, stop here and run:
+       bash deploy/gcp/bootstrap_dev_foundation.sh ${env_file}
+  2. Configure Pub/Sub push subscriptions and the Cloud Scheduler job:
+       bash deploy/gcp/configure_dev_eventing.sh ${env_file}
   3. Run smoke checks:
      - GET operator-api /health/live
      - GET operator-api /api/v1/health

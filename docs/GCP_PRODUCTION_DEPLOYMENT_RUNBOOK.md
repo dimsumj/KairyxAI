@@ -240,7 +240,7 @@ gcloud beta billing projects link "${GCP_PROJECT_ID}" \
 ```
 
 After project creation:
-- enable required org labels and policies using your organization’s standard platform tooling
+- enable required org labels and policies using your organization's standard platform tooling
 - confirm the project number because some later IAM bindings use the Pub/Sub service agent derived from it
 
 ### 7.2 Enable Required APIs
@@ -415,7 +415,7 @@ How to fill it in:
 - `INSTANCE_NAME`: the Cloud SQL instance name, for example `kairyx-prod-db`
 
 Important details:
-- Use the `/cloudsql/PROJECT:REGION:INSTANCE` host form for this repo’s Cloud Run path.
+- Use the `/cloudsql/PROJECT:REGION:INSTANCE` host form for this repo's Cloud Run path.
 - Do not use SQLite in production.
 - If the password contains characters such as `@`, `:`, `/`, or `?`, URL-encode the password before building the URL.
 
@@ -547,7 +547,17 @@ gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
 
 Apply the Cloud Run service-level `roles/run.invoker` bindings after the worker services exist. The later Pub/Sub and Scheduler steps show where those bindings fit operationally.
 
-### 7.10 Build The Production Image
+### 7.10 Dev Bootstrap Versus Production Deploy
+Use the dedicated dev bootstrap path when you are standing up the first internal GCP dev environment:
+- `deploy/gcp/bootstrap_dev_foundation.sh`
+- `deploy/gcp/configure_dev_eventing.sh`
+- `docs/GCP_DEV_ENV_BOOTSTRAP_RUNBOOK.md`
+
+That path is intentionally dev-only and creates or verifies the project foundation before the Cloud Run deploy happens.
+
+Use this production runbook when you already have the GCP foundation resources in place and want the production-shaped Cloud Run deploy flow.
+
+### 7.11 Build The Production Image
 Use the checked-in deploy script:
 - `deploy/gcp/deploy_cloud_run.sh`
 - `deploy/gcp/dev.env.example`
@@ -562,7 +572,7 @@ What the script does:
 
 The script intentionally does not provision the full GCP foundation. It assumes your project, Artifact Registry repository, Cloud SQL instance, VPC path, service accounts, Secret Manager secrets, Pub/Sub topics, and Scheduler caller identity already exist.
 
-### 7.11 Prepare Runtime Configuration
+### 7.12 Prepare Runtime Configuration
 Create one deploy env file, for example `deploy/gcp/production.env`, and pass it to the script.
 
 Checked-in non-prod templates:
@@ -693,7 +703,7 @@ Secrets expected by the script:
 - In practice, keep those secrets in the same project you deploy Cloud Run into.
 - `GCP_SECRET_PROJECT_ID` is still useful for app-resolved `gsm://...` connector/provider refs, but Cloud Run deploy-time secret injection should stay simple and same-project.
 
-### 7.12 Deploy `operator-api`
+### 7.13 Deploy `operator-api`
 Run the deploy script from the repository root:
 
 ```bash
@@ -736,7 +746,7 @@ Recommended probe settings:
   - timeout: `2s`
   - failure threshold: `3`
 
-### 7.13 Deploy The Workers
+### 7.14 Deploy The Workers
 
 The script deploys each worker as a separate Cloud Run service using the same image digest and the role-aware entrypoint driven by `SERVICE_ROLE`:
 - `import-worker`: `SERVICE_ROLE=import-worker`
@@ -763,7 +773,7 @@ Worker-specific sizing:
 Important limit:
 - Cloud Run service requests top out at `3600s`. If imports or predictions regularly approach that ceiling, split the work into smaller jobs or move that execution class to a different runtime model before production scale-out.
 
-### 7.14 Create Pub/Sub Topics And Subscriptions
+### 7.15 Create Pub/Sub Topics And Subscriptions
 Create at minimum:
 - `kairyx-raw-shards`
 - `kairyx-import-jobs`
@@ -834,7 +844,7 @@ If you set `GCP_SERVICE_PREFIX`, resolve the prefixed service names instead:
 - `dev-export-worker`
 - `qa-export-worker`
 
-### 7.15 Create The Scheduler Job
+### 7.16 Create The Scheduler Job
 1. Create one Cloud Scheduler HTTP job pointed at `scheduler-worker` `/run?token=WORKER_SHARED_TOKEN`.
 2. Use OIDC auth, not unauthenticated calls.
 3. Use service account `scheduler-invoker`.
@@ -874,7 +884,7 @@ gcloud scheduler jobs create http kairyx-scheduler-worker \
 
 If you set `GCP_SERVICE_PREFIX`, use the prefixed scheduler service name, for example `dev-scheduler-worker` or `qa-scheduler-worker`.
 
-### 7.16 Run Schema Migration
+### 7.17 Run Schema Migration
 1. Run Alembic against production Cloud SQL.
 2. Execute the multi-tenant migration before enabling live production traffic.
 3. Validate:
@@ -882,13 +892,13 @@ If you set `GCP_SERVICE_PREFIX`, use the prefixed scheduler service name, for ex
    - all control-plane tables have expected row counts
    - tenant-scoped unique constraints behave correctly
 
-### 7.17 Bootstrap Production Tenancy
+### 7.18 Bootstrap Production Tenancy
 1. Use the platform-admin API to create the initial tenant.
 2. Create at least one tenant membership.
 3. Create provider connections with `*_ref` values, not inline secrets.
 4. Run the auth smoke flow with a real bearer token against an org-scoped URL such as `/{organization_id}/v1/auth/me` and include `X-Kairyx-Project` when project selection is required.
 
-### 7.18 Configure Monitoring And Alerts
+### 7.19 Configure Monitoring And Alerts
 Create notification channels first, then alert policies for:
 - Cloud Run API error rate
 - Cloud Run worker error rate
@@ -903,7 +913,7 @@ Create notification channels first, then alert policies for:
 - callback failure spikes
 - outcome lag
 
-### 7.19 Smoke Test Before Traffic
+### 7.20 Smoke Test Before Traffic
 Validate the following in staging first, then production:
 1. `GET /health/live`
 2. `GET /api/v1/health`

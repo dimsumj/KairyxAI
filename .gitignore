@@ -90,3 +90,5 @@ backend/services/.kairyx_control_plane.db
 backend/services/.kairyx_control_plane.db-shm
 backend/services/.kairyx_control_plane.db-wal
 .vercel
+deploy/gcp/*.env
+deploy/gcp/*.extra.env.yaml

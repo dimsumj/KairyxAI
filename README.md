@@ -69,6 +69,7 @@ Start here for detailed product and operational documentation:
 - [KairyxAI v1 Master PRD](docs/KAIRYXAI_V1_MASTER_PRD.md)
 - [Multi-tenant production readiness PRD](docs/MULTITENANT_PRODUCTION_READINESS_V1_PRD.md)
 - [GCP production deployment runbook](docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md)
+- [GCP dev environment bootstrap runbook](docs/GCP_DEV_ENV_BOOTSTRAP_RUNBOOK.md)
 - [Self-hosted Google login plan](docs/SELF_HOST_GOOGLE_LOGIN_PLAN.md)
 - [Data Core v1 PRD](docs/DATA_CORE_V1_PRD.md)
 - [Audience Engine v1 PRD](docs/AUDIENCE_ENGINE_V1_PRD.md)
