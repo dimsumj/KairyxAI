@@ -57,6 +57,21 @@ logger = logging.getLogger(__name__)
 _FRONTEND_SHELL_RESERVED_PATHS = frozenset({"api", "health", "static"})
 
 
+def _resolve_frontend_paths(settings, frontend_dir: Path) -> tuple[Path, Path]:
+    frontend_dist_dir = frontend_dir / "dist"
+    frontend_source_index = frontend_dir / "index.html"
+    frontend_dist_index = frontend_dist_dir / "index.html"
+    frontend_source_assets = frontend_dir / "assets"
+    prefer_source_assets = settings.app_env == "local" or settings.data_backend_mode == "mock"
+    if prefer_source_assets:
+        frontend_index = frontend_source_index if frontend_source_index.exists() else frontend_dist_index
+        frontend_static_dir = frontend_source_assets if frontend_source_assets.exists() else frontend_dist_dir
+        return frontend_index, frontend_static_dir
+    frontend_index = frontend_dist_index if frontend_dist_index.exists() else frontend_source_index
+    frontend_static_dir = frontend_dist_dir if frontend_dist_dir.exists() else frontend_source_assets
+    return frontend_index, frontend_static_dir
+
+
 def _safe_session_rollback(session) -> None:
     try:
         session.rollback()
@@ -114,9 +129,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     validate_runtime_settings(settings)
     frontend_dir = Path(__file__).resolve().parents[3] / "frontend"
-    frontend_dist_dir = frontend_dir / "dist"
-    frontend_index = frontend_dist_dir / "index.html" if (frontend_dist_dir / "index.html").exists() else frontend_dir / "index.html"
-    frontend_static_dir = frontend_dist_dir if frontend_dist_dir.exists() else frontend_dir / "assets"
+    frontend_index, frontend_static_dir = _resolve_frontend_paths(settings, frontend_dir)
     configure_access_log_filters()
     app = FastAPI(title=settings.app_name)
     app.add_middleware(

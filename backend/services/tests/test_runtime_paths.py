@@ -155,6 +155,40 @@ def test_normalize_env_text_unwraps_nested_quotes_and_newlines():
     assert runtime_paths.normalize_env_text('"mock\\n"') == "mock"
 
 
+def test_resolve_frontend_paths_prefers_source_assets_for_local_mock_mode(tmp_path):
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "assets").mkdir()
+    (frontend_dir / "dist").mkdir()
+    (frontend_dir / "index.html").write_text("source shell", encoding="utf-8")
+    (frontend_dir / "dist" / "index.html").write_text("dist shell", encoding="utf-8")
+
+    frontend_index, frontend_static_dir = main_module._resolve_frontend_paths(
+        SimpleNamespace(app_env="local", data_backend_mode="mock"),
+        frontend_dir,
+    )
+
+    assert frontend_index == frontend_dir / "index.html"
+    assert frontend_static_dir == frontend_dir / "assets"
+
+
+def test_resolve_frontend_paths_prefers_dist_assets_outside_local_mock_mode(tmp_path):
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "assets").mkdir()
+    (frontend_dir / "dist").mkdir()
+    (frontend_dir / "index.html").write_text("source shell", encoding="utf-8")
+    (frontend_dir / "dist" / "index.html").write_text("dist shell", encoding="utf-8")
+
+    frontend_index, frontend_static_dir = main_module._resolve_frontend_paths(
+        SimpleNamespace(app_env="prod", data_backend_mode="gcp"),
+        frontend_dir,
+    )
+
+    assert frontend_index == frontend_dir / "dist" / "index.html"
+    assert frontend_static_dir == frontend_dir / "dist"
+
+
 def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):
     target = tmp_path / "nested" / "state" / "control_plane.db"
     monkeypatch.chdir(tmp_path)
