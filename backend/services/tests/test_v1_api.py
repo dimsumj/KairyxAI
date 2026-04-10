@@ -146,6 +146,9 @@ def test_root_serves_frontend_static_assets(client):
     assert "workspace-org-url-input" in js_resp.text
     assert "syncBrowserOrganizationPath" in js_resp.text
     assert "/api/v1" in js_resp.text
+    assert "Connect Data Source" in js_resp.text
+    assert "bigquery_credentials_entry_mode" in js_resp.text
+    assert "Service Account JSON File" in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")

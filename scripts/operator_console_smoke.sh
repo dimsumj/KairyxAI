@@ -68,6 +68,52 @@ assert_module() {
   })()" >>"$LOG_FILE"
 }
 
+assert_bigquery_connector_ui() {
+  log_step "Checking BigQuery connector UI"
+  run_pw run-code "async () => {
+    const connectorsLink = document.querySelector('[data-item=\"data-core-connectors\"]');
+    if (!connectorsLink) throw new Error('Missing Data Core -> Connectors navigation');
+    connectorsLink.click();
+    await page.waitForTimeout(700);
+
+    const connectButton = document.getElementById('add-connector-btn');
+    if (!connectButton) throw new Error('Missing Connect Data Source button');
+    connectButton.click();
+    await page.waitForTimeout(250);
+
+    const typeSelect = document.getElementById('connector-type');
+    if (!typeSelect) throw new Error('Missing connector type select');
+    typeSelect.value = 'bigquery';
+    typeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await page.waitForTimeout(250);
+
+    const modeSelect = document.getElementById('bigquery_credentials_entry_mode');
+    const uploadInput = document.getElementById('bigquery_service_account_file');
+    const pasteTextarea = document.getElementById('bigquery_service_account_json');
+    if (!modeSelect || !uploadInput || !pasteTextarea) {
+      throw new Error('Missing latest BigQuery connector credential controls');
+    }
+
+    modeSelect.value = 'paste';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await page.waitForTimeout(150);
+
+    const uploadStyle = window.getComputedStyle(uploadInput.closest('.form-group')).display;
+    const pasteStyle = window.getComputedStyle(pasteTextarea.closest('.form-group')).display;
+    if (uploadStyle !== 'none' || pasteStyle === 'none') {
+      throw new Error('BigQuery credential mode toggle did not switch to paste mode');
+    }
+
+    return {
+      title: document.querySelector('#add-connector-form-container h2')?.textContent || '',
+      typeValue: typeSelect.value,
+      modeValue: modeSelect.value,
+      uploadStyle,
+      pasteStyle,
+    };
+  }" >>"$LOG_FILE"
+}
+
 exercise_copilot_agent() {
   log_step "Exercising global AI assistant"
   run_pw run-code "async () => {
@@ -170,6 +216,7 @@ log_step "Opening $BASE_URL"
 open_and_wait
 assert_auth_shell
 assert_module "data-core" "#import-detail-output"
+assert_bigquery_connector_ui
 assert_module "audience-engine" "#audience-cohort-list"
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"
 assert_module "experiment-hub" "#experiment-integrity-output"
