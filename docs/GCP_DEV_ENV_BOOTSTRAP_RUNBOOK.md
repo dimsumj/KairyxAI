@@ -1,29 +1,31 @@
 # KairyxAI GCP Dev Environment Bootstrap Runbook
 
 ## 1) Purpose
-This runbook explains how to bootstrap one internal-only GCP dev environment for KairyxAI using the repository's Cloud Run deployment path.
+This runbook is the canonical operator guide for bringing up the shared KairyxAI GCP dev environment and wiring GitHub Actions to deploy it automatically from `main`.
 
-Use this runbook when you want:
-- one dedicated dev GCP project
-- Google Workspace login on the gateway
-- the same five-service runtime topology used by the production-shaped deployment path
-- repo-supported bootstrap scripts instead of a manual click-by-click setup
+Use this runbook when you need to:
+- create or verify the dedicated dev GCP project
+- install the local Bash tooling required to run the repo-supported scripts
+- bootstrap the GCP foundation resources
+- deploy the five Cloud Run services manually the first time
+- configure Pub/Sub push and Cloud Scheduler eventing
+- set up GitHub Actions Workload Identity Federation and the `dev` environment variables
 
-This runbook does not provision `qa` or `prod`. It is intentionally scoped to one dev environment.
+This runbook is intentionally scoped to the dev environment. Use `docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md` for production sizing, hardening, and rollout policy.
 
 ## 2) Recommended Dev Shape
 
 ### 2.1 Deployment model
-- One dedicated dev GCP project, for example `kairyx-dev`
+- One dedicated dev GCP project
 - Cloud Run services:
-  - `operator-api`
-  - `import-worker`
-  - `prediction-worker`
-  - `export-worker`
-  - `scheduler-worker`
+  - `dev-operator-api`
+  - `dev-import-worker`
+  - `dev-prediction-worker`
+  - `dev-export-worker`
+  - `dev-scheduler-worker`
 - Cloud SQL PostgreSQL for the control plane
 - Pub/Sub for import, prediction, export, and raw-shard topics
-- Cloud Scheduler for `scheduler-worker`
+- Cloud Scheduler for `dev-scheduler-worker`
 - BigQuery and Cloud Storage for production-shaped data services
 - Secret Manager for the database URL and worker shared token
 
@@ -40,184 +42,415 @@ The dev environment should stay production-shaped:
 | `SECRET_BACKEND` | `gcp_secret_manager` |
 | `LEGACY_HEADER_AUTH_ENABLED` | `false` |
 | `KAIRYX_PLATFORM_SURFACE` | unset |
+| `GCP_DEPLOYMENT_TIER` | `dev` |
+| `GCP_SERVICE_PREFIX` | `dev` |
 
 ### 2.3 Auth shape
 - Use Google login
-- Keep the base URL `/` as the gateway
+- Keep `/` as the gateway
 - Keep the active app on `/{organization_id}`
 - Restrict login to your Google Workspace domain through `GOOGLE_OIDC_HOSTED_DOMAIN`
+- If you use the Cloud Run default hostname, the OAuth client must allow that exact `run.app` origin and the same origin with a trailing slash as the redirect URI
 
 ## 3) Repo Entry Points
-Use these checked-in assets:
+The supported dev bootstrap and deploy surface is:
 
 - `deploy/gcp/dev.env.example`
 - `deploy/gcp/bootstrap_dev_foundation.sh`
 - `deploy/gcp/deploy_cloud_run.sh`
 - `deploy/gcp/configure_dev_eventing.sh`
-- `.github/workflows/`
+- `deploy/gcp/render_ci_env.py`
+- `.github/workflows/deploy-dev.yml`
 
 What each one does:
 - `deploy/gcp/dev.env.example`
-  - canonical example env file for the dev environment
+  - canonical local template for the dev environment
 - `deploy/gcp/bootstrap_dev_foundation.sh`
-  - creates or verifies the dev project foundation resources
+  - creates or verifies the dev GCP foundation resources
 - `deploy/gcp/deploy_cloud_run.sh`
-  - builds the image and deploys the five Cloud Run services
+  - builds the Docker image, pushes it to Artifact Registry, and deploys the five Cloud Run services
 - `deploy/gcp/configure_dev_eventing.sh`
-  - wires Pub/Sub push subscriptions and the Cloud Scheduler HTTP job after the services exist
-- `.github/workflows/`
-  - runs validation and then auto-deploys the shared dev environment from pushes to `main`
+  - configures Pub/Sub push subscriptions and the Cloud Scheduler job after the services exist
+- `deploy/gcp/render_ci_env.py`
+  - validates and renders the GitHub Actions `dev` environment contract into a temporary deploy env file
+- `.github/workflows/deploy-dev.yml`
+  - validates the repo on pushes to `main`, authenticates to GCP with WIF, deploys the shared dev environment, configures eventing, and runs the `operator-api` health smoke check
 
-## 4) GitHub Actions Dev Auto-Deploy
+## 4) Local Tooling And Authentication
 
-### 4.1 Deployment behavior
-The shared dev environment deploys from GitHub Actions:
-
-- pushes to `main` run validation first
-- after validation succeeds, GitHub Actions deploys the current `main` revision to the shared GCP dev environment
-- the deploy smoke step waits for the latest Cloud Run revision to become ready before checking `/health/live`
-- the GitHub environment name for this deployment is `dev`
-
-The CI deployment path does not source `deploy/gcp/dev.env`. That file stays local and manual for bootstrap, operator-driven redeploys, and eventing setup from a developer machine.
-
-### 4.2 GitHub `dev` environment contract
-The GitHub environment named `dev` should provide the values that the deploy job passes to `deploy/gcp/deploy_cloud_run.sh`.
-
-Required environment variables:
-
-- `GCP_PROJECT_ID`
-- `GCP_REGION`
-- `GCP_ARTIFACT_REGISTRY_REPOSITORY`
-- `GCP_IMAGE_NAME`
-- `GCP_DEPLOYMENT_TIER=dev`
-- `GCP_SERVICE_PREFIX=dev`
-- `GCP_CLOUD_SQL_CONNECTION_NAME`
-- `CONTROL_PLANE_DATABASE_URL_SECRET`
-- `WORKER_SHARED_TOKEN_SECRET`
-- `CORS_ALLOWED_ORIGINS`
-- `OIDC_ISSUER`
-- `OIDC_AUDIENCE`
-- `OIDC_JWKS_URL`
-- `OIDC_CLIENT_ID`
-- `OIDC_AUTHORIZE_URL`
-- `OIDC_TOKEN_URL`
-- `GOOGLE_OIDC_CLIENT_ID`
-- `GOOGLE_OIDC_HOSTED_DOMAIN`
-- `GCS_BUCKET_NAME`
-- `GCP_BIGQUERY_DATASET_ID`
-- `IMPORT_COMMAND_TOPIC`
-- `PREDICTION_COMMAND_TOPIC`
-- `EXPORT_COMMAND_TOPIC`
-- `PUBSUB_TOPIC_NAME`
-- `BOOTSTRAP_TENANT_ID`
-- `BOOTSTRAP_TENANT_NAME`
-- `BOOTSTRAP_PROJECT_ID`
-- `BOOTSTRAP_PROJECT_NAME`
-
-Required network variables:
-
-- either `GCP_RUN_NETWORK` and `GCP_RUN_SUBNET`
-- or `GCP_VPC_CONNECTOR`
-
-Optional environment variables:
-
-- `GCP_RELEASE_TAG` if the workflow does not generate a release tag itself
-- `GCP_VPC_EGRESS`
-- `GCP_SECRET_PROJECT_ID`
-- `OIDC_LOGOUT_URL`
-- `API_ACCESS_KEY_SECRET`
-- `OIDC_JWT_SIGNING_SECRET_SECRET`
-- the service-account override variables supported by `deploy/gcp/dev.env.example`
-
-Required environment variables:
-
-- `GCP_WORKLOAD_IDENTITY_PROVIDER`
-- `GCP_DEPLOY_SERVICE_ACCOUNT`
-
-Optional environment secrets:
-
-- none required for GitHub OIDC auth
-
-These two values are identifiers, not credentials, so the workflow reads them from GitHub `dev` environment variables instead of secrets.
-
-`deploy/gcp/dev.env` remains a local operator file and is not read by CI.
-The `deploy-dev` workflow now validates this GitHub `dev` environment contract before Google auth or deploy, including the Pub/Sub topic names needed by `configure_dev_eventing.sh`. If a required environment variable is missing, the job fails immediately with the exact missing key names.
-
-### 4.3 One-time Workload Identity Federation setup
-Set up GitHub Actions authentication to GCP with `google-github-actions/auth`:
-
-1. Create one deploy service account in the dev GCP project.
-2. Create one Workload Identity Pool and one OIDC provider that trust this GitHub repository.
-3. Restrict the provider to this repository and branch `refs/heads/main`.
-4. Grant the GitHub principal `roles/iam.workloadIdentityUser` on the deploy service account.
-5. Grant the deploy service account the runtime deploy roles it actually needs:
-   - `roles/run.admin`
-   - `roles/artifactregistry.writer`
-   - `roles/pubsub.admin`
-   - `roles/cloudscheduler.admin`
-   - `roles/secretmanager.secretAccessor` on `WORKER_SHARED_TOKEN_SECRET`
-6. Grant `roles/iam.serviceAccountUser` on the runtime service accounts used by:
-   - `operator-api`
-   - `import-worker`
-   - `prediction-worker`
-   - `export-worker`
-   - `scheduler-worker`
-7. Grant service-account policy edit rights only where the eventing step needs them:
-   - enough permission to manage IAM bindings on `pubsub-push-invoker`
-   - enough permission to manage IAM bindings on `scheduler-invoker`
-8. Keep the deploy service account scoped to the dev project only.
-9. Store the provider resource name in the GitHub `dev` environment variables as `GCP_WORKLOAD_IDENTITY_PROVIDER`.
-10. Store the deploy service account email in the GitHub `dev` environment variables as `GCP_DEPLOY_SERVICE_ACCOUNT`.
-
-The deploy job should authenticate with `google-github-actions/auth` using the GitHub `dev` environment values instead of a JSON key.
-
-## 5) Prerequisites
-
-### 5.1 Operator prerequisites
-- temporary IAM admin or equivalent bootstrap access in the dev GCP project
+### 4.1 Required local tools
+For the repo-supported Bash scripts, install:
 - `gcloud`
 - `bq`
 - `docker`
 - `python3`
 
-### 5.2 Project prerequisites
-- billing enabled
-- one dedicated dev GCP project
-- a Google OAuth client for the dev console origin
-- your Google Workspace domain
+If you want to reproduce the GitHub validation job locally, also install:
+- `node`
+- `npm`
+- `pip`
 
-## 6) Bootstrap Sequence
+### 4.2 Example Bash installs
+Example on macOS with Homebrew:
 
-### 6.1 Prepare the private env file
-Copy the checked-in template into a private env file that is not committed:
+```bash
+brew install --cask google-cloud-sdk
+brew install --cask docker
+brew install python@3.14
+brew install node
+```
+
+If you use another package manager or Linux distribution, install equivalent packages instead. The important part is that the commands below exist in your shell.
+
+### 4.3 Verify the local toolchain
+Run:
+
+```bash
+gcloud --version
+bq version
+docker --version
+python3 --version
+node --version
+npm --version
+```
+
+### 4.4 Authenticate the workstation
+Before running any local bootstrap or deploy script:
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project YOUR_DEV_PROJECT_ID
+```
+
+If the workstation is using a service account instead of a user account, activate it explicitly before running the scripts.
+
+## 5) Sample Dev Naming And Values
+Use these sample values while reading the commands in this runbook:
+
+```bash
+export GCP_PROJECT_ID="your-dev-project-id"
+export GCP_PROJECT_NUMBER="123456789012"
+export GCP_REGION="us-central1"
+export GCP_ARTIFACT_REGISTRY_REPOSITORY="kairyx"
+export GCP_IMAGE_NAME="kairyxai"
+export GCP_RELEASE_TAG="dev-2026-04-10-r1"
+export GCP_DEPLOYMENT_TIER="dev"
+export GCP_SERVICE_PREFIX="dev"
+export GCP_RUN_NETWORK="dev-vpc"
+export GCP_RUN_SUBNET="dev-serverless"
+export GCP_SQL_INSTANCE="kairyx-dev-db"
+export GCP_SQL_DATABASE="kairyx"
+export GCP_SQL_USER="kairyx_app"
+export GCP_CLOUD_SQL_CONNECTION_NAME="${GCP_PROJECT_ID}:${GCP_REGION}:${GCP_SQL_INSTANCE}"
+export GCP_BIGQUERY_DATASET_ID="kairyx_platform"
+export CONTROL_PLANE_DATABASE_URL_SECRET="dev-control-plane-db-url"
+export WORKER_SHARED_TOKEN_SECRET="dev-worker-shared-token"
+export GCS_BUCKET_NAME="kairyx-dev-data"
+export IMPORT_COMMAND_TOPIC="kairyx-dev-import-jobs"
+export PREDICTION_COMMAND_TOPIC="kairyx-dev-prediction-jobs"
+export EXPORT_COMMAND_TOPIC="kairyx-dev-export-jobs"
+export PUBSUB_TOPIC_NAME="kairyx-dev-raw-shards"
+export BOOTSTRAP_TENANT_ID="default"
+export BOOTSTRAP_TENANT_NAME="Default Tenant"
+export BOOTSTRAP_PROJECT_ID="default"
+export BOOTSTRAP_PROJECT_NAME="Default Project"
+export OIDC_CLIENT_ID="your-google-client-id.apps.googleusercontent.com"
+export GOOGLE_OIDC_HOSTED_DOMAIN="example.com"
+```
+
+Replace them with your real dev values before running anything.
+
+## 6) GCP Project Setup
+
+### 6.1 Create or select the dev project
+If the project does not exist yet:
+
+```bash
+gcloud projects create "${GCP_PROJECT_ID}" --name="KairyxAI Dev"
+gcloud config set project "${GCP_PROJECT_ID}"
+gcloud beta billing projects link "${GCP_PROJECT_ID}" \
+  --billing-account="REPLACE_WITH_BILLING_ACCOUNT_ID"
+```
+
+If the project already exists:
+
+```bash
+gcloud config set project "${GCP_PROJECT_ID}"
+export GCP_PROJECT_NUMBER="$(gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectNumber)')"
+```
+
+### 6.2 APIs that must be enabled
+`deploy/gcp/bootstrap_dev_foundation.sh` enables these APIs automatically, but you should know the expected set for verification and troubleshooting:
+
+- `run.googleapis.com`
+- `artifactregistry.googleapis.com`
+- `cloudbuild.googleapis.com`
+- `sqladmin.googleapis.com`
+- `secretmanager.googleapis.com`
+- `pubsub.googleapis.com`
+- `cloudscheduler.googleapis.com`
+- `monitoring.googleapis.com`
+- `logging.googleapis.com`
+- `bigquery.googleapis.com`
+- `storage.googleapis.com`
+- `compute.googleapis.com`
+- `servicenetworking.googleapis.com`
+
+Manual equivalent:
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com \
+  sqladmin.googleapis.com \
+  secretmanager.googleapis.com \
+  pubsub.googleapis.com \
+  cloudscheduler.googleapis.com \
+  monitoring.googleapis.com \
+  logging.googleapis.com \
+  bigquery.googleapis.com \
+  storage.googleapis.com \
+  compute.googleapis.com \
+  servicenetworking.googleapis.com \
+  --project "${GCP_PROJECT_ID}"
+```
+
+### 6.3 Google OAuth client configuration
+Create or verify one Google OAuth client for the dev console:
+
+- Client type: `Web application`
+- Authorized JavaScript origin:
+  - your current dev console origin, for example `https://dev-operator-api-xxxxxx-uc.a.run.app`
+- Authorized redirect URI:
+  - the same origin with a trailing slash, for example `https://dev-operator-api-xxxxxx-uc.a.run.app/`
+- Audience mode:
+  - prefer `Internal` if the project belongs to your Google Workspace organization
+- Hosted-domain restriction:
+  - set `GOOGLE_OIDC_HOSTED_DOMAIN` to your Workspace domain
+
+The deployed app expects:
+- `OIDC_ISSUER=https://accounts.google.com`
+- `OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs`
+- `OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth`
+- `OIDC_TOKEN_URL=https://oauth2.googleapis.com/token`
+- `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, and `GOOGLE_OIDC_CLIENT_ID` equal to the OAuth client ID
+
+## 7) Service Accounts And IAM
+
+### 7.1 Service accounts used in dev
+Runtime and invoker service accounts are created automatically by `deploy/gcp/bootstrap_dev_foundation.sh` unless you override them in `deploy/gcp/dev.env`:
+
+- `operator-api@PROJECT_ID.iam.gserviceaccount.com`
+- `import-worker@PROJECT_ID.iam.gserviceaccount.com`
+- `prediction-worker@PROJECT_ID.iam.gserviceaccount.com`
+- `export-worker@PROJECT_ID.iam.gserviceaccount.com`
+- `scheduler-worker@PROJECT_ID.iam.gserviceaccount.com`
+- `pubsub-push-invoker@PROJECT_ID.iam.gserviceaccount.com`
+- `scheduler-invoker@PROJECT_ID.iam.gserviceaccount.com`
+
+The GitHub CI deploy path uses one additional service account that you create manually:
+
+- `kairyx-dev-deploy-service@PROJECT_ID.iam.gserviceaccount.com`
+
+### 7.2 Temporary bootstrap operator permissions
+The easiest safe bootstrap path is a temporary human or workstation identity with admin-level coverage for the dev project. One workable role set is:
+
+- `roles/serviceusage.serviceUsageAdmin`
+- `roles/artifactregistry.admin`
+- `roles/compute.networkAdmin`
+- `roles/cloudsql.admin`
+- `roles/secretmanager.admin`
+- `roles/storage.admin`
+- `roles/bigquery.admin`
+- `roles/pubsub.admin`
+- `roles/cloudscheduler.admin`
+- `roles/iam.serviceAccountAdmin`
+- `roles/resourcemanager.projectIamAdmin`
+
+This is not the long-term runtime posture. It is the bootstrap posture used to create the dev foundation and then step back to least privilege.
+
+### 7.3 Runtime IAM applied by the foundation script
+`deploy/gcp/bootstrap_dev_foundation.sh` grants these baseline runtime permissions:
+
+| Service account | Project roles | Bucket roles |
+| --- | --- | --- |
+| `operator-api` | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`, `roles/pubsub.publisher`, `roles/bigquery.jobUser`, `roles/bigquery.dataEditor` | `roles/storage.objectAdmin` on `gs://GCS_BUCKET_NAME` |
+| `import-worker` | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`, `roles/pubsub.publisher`, `roles/bigquery.jobUser`, `roles/bigquery.dataEditor` | `roles/storage.objectAdmin` on `gs://GCS_BUCKET_NAME` |
+| `prediction-worker` | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`, `roles/bigquery.jobUser`, `roles/bigquery.dataEditor` | none |
+| `export-worker` | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`, `roles/bigquery.jobUser`, `roles/bigquery.dataViewer` | `roles/storage.objectAdmin` on `gs://GCS_BUCKET_NAME` |
+| `scheduler-worker` | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`, `roles/bigquery.jobUser`, `roles/bigquery.dataViewer` | none |
+
+The foundation script also grants the Pub/Sub service agent `roles/iam.serviceAccountTokenCreator` on `pubsub-push-invoker@PROJECT_ID.iam.gserviceaccount.com`.
+
+### 7.4 Create the GitHub deploy service account
+Create the CI deploy service account once:
+
+```bash
+gcloud iam service-accounts create kairyx-dev-deploy-service \
+  --project "${GCP_PROJECT_ID}" \
+  --display-name "KairyxAI Dev GitHub Deploy"
+```
+
+### 7.5 CI deploy service account permissions
+Grant the GitHub deploy service account the permissions required by `.github/workflows/deploy-dev.yml`, `deploy/gcp/deploy_cloud_run.sh`, and `deploy/gcp/configure_dev_eventing.sh`.
+
+Project-level roles:
+
+```bash
+export DEPLOY_SA="kairyx-dev-deploy-service@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+
+for role in \
+  roles/run.admin \
+  roles/artifactregistry.writer \
+  roles/pubsub.admin \
+  roles/cloudscheduler.admin
+do
+  gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
+    --member="serviceAccount:${DEPLOY_SA}" \
+    --role="${role}"
+done
+```
+
+Secret-level access for eventing:
+
+```bash
+gcloud secrets add-iam-policy-binding "${WORKER_SHARED_TOKEN_SECRET}" \
+  --project "${GCP_PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOY_SA}" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+Service-account impersonation for Cloud Run deploy and eventing:
+
+```bash
+for sa in \
+  operator-api \
+  import-worker \
+  prediction-worker \
+  export-worker \
+  scheduler-worker \
+  pubsub-push-invoker \
+  scheduler-invoker
+do
+  gcloud iam service-accounts add-iam-policy-binding \
+    "${sa}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+    --project "${GCP_PROJECT_ID}" \
+    --member="serviceAccount:${DEPLOY_SA}" \
+    --role="roles/iam.serviceAccountUser"
+done
+```
+
+Service-account policy edit rights for the Pub/Sub push invoker, because `configure_dev_eventing.sh` grants the Pub/Sub service agent `roles/iam.serviceAccountTokenCreator` on it:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  "pubsub-push-invoker@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --project "${GCP_PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOY_SA}" \
+  --role="roles/iam.serviceAccountAdmin"
+```
+
+## 8) Create The Local `deploy/gcp/dev.env`
+
+### 8.1 Copy the template
+Do not edit `deploy/gcp/dev.env.example` directly. Copy it to a private local file:
 
 ```bash
 cp deploy/gcp/dev.env.example deploy/gcp/dev.env
 ```
 
-Fill the real values for:
-- `GCP_PROJECT_ID`
-- `GCP_REGION`
-- `GCP_ARTIFACT_REGISTRY_REPOSITORY`
-- `GCP_IMAGE_NAME`
-- `GCP_RELEASE_TAG`
-- `CORS_ALLOWED_ORIGINS`
-- `OIDC_AUDIENCE`
-- `OIDC_CLIENT_ID`
-- `GOOGLE_OIDC_CLIENT_ID`
-- `GOOGLE_OIDC_HOSTED_DOMAIN`
-- any naming overrides required by your organization
+`deploy/gcp/*.env` is already ignored by git.
 
-Do not store real secret values in git. The scripts generate the expected Secret Manager secrets when they are missing.
+### 8.2 Sample `deploy/gcp/dev.env`
+Use this sample as a starting point:
 
-### 6.2 Bootstrap the dev foundation
+```bash
+GCP_DEPLOYMENT_TIER=dev
+GCP_SERVICE_PREFIX=dev
+
+GCP_PROJECT_ID=your-dev-project-id
+GCP_REGION=us-central1
+GCP_ARTIFACT_REGISTRY_REPOSITORY=kairyx
+GCP_IMAGE_NAME=kairyxai
+GCP_RELEASE_TAG=dev-2026-04-10-r1
+
+GCP_RUN_NETWORK=dev-vpc
+GCP_RUN_SUBNET=dev-serverless
+# GCP_VPC_CONNECTOR=projects/your-dev-project-id/locations/us-central1/connectors/dev-serverless
+GCP_VPC_EGRESS=private-ranges-only
+
+GCP_SQL_INSTANCE=kairyx-dev-db
+GCP_SQL_DATABASE=kairyx
+GCP_SQL_USER=kairyx_app
+GCP_SQL_TIER=db-custom-2-8192
+GCP_SQL_STORAGE_SIZE_GB=50
+GCP_SQL_AVAILABILITY_TYPE=ZONAL
+GCP_SQL_DATABASE_VERSION=POSTGRES_16
+GCP_CLOUD_SQL_CONNECTION_NAME=${GCP_PROJECT_ID}:${GCP_REGION}:${GCP_SQL_INSTANCE}
+GCP_BIGQUERY_DATASET_ID=kairyx_platform
+
+CONTROL_PLANE_DATABASE_URL_SECRET=dev-control-plane-db-url
+WORKER_SHARED_TOKEN_SECRET=dev-worker-shared-token
+
+CORS_ALLOWED_ORIGINS=https://dev-console.example.internal
+OIDC_ISSUER=https://accounts.google.com
+OIDC_AUDIENCE=your-google-client-id.apps.googleusercontent.com
+OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs
+OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth
+OIDC_TOKEN_URL=https://oauth2.googleapis.com/token
+OIDC_LOGOUT_URL=
+GOOGLE_OIDC_HOSTED_DOMAIN=example.com
+
+GCP_SECRET_PROJECT_ID=${GCP_PROJECT_ID}
+GCS_BUCKET_NAME=kairyx-dev-data
+IMPORT_COMMAND_TOPIC=kairyx-dev-import-jobs
+PREDICTION_COMMAND_TOPIC=kairyx-dev-prediction-jobs
+EXPORT_COMMAND_TOPIC=kairyx-dev-export-jobs
+PUBSUB_TOPIC_NAME=kairyx-dev-raw-shards
+
+BOOTSTRAP_TENANT_ID=default
+BOOTSTRAP_TENANT_NAME=Default Tenant
+BOOTSTRAP_PROJECT_ID=default
+BOOTSTRAP_PROJECT_NAME=Default Project
+
+# Optional overrides:
+# IMPORT_COMMAND_SUBSCRIPTION=dev-import-worker-push
+# PREDICTION_COMMAND_SUBSCRIPTION=dev-prediction-worker-push
+# EXPORT_COMMAND_SUBSCRIPTION=dev-export-worker-push
+# SCHEDULER_JOB_NAME=dev-scheduler-worker
+# GCP_SCHEDULER_CRON=* * * * *
+# GCP_SCHEDULER_TIME_ZONE=UTC
+# OPERATOR_API_SERVICE_ACCOUNT=operator-api@your-dev-project-id.iam.gserviceaccount.com
+# IMPORT_WORKER_SERVICE_ACCOUNT=import-worker@your-dev-project-id.iam.gserviceaccount.com
+# PREDICTION_WORKER_SERVICE_ACCOUNT=prediction-worker@your-dev-project-id.iam.gserviceaccount.com
+# EXPORT_WORKER_SERVICE_ACCOUNT=export-worker@your-dev-project-id.iam.gserviceaccount.com
+# SCHEDULER_WORKER_SERVICE_ACCOUNT=scheduler-worker@your-dev-project-id.iam.gserviceaccount.com
+# PUBSUB_PUSH_INVOKER_SERVICE_ACCOUNT=pubsub-push-invoker@your-dev-project-id.iam.gserviceaccount.com
+# SCHEDULER_INVOKER_SERVICE_ACCOUNT=scheduler-invoker@your-dev-project-id.iam.gserviceaccount.com
+# API_ACCESS_KEY_SECRET=dev-api-access-key
+# OIDC_JWT_SIGNING_SECRET_SECRET=dev-oidc-jwt-signing-secret
+# GCP_EXTRA_ENV_FILE=deploy/gcp/dev.extra.env.yaml
+```
+
+Important:
+- `GCP_DEPLOYMENT_TIER=dev` and `GCP_SERVICE_PREFIX=dev` are required for the current GitHub deploy flow
+- if `GCP_SERVICE_PREFIX` is missing, the CI smoke check will target `operator-api` instead of `dev-operator-api`
+- do not put real secret values in this file; keep only the Secret Manager secret IDs
+
+## 9) Manual Bootstrap And First Deploy
+
+### 9.1 Bootstrap the foundation
 Run:
 
 ```bash
 bash deploy/gcp/bootstrap_dev_foundation.sh deploy/gcp/dev.env
 ```
 
-This script enables required APIs and creates or verifies:
+This script creates or verifies:
 - Artifact Registry repository
 - VPC and subnet
 - Private Service Access range and connection
@@ -226,21 +459,19 @@ This script enables required APIs and creates or verifies:
   - `CONTROL_PLANE_DATABASE_URL_SECRET`
   - `WORKER_SHARED_TOKEN_SECRET`
 - Cloud Storage bucket
-- BigQuery datasets:
-  - the base dataset from `GCP_BIGQUERY_DATASET_ID`
-  - the bootstrap-scoped dataset for `BOOTSTRAP_TENANT_ID` and `BOOTSTRAP_PROJECT_ID`
-- the bootstrap `pipeline_dead_letters` table inside the bootstrap-scoped dataset
+- BigQuery base dataset from `GCP_BIGQUERY_DATASET_ID`
+- bootstrap-scoped BigQuery dataset and `pipeline_dead_letters` table
 - Pub/Sub topics
 - runtime and invoker service accounts
-- baseline IAM bindings
+- baseline runtime IAM bindings
 
-Important constraints:
-- the script is dev-only and expects `GCP_DEPLOYMENT_TIER=dev` when that variable is set
+Important behavior:
+- the script is dev-only and rejects other deployment tiers
 - service-account overrides must stay in the same GCP project
-- existing secrets are reused; the script does not rotate a secret just because it already exists
-- the bootstrap-scoped BigQuery dataset follows the same normalization as the runtime, for example `kairyx_platform_default_default`
+- if `CONTROL_PLANE_DATABASE_URL_SECRET` already exists, the script uses that password as the source of truth and resets the Cloud SQL user password to match it
+- if `WORKER_SHARED_TOKEN_SECRET` already exists, the script reuses it instead of rotating it
 
-### 6.3 Deploy the runtime
+### 9.2 Deploy the five Cloud Run services
 Run:
 
 ```bash
@@ -248,138 +479,224 @@ bash deploy/gcp/deploy_cloud_run.sh deploy/gcp/dev.env
 ```
 
 This deploys:
-- `operator-api`
-- `import-worker`
-- `prediction-worker`
-- `export-worker`
-- `scheduler-worker`
+- `dev-operator-api`
+- `dev-import-worker`
+- `dev-prediction-worker`
+- `dev-export-worker`
+- `dev-scheduler-worker`
 
-### 6.4 Wire Pub/Sub and Scheduler
-After the services exist, run:
+### 9.3 Configure Pub/Sub push and Cloud Scheduler
+Run:
 
 ```bash
 bash deploy/gcp/configure_dev_eventing.sh deploy/gcp/dev.env
 ```
 
 This script:
-- grants `roles/run.invoker` on the worker services to the dedicated Pub/Sub and Scheduler caller identities
-- creates or updates the import, prediction, and export push subscriptions
-- creates or updates the Scheduler HTTP job for `scheduler-worker`
+- resolves the deployed worker URLs
+- grants `roles/run.invoker` on worker services to the dedicated Pub/Sub and Scheduler caller identities
+- creates or updates the push subscriptions
+- creates or updates the Cloud Scheduler HTTP job
 
-The script reads `WORKER_SHARED_TOKEN` from Secret Manager and uses it in the callback URLs. It does not print the token or the full URLs, but anyone who can inspect the resulting Pub/Sub subscription or Scheduler job configuration can still read the token from those stored URIs.
+Default generated names when `GCP_SERVICE_PREFIX=dev`:
+- import subscription: `dev-import-worker-push`
+- prediction subscription: `dev-prediction-worker-push`
+- export subscription: `dev-export-worker-push`
+- scheduler job: `dev-scheduler-worker`
 
-## 7) Required Variables In `deploy/gcp/dev.env`
+The script fails fast if an existing subscription name points at the wrong Pub/Sub topic.
 
-### 7.1 Foundation and deploy
-These values must be set for the bootstrap and deploy flow:
+### 9.4 Validate the eventing contract without changing resources
+Run:
 
-- `GCP_PROJECT_ID`
-- `GCP_REGION`
-- `GCP_ARTIFACT_REGISTRY_REPOSITORY`
-- `GCP_IMAGE_NAME`
-- `GCP_RELEASE_TAG`
-- `GCP_RUN_NETWORK`
-- `GCP_RUN_SUBNET`
-- `GCP_SQL_INSTANCE`
-- `GCP_SQL_DATABASE`
-- `GCP_SQL_USER`
-- `GCP_CLOUD_SQL_CONNECTION_NAME`
-- `CONTROL_PLANE_DATABASE_URL_SECRET`
-- `WORKER_SHARED_TOKEN_SECRET`
-- `CORS_ALLOWED_ORIGINS`
-- `OIDC_ISSUER`
-- `OIDC_AUDIENCE`
-- `OIDC_JWKS_URL`
-- `OIDC_CLIENT_ID`
-- `OIDC_AUTHORIZE_URL`
-- `OIDC_TOKEN_URL`
-- `GOOGLE_OIDC_CLIENT_ID`
-- `GOOGLE_OIDC_HOSTED_DOMAIN`
-- `GCS_BUCKET_NAME`
-- `IMPORT_COMMAND_TOPIC`
-- `PREDICTION_COMMAND_TOPIC`
-- `EXPORT_COMMAND_TOPIC`
-- `PUBSUB_TOPIC_NAME`
+```bash
+bash deploy/gcp/configure_dev_eventing.sh --validate-only deploy/gcp/dev.env
+```
 
-### 7.2 Optional overrides
-These stay optional:
-- `GCP_VPC_CONNECTOR`
-- `GCP_VPC_EGRESS`
-- `GCP_PRIVATE_SERVICE_RANGE_NAME`
-- `GCP_PRIVATE_SERVICE_RANGE_PREFIX_LENGTH`
-- `GCP_BIGQUERY_DATASET_ID`
-- `GCP_STORAGE_CLASS`
-- `IMPORT_COMMAND_SUBSCRIPTION`
-- `PREDICTION_COMMAND_SUBSCRIPTION`
-- `EXPORT_COMMAND_SUBSCRIPTION`
-- `SCHEDULER_JOB_NAME`
-- `GCP_SCHEDULER_CRON`
-- `GCP_SCHEDULER_TIME_ZONE`
-- `OPERATOR_API_SERVICE_ACCOUNT`
-- `IMPORT_WORKER_SERVICE_ACCOUNT`
-- `PREDICTION_WORKER_SERVICE_ACCOUNT`
-- `EXPORT_WORKER_SERVICE_ACCOUNT`
-- `SCHEDULER_WORKER_SERVICE_ACCOUNT`
-- `PUBSUB_PUSH_INVOKER_SERVICE_ACCOUNT`
-- `SCHEDULER_INVOKER_SERVICE_ACCOUNT`
-- `GCP_RELEASE_TAG`
-- `GCP_SECRET_PROJECT_ID`
-- `OIDC_LOGOUT_URL`
-- `API_ACCESS_KEY_SECRET`
-- `OIDC_JWT_SIGNING_SECRET_SECRET`
-- `GCP_EXTRA_ENV_FILE`
+Use this when checking local config or matching the GitHub CI preflight behavior.
+
+## 10) GitHub Actions Dev Auto-Deploy
+
+### 10.1 Workflow behavior
+`.github/workflows/deploy-dev.yml` does the following on every push to `main`:
+
+1. validates the repo
+2. validates the GitHub `dev` environment contract
+3. authenticates to GCP with WIF
+4. renders a temporary deploy env file
+5. validates the dev eventing contract
+6. deploys the five Cloud Run services
+7. configures Pub/Sub push and Cloud Scheduler
+8. waits for the latest Cloud Run revision to become ready
+9. smoke-checks `operator-api` at `/health/live`
+
+The GitHub workflow does not read `deploy/gcp/dev.env`. It uses GitHub `Environment -> dev -> Variables`.
+
+### 10.2 Create the Workload Identity Pool and Provider
+Run these once with an admin-capable GCP identity:
+
+```bash
+export PROJECT_ID="your-dev-project-id"
+export PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+export POOL_ID="github-actions"
+export PROVIDER_ID="github-main"
+export REPO="dimsumj/KairyxAI"
+export DEPLOY_SA="kairyx-dev-deploy-service@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud iam workload-identity-pools create "${POOL_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --display-name="GitHub Actions"
+
+gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --workload-identity-pool="${POOL_ID}" \
+  --display-name="GitHub main branch" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.repository=='${REPO}' && assertion.ref=='refs/heads/main'"
+
+gcloud iam service-accounts add-iam-policy-binding "${DEPLOY_SA}" \
+  --project="${PROJECT_ID}" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}"
+```
+
+Get the exact provider resource name for GitHub:
+
+```bash
+gcloud iam workload-identity-pools providers describe "${PROVIDER_ID}" \
+  --project="${PROJECT_ID}" \
+  --location="global" \
+  --workload-identity-pool="${POOL_ID}" \
+  --format='value(name)'
+```
+
+That output becomes `GCP_WORKLOAD_IDENTITY_PROVIDER` in GitHub.
+
+### 10.3 GitHub `Environment -> dev -> Variables`
+Create a GitHub environment named `dev`. The current workflow expects these values as environment variables, not secrets.
+
+Required variables with sample values:
+
+| Variable | Sample value |
+| --- | --- |
+| `GCP_PROJECT_ID` | `your-dev-project-id` |
+| `GCP_REGION` | `us-central1` |
+| `GCP_ARTIFACT_REGISTRY_REPOSITORY` | `kairyx` |
+| `GCP_IMAGE_NAME` | `kairyxai` |
+| `GCP_DEPLOYMENT_TIER` | `dev` |
+| `GCP_SERVICE_PREFIX` | `dev` |
+| `GCP_CLOUD_SQL_CONNECTION_NAME` | `your-dev-project-id:us-central1:kairyx-dev-db` |
+| `GCP_RUN_NETWORK` | `dev-vpc` |
+| `GCP_RUN_SUBNET` | `dev-serverless` |
+| `CONTROL_PLANE_DATABASE_URL_SECRET` | `dev-control-plane-db-url` |
+| `WORKER_SHARED_TOKEN_SECRET` | `dev-worker-shared-token` |
+| `CORS_ALLOWED_ORIGINS` | `https://dev-console.example.internal` |
+| `OIDC_ISSUER` | `https://accounts.google.com` |
+| `OIDC_AUDIENCE` | `your-google-client-id.apps.googleusercontent.com` |
+| `OIDC_JWKS_URL` | `https://www.googleapis.com/oauth2/v3/certs` |
+| `OIDC_CLIENT_ID` | `your-google-client-id.apps.googleusercontent.com` |
+| `GOOGLE_OIDC_CLIENT_ID` | `your-google-client-id.apps.googleusercontent.com` |
+| `OIDC_AUTHORIZE_URL` | `https://accounts.google.com/o/oauth2/v2/auth` |
+| `OIDC_TOKEN_URL` | `https://oauth2.googleapis.com/token` |
+| `GOOGLE_OIDC_HOSTED_DOMAIN` | `example.com` |
+| `GCP_SECRET_PROJECT_ID` | `your-dev-project-id` |
+| `GCP_BIGQUERY_DATASET_ID` | `kairyx_platform` |
+| `GCS_BUCKET_NAME` | `kairyx-dev-data` |
+| `IMPORT_COMMAND_TOPIC` | `kairyx-dev-import-jobs` |
+| `PREDICTION_COMMAND_TOPIC` | `kairyx-dev-prediction-jobs` |
+| `EXPORT_COMMAND_TOPIC` | `kairyx-dev-export-jobs` |
+| `PUBSUB_TOPIC_NAME` | `kairyx-dev-raw-shards` |
+| `BOOTSTRAP_TENANT_ID` | `default` |
+| `BOOTSTRAP_TENANT_NAME` | `Default Tenant` |
+| `BOOTSTRAP_PROJECT_ID` | `default` |
+| `BOOTSTRAP_PROJECT_NAME` | `Default Project` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/123456789012/locations/global/workloadIdentityPools/github-actions/providers/github-main` |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | `kairyx-dev-deploy-service@your-dev-project-id.iam.gserviceaccount.com` |
+
+Optional variables:
+
+| Variable | Sample value |
+| --- | --- |
+| `GCP_VPC_CONNECTOR` | `projects/your-dev-project-id/locations/us-central1/connectors/dev-serverless` |
+| `GCP_VPC_EGRESS` | `private-ranges-only` |
+| `OIDC_LOGOUT_URL` | empty |
+| `API_ACCESS_KEY_SECRET` | `dev-api-access-key` |
+| `OIDC_JWT_SIGNING_SECRET_SECRET` | `dev-oidc-jwt-signing-secret` |
+| `GCP_EXTRA_ENV_FILE` | `deploy/gcp/dev.extra.env.yaml` |
+| `OPERATOR_API_SERVICE_ACCOUNT` | `operator-api@your-dev-project-id.iam.gserviceaccount.com` |
+| `IMPORT_WORKER_SERVICE_ACCOUNT` | `import-worker@your-dev-project-id.iam.gserviceaccount.com` |
+| `PREDICTION_WORKER_SERVICE_ACCOUNT` | `prediction-worker@your-dev-project-id.iam.gserviceaccount.com` |
+| `EXPORT_WORKER_SERVICE_ACCOUNT` | `export-worker@your-dev-project-id.iam.gserviceaccount.com` |
+| `SCHEDULER_WORKER_SERVICE_ACCOUNT` | `scheduler-worker@your-dev-project-id.iam.gserviceaccount.com` |
+| `PUBSUB_PUSH_INVOKER_SERVICE_ACCOUNT` | `pubsub-push-invoker@your-dev-project-id.iam.gserviceaccount.com` |
+| `SCHEDULER_INVOKER_SERVICE_ACCOUNT` | `scheduler-invoker@your-dev-project-id.iam.gserviceaccount.com` |
 
 Important:
+- `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT` are GitHub environment variables in the current workflow, not GitHub secrets
+- if `GCP_DEPLOYMENT_TIER` or `GCP_SERVICE_PREFIX` is missing, the workflow fails preflight before Google auth or deploy
+- if `GCP_SERVICE_PREFIX` is blank, the smoke check will build the wrong service name
 
-- `deploy/gcp/dev.env` is for local operator use only
-- GitHub Actions deploys dev from the GitHub `dev` environment contract instead of sourcing `deploy/gcp/dev.env`
+### 10.4 Optional: verify the CI contract locally
+You can verify the GitHub environment contract locally by exporting the same variables in your shell and running:
 
-## 8) Validation Checklist
+```bash
+python3 deploy/gcp/render_ci_env.py --check-only
+```
 
-### 8.1 Infrastructure checks
-- required APIs enabled
-- Cloud SQL instance exists
-- bucket exists
-- BigQuery dataset exists
+## 11) Validation Checklist
+
+### 11.1 Foundation validation
+- the required APIs are enabled
+- Artifact Registry repository exists
+- VPC, subnet, and Private Service Access are configured
+- Cloud SQL instance, database, and user exist
+- Secret Manager contains:
+  - `CONTROL_PLANE_DATABASE_URL_SECRET`
+  - `WORKER_SHARED_TOKEN_SECRET`
+- Cloud Storage bucket exists
+- BigQuery base dataset exists
+- bootstrap-scoped BigQuery dataset exists
+- `pipeline_dead_letters` exists in the bootstrap-scoped dataset
 - Pub/Sub topics exist
-- expected Secret Manager secrets exist
 - runtime and invoker service accounts exist
 
-### 8.2 Deployment checks
+### 11.2 Runtime validation
 - all five Cloud Run services are deployed
-- worker services stay authenticated-only
+- worker services remain authenticated-only
 - `operator-api` is reachable
-- pushes to `main` auto-deploy the dev environment after validation passes
+- `curl https://YOUR_OPERATOR_API_URL/health/live` returns `200`
+- `curl https://YOUR_OPERATOR_API_URL/health` returns `200`
+- `curl https://YOUR_OPERATOR_API_URL/api/v1/health` returns `401` without a bearer token
 
-### 8.3 App checks
-- `GET /health/live` succeeds
-- Google login appears on `/`
-- Workspace-domain restriction works
-- the user can sign in and reach `/{organization_id}`
+### 11.3 Eventing validation
+- `bash deploy/gcp/configure_dev_eventing.sh --validate-only deploy/gcp/dev.env` succeeds
+- the import, prediction, and export subscriptions exist
+- each subscription points at the correct worker topic and worker URL
+- the Cloud Scheduler job exists and points at `dev-scheduler-worker`
+- the Pub/Sub and Scheduler caller identities have `roles/run.invoker` on the expected services
 
-### 8.4 Functional smoke
-- enter or create an organization
-- enter or create a project
-- create a connector
-- start an import
-- confirm project-scoped pages load without membership errors
+### 11.4 GitHub CI validation
+- the GitHub environment name is exactly `dev`
+- `deploy-dev` succeeds on a push to `main`
+- the workflow summary shows the deployed release tag and the `operator-api` health URL
+- the smoke step checks the prefixed service URL, for example `https://dev-operator-api-.../health/live`
 
-### 8.5 Operational checks
-- logs appear in Cloud Logging
-- Pub/Sub push hits the worker services successfully
-- Cloud Scheduler can invoke `scheduler-worker`
-- Secret Manager access works only for the intended service accounts
+## 12) Security And Cleanup
+- remove broad human admin access after the first successful bootstrap
+- keep the deploy service account scoped to the dev project only
+- keep runtime service accounts least-privilege
+- never commit `deploy/gcp/dev.env`
+- never paste the real database URL or worker shared token into docs, tickets, or git history
+- restrict who can inspect Pub/Sub subscription and Cloud Scheduler job configuration because those resources store the worker token in the callback URI
 
-## 9) Security And Access Cleanup
-After the first successful bootstrap and deploy:
-- remove broad human IAM admin from normal operations
-- keep only the deployment principal and least-privilege runtime service accounts
-- do not commit `deploy/gcp/dev.env`
-- do not print or paste the actual database URL or worker token into docs, tickets, or git history
-- restrict read access to Pub/Sub subscription and Cloud Scheduler job configuration because those resources store the worker token in the callback URI
-
-## 10) Relationship To The Production Runbook
-Use this dev runbook for the first internal dev environment only.
+## 13) Relationship To The Production Runbook
+Use this runbook for:
+- the first internal dev environment
+- ongoing manual dev redeploys
+- GitHub `main` auto-deploy setup
 
 Use `docs/GCP_PRODUCTION_DEPLOYMENT_RUNBOOK.md` for:
 - production sizing and quotas
