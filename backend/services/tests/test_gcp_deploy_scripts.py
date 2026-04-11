@@ -101,6 +101,15 @@ def test_bootstrap_script_grants_scheduler_worker_bigquery_read_job_access():
     assert 'ensure_project_binding "$member" "roles/bigquery.dataViewer"' in content
 
 
+def test_bootstrap_script_seeds_bootstrap_scoped_bigquery_dataset_and_dead_letter_table():
+    content = (GCP_DEPLOY_DIR / "bootstrap_dev_foundation.sh").read_text(encoding="utf-8")
+
+    assert 'dataset_id="${dataset_base}_${tenant_scope}_${project_scope}"' in content
+    assert 'ensure_bigquery_dataset "$dataset_id"' in content
+    assert '"pipeline_dead_letters"' in content
+    assert 'payload_json:STRING' in content
+
+
 def test_bootstrap_script_rejects_non_dev_tier(_stubbed_cli_environment, tmp_path):
     env_file = tmp_path / "qa.env"
     env_file.write_text(

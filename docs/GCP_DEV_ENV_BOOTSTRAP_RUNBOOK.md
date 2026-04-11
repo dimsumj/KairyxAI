@@ -120,7 +120,10 @@ This script enables required APIs and creates or verifies:
   - `CONTROL_PLANE_DATABASE_URL_SECRET`
   - `WORKER_SHARED_TOKEN_SECRET`
 - Cloud Storage bucket
-- BigQuery dataset
+- BigQuery datasets:
+  - the base dataset from `GCP_BIGQUERY_DATASET_ID`
+  - the bootstrap-scoped dataset for `BOOTSTRAP_TENANT_ID` and `BOOTSTRAP_PROJECT_ID`
+- the bootstrap `pipeline_dead_letters` table inside the bootstrap-scoped dataset
 - Pub/Sub topics
 - runtime and invoker service accounts
 - baseline IAM bindings
@@ -129,6 +132,7 @@ Important constraints:
 - the script is dev-only and expects `GCP_DEPLOYMENT_TIER=dev` when that variable is set
 - service-account overrides must stay in the same GCP project
 - existing secrets are reused; the script does not rotate a secret just because it already exists
+- the bootstrap-scoped BigQuery dataset follows the same normalization as the runtime, for example `kairyx_platform_default_default`
 
 ### 5.3 Deploy the runtime
 Run:

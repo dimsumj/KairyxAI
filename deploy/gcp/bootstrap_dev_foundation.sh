@@ -165,6 +165,18 @@ print(unquote(parsed.password))
 PY
 }
 
+normalize_scope_key() {
+  local raw_value="${1:-default}"
+  python3 - "$raw_value" <<'PY'
+import re
+import sys
+
+raw_value = str(sys.argv[1] or "default").strip()
+normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw_value).strip("_").lower()
+print(normalized or "default")
+PY
+}
+
 ensure_api_enabled() {
   local api_name="$1"
   gcloud services enable "$api_name" --project="$GCP_PROJECT_ID" >/dev/null
@@ -350,7 +362,7 @@ ensure_bucket() {
 }
 
 ensure_bigquery_dataset() {
-  local dataset_id="${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}"
+  local dataset_id="${1:-${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}}"
   if bq --project_id="$GCP_PROJECT_ID" show --dataset "${GCP_PROJECT_ID}:${dataset_id}" >/dev/null 2>&1; then
     return
   fi
@@ -361,6 +373,39 @@ ensure_bigquery_dataset() {
     --label=product:kairyx \
     "${GCP_PROJECT_ID}:${dataset_id}" \
     >/dev/null
+}
+
+ensure_bigquery_table() {
+  local dataset_id="$1"
+  local table_name="$2"
+  local schema="$3"
+
+  if bq --project_id="$GCP_PROJECT_ID" show --table "${GCP_PROJECT_ID}:${dataset_id}.${table_name}" >/dev/null 2>&1; then
+    return
+  fi
+
+  bq --project_id="$GCP_PROJECT_ID" --location="$GCP_REGION" mk \
+    --table \
+    "${GCP_PROJECT_ID}:${dataset_id}.${table_name}" \
+    "$schema" \
+    >/dev/null
+}
+
+ensure_bootstrap_bigquery_scope() {
+  local dataset_base="${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}"
+  local tenant_scope
+  local project_scope
+  local dataset_id
+
+  tenant_scope="$(normalize_scope_key "${BOOTSTRAP_TENANT_ID:-default}")"
+  project_scope="$(normalize_scope_key "${BOOTSTRAP_PROJECT_ID:-default}")"
+  dataset_id="${dataset_base}_${tenant_scope}_${project_scope}"
+
+  ensure_bigquery_dataset "$dataset_id"
+  ensure_bigquery_table \
+    "$dataset_id" \
+    "pipeline_dead_letters" \
+    "job_id:STRING,job_identifier:STRING,player_id:STRING,canonical_user_id:STRING,event_type:STRING,event_time:TIMESTAMP,rejection_reason:STRING,ingested_at:TIMESTAMP,created_at:TIMESTAMP,payload_json:STRING"
 }
 
 ensure_topic() {
@@ -554,6 +599,7 @@ main() {
   log "Ensuring bucket, dataset, and Pub/Sub topics"
   ensure_bucket
   ensure_bigquery_dataset
+  ensure_bootstrap_bigquery_scope
   ensure_topic "$PUBSUB_TOPIC_NAME"
   ensure_topic "$IMPORT_COMMAND_TOPIC"
   ensure_topic "$PREDICTION_COMMAND_TOPIC"
@@ -593,6 +639,7 @@ Provisioned or verified:
   - Cloud SQL: ${GCP_SQL_INSTANCE}
   - Cloud Storage bucket: ${GCS_BUCKET_NAME}
   - BigQuery dataset: ${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}
+  - Bootstrap BigQuery scope: ${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}_$(normalize_scope_key "${BOOTSTRAP_TENANT_ID:-default}")_$(normalize_scope_key "${BOOTSTRAP_PROJECT_ID:-default}")
   - Pub/Sub topics:
       * ${PUBSUB_TOPIC_NAME}
       * ${IMPORT_COMMAND_TOPIC}

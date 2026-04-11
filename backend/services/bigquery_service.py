@@ -171,6 +171,8 @@ class BigQueryService:
         project_scope = _project_scope_key()
         dataset_base = os.getenv("BIGQUERY_DATASET_ID", "kairyx")
         dataset_id = os.getenv("BIGQUERY_DATASET_ID_EFFECTIVE", f"{dataset_base}_{tenant_scope}_{project_scope}")
+        self._gcp_project_id = project_id
+        self._gcp_dataset_id = dataset_id
         table_name = os.getenv("BIGQUERY_TABLE_NAME", "processed_events")
         self._table_id = os.getenv("BIGQUERY_TABLE_ID", f"{project_id}.{dataset_id}.{table_name}")
         self._curated_table_id = os.getenv(
@@ -192,6 +194,35 @@ class BigQueryService:
 
         self._bigquery = bigquery
         self._client = bigquery.Client(project=project_id)
+        self._ensure_gcp_dataset_exists()
+
+    @staticmethod
+    def _is_missing_gcp_resource_error(exc: Exception) -> bool:
+        error_name = exc.__class__.__name__.lower()
+        if "notfound" in error_name:
+            return True
+        message = str(exc or "").lower()
+        return "not found" in message or "404" in message
+
+    def _ensure_gcp_dataset_exists(self) -> None:
+        dataset_ref = f"{self._gcp_project_id}.{self._gcp_dataset_id}"
+        try:
+            self._client.get_dataset(dataset_ref)
+            return
+        except Exception as exc:
+            if not self._is_missing_gcp_resource_error(exc):
+                return
+
+        try:
+            dataset = self._bigquery.Dataset(dataset_ref)
+            dataset_location = normalize_env_text(
+                os.getenv("BIGQUERY_LOCATION") or os.getenv("GCP_REGION") or ""
+            )
+            if dataset_location:
+                dataset.location = dataset_location
+            self._client.create_dataset(dataset, exists_ok=True)
+        except Exception:
+            return
 
     def _init_redshift_backend(self):
         self._redshift = RedshiftWarehouseService()
@@ -1715,7 +1746,12 @@ class BigQueryService:
                         self._bigquery.ScalarQueryParameter("job_id", "STRING", str(job_id))
                     ]
                 )
-            rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
+            try:
+                rows = [dict(row.items()) for row in self._client.query(query, job_config=job_config).result()]
+            except Exception as exc:
+                if self._is_missing_gcp_resource_error(exc):
+                    return []
+                raise
             return rows
         if self.mode == "redshift":
             rows = self._load_all_rows_from_target("pipeline_dead_letters")
@@ -2037,8 +2073,13 @@ class BigQueryService:
                 f"SELECT * FROM `{self._prediction_results_table_id}` "
                 "WHERE CAST(prediction_job_id AS STRING) = @job_id"
             )
-            total = int(next(iter(self._client.query(count_query, job_config=job_config).result()))["total"])
-            items = [self._deserialize_prediction_row(dict(row.items())) for row in self._client.query(row_query, job_config=job_config).result()]
+            try:
+                total = int(next(iter(self._client.query(count_query, job_config=job_config).result()))["total"])
+                items = [self._deserialize_prediction_row(dict(row.items())) for row in self._client.query(row_query, job_config=job_config).result()]
+            except Exception as exc:
+                if self._is_missing_gcp_resource_error(exc):
+                    return {"page": page, "page_size": page_size, "total": 0, "items": []}
+                raise
             items = self._sort_prediction_result_dicts(items)[offset: offset + page_size]
             return {"page": page, "page_size": page_size, "total": total, "items": items}
         if self.mode == "redshift":
