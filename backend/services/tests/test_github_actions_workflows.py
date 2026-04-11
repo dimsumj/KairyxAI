@@ -61,9 +61,10 @@ def test_deploy_dev_workflow_generates_temp_env_and_smoke_checks_health():
     assert "status.latestCreatedRevisionName" in content
     assert "latest_ready_revision" in content
     assert "status.latestReadyRevisionName" in content
+    assert 'health_url="${service_url}/health/live"' in content
     assert "for attempt in $(seq 1 18); do" in content
-    assert "waiting for revision ${latest_created_revision} to become ready" in content
-    assert "Health check attempt ${attempt}/18 returned ${last_status:-curl_error}; waiting for Cloud Run readiness..." in content
+    assert "Smoke check attempt ${attempt}/18 for ${health_url} waiting for revision ${latest_created_revision} to become ready" in content
+    assert "Health check attempt ${attempt}/18 for ${health_url} returned ${last_status:-curl_error}; waiting for Cloud Run readiness..." in content
     assert "gcloud run services describe" in content
     assert "exit 1" in content
 
