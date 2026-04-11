@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from app.application.churn_models import LocalChurnModelService
 from app.application.experiments import ExperimentConfigService
+from app.application.secret_refs import materialize_secret_refs
 from app.core.db import session_scope
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.request_context import RequestContext, get_request_context, request_context
@@ -994,10 +995,14 @@ class PredictionService:
 
     def _select_google_connector(self) -> Dict[str, Any] | None:
         google_connectors = [
-            connector
+            {**connector, "config": materialize_secret_refs(dict(connector.get("config") or {}))}
             for connector in self.repository.list_connectors()
             if str(connector.get("type") or "").lower() == "google"
-            and str((connector.get("config") or {}).get("api_key") or "").strip()
+        ]
+        google_connectors = [
+            connector
+            for connector in google_connectors
+            if str((connector.get("config") or {}).get("api_key") or "").strip()
         ]
         if not google_connectors:
             return None
