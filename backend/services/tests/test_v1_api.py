@@ -18,7 +18,7 @@ from app.core import db as db_module
 from app.core.deps import get_settings_dependency
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
-from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
+from app.infrastructure.db_models import ControlPlaneResourceModel, ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 from bigquery_service import BigQueryService, get_shared_bigquery_service
@@ -247,6 +247,57 @@ def test_health_reports_database_mock_storage(monkeypatch, tmp_path):
     assert payload["control_plane_database_fallback_active"] is False
     assert payload["local_cache"]["storage_backend"] == "database"
     assert payload["local_cache"]["persistent"] is True
+
+
+def test_upsert_resource_recovers_from_concurrent_insert(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.clear_runtime_database_fallback()
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+    db_module.init_db()
+
+    session = db_module.get_session_factory()()
+    repository = SqlAlchemyControlPlaneRepository(session)
+    original_flush = session.flush
+    resource_id = "data_core:canonical_coverage_low"
+    injected_race = False
+
+    def flush_with_race(*args, **kwargs):
+        nonlocal injected_race
+        if not injected_race:
+            injected_race = True
+            with db_module.session_scope() as competing_session:
+                competing_repository = SqlAlchemyControlPlaneRepository(competing_session)
+                competing_repository.upsert_resource(
+                    "health_alert",
+                    resource_id,
+                    status="open",
+                    name="canonical_coverage_low",
+                    payload={"alert_id": resource_id, "code": "canonical_coverage_low", "status": "open"},
+                )
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(session, "flush", flush_with_race)
+
+    try:
+        saved = repository.upsert_resource(
+            "health_alert",
+            resource_id,
+            status="open",
+            name="canonical_coverage_low",
+            payload={"alert_id": resource_id, "code": "canonical_coverage_low", "status": "open", "message": "latest"},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert saved["resource_id"] == resource_id
+    with db_module.session_scope() as verification_session:
+        rows = verification_session.query(ControlPlaneResourceModel).filter_by(resource_type="health_alert", resource_id=resource_id).all()
+    assert len(rows) == 1
 
 
 def test_prediction_model_runs_reports_untrained_readiness(client):
