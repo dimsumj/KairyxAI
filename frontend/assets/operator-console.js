@@ -1685,7 +1685,8 @@ export function initializeOperatorConsole() {
                 workspaceOverlayAllowClose = Boolean(allowClose);
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
-                workspaceModalCloseBtn.classList.toggle('hidden', !workspaceOverlayAllowClose);
+                const showFooterCloseButton = workspaceOverlayAllowClose && mode !== 'create-project';
+                workspaceModalCloseBtn.classList.toggle('hidden', !showFooterCloseButton);
                 if (mode === 'login') {
                     const invitePending = Boolean(readPendingInvite());
                     workspaceModalEyebrow.textContent = 'Google Login';
