@@ -416,6 +416,11 @@ Use this page to register upstream ingestion sources and downstream service cred
 | `Cancel` | Button | Resets the form and returns to the empty state. | None | Dynamic fields disappear and the add card returns. |
 | Saved connector `Delete` | Row button | Deletes the connector after confirmation. | None | Connector is removed from the saved list. |
 
+Credential storage behavior:
+- Browser-entered secret fields are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
+- Connector reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
+- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
+
 #### Connector-specific fields
 
 | Connector type | Fields / API payload | Sample input |
@@ -424,7 +429,7 @@ Use this page to register upstream ingestion sources and downstream service cred
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
 | `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
-| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json` and `service_account_json_ref` | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
+| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
@@ -441,7 +446,7 @@ Use this page to register upstream ingestion sources and downstream service cred
 ```
 
 #### BigQuery connector API
-Once a BigQuery connector is saved with `project_id`, `dataset_id`, and tenant-scoped service account credentials, operators can use the connector health and dataset-discovery routes directly. Connector responses redact the saved credential payload and expose only the `*_configured` metadata flag.
+Once a BigQuery connector is saved with `project_id`, `dataset_id`, and tenant-scoped service account credentials, operators can use the connector health and dataset-discovery routes directly. If the runtime has `CONTROL_PLANE_SECRET_KEY`, browser-entered BigQuery credentials are encrypted before storage. Connector responses redact the saved credential payload and expose only the `*_configured` metadata flag.
 
 #### Sample BigQuery connector request
 ```json
@@ -452,6 +457,20 @@ Once a BigQuery connector is saved with `project_id`, `dataset_id`, and tenant-s
     "project_id": "warehouse-project",
     "dataset_id": "growth_inputs",
     "location": "US",
+    "service_account_json": "{\"type\":\"service_account\",\"client_email\":\"warehouse-reader@tenant-warehouse.iam.gserviceaccount.com\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\",\"token_uri\":\"https://oauth2.googleapis.com/token\"}"
+  }
+}
+```
+
+Teams that keep warehouse credentials in Secret Manager can still use:
+
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "config": {
+    "project_id": "warehouse-project",
+    "dataset_id": "growth_inputs",
     "service_account_json_ref": "gsm://tenant-connectors/warehouse-scores"
   }
 }

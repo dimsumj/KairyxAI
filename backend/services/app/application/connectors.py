@@ -4,9 +4,18 @@ from connectors.bigquery_connector import BigQueryConnector
 from typing import Any, Dict, List
 
 from connectors import create_connector
-from app.application.secret_refs import contains_inline_secret, materialize_secret_refs, redact_secret_values
+from app.application.secret_refs import (
+    REDACTED_FIELDS,
+    contains_inline_secret,
+    materialize_secret_refs,
+    redact_secret_values,
+    secure_inline_secret_values,
+)
 from app.core.errors import ResourceLockedError
 from app.core.settings import get_settings
+
+
+CONNECTOR_SECRET_FIELDS = REDACTED_FIELDS
 
 
 class ConnectorService:
@@ -18,9 +27,12 @@ class ConnectorService:
 
     def create_connector(self, name: str, connector_type: str, config: Dict[str, Any], connector_id: str | None = None) -> Dict[str, Any]:
         settings = get_settings()
-        if settings.app_env == "prod" and contains_inline_secret(config):
-            raise ValueError("Inline connector secrets are not allowed in production; use *_ref fields.")
         self._validate_connector_config(connector_type, config)
+        config = self._persist_inline_secrets(config)
+        if settings.app_env == "prod" and contains_inline_secret(config, secret_fields=CONNECTOR_SECRET_FIELDS):
+            raise ValueError(
+                "Inline connector secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+            )
         return self._to_response(
             self.repository.upsert_connector(name=name, connector_type=connector_type, config=config, connector_id=connector_id)
         )
@@ -102,6 +114,17 @@ class ConnectorService:
         service_account_type = str(service_account_info.get("type") or "").strip()
         if service_account_type and service_account_type != "service_account":
             raise ValueError("BigQuery service account JSON must use type 'service_account'.")
+
+    @staticmethod
+    def _persist_inline_secrets(config: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return secure_inline_secret_values(config, secret_fields=CONNECTOR_SECRET_FIELDS)
+        except RuntimeError as exc:
+            if contains_inline_secret(config, secret_fields=CONNECTOR_SECRET_FIELDS):
+                raise ValueError(
+                    "Secure connector secret storage is not configured; set CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+                ) from exc
+            raise
 
     @staticmethod
     def _to_response(connector_record: Dict[str, Any]) -> Dict[str, Any]:

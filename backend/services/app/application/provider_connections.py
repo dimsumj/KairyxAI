@@ -3,18 +3,14 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List
 
-from app.application.secret_refs import contains_inline_secret, materialize_secret_refs, redact_secret_values
+from app.application.secret_refs import (
+    SENSITIVE_FIELDS,
+    contains_inline_secret,
+    materialize_secret_refs,
+    redact_secret_values,
+    secure_inline_secret_values,
+)
 from app.core.settings import get_settings
-
-SENSITIVE_FIELDS = {
-    "api_key",
-    "api_token",
-    "callback_signing_secret",
-    "password",
-    "secret_key",
-    "signing_secret",
-    "webhook_token",
-}
 
 
 class ProviderConnectionService:
@@ -33,8 +29,11 @@ class ProviderConnectionService:
 
     def create_connection(self, name: str, provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
         settings = get_settings()
-        if settings.app_env == "prod" and contains_inline_secret(config):
-            raise ValueError("Inline provider secrets are not allowed in production; use *_ref fields.")
+        config = self._persist_inline_secrets(config)
+        if settings.app_env == "prod" and contains_inline_secret(config, secret_fields=SENSITIVE_FIELDS):
+            raise ValueError(
+                "Inline provider secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+            )
         payload = self._build_payload(
             provider_connection_id=f"pc_{uuid.uuid4().hex[:20]}",
             name=name,
@@ -60,9 +59,12 @@ class ProviderConnectionService:
         if patch.get("name") is not None:
             payload["name"] = patch["name"]
         if patch.get("config") is not None:
-            if settings.app_env == "prod" and contains_inline_secret(patch["config"]):
-                raise ValueError("Inline provider secrets are not allowed in production; use *_ref fields.")
-            payload["config"] = self._sanitize_config(patch["config"])
+            next_config = self._persist_inline_secrets(patch["config"])
+            if settings.app_env == "prod" and contains_inline_secret(next_config, secret_fields=SENSITIVE_FIELDS):
+                raise ValueError(
+                    "Inline provider secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+                )
+            payload["config"] = next_config
         saved = self.repository.upsert_resource(
             "provider_connection",
             provider_connection_id,
@@ -92,16 +94,20 @@ class ProviderConnectionService:
             "provider_connection_id": provider_connection_id,
             "name": name,
             "provider": str(provider).lower(),
-            "config": self._sanitize_config(config),
+            "config": config,
             "status": "active",
         }
 
-    def _sanitize_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        sanitized = dict(config or {})
-        for field in SENSITIVE_FIELDS:
-            if field in sanitized and sanitized[field]:
-                sanitized[f"{field}_stored_inline"] = True
-        return sanitized
+    @staticmethod
+    def _persist_inline_secrets(config: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return secure_inline_secret_values(config, secret_fields=SENSITIVE_FIELDS)
+        except RuntimeError as exc:
+            if contains_inline_secret(config, secret_fields=SENSITIVE_FIELDS):
+                raise ValueError(
+                    "Secure provider secret storage is not configured; set CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+                ) from exc
+            raise
 
     @staticmethod
     def _to_response(record: Dict[str, Any]) -> Dict[str, Any]:

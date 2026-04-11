@@ -27,7 +27,7 @@ This runbook is intentionally scoped to the dev environment. Use `docs/GCP_PRODU
 - Pub/Sub for import, prediction, export, and raw-shard topics
 - Cloud Scheduler for `dev-scheduler-worker`
 - BigQuery and Cloud Storage for production-shaped data services
-- Secret Manager for the database URL and worker shared token
+- Secret Manager for the database URL, control-plane secret encryption key, and worker shared token
 
 ### 2.2 Runtime settings
 The dev environment should stay production-shaped:
@@ -145,6 +145,7 @@ export GCP_SQL_USER="kairyx_app"
 export GCP_CLOUD_SQL_CONNECTION_NAME="${GCP_PROJECT_ID}:${GCP_REGION}:${GCP_SQL_INSTANCE}"
 export GCP_BIGQUERY_DATASET_ID="kairyx_platform"
 export CONTROL_PLANE_DATABASE_URL_SECRET="dev-control-plane-db-url"
+export CONTROL_PLANE_SECRET_KEY_SECRET="dev-control-plane-secret-key"
 export WORKER_SHARED_TOKEN_SECRET="dev-worker-shared-token"
 export GCS_BUCKET_NAME="kairyx-dev-data"
 export IMPORT_COMMAND_TOPIC="kairyx-dev-import-jobs"
@@ -392,6 +393,7 @@ GCP_CLOUD_SQL_CONNECTION_NAME=${GCP_PROJECT_ID}:${GCP_REGION}:${GCP_SQL_INSTANCE
 GCP_BIGQUERY_DATASET_ID=kairyx_platform
 
 CONTROL_PLANE_DATABASE_URL_SECRET=dev-control-plane-db-url
+CONTROL_PLANE_SECRET_KEY_SECRET=dev-control-plane-secret-key
 WORKER_SHARED_TOKEN_SECRET=dev-worker-shared-token
 
 CORS_ALLOWED_ORIGINS=https://dev-console.example.internal
@@ -457,6 +459,7 @@ This script creates or verifies:
 - Cloud SQL PostgreSQL instance, database, and app user
 - Secret Manager secrets:
   - `CONTROL_PLANE_DATABASE_URL_SECRET`
+  - `CONTROL_PLANE_SECRET_KEY_SECRET`
   - `WORKER_SHARED_TOKEN_SECRET`
 - Cloud Storage bucket
 - BigQuery base dataset from `GCP_BIGQUERY_DATASET_ID`
@@ -469,6 +472,7 @@ Important behavior:
 - the script is dev-only and rejects other deployment tiers
 - service-account overrides must stay in the same GCP project
 - if `CONTROL_PLANE_DATABASE_URL_SECRET` already exists, the script uses that password as the source of truth and resets the Cloud SQL user password to match it
+- if `CONTROL_PLANE_SECRET_KEY_SECRET` already exists, the script reuses it instead of rotating it
 - if `WORKER_SHARED_TOKEN_SECRET` already exists, the script reuses it instead of rotating it
 
 ### 9.2 Deploy the five Cloud Run services
@@ -592,6 +596,7 @@ Required variables with sample values:
 | `GCP_RUN_NETWORK` | `dev-vpc` |
 | `GCP_RUN_SUBNET` | `dev-serverless` |
 | `CONTROL_PLANE_DATABASE_URL_SECRET` | `dev-control-plane-db-url` |
+| `CONTROL_PLANE_SECRET_KEY_SECRET` | `dev-control-plane-secret-key` |
 | `WORKER_SHARED_TOKEN_SECRET` | `dev-worker-shared-token` |
 | `CORS_ALLOWED_ORIGINS` | `https://dev-console.example.internal` |
 | `OIDC_ISSUER` | `https://accounts.google.com` |
@@ -655,6 +660,7 @@ python3 deploy/gcp/render_ci_env.py --check-only
 - Cloud SQL instance, database, and user exist
 - Secret Manager contains:
   - `CONTROL_PLANE_DATABASE_URL_SECRET`
+  - `CONTROL_PLANE_SECRET_KEY_SECRET`
   - `WORKER_SHARED_TOKEN_SECRET`
 - Cloud Storage bucket exists
 - BigQuery base dataset exists

@@ -4096,7 +4096,7 @@ export function initializeOperatorConsole() {
                 if (normalizedMode === 'parallel') return 'AI + Cloud';
                 return connectors.some((connector) => (
                     String(connector.type || '').toLowerCase() === 'google'
-                    && Boolean((connector.config || {}).api_key)
+                    && Boolean((connector.config || {}).api_key_configured)
                 )) ? 'AI' : 'Local Model';
             }
 
@@ -5465,7 +5465,7 @@ export function initializeOperatorConsole() {
             function hasConfiguredGeminiConnector() {
                 return cachedConnectors.some((connector) => (
                     String(connector.type || '').toLowerCase() === 'google'
-                    && Boolean((connector.config || {}).api_key)
+                    && Boolean((connector.config || {}).api_key_configured)
                 ));
             }
 
@@ -6342,7 +6342,7 @@ export function initializeOperatorConsole() {
                     </div>
                     <div class="form-group">
                         <p style="font-size: 0.8rem; color: var(--subtle-text); margin-bottom: 0;">
-                            BigQuery connections now use tenant-provided credentials for this connector. Credentials are redacted in API responses after save.
+                            Credentials entered here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use `*_ref` values through the API.
                         </p>
                     </div>`,
                 sendgrid: `

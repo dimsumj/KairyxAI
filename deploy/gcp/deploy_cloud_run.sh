@@ -22,6 +22,7 @@ Required env file values:
   GCP_RELEASE_TAG
   GCP_CLOUD_SQL_CONNECTION_NAME
   CONTROL_PLANE_DATABASE_URL_SECRET
+  CONTROL_PLANE_SECRET_KEY_SECRET
   WORKER_SHARED_TOKEN_SECRET
   CORS_ALLOWED_ORIGINS
   OIDC_ISSUER
@@ -289,6 +290,7 @@ validate_configuration() {
   require_env GCP_RELEASE_TAG
   require_env GCP_CLOUD_SQL_CONNECTION_NAME
   require_env CONTROL_PLANE_DATABASE_URL_SECRET
+  require_env CONTROL_PLANE_SECRET_KEY_SECRET
   require_env WORKER_SHARED_TOKEN_SECRET
   require_env CORS_ALLOWED_ORIGINS
   require_env OIDC_ISSUER
@@ -380,6 +382,7 @@ build_secret_bindings() {
   local service_role="$1"
   SECRET_BINDINGS=(
     "CONTROL_PLANE_DATABASE_URL=${CONTROL_PLANE_DATABASE_URL_SECRET}:latest"
+    "CONTROL_PLANE_SECRET_KEY=${CONTROL_PLANE_SECRET_KEY_SECRET}:latest"
   )
 
   if [[ "${service_role}" != "operator-api" ]]; then

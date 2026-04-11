@@ -14,7 +14,7 @@ What this script does:
      - Artifact Registry repository
      - VPC + subnet + Private Service Access range
      - Cloud SQL PostgreSQL instance, database, and app user
-     - Secret Manager secrets for control-plane DB URL and worker token
+     - Secret Manager secrets for control-plane DB URL, control-plane secret encryption, and worker token
      - Cloud Storage bucket
      - BigQuery dataset
      - Pub/Sub topics
@@ -32,6 +32,7 @@ Required env values:
   GCP_SQL_USER
   GCP_CLOUD_SQL_CONNECTION_NAME
   CONTROL_PLANE_DATABASE_URL_SECRET
+  CONTROL_PLANE_SECRET_KEY_SECRET
   WORKER_SHARED_TOKEN_SECRET
   GCS_BUCKET_NAME
   IMPORT_COMMAND_TOPIC
@@ -348,6 +349,16 @@ ensure_worker_shared_token_secret() {
   create_or_update_secret "$WORKER_SHARED_TOKEN_SECRET" "$worker_auth_value"
 }
 
+ensure_control_plane_secret_key_secret() {
+  local control_plane_secret_key=""
+  if secret_has_latest_version "$CONTROL_PLANE_SECRET_KEY_SECRET"; then
+    return
+  fi
+
+  control_plane_secret_key="$(generate_random_secret)"
+  create_or_update_secret "$CONTROL_PLANE_SECRET_KEY_SECRET" "$control_plane_secret_key"
+}
+
 ensure_bucket() {
   if gcloud storage buckets describe "gs://${GCS_BUCKET_NAME}" >/dev/null 2>&1; then
     return
@@ -511,6 +522,7 @@ validate_configuration() {
   require_env GCP_SQL_USER
   require_env GCP_CLOUD_SQL_CONNECTION_NAME
   require_env CONTROL_PLANE_DATABASE_URL_SECRET
+  require_env CONTROL_PLANE_SECRET_KEY_SECRET
   require_env WORKER_SHARED_TOKEN_SECRET
   require_env GCS_BUCKET_NAME
   require_env IMPORT_COMMAND_TOPIC
@@ -594,6 +606,7 @@ main() {
   ensure_cloud_sql_instance
   ensure_cloud_sql_database
   ensure_database_url_secret
+  ensure_control_plane_secret_key_secret
   ensure_worker_shared_token_secret
 
   log "Ensuring bucket, dataset, and Pub/Sub topics"
@@ -647,6 +660,7 @@ Provisioned or verified:
       * ${EXPORT_COMMAND_TOPIC}
   - Secret Manager secrets:
       * ${CONTROL_PLANE_DATABASE_URL_SECRET}
+      * ${CONTROL_PLANE_SECRET_KEY_SECRET}
       * ${WORKER_SHARED_TOKEN_SECRET}
 
 Next steps:

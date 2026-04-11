@@ -484,12 +484,18 @@ gs://kairyx-prod-data/tenants/default/backups/
 1. Create production-only secrets in Secret Manager.
 2. Use least-privilege secret IAM.
 3. Prefer stable secret IDs and rotate by adding versions.
-4. For this repo, use `gsm://SECRET_NAME` references when you want the code to resolve the latest version automatically.
-5. If you need strict release control for a high-risk secret, use a full Secret Manager version path because the current secret resolver also accepts `projects/.../secrets/.../versions/...`.
+4. Create a dedicated `CONTROL_PLANE_SECRET_KEY` secret for browser-entered connector and provider credentials so the control plane can encrypt them before persistence.
+5. For this repo, use `gsm://SECRET_NAME` references when you want the code to resolve the latest version automatically.
+6. If you need strict release control for a high-risk secret, use a full Secret Manager version path because the current secret resolver also accepts `projects/.../secrets/.../versions/...`.
 
 Example:
 
 ```bash
+printf '%s' 'replace-me-with-a-long-random-control-plane-secret-key' \
+  | gcloud secrets create control-plane-secret-key \
+      --project="${GCP_PROJECT_ID}" \
+      --data-file=-
+
 printf '%s' 'replace-me-with-a-long-random-worker-token' \
   | gcloud secrets create worker-shared-token \
       --project="${GCP_PROJECT_ID}" \
@@ -595,6 +601,7 @@ Required deploy-script variables:
 | `GCP_RELEASE_TAG` | Release tag to build and push |
 | `GCP_CLOUD_SQL_CONNECTION_NAME` | `PROJECT:REGION:INSTANCE` Cloud SQL connection name |
 | `CONTROL_PLANE_DATABASE_URL_SECRET` | Secret Manager secret ID injected into `CONTROL_PLANE_DATABASE_URL` |
+| `CONTROL_PLANE_SECRET_KEY_SECRET` | Secret Manager secret ID injected into `CONTROL_PLANE_SECRET_KEY` for encrypted-at-rest browser-entered connector and provider secrets |
 | `WORKER_SHARED_TOKEN_SECRET` | Secret Manager secret ID injected into worker `WORKER_SHARED_TOKEN` |
 | `CORS_ALLOWED_ORIGINS` | Production console origins |
 | `OIDC_ISSUER` | Production OIDC issuer |
@@ -656,6 +663,7 @@ GCP_RUN_NETWORK=prod-vpc
 GCP_RUN_SUBNET=prod-serverless
 
 CONTROL_PLANE_DATABASE_URL_SECRET=control-plane-db-url
+CONTROL_PLANE_SECRET_KEY_SECRET=control-plane-secret-key
 WORKER_SHARED_TOKEN_SECRET=worker-shared-token
 
 CORS_ALLOWED_ORIGINS=https://console.example.com
@@ -699,7 +707,7 @@ What the non-prod templates already do:
 - keep the default service-account names unless you explicitly override `OPERATOR_API_SERVICE_ACCOUNT`, `IMPORT_WORKER_SERVICE_ACCOUNT`, `PREDICTION_WORKER_SERVICE_ACCOUNT`, `EXPORT_WORKER_SERVICE_ACCOUNT`, or `SCHEDULER_WORKER_SERVICE_ACCOUNT`
 
 Secrets expected by the script:
-- `CONTROL_PLANE_DATABASE_URL_SECRET` and `WORKER_SHARED_TOKEN_SECRET` must be secret IDs that Cloud Run can inject at deploy time.
+- `CONTROL_PLANE_DATABASE_URL_SECRET`, `CONTROL_PLANE_SECRET_KEY_SECRET`, and `WORKER_SHARED_TOKEN_SECRET` must be secret IDs that Cloud Run can inject at deploy time.
 - In practice, keep those secrets in the same project you deploy Cloud Run into.
 - `GCP_SECRET_PROJECT_ID` is still useful for app-resolved `gsm://...` connector/provider refs, but Cloud Run deploy-time secret injection should stay simple and same-project.
 
@@ -895,7 +903,7 @@ If you set `GCP_SERVICE_PREFIX`, use the prefixed scheduler service name, for ex
 ### 7.18 Bootstrap Production Tenancy
 1. Use the platform-admin API to create the initial tenant.
 2. Create at least one tenant membership.
-3. Create provider connections with `*_ref` values, not inline secrets.
+3. If operators will enter connector or provider credentials through the web UI, make sure Cloud Run is injecting `CONTROL_PLANE_SECRET_KEY`; otherwise keep using API `*_ref` values backed by Secret Manager.
 4. Run the auth smoke flow with a real bearer token against an org-scoped URL such as `/{organization_id}/v1/auth/me` and include `X-Kairyx-Project` when project selection is required.
 
 ### 7.19 Configure Monitoring And Alerts
