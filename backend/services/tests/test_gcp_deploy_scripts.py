@@ -52,6 +52,71 @@ def test_gcp_shell_scripts_expose_help_text():
         assert "Usage:" in result.stdout
 
 
+def test_configure_dev_eventing_validate_only_accepts_complete_env_without_gcloud(tmp_path):
+    env_file = tmp_path / "dev.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "GCP_DEPLOYMENT_TIER=dev",
+                "GCP_PROJECT_ID=kairyx-dev",
+                "GCP_REGION=us-central1",
+                "WORKER_SHARED_TOKEN_SECRET=dev-worker-shared-token",
+                "IMPORT_COMMAND_TOPIC=kairyx-dev-import-jobs",
+                "PREDICTION_COMMAND_TOPIC=kairyx-dev-prediction-jobs",
+                "EXPORT_COMMAND_TOPIC=kairyx-dev-export-jobs",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = "/bin:/usr/bin"
+
+    result = _run(
+        "bash",
+        str(GCP_DEPLOY_DIR / "configure_dev_eventing.sh"),
+        "--validate-only",
+        str(env_file),
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Validated dev eventing env contract." in result.stdout
+
+
+def test_configure_dev_eventing_validate_only_fails_fast_on_missing_import_topic(tmp_path):
+    env_file = tmp_path / "dev.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "GCP_DEPLOYMENT_TIER=dev",
+                "GCP_PROJECT_ID=kairyx-dev",
+                "GCP_REGION=us-central1",
+                "WORKER_SHARED_TOKEN_SECRET=dev-worker-shared-token",
+                "PREDICTION_COMMAND_TOPIC=kairyx-dev-prediction-jobs",
+                "EXPORT_COMMAND_TOPIC=kairyx-dev-export-jobs",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = "/bin:/usr/bin"
+
+    result = _run(
+        "bash",
+        str(GCP_DEPLOY_DIR / "configure_dev_eventing.sh"),
+        "--validate-only",
+        str(env_file),
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "Required env var is missing: IMPORT_COMMAND_TOPIC" in result.stderr
+
+
 def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
     env_file = tmp_path / "deploy-dev.env"
     env = dict(os.environ)
@@ -71,6 +136,9 @@ def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
             "OIDC_AUTHORIZE_URL": "https://accounts.google.com/o/oauth2/v2/auth",
             "OIDC_TOKEN_URL": "https://oauth2.googleapis.com/token",
             "GCS_BUCKET_NAME": "kairyx-dev-data",
+            "IMPORT_COMMAND_TOPIC": "kairyx-dev-import-jobs",
+            "PREDICTION_COMMAND_TOPIC": "kairyx-dev-prediction-jobs",
+            "EXPORT_COMMAND_TOPIC": "kairyx-dev-export-jobs",
             "GCP_WORKLOAD_IDENTITY_PROVIDER": "projects/123456789/locations/global/workloadIdentityPools/github-actions/providers/github-main",
             "GCP_DEPLOY_SERVICE_ACCOUNT": "github-deploy@kairyx-dev.iam.gserviceaccount.com",
             "BOOTSTRAP_TENANT_NAME": "Default Tenant",
@@ -106,6 +174,7 @@ def test_render_ci_env_helper_rejects_missing_required_values(tmp_path):
     env.pop("GCP_PROJECT_ID", None)
     env.pop("GCP_WORKLOAD_IDENTITY_PROVIDER", None)
     env.pop("GCP_DEPLOY_SERVICE_ACCOUNT", None)
+    env.pop("IMPORT_COMMAND_TOPIC", None)
 
     result = _run(
         "python3",
@@ -119,6 +188,7 @@ def test_render_ci_env_helper_rejects_missing_required_values(tmp_path):
     assert "GCP_PROJECT_ID" in result.stderr
     assert "GCP_WORKLOAD_IDENTITY_PROVIDER" in result.stderr
     assert "GCP_DEPLOY_SERVICE_ACCOUNT" in result.stderr
+    assert "IMPORT_COMMAND_TOPIC" in result.stderr
 
 
 def test_dev_env_example_includes_bootstrap_and_google_workspace_fields():

@@ -55,6 +55,8 @@ def test_deploy_dev_workflow_generates_temp_env_and_smoke_checks_health():
     assert "python3 deploy/gcp/render_ci_env.py" in content
     assert '--release-tag "dev-${short_sha}"' in content
     assert 'printf \'DEPLOY_ENV_FILE=%s\\n\' "${env_file}" >> "${GITHUB_ENV}"' in content
+    assert "Validate dev eventing env contract" in content
+    assert 'bash deploy/gcp/configure_dev_eventing.sh --validate-only "${DEPLOY_ENV_FILE}"' in content
     assert 'curl --fail --silent --show-error "${service_url}/health/live" >/dev/null' in content
 
 

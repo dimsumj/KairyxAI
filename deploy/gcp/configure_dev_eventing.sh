@@ -6,6 +6,7 @@ usage() {
   cat <<'EOF'
 Usage:
   deploy/gcp/configure_dev_eventing.sh <env-file>
+  deploy/gcp/configure_dev_eventing.sh --validate-only <env-file>
 
 What this script does:
   1. Loads the dev environment file.
@@ -218,6 +219,7 @@ validate_configuration() {
 }
 
 main() {
+  local validate_only=0
   local env_file="${1:-}"
   local project_number=""
   local worker_auth_value=""
@@ -236,18 +238,27 @@ main() {
   local export_subscription=""
   local scheduler_job=""
 
+  if [[ "$env_file" == "--validate-only" ]]; then
+    validate_only=1
+    env_file="${2:-}"
+  fi
+
   if [[ -z "$env_file" || "$env_file" == "-h" || "$env_file" == "--help" ]]; then
     usage
     exit 0
   fi
-
-  require_command gcloud
 
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   cd "$ROOT_DIR"
 
   load_env_file "$env_file"
   validate_configuration
+  if [[ "$validate_only" -eq 1 ]]; then
+    log "Validated dev eventing env contract."
+    return 0
+  fi
+
+  require_command gcloud
   SERVICE_PREFIX="$(normalize_service_prefix)"
 
   gcloud config set project "$GCP_PROJECT_ID" >/dev/null

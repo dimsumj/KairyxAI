@@ -140,7 +140,7 @@ Optional environment secrets:
 These two values are identifiers, not credentials, so the workflow reads them from GitHub `dev` environment variables instead of secrets.
 
 `deploy/gcp/dev.env` remains a local operator file and is not read by CI.
-The `deploy-dev` workflow now validates this GitHub `dev` environment contract before Google auth or deploy. If a required variable or secret is missing, the job fails immediately with the exact missing key names.
+The `deploy-dev` workflow now validates this GitHub `dev` environment contract before Google auth or deploy, including the Pub/Sub topic names needed by `configure_dev_eventing.sh`. If a required environment variable is missing, the job fails immediately with the exact missing key names.
 
 ### 4.3 One-time Workload Identity Federation setup
 Set up GitHub Actions authentication to GCP with `google-github-actions/auth`:

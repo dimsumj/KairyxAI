@@ -125,6 +125,10 @@ jobs:
           printf 'DEPLOY_ENV_FILE=%s\n' "${env_file}" >> "${GITHUB_ENV}"
           printf 'DEPLOY_RELEASE_TAG=dev-%s\n' "${short_sha}" >> "${GITHUB_ENV}"
 
+      - name: Validate dev eventing env contract
+        shell: bash
+        run: bash deploy/gcp/configure_dev_eventing.sh --validate-only "${DEPLOY_ENV_FILE}"
+
       - name: Deploy Cloud Run services
         shell: bash
         run: bash deploy/gcp/deploy_cloud_run.sh "${DEPLOY_ENV_FILE}"
