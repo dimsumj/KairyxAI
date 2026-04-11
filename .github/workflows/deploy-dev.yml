@@ -149,10 +149,17 @@ jobs:
 
           service_name="${prefix}operator-api"
           service_url="$(gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.url)')"
+          latest_created_revision="$(gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.latestCreatedRevisionName)')"
           health_url="${service_url}/health/live"
           last_status=""
 
           for attempt in $(seq 1 18); do
+            latest_ready_revision="$(gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.latestReadyRevisionName)')"
+            if [[ "${latest_ready_revision}" != "${latest_created_revision}" ]]; then
+              echo "Smoke check attempt ${attempt}/18 waiting for revision ${latest_created_revision} to become ready (latest ready: ${latest_ready_revision:-none})..."
+              sleep 10
+              continue
+            fi
             last_status="$(curl --silent --show-error --output /tmp/operator-health-response.json --write-out '%{http_code}' "${health_url}" || true)"
             if [[ "${last_status}" == "200" ]]; then
               break

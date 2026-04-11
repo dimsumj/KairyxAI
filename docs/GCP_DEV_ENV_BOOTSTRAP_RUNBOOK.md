@@ -75,6 +75,7 @@ The shared dev environment deploys from GitHub Actions:
 
 - pushes to `main` run validation first
 - after validation succeeds, GitHub Actions deploys the current `main` revision to the shared GCP dev environment
+- the deploy smoke step waits for the latest Cloud Run revision to become ready before checking `/health/live`
 - the GitHub environment name for this deployment is `dev`
 
 The CI deployment path does not source `deploy/gcp/dev.env`. That file stays local and manual for bootstrap, operator-driven redeploys, and eventing setup from a developer machine.
