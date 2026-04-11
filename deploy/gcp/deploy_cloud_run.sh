@@ -309,7 +309,7 @@ build_image() {
   gcloud auth configure-docker "${registry_host}" --quiet >/dev/null
 
   log "Building ${IMAGE_TAGGED}"
-  docker build -t "${IMAGE_TAGGED}" .
+  docker build --platform "linux/amd64" -t "${IMAGE_TAGGED}" .
 
   log "Pushing ${IMAGE_TAGGED}"
   docker push "${IMAGE_TAGGED}" >/dev/null
@@ -350,6 +350,8 @@ write_env_vars_file() {
   env_file_line GOOGLE_OIDC_HOSTED_DOMAIN "${GOOGLE_OIDC_HOSTED_DOMAIN:-}" >>"${file_path}"
   env_file_line GCP_PROJECT_ID "${GCP_PROJECT_ID}" >>"${file_path}"
   env_file_line GCP_SECRET_PROJECT_ID "${GCP_SECRET_PROJECT_ID:-${GCP_PROJECT_ID}}" >>"${file_path}"
+  env_file_line BIGQUERY_PROJECT_ID "${BIGQUERY_PROJECT_ID:-${GCP_PROJECT_ID}}" >>"${file_path}"
+  env_file_line BIGQUERY_DATASET_ID "${BIGQUERY_DATASET_ID:-${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}}" >>"${file_path}"
   env_file_line GCS_BUCKET_NAME "${GCS_BUCKET_NAME}" >>"${file_path}"
   env_file_line IMPORT_COMMAND_TOPIC "${IMPORT_COMMAND_TOPIC:-kairyx-import-jobs}" >>"${file_path}"
   env_file_line PREDICTION_COMMAND_TOPIC "${PREDICTION_COMMAND_TOPIC:-kairyx-prediction-jobs}" >>"${file_path}"
@@ -361,7 +363,6 @@ write_env_vars_file() {
   env_file_line BOOTSTRAP_PROJECT_NAME "${BOOTSTRAP_PROJECT_NAME:-Default Project}" >>"${file_path}"
   env_file_line SCHEDULER_ENABLED "${scheduler_enabled}" >>"${file_path}"
   env_file_line SCHEDULER_INTERVAL_SECONDS "${SCHEDULER_INTERVAL_SECONDS:-60}" >>"${file_path}"
-  env_file_line PORT "8080" >>"${file_path}"
   env_file_line WEB_CONCURRENCY "${WEB_CONCURRENCY:-4}" >>"${file_path}"
   env_file_line GUNICORN_TIMEOUT "${GUNICORN_TIMEOUT:-300}" >>"${file_path}"
   env_file_line MAX_SQL_PREVIEW_ROWS_PER_TENANT "${MAX_SQL_PREVIEW_ROWS_PER_TENANT:-1000}" >>"${file_path}"

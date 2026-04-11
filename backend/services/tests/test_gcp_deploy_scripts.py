@@ -69,6 +69,38 @@ def test_dev_env_example_includes_bootstrap_and_google_workspace_fields():
         assert required_line in content
 
 
+def test_deploy_script_does_not_set_reserved_cloud_run_port_env_var():
+    content = (GCP_DEPLOY_DIR / "deploy_cloud_run.sh").read_text(encoding="utf-8")
+
+    assert 'env_file_line PORT "8080"' not in content
+
+
+def test_deploy_script_builds_cloud_run_image_for_linux_amd64():
+    content = (GCP_DEPLOY_DIR / "deploy_cloud_run.sh").read_text(encoding="utf-8")
+
+    assert 'docker build --platform "linux/amd64" -t "${IMAGE_TAGGED}" .' in content
+
+
+def test_deploy_script_exports_bigquery_runtime_env_from_gcp_settings():
+    content = (GCP_DEPLOY_DIR / "deploy_cloud_run.sh").read_text(encoding="utf-8")
+
+    assert 'env_file_line BIGQUERY_PROJECT_ID "${BIGQUERY_PROJECT_ID:-${GCP_PROJECT_ID}}"' in content
+    assert 'env_file_line BIGQUERY_DATASET_ID "${BIGQUERY_DATASET_ID:-${GCP_BIGQUERY_DATASET_ID:-kairyx_platform}}"' in content
+
+
+def test_bootstrap_script_uses_cloud_run_safe_default_subnet_range():
+    content = (GCP_DEPLOY_DIR / "bootstrap_dev_foundation.sh").read_text(encoding="utf-8")
+
+    assert '--range="${GCP_RUN_SUBNET_RANGE:-10.20.0.0/24}"' in content
+
+
+def test_bootstrap_script_grants_scheduler_worker_bigquery_read_job_access():
+    content = (GCP_DEPLOY_DIR / "bootstrap_dev_foundation.sh").read_text(encoding="utf-8")
+
+    assert 'scheduler-worker)\n      ensure_project_binding "$member" "roles/bigquery.jobUser"' in content
+    assert 'ensure_project_binding "$member" "roles/bigquery.dataViewer"' in content
+
+
 def test_bootstrap_script_rejects_non_dev_tier(_stubbed_cli_environment, tmp_path):
     env_file = tmp_path / "qa.env"
     env_file.write_text(

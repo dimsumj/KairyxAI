@@ -201,7 +201,7 @@ ensure_network() {
       --project="$GCP_PROJECT_ID" \
       --network="$GCP_RUN_NETWORK" \
       --region="$GCP_REGION" \
-      --range="${GCP_RUN_SUBNET_RANGE:-10.20.0.0/28}" \
+      --range="${GCP_RUN_SUBNET_RANGE:-10.20.0.0/24}" \
       >/dev/null
   fi
 }
@@ -445,6 +445,8 @@ grant_runtime_permissions() {
       ensure_bucket_binding "$member" "roles/storage.objectAdmin"
       ;;
     scheduler-worker)
+      ensure_project_binding "$member" "roles/bigquery.jobUser"
+      ensure_project_binding "$member" "roles/bigquery.dataViewer"
       ;;
     *)
       die "Unsupported service role for IAM grants: ${service_role}"
