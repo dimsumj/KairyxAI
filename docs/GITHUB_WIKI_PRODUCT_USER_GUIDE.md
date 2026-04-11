@@ -159,6 +159,8 @@ All org members can access all active projects in that organization. Project sel
 | `Create Project` | Button | Creates the project in the selected organization. Available only to `owner` and `admin` users. | None | The project is created, it joins the org-wide project list, and the console switches into it. |
 | `Cancel` | Button | Closes the new-project overlay. This button uses red styling to distinguish it from `Create Project`. | None | Returns to the prior workspace selection state. |
 
+The create-project overlay does not show the shared footer `Close` button. In this mode the only exit action is the inline red `Cancel` button beside `Create Project`.
+
 As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
 #### Invite redemption behavior
