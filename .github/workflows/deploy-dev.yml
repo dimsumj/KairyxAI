@@ -149,7 +149,27 @@ jobs:
 
           service_name="${prefix}operator-api"
           service_url="$(gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.url)')"
-          curl --fail --silent --show-error "${service_url}/health/live" >/dev/null
+          health_url="${service_url}/health/live"
+          last_status=""
+
+          for attempt in $(seq 1 18); do
+            last_status="$(curl --silent --show-error --output /tmp/operator-health-response.json --write-out '%{http_code}' "${health_url}" || true)"
+            if [[ "${last_status}" == "200" ]]; then
+              break
+            fi
+            echo "Health check attempt ${attempt}/18 returned ${last_status:-curl_error}; waiting for Cloud Run readiness..."
+            sleep 10
+          done
+
+          if [[ "${last_status}" != "200" ]]; then
+            echo "Final health response status: ${last_status:-curl_error}" >&2
+            if [[ -f /tmp/operator-health-response.json ]]; then
+              echo "Health response body:" >&2
+              cat /tmp/operator-health-response.json >&2
+            fi
+            gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" >&2
+            exit 1
+          fi
 
           {
             echo "### Dev deploy complete"
