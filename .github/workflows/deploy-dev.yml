@@ -142,6 +142,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          set -a
+          # shellcheck disable=SC1090
+          source "${DEPLOY_ENV_FILE}"
+          set +a
+
           prefix="${GCP_SERVICE_PREFIX:-}"
           if [[ -n "${prefix}" && "${prefix}" != *- ]]; then
             prefix="${prefix}-"

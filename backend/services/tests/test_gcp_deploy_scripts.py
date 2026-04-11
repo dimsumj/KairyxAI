@@ -125,6 +125,8 @@ def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
             "GCP_REGION": "us-central1",
             "GCP_ARTIFACT_REGISTRY_REPOSITORY": "kairyx",
             "GCP_IMAGE_NAME": "kairyxai",
+            "GCP_DEPLOYMENT_TIER": "dev",
+            "GCP_SERVICE_PREFIX": "dev",
             "GCP_CLOUD_SQL_CONNECTION_NAME": "kairyx-dev:us-central1:kairyx-db",
             "CONTROL_PLANE_DATABASE_URL_SECRET": "dev-control-plane-db-url",
             "WORKER_SHARED_TOKEN_SECRET": "dev-worker-shared-token",
@@ -172,6 +174,7 @@ def test_render_ci_env_helper_rejects_missing_required_values(tmp_path):
     env_file = tmp_path / "deploy-dev.env"
     env = dict(os.environ)
     env.pop("GCP_PROJECT_ID", None)
+    env.pop("GCP_SERVICE_PREFIX", None)
     env.pop("GCP_WORKLOAD_IDENTITY_PROVIDER", None)
     env.pop("GCP_DEPLOY_SERVICE_ACCOUNT", None)
     env.pop("IMPORT_COMMAND_TOPIC", None)
@@ -186,6 +189,7 @@ def test_render_ci_env_helper_rejects_missing_required_values(tmp_path):
     assert result.returncode != 0
     assert "Missing required GitHub Actions deploy environment values:" in result.stderr
     assert "GCP_PROJECT_ID" in result.stderr
+    assert "GCP_SERVICE_PREFIX" in result.stderr
     assert "GCP_WORKLOAD_IDENTITY_PROVIDER" in result.stderr
     assert "GCP_DEPLOY_SERVICE_ACCOUNT" in result.stderr
     assert "IMPORT_COMMAND_TOPIC" in result.stderr

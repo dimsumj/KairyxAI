@@ -36,6 +36,7 @@ def test_deploy_dev_workflow_uses_gcp_wif_and_repo_scripts():
 
     assert "environment: dev" in content
     assert "id-token: write" in content
+    assert "GCP_SERVICE_PREFIX: ${{ vars.GCP_SERVICE_PREFIX }}" in content
     assert "GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" in content
     assert "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in content
     assert "Validate GitHub dev environment contract" in content
@@ -57,6 +58,9 @@ def test_deploy_dev_workflow_generates_temp_env_and_smoke_checks_health():
     assert 'printf \'DEPLOY_ENV_FILE=%s\\n\' "${env_file}" >> "${GITHUB_ENV}"' in content
     assert "Validate dev eventing env contract" in content
     assert 'bash deploy/gcp/configure_dev_eventing.sh --validate-only "${DEPLOY_ENV_FILE}"' in content
+    assert 'source "${DEPLOY_ENV_FILE}"' in content
+    assert 'prefix="${GCP_SERVICE_PREFIX:-}"' in content
+    assert 'service_name="${prefix}operator-api"' in content
     assert "latest_created_revision" in content
     assert "status.latestCreatedRevisionName" in content
     assert "latest_ready_revision" in content
