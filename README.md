@@ -61,6 +61,8 @@ This script will:
 - AWS deployment assets: `deploy/aws/`
 - Docker packaging: `deploy/docker/`
 
+The shared GCP dev environment now auto-deploys from GitHub Actions after validation passes on pushes to `main`. The CI contract and one-time GitHub-to-GCP setup are documented in `docs/GCP_DEV_ENV_BOOTSTRAP_RUNBOOK.md`.
+
 ## Documentation Map
 
 Start here for detailed product and operational documentation:

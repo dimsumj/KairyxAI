@@ -1,0 +1,150 @@
+name: deploy-dev
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend bundle
+        working-directory: frontend
+        run: npm run build
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run targeted backend tests
+        run: pytest tests/test_multitenant_auth.py tests/test_v1_api.py tests/test_v1_closed_loop.py tests/test_gcp_deploy_scripts.py tests/test_github_actions_workflows.py
+
+  deploy-dev:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.GCP_ARTIFACT_REGISTRY_REPOSITORY }}
+      GCP_IMAGE_NAME: ${{ vars.GCP_IMAGE_NAME }}
+      GCP_DEPLOYMENT_TIER: ${{ vars.GCP_DEPLOYMENT_TIER }}
+      GCP_SERVICE_PREFIX: ${{ vars.GCP_SERVICE_PREFIX }}
+      GCP_CLOUD_SQL_CONNECTION_NAME: ${{ vars.GCP_CLOUD_SQL_CONNECTION_NAME }}
+      GCP_RUN_NETWORK: ${{ vars.GCP_RUN_NETWORK }}
+      GCP_RUN_SUBNET: ${{ vars.GCP_RUN_SUBNET }}
+      GCP_VPC_CONNECTOR: ${{ vars.GCP_VPC_CONNECTOR }}
+      GCP_VPC_EGRESS: ${{ vars.GCP_VPC_EGRESS }}
+      CONTROL_PLANE_DATABASE_URL_SECRET: ${{ vars.CONTROL_PLANE_DATABASE_URL_SECRET }}
+      WORKER_SHARED_TOKEN_SECRET: ${{ vars.WORKER_SHARED_TOKEN_SECRET }}
+      CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
+      OIDC_ISSUER: ${{ vars.OIDC_ISSUER }}
+      OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
+      OIDC_JWKS_URL: ${{ vars.OIDC_JWKS_URL }}
+      OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+      GOOGLE_OIDC_CLIENT_ID: ${{ vars.GOOGLE_OIDC_CLIENT_ID }}
+      OIDC_AUTHORIZE_URL: ${{ vars.OIDC_AUTHORIZE_URL }}
+      OIDC_TOKEN_URL: ${{ vars.OIDC_TOKEN_URL }}
+      OIDC_LOGOUT_URL: ${{ vars.OIDC_LOGOUT_URL }}
+      GOOGLE_OIDC_HOSTED_DOMAIN: ${{ vars.GOOGLE_OIDC_HOSTED_DOMAIN }}
+      GCP_SECRET_PROJECT_ID: ${{ vars.GCP_SECRET_PROJECT_ID }}
+      GCP_BIGQUERY_DATASET_ID: ${{ vars.GCP_BIGQUERY_DATASET_ID }}
+      GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+      IMPORT_COMMAND_TOPIC: ${{ vars.IMPORT_COMMAND_TOPIC }}
+      PREDICTION_COMMAND_TOPIC: ${{ vars.PREDICTION_COMMAND_TOPIC }}
+      EXPORT_COMMAND_TOPIC: ${{ vars.EXPORT_COMMAND_TOPIC }}
+      PUBSUB_TOPIC_NAME: ${{ vars.PUBSUB_TOPIC_NAME }}
+      BOOTSTRAP_TENANT_ID: ${{ vars.BOOTSTRAP_TENANT_ID }}
+      BOOTSTRAP_TENANT_NAME: ${{ vars.BOOTSTRAP_TENANT_NAME }}
+      BOOTSTRAP_PROJECT_ID: ${{ vars.BOOTSTRAP_PROJECT_ID }}
+      BOOTSTRAP_PROJECT_NAME: ${{ vars.BOOTSTRAP_PROJECT_NAME }}
+      API_ACCESS_KEY_SECRET: ${{ vars.API_ACCESS_KEY_SECRET }}
+      OIDC_JWT_SIGNING_SECRET_SECRET: ${{ vars.OIDC_JWT_SIGNING_SECRET_SECRET }}
+      GCP_EXTRA_ENV_FILE: ${{ vars.GCP_EXTRA_ENV_FILE }}
+      OPERATOR_API_SERVICE_ACCOUNT: ${{ vars.OPERATOR_API_SERVICE_ACCOUNT }}
+      IMPORT_WORKER_SERVICE_ACCOUNT: ${{ vars.IMPORT_WORKER_SERVICE_ACCOUNT }}
+      PREDICTION_WORKER_SERVICE_ACCOUNT: ${{ vars.PREDICTION_WORKER_SERVICE_ACCOUNT }}
+      EXPORT_WORKER_SERVICE_ACCOUNT: ${{ vars.EXPORT_WORKER_SERVICE_ACCOUNT }}
+      SCHEDULER_WORKER_SERVICE_ACCOUNT: ${{ vars.SCHEDULER_WORKER_SERVICE_ACCOUNT }}
+      PUBSUB_PUSH_INVOKER_SERVICE_ACCOUNT: ${{ vars.PUBSUB_PUSH_INVOKER_SERVICE_ACCOUNT }}
+      SCHEDULER_INVOKER_SERVICE_ACCOUNT: ${{ vars.SCHEDULER_INVOKER_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 390.0.0"
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Generate deploy env file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::12}"
+          env_file="${RUNNER_TEMP}/deploy-dev.env"
+          python3 deploy/gcp/render_ci_env.py \
+            --output "${env_file}" \
+            --release-tag "dev-${short_sha}"
+
+          printf 'DEPLOY_ENV_FILE=%s\n' "${env_file}" >> "${GITHUB_ENV}"
+          printf 'DEPLOY_RELEASE_TAG=dev-%s\n' "${short_sha}" >> "${GITHUB_ENV}"
+
+      - name: Deploy Cloud Run services
+        shell: bash
+        run: bash deploy/gcp/deploy_cloud_run.sh "${DEPLOY_ENV_FILE}"
+
+      - name: Configure dev eventing
+        shell: bash
+        run: bash deploy/gcp/configure_dev_eventing.sh "${DEPLOY_ENV_FILE}"
+
+      - name: Smoke test operator-api health
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prefix="${GCP_SERVICE_PREFIX:-}"
+          if [[ -n "${prefix}" && "${prefix}" != *- ]]; then
+            prefix="${prefix}-"
+          fi
+
+          service_name="${prefix}operator-api"
+          service_url="$(gcloud run services describe "${service_name}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.url)')"
+          curl --fail --silent --show-error "${service_url}/health/live" >/dev/null
+
+          {
+            echo "### Dev deploy complete"
+            echo
+            echo "- Release tag: ${DEPLOY_RELEASE_TAG}"
+            echo "- Service: ${service_name}"
+            echo "- Health URL: ${service_url}/health/live"
+          } >> "${GITHUB_STEP_SUMMARY}"

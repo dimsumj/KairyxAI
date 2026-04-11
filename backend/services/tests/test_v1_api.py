@@ -120,7 +120,8 @@ def test_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="root"' in resp.text
+    assert 'id="sidebar-nav"' in resp.text
+    assert '<main class="content">' in resp.text
 
 
 def test_org_root_serves_frontend_shell(client):
@@ -130,7 +131,8 @@ def test_org_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="root"' in resp.text
+    assert 'id="sidebar-nav"' in resp.text
+    assert '<main class="content">' in resp.text
 
 
 def test_root_serves_frontend_static_assets(client):
@@ -1375,21 +1377,22 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
 
 
 def test_prediction_uses_merged_history_for_selected_import_roster(client):
-    old_updated_at = datetime(2026, 3, 1, 12, 0, 0)
-    new_updated_at = datetime(2026, 3, 23, 12, 0, 0)
+    now = datetime.utcnow().replace(microsecond=0)
+    old_updated_at = now - timedelta(days=40)
+    new_updated_at = now - timedelta(days=1)
     old_import = _create_completed_import_job(
         "imp_old_history",
         source_name="Manual Old Import",
-        start_date="20260201",
-        end_date="20260228",
+        start_date=(now - timedelta(days=60)).strftime("%Y%m%d"),
+        end_date=(now - timedelta(days=30)).strftime("%Y%m%d"),
         created_at=old_updated_at,
         updated_at=old_updated_at,
     )
     _create_completed_import_job(
         "imp_new_history",
         source_name="Manual New Import",
-        start_date="20260320",
-        end_date="20260323",
+        start_date=(now - timedelta(days=3)).strftime("%Y%m%d"),
+        end_date=(now - timedelta(days=1)).strftime("%Y%m%d"),
         created_at=new_updated_at,
         updated_at=new_updated_at,
     )
@@ -1406,7 +1409,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "old-evt-1",
                 "event_fingerprint": "old-fp-1",
                 "event_type": "session_start",
-                "event_time": "2026-02-15T00:00:00",
+                "event_time": (now - timedelta(days=42)).isoformat(),
                 "event_properties": {},
                 "user_properties": {"email": "player-1@example.com"},
             },
@@ -1419,7 +1422,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "old-evt-2",
                 "event_fingerprint": "old-fp-2",
                 "event_type": "session_start",
-                "event_time": "2026-02-16T00:00:00",
+                "event_time": (now - timedelta(days=41)).isoformat(),
                 "event_properties": {},
                 "user_properties": {"email": "player-2@example.com"},
             },
@@ -1432,7 +1435,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "new-evt-1",
                 "event_fingerprint": "new-fp-1",
                 "event_type": "session_start",
-                "event_time": "2026-03-23T00:00:00",
+                "event_time": (now - timedelta(days=1)).isoformat(),
                 "event_properties": {"campaign": "revive"},
                 "user_properties": {"email": "player-1@example.com"},
             },

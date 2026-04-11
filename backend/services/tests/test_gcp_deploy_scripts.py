@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
 import subprocess
 
 import pytest
@@ -49,6 +50,38 @@ def test_gcp_shell_scripts_expose_help_text():
         result = _run("bash", str(GCP_DEPLOY_DIR / script_name), "--help")
         assert result.returncode == 0, result.stderr
         assert "Usage:" in result.stdout
+
+
+def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
+    env_file = tmp_path / "deploy-dev.env"
+    env = dict(os.environ)
+    env.update(
+        {
+            "BOOTSTRAP_TENANT_NAME": "Default Tenant",
+            "BOOTSTRAP_PROJECT_NAME": "Default Project",
+            "GCP_PROJECT_ID": "kairyx-dev",
+        }
+    )
+
+    result = _run(
+        "python3",
+        str(GCP_DEPLOY_DIR / "render_ci_env.py"),
+        "--output",
+        str(env_file),
+        "--release-tag",
+        "dev-abc123",
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    source_result = _run(
+        "bash",
+        "-lc",
+        f"set -a && source {shlex.quote(str(env_file))} && printf '%s|%s|%s' \"$BOOTSTRAP_TENANT_NAME\" \"$BOOTSTRAP_PROJECT_NAME\" \"$GCP_RELEASE_TAG\"",
+    )
+    assert source_result.returncode == 0, source_result.stderr
+    assert source_result.stdout == "Default Tenant|Default Project|dev-abc123"
 
 
 def test_dev_env_example_includes_bootstrap_and_google_workspace_fields():
