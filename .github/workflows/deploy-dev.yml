@@ -90,6 +90,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate GitHub dev environment contract
+        shell: bash
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: python3 deploy/gcp/render_ci_env.py --check-only
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:

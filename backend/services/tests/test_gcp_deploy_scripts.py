@@ -57,6 +57,22 @@ def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
     env = dict(os.environ)
     env.update(
         {
+            "GCP_REGION": "us-central1",
+            "GCP_ARTIFACT_REGISTRY_REPOSITORY": "kairyx",
+            "GCP_IMAGE_NAME": "kairyxai",
+            "GCP_CLOUD_SQL_CONNECTION_NAME": "kairyx-dev:us-central1:kairyx-db",
+            "CONTROL_PLANE_DATABASE_URL_SECRET": "dev-control-plane-db-url",
+            "WORKER_SHARED_TOKEN_SECRET": "dev-worker-shared-token",
+            "CORS_ALLOWED_ORIGINS": "https://dev-console.example.internal",
+            "OIDC_ISSUER": "https://accounts.google.com",
+            "OIDC_AUDIENCE": "client-id.apps.googleusercontent.com",
+            "OIDC_JWKS_URL": "https://www.googleapis.com/oauth2/v3/certs",
+            "OIDC_CLIENT_ID": "client-id.apps.googleusercontent.com",
+            "OIDC_AUTHORIZE_URL": "https://accounts.google.com/o/oauth2/v2/auth",
+            "OIDC_TOKEN_URL": "https://oauth2.googleapis.com/token",
+            "GCS_BUCKET_NAME": "kairyx-dev-data",
+            "GCP_WORKLOAD_IDENTITY_PROVIDER": "projects/123456789/locations/global/workloadIdentityPools/github-actions/providers/github-main",
+            "GCP_DEPLOY_SERVICE_ACCOUNT": "github-deploy@kairyx-dev.iam.gserviceaccount.com",
             "BOOTSTRAP_TENANT_NAME": "Default Tenant",
             "BOOTSTRAP_PROJECT_NAME": "Default Project",
             "GCP_PROJECT_ID": "kairyx-dev",
@@ -82,6 +98,27 @@ def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
     )
     assert source_result.returncode == 0, source_result.stderr
     assert source_result.stdout == "Default Tenant|Default Project|dev-abc123"
+
+
+def test_render_ci_env_helper_rejects_missing_required_values(tmp_path):
+    env_file = tmp_path / "deploy-dev.env"
+    env = dict(os.environ)
+    env.pop("GCP_PROJECT_ID", None)
+    env.pop("GCP_WORKLOAD_IDENTITY_PROVIDER", None)
+    env.pop("GCP_DEPLOY_SERVICE_ACCOUNT", None)
+
+    result = _run(
+        "python3",
+        str(GCP_DEPLOY_DIR / "render_ci_env.py"),
+        "--check-only",
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "Missing required GitHub Actions deploy environment values:" in result.stderr
+    assert "GCP_PROJECT_ID" in result.stderr
+    assert "GCP_WORKLOAD_IDENTITY_PROVIDER" in result.stderr
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT" in result.stderr
 
 
 def test_dev_env_example_includes_bootstrap_and_google_workspace_fields():

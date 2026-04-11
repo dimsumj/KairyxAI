@@ -53,14 +53,53 @@ ENV_KEYS = (
     "SCHEDULER_INVOKER_SERVICE_ACCOUNT",
 )
 
+REQUIRED_ENV_KEYS = (
+    "GCP_PROJECT_ID",
+    "GCP_REGION",
+    "GCP_ARTIFACT_REGISTRY_REPOSITORY",
+    "GCP_IMAGE_NAME",
+    "GCP_CLOUD_SQL_CONNECTION_NAME",
+    "CONTROL_PLANE_DATABASE_URL_SECRET",
+    "WORKER_SHARED_TOKEN_SECRET",
+    "CORS_ALLOWED_ORIGINS",
+    "OIDC_ISSUER",
+    "OIDC_AUDIENCE",
+    "OIDC_JWKS_URL",
+    "OIDC_CLIENT_ID",
+    "OIDC_AUTHORIZE_URL",
+    "OIDC_TOKEN_URL",
+    "GCS_BUCKET_NAME",
+)
+
+REQUIRED_SECRET_KEYS = (
+    "GCP_WORKLOAD_IDENTITY_PROVIDER",
+    "GCP_DEPLOY_SERVICE_ACCOUNT",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render a shell-safe env file for the GitHub Actions dev deploy workflow."
     )
-    parser.add_argument("--output", required=True, help="Path to the env file to write.")
-    parser.add_argument("--release-tag", required=True, help="Release tag to write as GCP_RELEASE_TAG.")
+    parser.add_argument("--output", help="Path to the env file to write.")
+    parser.add_argument("--release-tag", help="Release tag to write as GCP_RELEASE_TAG.")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Validate the required GitHub Actions env contract and exit without writing a file.",
+    )
     return parser.parse_args()
+
+
+def validate_required_env() -> None:
+    missing = [key for key in REQUIRED_ENV_KEYS if not os.environ.get(key)]
+    missing.extend(key for key in REQUIRED_SECRET_KEYS if not os.environ.get(key))
+    if missing:
+        missing_values = ", ".join(sorted(missing))
+        raise SystemExit(
+            "Missing required GitHub Actions deploy environment values: "
+            f"{missing_values}. Populate the GitHub 'dev' environment variables/secrets before rerunning deploy-dev."
+        )
 
 
 def render_env_file(output_path: Path, release_tag: str) -> None:
@@ -72,6 +111,11 @@ def render_env_file(output_path: Path, release_tag: str) -> None:
 
 def main() -> None:
     args = parse_args()
+    validate_required_env()
+    if args.check_only:
+        return
+    if not args.output or not args.release_tag:
+        raise SystemExit("--output and --release-tag are required unless --check-only is used.")
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     render_env_file(output_path, args.release_tag)
