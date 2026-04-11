@@ -71,7 +71,7 @@ REQUIRED_ENV_KEYS = (
     "GCS_BUCKET_NAME",
 )
 
-REQUIRED_SECRET_KEYS = (
+REQUIRED_WIF_KEYS = (
     "GCP_WORKLOAD_IDENTITY_PROVIDER",
     "GCP_DEPLOY_SERVICE_ACCOUNT",
 )
@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
 
 def validate_required_env() -> None:
     missing = [key for key in REQUIRED_ENV_KEYS if not os.environ.get(key)]
-    missing.extend(key for key in REQUIRED_SECRET_KEYS if not os.environ.get(key))
+    missing.extend(key for key in REQUIRED_WIF_KEYS if not os.environ.get(key))
     if missing:
         missing_values = ", ".join(sorted(missing))
         raise SystemExit(

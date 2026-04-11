@@ -128,10 +128,16 @@ Optional environment variables:
 - `OIDC_JWT_SIGNING_SECRET_SECRET`
 - the service-account override variables supported by `deploy/gcp/dev.env.example`
 
-Required environment secrets:
+Required environment variables:
 
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_DEPLOY_SERVICE_ACCOUNT`
+
+Optional environment secrets:
+
+- none required for GitHub OIDC auth
+
+These two values are identifiers, not credentials, so the workflow reads them from GitHub `dev` environment variables instead of secrets.
 
 `deploy/gcp/dev.env` remains a local operator file and is not read by CI.
 The `deploy-dev` workflow now validates this GitHub `dev` environment contract before Google auth or deploy. If a required variable or secret is missing, the job fails immediately with the exact missing key names.
@@ -159,8 +165,8 @@ Set up GitHub Actions authentication to GCP with `google-github-actions/auth`:
    - enough permission to manage IAM bindings on `pubsub-push-invoker`
    - enough permission to manage IAM bindings on `scheduler-invoker`
 8. Keep the deploy service account scoped to the dev project only.
-9. Store the provider resource name in the GitHub `dev` environment as `GCP_WORKLOAD_IDENTITY_PROVIDER`.
-10. Store the deploy service account email in the GitHub `dev` environment as `GCP_DEPLOY_SERVICE_ACCOUNT`.
+9. Store the provider resource name in the GitHub `dev` environment variables as `GCP_WORKLOAD_IDENTITY_PROVIDER`.
+10. Store the deploy service account email in the GitHub `dev` environment variables as `GCP_DEPLOY_SERVICE_ACCOUNT`.
 
 The deploy job should authenticate with `google-github-actions/auth` using the GitHub `dev` environment values instead of a JSON key.
 

@@ -80,6 +80,8 @@ jobs:
       API_ACCESS_KEY_SECRET: ${{ vars.API_ACCESS_KEY_SECRET }}
       OIDC_JWT_SIGNING_SECRET_SECRET: ${{ vars.OIDC_JWT_SIGNING_SECRET_SECRET }}
       GCP_EXTRA_ENV_FILE: ${{ vars.GCP_EXTRA_ENV_FILE }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       OPERATOR_API_SERVICE_ACCOUNT: ${{ vars.OPERATOR_API_SERVICE_ACCOUNT }}
       IMPORT_WORKER_SERVICE_ACCOUNT: ${{ vars.IMPORT_WORKER_SERVICE_ACCOUNT }}
       PREDICTION_WORKER_SERVICE_ACCOUNT: ${{ vars.PREDICTION_WORKER_SERVICE_ACCOUNT }}
@@ -92,17 +94,14 @@ jobs:
 
       - name: Validate GitHub dev environment contract
         shell: bash
-        env:
-          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
         run: python3 deploy/gcp/render_ci_env.py --check-only
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
 

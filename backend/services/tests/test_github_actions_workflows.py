@@ -36,12 +36,14 @@ def test_deploy_dev_workflow_uses_gcp_wif_and_repo_scripts():
 
     assert "environment: dev" in content
     assert "id-token: write" in content
+    assert "GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" in content
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in content
     assert "Validate GitHub dev environment contract" in content
     assert "python3 deploy/gcp/render_ci_env.py --check-only" in content
     assert "google-github-actions/auth@v3" in content
     assert "google-github-actions/setup-gcloud@v3" in content
-    assert "workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" in content
-    assert "service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}" in content
+    assert "workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" in content
+    assert "service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in content
     assert 'bash deploy/gcp/deploy_cloud_run.sh "${DEPLOY_ENV_FILE}"' in content
     assert 'bash deploy/gcp/configure_dev_eventing.sh "${DEPLOY_ENV_FILE}"' in content
 
