@@ -1,11 +1,41 @@
 from __future__ import annotations
 
+import runpy
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "backend-ci.yml"
 DEPLOY_DEV_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-dev.yml"
+RENDER_CI_ENV = REPO_ROOT / "deploy" / "gcp" / "render_ci_env.py"
+
+
+def _workflow_job_env(content: str, job_name: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    in_job = False
+    in_env = False
+
+    for line in content.splitlines():
+        if not in_job:
+            if line == f"  {job_name}:":
+                in_job = True
+            continue
+
+        if not in_env:
+            if line.startswith("  ") and not line.startswith("    "):
+                break
+            if line == "    env:":
+                in_env = True
+            continue
+
+        if line.startswith("    ") and not line.startswith("      "):
+            break
+        if not line.startswith("      ") or ": " not in line:
+            continue
+        key, value = line.strip().split(": ", 1)
+        env[key] = value
+
+    return env
 
 
 def test_deploy_dev_workflow_targets_main_pushes_and_manual_dispatch():
@@ -47,6 +77,18 @@ def test_deploy_dev_workflow_uses_gcp_wif_and_repo_scripts():
     assert "service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in content
     assert 'bash deploy/gcp/deploy_cloud_run.sh "${DEPLOY_ENV_FILE}"' in content
     assert 'bash deploy/gcp/configure_dev_eventing.sh "${DEPLOY_ENV_FILE}"' in content
+
+
+def test_deploy_dev_workflow_exports_every_required_render_ci_env_key():
+    content = DEPLOY_DEV_WORKFLOW.read_text(encoding="utf-8")
+    deploy_dev_env = _workflow_job_env(content, "deploy-dev")
+    render_ci_env_globals = runpy.run_path(str(RENDER_CI_ENV))
+
+    for key in (
+        *render_ci_env_globals["REQUIRED_ENV_KEYS"],
+        *render_ci_env_globals["REQUIRED_WIF_KEYS"],
+    ):
+        assert deploy_dev_env.get(key) == f"${{{{ vars.{key} }}}}"
 
 
 def test_deploy_dev_workflow_generates_temp_env_and_smoke_checks_health():
