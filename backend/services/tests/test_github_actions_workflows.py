@@ -57,7 +57,10 @@ def test_deploy_dev_workflow_generates_temp_env_and_smoke_checks_health():
     assert 'printf \'DEPLOY_ENV_FILE=%s\\n\' "${env_file}" >> "${GITHUB_ENV}"' in content
     assert "Validate dev eventing env contract" in content
     assert 'bash deploy/gcp/configure_dev_eventing.sh --validate-only "${DEPLOY_ENV_FILE}"' in content
-    assert 'curl --fail --silent --show-error "${service_url}/health/live" >/dev/null' in content
+    assert "for attempt in $(seq 1 18); do" in content
+    assert "Health check attempt ${attempt}/18 returned ${last_status:-curl_error}; waiting for Cloud Run readiness..." in content
+    assert "gcloud run services describe" in content
+    assert "exit 1" in content
 
 
 def test_backend_ci_tracks_deploy_workflow_changes():
