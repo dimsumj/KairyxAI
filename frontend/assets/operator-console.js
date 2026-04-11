@@ -82,6 +82,7 @@ export function initializeOperatorConsole() {
             const workspaceModalEyebrow = document.getElementById('workspace-modal-eyebrow');
             const workspaceStartupStatus = document.getElementById('workspace-startup-status');
             const workspaceModalCloseBtn = document.getElementById('workspace-modal-close-btn');
+            const workspaceModalFooter = workspaceModalCloseBtn?.parentElement || null;
             const workspaceLoginPanel = document.getElementById('workspace-login-panel');
             const workspaceLoginStatus = document.getElementById('workspace-login-status');
             const workspaceGoogleLoginBtn = document.getElementById('workspace-google-login-btn');
@@ -105,6 +106,7 @@ export function initializeOperatorConsole() {
             const workspaceSelectionCopy = document.getElementById('workspace-selection-copy');
             const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
             const workspaceSelectionBackBtn = document.getElementById('workspace-selection-back-btn');
+            const workspaceSelectionCancelBtn = document.getElementById('workspace-selection-cancel-btn');
             const workspaceSelectionResolveBtn = document.getElementById('workspace-selection-resolve-btn');
             const workspaceSelectionSwitchAccountBtn = document.getElementById('workspace-selection-switch-account-btn');
             const workspaceSelectionContinueBtn = document.getElementById('workspace-selection-continue-btn');
@@ -1685,8 +1687,12 @@ export function initializeOperatorConsole() {
                 workspaceOverlayAllowClose = Boolean(allowClose);
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
-                const showFooterCloseButton = workspaceOverlayAllowClose && mode !== 'create-project';
+                const showFooterCloseButton = workspaceOverlayAllowClose && mode !== 'create-project' && mode !== 'selection';
                 workspaceModalCloseBtn.classList.toggle('hidden', !showFooterCloseButton);
+                workspaceModalFooter?.classList.toggle('hidden', !showFooterCloseButton);
+                if (workspaceSelectionCancelBtn) {
+                    workspaceSelectionCancelBtn.classList.toggle('hidden', mode !== 'selection' || !workspaceOverlayAllowClose);
+                }
                 if (mode === 'login') {
                     const invitePending = Boolean(readPendingInvite());
                     workspaceModalEyebrow.textContent = 'Google Login';
@@ -4834,6 +4840,7 @@ export function initializeOperatorConsole() {
                 clearWorkspaceSelectionContext({ preserveOrganization: true });
                 setWorkspaceSelectionStage('org');
             });
+            workspaceSelectionCancelBtn?.addEventListener('click', () => closeWorkspaceOverlay());
             workspaceSelectionResolveBtn.addEventListener('click', async () => {
                 const requestedOrganizationInput = workspaceOrgUrlInput.value || workspaceModalOrgSelect.value;
                 setWorkspaceSelectionSwitchAccountVisible(false);

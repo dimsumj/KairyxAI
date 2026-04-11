@@ -105,4 +105,4 @@ The remaining work is mostly production hardening, deeper provider-backed execut
 - The README is intentionally brief.
 - Detailed operations, module walkthroughs, sample inputs, and expected outputs are maintained in `docs/GITHUB_WIKI_PRODUCT_USER_GUIDE.md`.
 - Production and deployment details are maintained in the runbooks and PRDs under `docs/` and `deploy/`.
-- The `Settings -> Organization -> New Project` overlay now uses only the inline `Cancel` and `Create Project` actions; the shared footer `Close` button remains reserved for the switcher-style workspace gateway.
+- The `Settings -> Organization` overlays now use inline red `Cancel` actions in their main button rows. `New Project` pairs `Cancel` with `Create Project`, and `Switcher` pairs `Cancel` with `Continue` instead of showing a separate footer `Close` button.

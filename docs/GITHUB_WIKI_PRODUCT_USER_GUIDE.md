@@ -136,8 +136,8 @@ Gateway validation rules for the org step are:
 | --- | --- | --- | --- | --- |
 | `Your organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
+| `Cancel` | Button | Closes the workspace switcher overlay without applying a new workspace. This button sits inline in the main action row beside the primary continue action. | None | Returns to the prior app state. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
-| `Close` | Button | Closes the gateway overlay without applying a new workspace. The button sits in the bottom action row and uses red styling so it does not read like a primary continue action. | None | Returns to the prior app state. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization. If multiple active projects exist, the oldest active project is preselected as the default. | `sandbox` | The selected project becomes the active console context after continue. |
 | `Use Existing Project` | Button | Confirms the selected existing project. Available to any member of the selected organization. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization. | `Growth Sandbox` | The console generates the internal project id automatically. |
@@ -148,6 +148,8 @@ When the typed organization already exists and the signed-in Google user has acc
 - `Create New Project`
 
 If the same signed-in user wants a different organization instead, they can use `Switcher`, return to the base gateway, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
+
+The switcher overlay does not use the shared footer `Close` button. In this mode the red inline `Cancel` button sits in the same main action row as `Continue`, matching the alignment used in the create-project overlay.
 
 All org members can access all active projects in that organization. Project selection is a workspace choice, not a project-membership permission check.
 
