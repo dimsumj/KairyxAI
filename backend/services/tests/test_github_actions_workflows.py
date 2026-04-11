@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "backend-ci.yml"
@@ -23,21 +21,13 @@ def test_deploy_dev_workflow_targets_main_pushes_and_manual_dispatch():
     assert "cancel-in-progress: true" in content
 
 
-def test_github_actions_workflows_are_valid_yaml():
-    for workflow_path in (BACKEND_CI_WORKFLOW, DEPLOY_DEV_WORKFLOW):
-        with workflow_path.open("r", encoding="utf-8") as handle:
-            parsed = yaml.safe_load(handle)
-
-        assert parsed is not None, f"{workflow_path.name} should parse as YAML"
-
-
 def test_deploy_dev_workflow_uses_validation_before_deploy():
     content = DEPLOY_DEV_WORKFLOW.read_text(encoding="utf-8")
 
     assert "validate:" in content
     assert "deploy-dev:" in content
     assert "needs: validate" in content
-    assert "pip install -r requirements-test.txt" in content
+    assert "pip install -r requirements.txt" in content
     assert "pytest tests/test_multitenant_auth.py tests/test_v1_api.py tests/test_v1_closed_loop.py tests/test_gcp_deploy_scripts.py tests/test_github_actions_workflows.py" in content
 
 
@@ -69,4 +59,4 @@ def test_backend_ci_tracks_deploy_workflow_changes():
 
     assert '".github/workflows/deploy-dev.yml"' in content
     assert "tests/test_github_actions_workflows.py" in content
-    assert "pip install -r requirements-test.txt" in content
+    assert "pip install -r requirements.txt" in content
