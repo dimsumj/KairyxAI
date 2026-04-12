@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.application.imports import ImportService
 from app.core import db as db_module
+from app.core.deps import get_settings_dependency
+from app.core.settings import get_settings
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache
 
@@ -142,6 +147,76 @@ def test_bigquery_prediction_table_import_materializes_prediction_job_without_ma
     assert by_user["u_1"]["email"] == "u1-latest@example.com"
     assert by_user["u_1"]["predicted_churn_risk"] == "high"
     assert by_user["u_2"]["predicted_churn_risk"] == "high"
+
+
+def test_bigquery_table_import_times_out_when_page_fetch_exceeds_budget(client: TestClient, monkeypatch):
+    settings = replace(
+        get_settings(),
+        import_network_timeout_seconds=0.2,
+        import_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Lists",
+        mock_tables={"churned_users": []},
+    )
+
+    created = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Warehouse Lists",
+            "table_name": "churned_users",
+            "resource_kind": "churn_list",
+            "activate_cohort": True,
+            "cohort_name": "slow_bigquery_list",
+            "column_mapping": {
+                "canonical_user_id": "player_id",
+                "user_id": "player_id",
+                "email": "email",
+                "reason": "reason",
+                "segment": "segment",
+                "as_of_timestamp": "as_of",
+            },
+            "start_date": "2026-04-01",
+            "end_date": "2026-04-03",
+        },
+    )
+    assert created.status_code == 201, created.text
+    job_id = created.json()["id"]
+
+    class SlowBigQueryConnector:
+        def fetch_table_rows_page(self, *args, **kwargs):
+            time.sleep(0.45)
+            return {
+                "rows": [
+                    {
+                        "player_id": "u_1",
+                        "email": "u1@example.com",
+                        "reason": "inactive_7d",
+                        "segment": "vip",
+                        "as_of": "2026-04-01T10:00:00",
+                    }
+                ],
+                "total": 1,
+                "next_cursor": None,
+                "has_more": False,
+            }
+
+    monkeypatch.setattr(
+        "app.application.imports.create_connector",
+        lambda connector_type, config: SlowBigQueryConnector(),
+    )
+
+    run = client.post(f"/api/v1/imports/{job_id}/run")
+    assert run.status_code == 500, run.text
+    assert "timed out" in run.json()["detail"]
+
+    failed_job = client.get(f"/api/v1/imports/{job_id}")
+    assert failed_job.status_code == 200
+    assert failed_job.json()["status"] == "failed"
+    assert failed_job.json()["progress"]["details"]["failure_stage"] == "bigquery_table_import"
 
 
 def test_bigquery_churn_list_import_creates_active_cohort_and_runs_closed_loop(client: TestClient):

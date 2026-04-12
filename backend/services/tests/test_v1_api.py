@@ -1768,7 +1768,16 @@ def test_import_processing_progress_reports_event_counts(client, monkeypatch):
     release_processing = threading.Event()
     run_result = {}
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         if callable(progress_callback):
             progress_callback(1000, 1, {})
             progress_callback(2000, 2, {})
@@ -1901,7 +1910,16 @@ def test_import_staging_progress_resets_timeout_budget(client, monkeypatch):
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def slow_but_progressing_fetch(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def slow_but_progressing_fetch(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         for index in range(3):
             time.sleep(0.12)
             if callable(progress_callback):
@@ -1957,7 +1975,16 @@ def test_import_staging_startup_grace_allows_first_progress_heartbeat(client, mo
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def delayed_first_progress_fetch(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def delayed_first_progress_fetch(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         time.sleep(0.22)
         if callable(progress_callback):
             progress_callback(1000, 1, {})
@@ -1984,6 +2011,61 @@ def test_import_staging_startup_grace_allows_first_progress_heartbeat(client, mo
     assert run_import.json()["progress"]["details"]["events_staged"] == 1000
 
 
+def test_import_staging_upload_delay_does_not_consume_network_timeout_budget(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        data_backend_mode="gcp",
+        import_network_timeout_seconds=0.2,
+        import_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def single_page(self, start_date, end_date, page_size=None):
+        yield [
+            {
+                "player_id": "u_1",
+                "event_name": "session_start",
+                "timestamp": "2026-02-01T00:00:00",
+            }
+        ]
+
+    original_upload = GcsService.upload_raw_events
+
+    def slow_upload(self, events, destination_blob_name):
+        time.sleep(0.3)
+        return original_upload(self, events, destination_blob_name)
+
+    monkeypatch.setattr("ingestion_service.IngestionService._iter_event_pages", single_page)
+    monkeypatch.setattr("gcs_service.GcsService.upload_raw_events", slow_upload)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    assert run_import.json()["status"] == "completed"
+    assert run_import.json()["progress"]["current"] == 1
+    assert run_import.json()["progress"]["details"]["events_staged"] == 1
+
+
 def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -2006,7 +2088,16 @@ def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch)
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         if callable(progress_callback):
             progress_callback(1000, 1, {})
             progress_callback(2000, 2, {})
@@ -2346,7 +2437,16 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     started = threading.Event()
     run_result = {}
 
-    def slow_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def slow_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         started.set()
         while True:
             if callable(should_stop) and should_stop():
@@ -2418,7 +2518,16 @@ def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(c
     release_worker = threading.Event()
     run_result = {}
 
-    def stuck_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def stuck_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         started.set()
         release_worker.wait(timeout=5)
         return {
@@ -2485,7 +2594,16 @@ def test_delete_stopped_import_cleans_raw_and_warehouse_state(client, monkeypatc
     processing_started = threading.Event()
     seeded = {"done": False, "gcs_uri": ""}
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         gcs_uri = gcs_service.upload_raw_events(
             [
                 {

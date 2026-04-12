@@ -1524,7 +1524,6 @@ class ImportService:
         self._commit_session()
         try:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
-            stage_progress = {"last_activity_at": time.monotonic()}
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
             connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
@@ -1542,7 +1541,6 @@ class ImportService:
             ingestion_service.local_shard_event_count = page_size
 
             def _stage_progress_callback(current_events: int, shards_created: int, manifest: Dict[str, Any]) -> Dict[str, Any]:
-                stage_progress["last_activity_at"] = time.monotonic()
                 return self._update_stage_progress(
                     job_id,
                     connector_record,
@@ -1554,6 +1552,11 @@ class ImportService:
             staged = self._interruptible_call(
                 job_id,
                 operation="fetch_and_stage_events",
+                # The inner page wrapper enforces the real connector/network budget.
+                # This outer wrapper stays long-lived so stop requests can still interrupt
+                # uploads or other non-fetch staging work without reintroducing false
+                # page-level timeout failures.
+                timeout_seconds=max(3600.0, float(self.settings.import_network_timeout_seconds)),
                 callback=lambda: ingestion_service.fetch_and_stage_events(
                     job["spec"]["start_date"],
                     job["spec"]["end_date"],
@@ -1561,8 +1564,12 @@ class ImportService:
                     page_size=page_size,
                     should_stop=lambda: self._should_stop(job_id),
                     progress_callback=_stage_progress_callback,
+                    page_fetch_wrapper=lambda fetch_page: self._interruptible_call(
+                        job_id,
+                        operation="fetch_and_stage_events",
+                        callback=fetch_page,
+                    ),
                 ),
-                activity_timestamp_getter=lambda: stage_progress["last_activity_at"],
             )
             if staged.get("stopped"):
                 return self._mark_stopped(job_id, staged.get("stop_reason") or self._stop_reason())
@@ -1735,15 +1742,19 @@ class ImportService:
             while True:
                 if self._should_stop(job_id):
                     return self._mark_stopped(job_id, self._stop_reason())
-                page = connector.fetch_table_rows_page(
-                    str(spec.get("table_name") or ""),
-                    cursor=cursor,
-                    page_size=int(spec.get("page_size") or self.settings.worker_page_size),
-                    selected_columns=selected_columns,
-                    where_sql=spec.get("where_sql"),
-                    timestamp_column=self._bigquery_timestamp_source_column(spec),
-                    start_date=spec.get("start_date"),
-                    end_date=spec.get("end_date"),
+                page = self._interruptible_call(
+                    job_id,
+                    operation="fetch_bigquery_table_page",
+                    callback=lambda: connector.fetch_table_rows_page(
+                        str(spec.get("table_name") or ""),
+                        cursor=cursor,
+                        page_size=int(spec.get("page_size") or self.settings.worker_page_size),
+                        selected_columns=selected_columns,
+                        where_sql=spec.get("where_sql"),
+                        timestamp_column=self._bigquery_timestamp_source_column(spec),
+                        start_date=spec.get("start_date"),
+                        end_date=spec.get("end_date"),
+                    ),
                 )
                 total_rows = max(total_rows, int(page.get("total") or 0))
                 for raw_row in list(page.get("rows") or []):
