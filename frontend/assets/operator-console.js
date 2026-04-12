@@ -6342,7 +6342,7 @@ export function initializeOperatorConsole() {
                     </div>
                     <div class="form-group">
                         <p style="font-size: 0.8rem; color: var(--subtle-text); margin-bottom: 0;">
-                            Credentials entered here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use `*_ref` values through the API.
+                            Credentials entered here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use <code>*_ref</code> values through the API.
                         </p>
                     </div>`,
                 sendgrid: `

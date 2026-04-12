@@ -151,6 +151,8 @@ def test_root_serves_frontend_static_assets(client):
     assert "Connect Data Source" in js_resp.text
     assert "bigquery_credentials_entry_mode" in js_resp.text
     assert "Service Account JSON File" in js_resp.text
+    assert "<code>*_ref</code> values through the API." in js_resp.text
+    assert "`*_ref` values through the API." not in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")
