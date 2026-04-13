@@ -73,14 +73,17 @@ class BigQueryConnector:
         client = self._get_client()
         dataset_ref = f"{self.project_id}.{self.dataset_id}"
         items = []
-        for table in client.list_tables(dataset_ref):
-            items.append(
-                {
-                    "table_name": str(table.table_id),
-                    "table_type": str(getattr(table, "table_type", "table") or "table").lower(),
-                    "row_count": None,
-                }
-            )
+        try:
+            for table in client.list_tables(dataset_ref):
+                items.append(
+                    {
+                        "table_name": str(table.table_id),
+                        "table_type": str(getattr(table, "table_type", "table") or "table").lower(),
+                        "row_count": None,
+                    }
+                )
+        except Exception as exc:
+            raise ValueError(f"Unable to list BigQuery tables for dataset {dataset_ref}: {exc}") from exc
         return items
 
     def fetch_table_rows_page(

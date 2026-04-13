@@ -71,6 +71,29 @@ def test_bigquery_connector_health_and_table_listing(client: TestClient):
     ]
 
 
+def test_bigquery_connector_table_listing_returns_controlled_error(client: TestClient, monkeypatch):
+    monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={},
+    )
+
+    class BrokenBigQueryClient:
+        def list_tables(self, dataset_ref):
+            raise RuntimeError("permission denied for dataset growth_inputs")
+
+    monkeypatch.setattr(
+        "connectors.bigquery_connector.BigQueryConnector._get_client",
+        lambda self: BrokenBigQueryClient(),
+    )
+
+    tables = client.get("/api/v1/connectors/Warehouse%20Scores/tables")
+    assert tables.status_code == 409
+    assert "Unable to list BigQuery tables for dataset" in tables.json()["detail"]
+    assert "permission denied for dataset growth_inputs" in tables.json()["detail"]
+
+
 def test_bigquery_prediction_table_import_materializes_prediction_job_without_mapping_gate(client: TestClient, monkeypatch):
     _create_bigquery_connector(
         client,
