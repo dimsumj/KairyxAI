@@ -109,3 +109,51 @@ def test_missing_table_guards_do_not_swallow_unexpected_bigquery_errors():
 
     with pytest.raises(UnexpectedQueryError):
         service.list_prediction_results("job-1")
+
+
+def test_load_all_rows_from_target_skips_query_when_bigquery_table_is_missing():
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._player_latest_state_table_id = "demo.scope.player_latest_state"
+
+    def _missing_table(table_id):
+        raise NotFoundError(f"{table_id} not found")
+
+    def _unexpected_query(*args, **kwargs):
+        raise AssertionError("Missing tables should not be queried.")
+
+    service._client = SimpleNamespace(get_table=_missing_table, query=_unexpected_query)
+
+    assert service._load_all_rows_from_target("player_latest_state") == []
+
+
+def test_get_all_player_ids_skips_missing_player_latest_state_table():
+    queried_sql = []
+    existing_tables = {
+        "demo.scope.events_curated": object(),
+        "demo.scope.events_staging": object(),
+    }
+
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._player_latest_state_table_id = "demo.scope.player_latest_state"
+    service._curated_table_id = "demo.scope.events_curated"
+    service._table_id = "demo.scope.events_staging"
+
+    def _get_table(table_id):
+        if table_id in existing_tables:
+            return existing_tables[table_id]
+        raise NotFoundError(f"{table_id} not found")
+
+    def _query(sql, job_config=None):
+        queried_sql.append(sql)
+        if "events_curated" in sql:
+            return SimpleNamespace(result=lambda: [{"player_id": "player-1"}])
+        if "events_staging" in sql:
+            return SimpleNamespace(result=lambda: [])
+        raise AssertionError("player_latest_state should be skipped when the table is missing.")
+
+    service._client = SimpleNamespace(get_table=_get_table, query=_query)
+
+    assert service.get_all_player_ids() == ["player-1"]
+    assert all("player_latest_state" not in sql for sql in queried_sql)

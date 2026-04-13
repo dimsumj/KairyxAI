@@ -204,6 +204,18 @@ class BigQueryService:
         message = str(exc or "").lower()
         return "not found" in message or "404" in message
 
+    def _gcp_table_exists(self, table_id: str) -> bool:
+        get_table = getattr(getattr(self, "_client", None), "get_table", None)
+        if not callable(get_table):
+            return True
+        try:
+            get_table(table_id)
+            return True
+        except Exception as exc:
+            if self._is_missing_gcp_resource_error(exc):
+                return False
+            raise
+
     def _ensure_gcp_dataset_exists(self) -> None:
         dataset_ref = f"{self._gcp_project_id}.{self._gcp_dataset_id}"
         try:
@@ -563,6 +575,8 @@ class BigQueryService:
             return
 
         try:
+            if not self._gcp_table_exists(table_id):
+                return
             self._client.query(f"TRUNCATE TABLE `{table_id}`").result()
         except Exception:
             return
@@ -725,6 +739,8 @@ class BigQueryService:
         limit: Optional[int] = None,
         job_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        if not self._gcp_table_exists(table_id):
+            return []
         query = f"""
             SELECT *
             FROM `{table_id}`
@@ -756,6 +772,8 @@ class BigQueryService:
     def _load_all_rows_from_target(self, target: str) -> List[Dict[str, Any]]:
         if self.mode == "bigquery":
             table_id = self._target_meta(target)["table_id"]
+            if not self._gcp_table_exists(table_id):
+                return []
             try:
                 rows = [dict(row.items()) for row in self._client.query(f"SELECT * FROM `{table_id}`").result()]
                 return rows
@@ -1634,7 +1652,14 @@ class BigQueryService:
                     WHERE COALESCE(CAST(player_id AS STRING), CAST(canonical_user_id AS STRING)) IS NOT NULL
                 """,
             ]
-            for query in queries:
+            table_ids = [
+                self._player_latest_state_table_id,
+                self._curated_table_id,
+                self._table_id,
+            ]
+            for table_id, query in zip(table_ids, queries):
+                if not self._gcp_table_exists(table_id):
+                    continue
                 try:
                     rows = []
                     for row in self._client.query(query).result():
