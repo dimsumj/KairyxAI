@@ -2162,17 +2162,25 @@ class BigQueryService:
                     self._bigquery.ScalarQueryParameter("job_identifier", "STRING", job_identifier)
                 ]
             )
-            queries = [
-                f"""
-                    DELETE FROM `{self._table_id}`
-                    WHERE job_identifier = @job_identifier OR job_id = @job_identifier
-                """,
-                f"""
-                    DELETE FROM `{self._dead_letter_table_id}`
-                    WHERE job_identifier = @job_identifier OR job_id = @job_identifier
-                """,
+            statements = [
+                (
+                    self._table_id,
+                    f"""
+                        DELETE FROM `{self._table_id}`
+                        WHERE job_identifier = @job_identifier OR job_id = @job_identifier
+                    """,
+                ),
+                (
+                    self._dead_letter_table_id,
+                    f"""
+                        DELETE FROM `{self._dead_letter_table_id}`
+                        WHERE job_identifier = @job_identifier OR job_id = @job_identifier
+                    """,
+                ),
             ]
-            for query in queries:
+            for table_id, query in statements:
+                if not self._gcp_table_exists(table_id):
+                    continue
                 self._client.query(query, job_config=job_config).result()
             self.run_events_curation()
             self.refresh_player_latest_state()

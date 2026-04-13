@@ -157,3 +157,38 @@ def test_get_all_player_ids_skips_missing_player_latest_state_table():
 
     assert service.get_all_player_ids() == ["player-1"]
     assert all("player_latest_state" not in sql for sql in queried_sql)
+
+
+def test_delete_data_for_job_skips_missing_bigquery_tables():
+    queried_sql = []
+    existing_tables = {
+        "demo.scope.pipeline_dead_letters": object(),
+    }
+
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._table_id = "demo.scope.processed_events"
+    service._dead_letter_table_id = "demo.scope.pipeline_dead_letters"
+    service._bigquery = SimpleNamespace(
+        QueryJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+        ScalarQueryParameter=lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs),
+    )
+
+    def _get_table(table_id):
+        if table_id in existing_tables:
+            return existing_tables[table_id]
+        raise NotFoundError(f"{table_id} not found")
+
+    def _query(sql, job_config=None):
+        queried_sql.append(sql)
+        return SimpleNamespace(result=lambda: None)
+
+    service._client = SimpleNamespace(get_table=_get_table, query=_query)
+    service.run_events_curation = lambda *args, **kwargs: {"curated_rows": 0}
+    service.refresh_player_latest_state = lambda *args, **kwargs: {"players_aggregated": 0}
+
+    service.delete_data_for_job("job-1")
+
+    assert len(queried_sql) == 1
+    assert "pipeline_dead_letters" in queried_sql[0]
+    assert "processed_events" not in queried_sql[0]
