@@ -109,10 +109,16 @@ class BigQueryConnector:
         client = self._get_client()
         table_ref = f"{self.project_id}.{self.dataset_id}.{resolved_table}"
         quoted_table_ref = f"`{table_ref}`"
+        table_type = None
+        row_count = None
         try:
             table = client.get_table(table_ref)
-            table_type = str(getattr(table, "table_type", "table") or "table").lower()
-            row_count = getattr(table, "num_rows", None)
+        except Exception:
+            table = None
+        try:
+            if table is not None:
+                table_type = str(getattr(table, "table_type", "table") or "table").lower()
+                row_count = getattr(table, "num_rows", None)
             if row_count is None:
                 query = f"SELECT COUNT(*) AS total FROM {quoted_table_ref}"
                 row_count = int(next(iter(client.query(query).result()))["total"])

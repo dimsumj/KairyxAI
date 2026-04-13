@@ -112,6 +112,9 @@ def test_bigquery_connector_row_count_returns_controlled_error(client: TestClien
         def get_table(self, table_ref):
             raise RuntimeError("permission denied for table prediction_scores")
 
+        def query(self, query):
+            raise RuntimeError("query permission denied for table prediction_scores")
+
     monkeypatch.setattr(
         "connectors.bigquery_connector.BigQueryConnector._get_client",
         lambda self: BrokenBigQueryClient(),
@@ -120,7 +123,45 @@ def test_bigquery_connector_row_count_returns_controlled_error(client: TestClien
     count = client.get("/api/v1/connectors/Warehouse%20Scores/tables/prediction_scores/count")
     assert count.status_code == 409
     assert "Unable to fetch BigQuery row count for table" in count.json()["detail"]
-    assert "permission denied for table prediction_scores" in count.json()["detail"]
+    assert "query permission denied for table prediction_scores" in count.json()["detail"]
+
+
+def test_bigquery_connector_row_count_falls_back_to_query_when_table_metadata_denied(client: TestClient, monkeypatch):
+    monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={},
+    )
+
+    class FakeRow:
+        def __getitem__(self, key):
+            if key == "total":
+                return 42
+            raise KeyError(key)
+
+    class FakeQueryJob:
+        def result(self):
+            return [FakeRow()]
+
+    class MetadataDeniedBigQueryClient:
+        def get_table(self, table_ref):
+            raise RuntimeError("Access Denied: missing bigquery.tables.get")
+
+        def query(self, query):
+            assert "SELECT COUNT(*) AS total FROM `warehouse-project.growth_inputs.prediction_scores`" == query
+            return FakeQueryJob()
+
+    monkeypatch.setattr(
+        "connectors.bigquery_connector.BigQueryConnector._get_client",
+        lambda self: MetadataDeniedBigQueryClient(),
+    )
+
+    count = client.get("/api/v1/connectors/Warehouse%20Scores/tables/prediction_scores/count")
+    assert count.status_code == 200
+    assert count.json()["table_name"] == "prediction_scores"
+    assert count.json()["table_type"] is None
+    assert count.json()["row_count"] == 42
 
 
 def test_bigquery_prediction_table_import_materializes_prediction_job_without_mapping_gate(client: TestClient, monkeypatch):

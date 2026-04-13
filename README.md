@@ -89,7 +89,7 @@ This repository already contains a working v1 control plane with:
 - mock-first local development
 - organization- and project-aware operator flows
 - connector-first Data Core onboarding, including a `Connect Data Source` entry point from the main workbench
-- BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery that defaults unresolved counts to `unknown rows`, on-demand exact row counts for a selected table, and browser-based table imports for external prediction scores and churn lists
+- BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery that defaults unresolved counts to `unknown rows`, on-demand exact row counts for a selected table with query-based fallback when table metadata access is blocked, and browser-based table imports for external prediction scores and churn lists
 - step-level import status tooltips for queued, staging, processing, stopping, and BigQuery table-read phases, with completed jobs no longer retaining stale timeout/failure badges after reruns
 - encrypted-at-rest storage for browser-entered connector and provider secrets when `CONTROL_PLANE_SECRET_KEY` is configured, while `*_ref` secret-manager references remain supported
 
