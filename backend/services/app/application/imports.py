@@ -1323,7 +1323,8 @@ class ImportService:
 
         gcs_service = GcsService()
         gcs_service.delete_data_for_job(job_id)
-        self.bigquery_service.delete_data_for_job(job_id)
+        if self._should_delete_warehouse_rows(job):
+            self.bigquery_service.delete_data_for_job(job_id)
         self.repository.delete_resource("identity_summary", job_id)
         for resource in self.repository.list_resources("import_manifest"):
             payload = dict(resource.get("payload") or {})
@@ -1338,6 +1339,36 @@ class ImportService:
         if self.repository.delete_import_job(job_id):
             self.repository.record_action("import_job_deleted", "import_job", job_id, job)
             self._commit_session()
+
+    def _should_delete_warehouse_rows(self, job: Dict[str, Any]) -> bool:
+        status = str(job.get("status") or "").lower()
+        if status != JobStatus.FAILED.value:
+            return True
+
+        details = dict(((job.get("progress") or {}).get("details") or {}))
+        checkpoint_state = dict(details.get("checkpoint_state") or {})
+        spec = dict(job.get("spec") or {})
+        connector_type = str(spec.get("connector_type") or "").strip().lower()
+        resource_kind = str(spec.get("resource_kind") or "").strip().lower()
+
+        if connector_type == "bigquery" and resource_kind:
+            return any(
+                [
+                    bool(str(details.get("snapshot_id") or "").strip()),
+                    bool(str(details.get("linked_prediction_job_id") or "").strip()),
+                    bool(str(details.get("linked_cohort_id") or "").strip()),
+                    int(details.get("rows_loaded") or 0) > 0,
+                ]
+            )
+
+        return any(
+            [
+                int(details.get("events_written") or 0) > 0,
+                int(details.get("normalized_events") or 0) > 0,
+                int(details.get("processed_manifests") or 0) > 0,
+                int(checkpoint_state.get("processed") or 0) > 0,
+            ]
+        )
 
     def resume_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
