@@ -7839,7 +7839,7 @@ export function initializeOperatorConsole() {
 
                 syncBigQueryResourceKindFields();
                 try {
-                    await loadBigQueryTablesForSource(connector?.name || '', { forceRefresh });
+                    await loadBigQueryTablesForSource(connector?.name || '', { forceRefresh: forceTableRefresh });
                 } catch (error) {
                     resetBigQueryTableSelect([]);
                     setInlineStatus(importBigQueryStatus, error.message || 'Failed to load BigQuery tables.', true);

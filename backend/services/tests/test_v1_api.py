@@ -157,6 +157,7 @@ def test_root_serves_frontend_static_assets(client):
     assert "Import BigQuery Table" in js_resp.text
     assert "BigQuery imports read one table at a time." in js_resp.text
     assert "Column mappings must use simple BigQuery identifiers." in js_resp.text
+    assert "forceRefresh: forceTableRefresh" in js_resp.text
     assert "Connected to source" in js_resp.text
     assert "Show import status details" in js_resp.text
     assert "<code>*_ref</code> values through the API." in js_resp.text
