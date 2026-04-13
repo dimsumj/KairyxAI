@@ -2277,6 +2277,106 @@ def test_delete_failed_import_skips_warehouse_cleanup_without_processed_rows(cli
     assert get_deleted.status_code == 404
 
 
+def test_delete_failed_import_ignores_raw_storage_cleanup_errors(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 1,
+            "events_staged": 1000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00001.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                }
+            ],
+            "stopped": False,
+        }
+
+    def fail_before_processing_writes(self, notifications, progress_callback=None):
+        raise RuntimeError("Normalization failed before warehouse writes")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fail_before_processing_writes,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+
+    def fail_raw_cleanup(self, job_identifier):
+        raise RuntimeError("raw storage backend unavailable")
+
+    def fail_if_called(self, job_identifier):
+        raise AssertionError("Warehouse cleanup should still be skipped for failed imports without processed rows.")
+
+    monkeypatch.setattr(GcsService, "delete_data_for_job", fail_raw_cleanup)
+    monkeypatch.setattr(BigQueryService, "delete_data_for_job", fail_if_called)
+
+    delete_import = client.delete(import_job["links"]["self"])
+    assert delete_import.status_code == 204
+
+    get_deleted = client.get(import_job["links"]["self"])
+    assert get_deleted.status_code == 404
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        actions = repository.list_actions(limit=20)
+    deleted_action = next(
+        action for action in actions
+        if action["action_type"] == "import_job_deleted" and action["resource_id"] == import_job["id"]
+    )
+    assert deleted_action["payload"]["delete_cleanup_warnings"] == [
+        {
+            "cleanup_target": "raw_storage",
+            "error": "raw storage backend unavailable",
+            "ignored_for_failed_job": True,
+        }
+    ]
+
+
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",

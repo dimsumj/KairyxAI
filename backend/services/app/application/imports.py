@@ -1335,10 +1335,31 @@ class ImportService:
         if not self._wait_for_import_run_thread(job_id):
             raise ResourceLockedError(f"Import job '{job_id}' is still shutting down; retry deleting it in a moment.")
 
+        cleanup_warnings: list[dict[str, Any]] = []
+
+        def _run_cleanup(cleanup_target: str, callback) -> None:
+            try:
+                callback()
+            except Exception as exc:
+                if status != JobStatus.FAILED.value:
+                    raise
+                warning = {
+                    "cleanup_target": cleanup_target,
+                    "error": str(exc),
+                    "ignored_for_failed_job": True,
+                }
+                cleanup_warnings.append(warning)
+                logger.warning(
+                    "Continuing import delete for failed job %s after %s cleanup error: %s",
+                    job_id,
+                    cleanup_target,
+                    exc,
+                )
+
         gcs_service = GcsService()
-        gcs_service.delete_data_for_job(job_id)
+        _run_cleanup("raw_storage", lambda: gcs_service.delete_data_for_job(job_id))
         if self._should_delete_warehouse_rows(job):
-            self.bigquery_service.delete_data_for_job(job_id)
+            _run_cleanup("warehouse", lambda: self.bigquery_service.delete_data_for_job(job_id))
         self.repository.delete_resource("identity_summary", job_id)
         for resource in self.repository.list_resources("import_manifest"):
             payload = dict(resource.get("payload") or {})
@@ -1351,7 +1372,10 @@ class ImportService:
                 self.repository.delete_resource("import_manifest", resource_id)
 
         if self.repository.delete_import_job(job_id):
-            self.repository.record_action("import_job_deleted", "import_job", job_id, job)
+            action_payload = dict(job)
+            if cleanup_warnings:
+                action_payload["delete_cleanup_warnings"] = cleanup_warnings
+            self.repository.record_action("import_job_deleted", "import_job", job_id, action_payload)
             self._commit_session()
 
     def _should_delete_warehouse_rows(self, job: Dict[str, Any]) -> bool:
