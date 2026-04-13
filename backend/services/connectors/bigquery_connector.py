@@ -18,7 +18,7 @@ class BigQueryConnector:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = dict(config or {})
-        self.project_id = str(self.config.get("project_id") or "").strip()
+        self.project_id = str(self.config.get("gcp_project_id") or self.config.get("project_id") or "").strip()
         self.dataset_id = str(self.config.get("dataset_id") or "").strip()
         self.location = str(self.config.get("location") or "").strip()
         self.mock_tables = dict(self.config.get("mock_tables") or {})

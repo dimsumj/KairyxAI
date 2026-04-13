@@ -50,11 +50,15 @@ def test_bigquery_connector_redacts_inline_service_account_json(client: TestClie
         },
     )
     assert created.status_code == 201, created.text
+    assert created.json()["config"]["project_id"] == "warehouse-project"
+    assert created.json()["config"]["gcp_project_id"] == "warehouse-project"
     assert created.json()["config"]["service_account_json"] is None
     assert created.json()["config"]["service_account_json_configured"] is True
 
     listed = client.get("/api/v1/connectors")
     assert listed.status_code == 200
+    assert listed.json()[0]["config"]["project_id"] == "warehouse-project"
+    assert listed.json()[0]["config"]["gcp_project_id"] == "warehouse-project"
     assert listed.json()[0]["config"]["service_account_json"] is None
     assert listed.json()[0]["config"]["service_account_json_configured"] is True
 
