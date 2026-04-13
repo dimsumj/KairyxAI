@@ -93,6 +93,28 @@ class ConnectorService:
             "items": list(connector.list_tables()),
         }
 
+    def get_table_row_count(self, name: str, table_name: str) -> Dict[str, Any]:
+        connector_record = self.repository.get_connector(name)
+        if connector_record is None:
+            raise KeyError(name)
+        connector = create_connector(
+            connector_record["type"],
+            self._materialize_runtime_config(connector_record),
+        )
+        if not hasattr(connector, "get_table_row_count"):
+            raise ValueError(f"Connector '{name}' does not support row-count discovery.")
+        payload = dict(connector.get_table_row_count(table_name))
+        return {
+            "tenant_id": connector_record.get("tenant_id"),
+            "project_id": connector_record.get("project_id"),
+            "connector_id": connector_record.get("connector_id"),
+            "name": connector_record["name"],
+            "type": connector_record["type"],
+            "table_name": payload.get("table_name") or str(table_name or "").strip(),
+            "table_type": payload.get("table_type"),
+            "row_count": int(payload.get("row_count") or 0),
+        }
+
     @staticmethod
     def _validate_connector_config(connector_type: str, config: Dict[str, Any]) -> None:
         if str(connector_type or "").strip().lower() != "bigquery":

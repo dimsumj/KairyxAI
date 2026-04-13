@@ -134,6 +134,7 @@ def test_org_root_serves_frontend_shell(client):
     assert 'id="sidebar-nav"' in resp.text
     assert '<main class="content">' in resp.text
     assert "Browse Tables" in resp.text
+    assert "Fetch Row Count" in resp.text
     assert "Import Type" in resp.text
     assert "WHERE Filter (optional)" in resp.text
 
@@ -158,6 +159,8 @@ def test_root_serves_frontend_static_assets(client):
     assert "BigQuery imports read one table at a time." in js_resp.text
     assert "Column mappings must use simple BigQuery identifiers." in js_resp.text
     assert "forceRefresh: forceTableRefresh" in js_resp.text
+    assert "unknown rows" in js_resp.text
+    assert "Fetching exact row count" in js_resp.text
     assert "Connected to source" in js_resp.text
     assert "Show import status details" in js_resp.text
     assert "<code>*_ref</code> values through the API." in js_resp.text

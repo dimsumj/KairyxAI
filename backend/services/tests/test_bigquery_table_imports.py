@@ -70,6 +70,12 @@ def test_bigquery_connector_health_and_table_listing(client: TestClient):
         {"table_name": "prediction_scores", "table_type": "table", "row_count": 1},
     ]
 
+    count = client.get("/api/v1/connectors/Warehouse%20Scores/tables/prediction_scores/count")
+    assert count.status_code == 200
+    assert count.json()["table_name"] == "prediction_scores"
+    assert count.json()["table_type"] == "table"
+    assert count.json()["row_count"] == 1
+
 
 def test_bigquery_connector_table_listing_returns_controlled_error(client: TestClient, monkeypatch):
     monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
@@ -92,6 +98,29 @@ def test_bigquery_connector_table_listing_returns_controlled_error(client: TestC
     assert tables.status_code == 409
     assert "Unable to list BigQuery tables for dataset" in tables.json()["detail"]
     assert "permission denied for dataset growth_inputs" in tables.json()["detail"]
+
+
+def test_bigquery_connector_row_count_returns_controlled_error(client: TestClient, monkeypatch):
+    monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={},
+    )
+
+    class BrokenBigQueryClient:
+        def get_table(self, table_ref):
+            raise RuntimeError("permission denied for table prediction_scores")
+
+    monkeypatch.setattr(
+        "connectors.bigquery_connector.BigQueryConnector._get_client",
+        lambda self: BrokenBigQueryClient(),
+    )
+
+    count = client.get("/api/v1/connectors/Warehouse%20Scores/tables/prediction_scores/count")
+    assert count.status_code == 409
+    assert "Unable to fetch BigQuery row count for table" in count.json()["detail"]
+    assert "permission denied for table prediction_scores" in count.json()["detail"]
 
 
 def test_bigquery_prediction_table_import_materializes_prediction_job_without_mapping_gate(client: TestClient, monkeypatch):
