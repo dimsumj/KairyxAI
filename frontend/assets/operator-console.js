@@ -3027,6 +3027,8 @@ export function initializeOperatorConsole() {
             const HEALTH_CACHE_TTL_MS = 30000;
             const HEALTH_LIVE_TIMEOUT_MS = 3000;
             const PREDICTION_POLL_INTERVAL_MS = 1000;
+            const simpleBigQueryIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+            const unsafeBigQueryWherePattern = /(;|--|\/\*|\*\/|\b(insert|update|delete|merge|drop|alter|create)\b)/i;
             const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
             const connectorTypeLabels = {
                 amplitude: 'Amplitude',
@@ -3050,6 +3052,7 @@ export function initializeOperatorConsole() {
             let mockStorageEnabled = false;
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
+            const importBigQueryTableCache = new Map();
 
             function renderConnectorEntrySummary(message = '') {
                 const configuredCount = cachedConnectors.length;
@@ -5466,6 +5469,7 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                importBigQueryTableCache.clear();
                 renderConnectorEntrySummary();
                 return cachedConnectors;
             }
@@ -5542,7 +5546,10 @@ export function initializeOperatorConsole() {
 
             function getConfiguredSourcesFromState() {
                 return cachedConnectors
-                    .filter((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()))
+                    .filter((connector) => {
+                        const connectorType = String(connector.type || '').toLowerCase();
+                        return ingestionConnectorTypes.has(connectorType) || connectorType === 'bigquery';
+                    })
                     .map((connector) => ({
                         id: connector.name,
                         name: connector.name,
@@ -5874,15 +5881,11 @@ export function initializeOperatorConsole() {
                 return connector;
             }
 
-            async function createImportRecord(sourceName, startDate, endDate) {
+            async function createImportRecord(requestBody) {
                 await ensureHealthState().catch(() => null);
                 const created = await apiRequest('/imports', {
                     method: 'POST',
-                    body: {
-                        source_name: sourceName,
-                        start_date: startDate,
-                        end_date: endDate,
-                    },
+                    body: requestBody,
                 });
                 if (backendMode === 'mock') {
                     setInlineStatus(importListStatus, `Created import ${created.id}. Running locally...`);
@@ -5893,6 +5896,83 @@ export function initializeOperatorConsole() {
                 });
                 publishDataVersion(IMPORTS_VERSION_STORAGE_KEY);
                 return normalizeImportJob(created);
+            }
+
+            function buildImportRequestBodyFromForm() {
+                const sourceName = String(importSourceSelect?.value || '').trim();
+                if (!sourceName) {
+                    throw new Error('No data source is available. Use Connect Data Source to configure one first.');
+                }
+
+                const connector = getImportConnectorByName(sourceName);
+                const startDate = String(startDateInput?.value || '').trim();
+                const endDate = String(endDateInput?.value || '').trim();
+                if (!isBigQueryImportSource(connector)) {
+                    if (!startDate || !endDate) {
+                        throw new Error('Please select a valid start and end date.');
+                    }
+                    return {
+                        source_name: sourceName,
+                        start_date: startDate.replace(/-/g, ''),
+                        end_date: endDate.replace(/-/g, ''),
+                    };
+                }
+
+                const resourceKind = String(importBigQueryResourceKindSelect?.value || 'external_prediction_scores').toLowerCase();
+                const tableName = String(importBigQueryTableNameInput?.value || importBigQueryTableSelect?.value || '').trim();
+                if (!tableName) {
+                    throw new Error('Select or enter a BigQuery table name.');
+                }
+                if (!isSimpleBigQueryIdentifier(tableName)) {
+                    throw new Error('BigQuery table names must use letters, numbers, and underscores, and start with a letter or underscore.');
+                }
+
+                const columnMapping = buildBigQueryColumnMapping(resourceKind);
+                if (!columnMapping.canonical_user_id) {
+                    throw new Error('Canonical User ID Column is required for BigQuery imports.');
+                }
+                const invalidColumn = Object.entries(columnMapping).find(([, value]) => !isSimpleBigQueryIdentifier(value));
+                if (invalidColumn) {
+                    throw new Error(`Column mappings must use simple BigQuery identifiers. Invalid value: ${invalidColumn[1]}.`);
+                }
+                if (resourceKind === 'external_prediction_scores' && !columnMapping.predicted_churn_risk && !columnMapping.score) {
+                    throw new Error('External Prediction Scores imports require a Predicted Risk Column or Score Column.');
+                }
+                if ((startDate && !endDate) || (!startDate && endDate)) {
+                    throw new Error('Provide both Start Date Filter and End Date Filter together.');
+                }
+                const timestampField = resourceKind === 'external_prediction_scores'
+                    ? columnMapping.score_timestamp
+                    : columnMapping.as_of_timestamp;
+                if ((startDate || endDate) && !timestampField) {
+                    throw new Error('Date filtering requires a mapped timestamp column for the selected BigQuery import type.');
+                }
+
+                const requestBody = {
+                    source_name: sourceName,
+                    table_name: tableName,
+                    resource_kind: resourceKind,
+                    column_mapping: columnMapping,
+                };
+                if (startDate) {
+                    requestBody.start_date = startDate;
+                    requestBody.end_date = endDate;
+                }
+                const whereSql = String(importBigQueryWhereSqlInput?.value || '').trim();
+                if (whereSql) {
+                    if (unsafeBigQueryWherePattern.test(whereSql)) {
+                        throw new Error('WHERE Filter can only contain a safe filter expression. Remove semicolons, comments, or write statements.');
+                    }
+                    requestBody.where_sql = whereSql;
+                }
+                if (resourceKind === 'churn_list') {
+                    requestBody.activate_cohort = Boolean(importBigQueryActivateCohortCheckbox?.checked);
+                    const cohortName = String(importBigQueryCohortNameInput?.value || '').trim();
+                    if (cohortName) {
+                        requestBody.cohort_name = cohortName;
+                    }
+                }
+                return requestBody;
             }
 
             async function queueMockImportRun(jobId) {
@@ -7594,6 +7674,24 @@ export function initializeOperatorConsole() {
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
             const importSourceStatus = document.getElementById('import-source-status');
+            const importFormHelp = document.getElementById('import-form-help');
+            const importSourceSelect = document.getElementById('cohort-source-select');
+            const importDateRangeFields = document.getElementById('import-date-range-fields');
+            const startDateInput = document.getElementById('start-date-cohort');
+            const endDateInput = document.getElementById('end-date-cohort');
+            const startDateLabel = document.getElementById('start-date-cohort-label');
+            const endDateLabel = document.getElementById('end-date-cohort-label');
+            const importBigQueryFields = document.getElementById('import-bigquery-fields');
+            const importBigQueryTableSelect = document.getElementById('import-bigquery-table-select');
+            const importBigQueryRefreshTablesBtn = document.getElementById('import-bigquery-refresh-tables-btn');
+            const importBigQueryStatus = document.getElementById('import-bigquery-status');
+            const importBigQueryTableNameInput = document.getElementById('import-bigquery-table-name');
+            const importBigQueryResourceKindSelect = document.getElementById('import-bigquery-resource-kind');
+            const importBigQueryWhereSqlInput = document.getElementById('import-bigquery-where-sql');
+            const importBigQueryPredictionFields = document.getElementById('import-bigquery-prediction-fields');
+            const importBigQueryChurnFields = document.getElementById('import-bigquery-churn-fields');
+            const importBigQueryActivateCohortCheckbox = document.getElementById('import-bigquery-activate-cohort');
+            const importBigQueryCohortNameInput = document.getElementById('import-bigquery-cohort-name');
             const importListContainer = document.getElementById('import-list-container');
             const importListStatus = document.getElementById('import-list-status');
             const importDetailSelect = document.getElementById('import-detail-select');
@@ -7605,18 +7703,166 @@ export function initializeOperatorConsole() {
             let importListInterval = null;
             let selectedImportJobId = null;
 
+            function getImportConnectorByName(sourceName = '') {
+                const normalizedSourceName = String(sourceName || '').trim();
+                return cachedConnectors.find((connector) => String(connector.name || '').trim() === normalizedSourceName) || null;
+            }
+
+            function isBigQueryImportSource(connector = null) {
+                return String((connector || {}).type || '').toLowerCase() === 'bigquery';
+            }
+
+            function resetBigQueryTableSelect(items = [], selectedTableName = '') {
+                if (!importBigQueryTableSelect) {
+                    return;
+                }
+                const requestedTableName = String(selectedTableName || importBigQueryTableNameInput?.value || '').trim();
+                importBigQueryTableSelect.innerHTML = '<option value="">Select a discovered table</option>';
+                items.forEach((item) => {
+                    const option = document.createElement('option');
+                    option.value = String(item.table_name || '').trim();
+                    option.textContent = `${option.value} (${String(item.table_type || 'table').toLowerCase()}, ${formatCount(item.row_count || 0)} rows)`;
+                    importBigQueryTableSelect.appendChild(option);
+                });
+                if (requestedTableName && items.some((item) => String(item.table_name || '').trim() === requestedTableName)) {
+                    importBigQueryTableSelect.value = requestedTableName;
+                }
+            }
+
+            async function loadBigQueryTablesForSource(sourceName, { forceRefresh = false } = {}) {
+                const normalizedSourceName = String(sourceName || '').trim();
+                if (!normalizedSourceName) {
+                    resetBigQueryTableSelect([]);
+                    setInlineStatus(importBigQueryStatus, '');
+                    return [];
+                }
+
+                if (!forceRefresh && importBigQueryTableCache.has(normalizedSourceName)) {
+                    const cachedTables = importBigQueryTableCache.get(normalizedSourceName) || [];
+                    resetBigQueryTableSelect(cachedTables);
+                    setInlineStatus(
+                        importBigQueryStatus,
+                        cachedTables.length
+                            ? `Loaded ${cachedTables.length} BigQuery table${cachedTables.length === 1 ? '' : 's'} from cache.`
+                            : 'No BigQuery tables discovered yet. Enter a table name manually if needed.',
+                    );
+                    return cachedTables;
+                }
+
+                setInlineStatus(importBigQueryStatus, 'Loading BigQuery tables...');
+                const payload = await apiRequest(`/connectors/${encodeURIComponent(normalizedSourceName)}/tables`);
+                const tables = Array.isArray(payload.items) ? payload.items : [];
+                importBigQueryTableCache.set(normalizedSourceName, tables);
+                resetBigQueryTableSelect(tables);
+                setInlineStatus(
+                    importBigQueryStatus,
+                    tables.length
+                        ? `Loaded ${tables.length} BigQuery table${tables.length === 1 ? '' : 's'} for ${normalizedSourceName}.`
+                        : 'No BigQuery tables were returned. Enter a table name manually if needed.',
+                );
+                return tables;
+            }
+
+            function getImportFieldValue(fieldId) {
+                return String(document.getElementById(fieldId)?.value || '').trim();
+            }
+
+            function isSimpleBigQueryIdentifier(value = '') {
+                return simpleBigQueryIdentifierPattern.test(String(value || '').trim());
+            }
+
+            function buildBigQueryColumnMapping(resourceKind) {
+                const mapping = {
+                    canonical_user_id: getImportFieldValue('import-bigquery-canonical-user-id'),
+                    user_id: getImportFieldValue('import-bigquery-user-id'),
+                    email: getImportFieldValue('import-bigquery-email'),
+                };
+                if (resourceKind === 'external_prediction_scores') {
+                    Object.assign(mapping, {
+                        predicted_churn_risk: getImportFieldValue('import-bigquery-predicted-risk'),
+                        score: getImportFieldValue('import-bigquery-score'),
+                        score_timestamp: getImportFieldValue('import-bigquery-score-timestamp'),
+                        suggested_action: getImportFieldValue('import-bigquery-suggested-action'),
+                        churn_state: getImportFieldValue('import-bigquery-churn-state'),
+                        model_name: getImportFieldValue('import-bigquery-model-name'),
+                        model_version: getImportFieldValue('import-bigquery-model-version'),
+                        recommended_template_id: getImportFieldValue('import-bigquery-template-id'),
+                        recommended_variant: getImportFieldValue('import-bigquery-variant'),
+                    });
+                } else if (resourceKind === 'churn_list') {
+                    Object.assign(mapping, {
+                        reason: getImportFieldValue('import-bigquery-reason'),
+                        segment: getImportFieldValue('import-bigquery-segment'),
+                        as_of_timestamp: getImportFieldValue('import-bigquery-as-of-timestamp'),
+                    });
+                }
+                return Object.fromEntries(
+                    Object.entries(mapping).filter(([, value]) => String(value || '').trim()),
+                );
+            }
+
+            function syncBigQueryResourceKindFields() {
+                const resourceKind = String(importBigQueryResourceKindSelect?.value || 'external_prediction_scores').toLowerCase();
+                if (importBigQueryPredictionFields) {
+                    importBigQueryPredictionFields.classList.toggle('hidden', resourceKind !== 'external_prediction_scores');
+                }
+                if (importBigQueryChurnFields) {
+                    importBigQueryChurnFields.classList.toggle('hidden', resourceKind !== 'churn_list');
+                }
+            }
+
+            async function syncImportSourceMode({ forceTableRefresh = false } = {}) {
+                const connector = getImportConnectorByName(importSourceSelect?.value || '');
+                const isBigQuerySource = isBigQueryImportSource(connector);
+
+                if (importBigQueryFields) {
+                    importBigQueryFields.classList.toggle('hidden', !isBigQuerySource);
+                }
+                if (importFormHelp) {
+                    importFormHelp.textContent = isBigQuerySource
+                        ? 'BigQuery imports read one table at a time. Date filters are optional and require a mapped timestamp column.'
+                        : 'Choose a configured ingestion source and a date window to create an import job.';
+                }
+                if (startDateLabel) {
+                    startDateLabel.textContent = isBigQuerySource ? 'Start Date Filter (optional)' : 'Start Date';
+                }
+                if (endDateLabel) {
+                    endDateLabel.textContent = isBigQuerySource ? 'End Date Filter (optional)' : 'End Date';
+                }
+                if (importDataBtn) {
+                    importDataBtn.textContent = isBigQuerySource ? 'Import BigQuery Table' : 'Import Data';
+                }
+                if (!isBigQuerySource) {
+                    setInlineStatus(importBigQueryStatus, '');
+                    return;
+                }
+
+                syncBigQueryResourceKindFields();
+                try {
+                    await loadBigQueryTablesForSource(connector?.name || '', { forceRefresh });
+                } catch (error) {
+                    resetBigQueryTableSelect([]);
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to load BigQuery tables.', true);
+                }
+            }
+
     
             async function loadConfiguredSources() {
                 const importCard = importDataBtn.parentElement;
-                const sourceSelect = document.getElementById('cohort-source-select');
-                const sourceGroup = document.getElementById('cohort-source-select').parentElement;
+                const sourceSelect = importSourceSelect;
+                const sourceGroup = importSourceSelect.parentElement;
                 const startDateGroup = document.getElementById('start-date-cohort').parentElement;
                 const endDateGroup = document.getElementById('end-date-cohort').parentElement;
                 const setImportSourceFormVisible = (visible) => {
                     sourceGroup.style.display = visible ? 'block' : 'none';
                     startDateGroup.style.display = visible ? 'block' : 'none';
                     endDateGroup.style.display = visible ? 'block' : 'none';
+                    importDateRangeFields.style.display = visible ? 'grid' : 'none';
+                    importBigQueryFields.classList.toggle('hidden', !visible);
                     importDataBtn.style.display = visible ? 'inline-block' : 'none';
+                    if (importFormHelp) {
+                        importFormHelp.style.display = visible ? 'block' : 'none';
+                    }
                 };
                 const ensureConfigMessage = (message = '') => {
                     let messageEl = importCard.querySelector('.config-message');
@@ -7657,7 +7903,9 @@ export function initializeOperatorConsole() {
                         sources.forEach(source => {
                             const option = document.createElement('option');
                             option.value = source.id;
-                            option.textContent = source.name;
+                            option.textContent = isBigQueryImportSource(source)
+                                ? `${source.name} (${formatConnectorLabel(source.type)})`
+                                : source.name;
                             sourceSelect.appendChild(option);
                         });
                         if (sources.some((source) => source.id === previousSelection)) {
@@ -7666,6 +7914,7 @@ export function initializeOperatorConsole() {
                         setImportSourceFormVisible(true);
                         ensureConfigMessage('');
                         setInlineStatus(importSourceStatus, '');
+                        await syncImportSourceMode();
                     }
                 } catch (error) {
                     setImportSourceFormVisible(false);
@@ -8143,6 +8392,24 @@ export function initializeOperatorConsole() {
                 toggle.textContent = expanded ? 'Show Less' : 'Show Full Text';
             });
 
+            importSourceSelect?.addEventListener('change', () => {
+                syncImportSourceMode().catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to update import source mode.', true);
+                });
+            });
+            importBigQueryResourceKindSelect?.addEventListener('change', syncBigQueryResourceKindFields);
+            importBigQueryRefreshTablesBtn?.addEventListener('click', () => {
+                syncImportSourceMode({ forceTableRefresh: true }).catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to refresh BigQuery tables.', true);
+                });
+            });
+            importBigQueryTableSelect?.addEventListener('change', () => {
+                const selectedTableName = String(importBigQueryTableSelect.value || '').trim();
+                if (selectedTableName && importBigQueryTableNameInput) {
+                    importBigQueryTableNameInput.value = selectedTableName;
+                }
+            });
+
             function getActionButtonsHTML(job) {
                 if (['completed', 'failed', 'stopped'].includes(job.raw_status)) {
                     return `<button type="button" data-import-action="delete" data-job-id="${escapeHtml(job.id)}" style="background-color: var(--subtle-text);">Delete</button>`;
@@ -8216,28 +8483,9 @@ export function initializeOperatorConsole() {
             }
 
             importDataBtn.addEventListener('click', async () => {
-                const startDate = document.getElementById('start-date-cohort').value;
-                const endDate = document.getElementById('end-date-cohort').value;
-                const source = document.getElementById('cohort-source-select').value;
-
-                if (!source) {
-                    alert('No data source is available. Use Connect Data Source to configure one first.');
-                    return;
-                }
-
-                if (!startDate || !endDate) {
-                    alert('Please select a valid start and end date.');
-                    return;
-                }
-
-                const payload = {
-                    start_date: startDate.replace(/-/g, ''),
-                    end_date: endDate.replace(/-/g, ''),
-                    source: source
-                };
-
                 try {
-                    const result = await createImportRecord(payload.source, payload.start_date, payload.end_date);
+                    const requestBody = buildImportRequestBodyFromForm();
+                    const result = await createImportRecord(requestBody);
                     const modeSuffix = result.raw_status === 'stopped'
                         ? 'was stopped.'
                         : backendMode === 'mock'

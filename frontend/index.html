@@ -285,8 +285,9 @@
         <section id="player-cohorts" class="page">
             <h1>Import Control Plane</h1>
             <div class="card">
-                <p>Import and process data from a connected source. Once imported, the system will analyze the data and automatically generate player cohorts.</p>
+                <p>Import and process data from a connected source. Event connectors use a date window, and BigQuery connectors can import one table directly into predictions or churn cohorts.</p>
                 <span id="import-source-status" class="subtle"></span>
+                <p id="import-form-help" class="subtle">Choose a configured source to start an import.</p>
                 <div class="form-group">
                     <label for="cohort-source-select">Import Source</label>
                     <select id="cohort-source-select">
@@ -294,13 +295,135 @@
                         <!-- Other configured sources could be added here dynamically -->
                     </select>
                 </div>
-                <div class="form-group">
-                    <label for="start-date-cohort">Start Date</label>
-                    <input type="date" id="start-date-cohort">
+                <div id="import-date-range-fields" class="grid-2">
+                    <div class="form-group">
+                        <label id="start-date-cohort-label" for="start-date-cohort">Start Date</label>
+                        <input type="date" id="start-date-cohort">
+                    </div>
+                    <div class="form-group">
+                        <label id="end-date-cohort-label" for="end-date-cohort">End Date</label>
+                        <input type="date" id="end-date-cohort">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="end-date-cohort">End Date</label>
-                    <input type="date" id="end-date-cohort">
+                <div id="import-bigquery-fields" class="hidden">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-bigquery-table-select">Browse Tables</label>
+                            <select id="import-bigquery-table-select">
+                                <option value="">Select a discovered table</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-bigquery-refresh-tables-btn" type="button">Refresh Tables</button>
+                            <span id="import-bigquery-status" class="subtle"></span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="import-bigquery-table-name">Table Name</label>
+                        <input type="text" id="import-bigquery-table-name" placeholder="prediction_scores">
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-bigquery-resource-kind">Import Type</label>
+                            <select id="import-bigquery-resource-kind">
+                                <option value="external_prediction_scores">External Prediction Scores</option>
+                                <option value="churn_list">Churn List</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-where-sql">WHERE Filter (optional)</label>
+                            <input type="text" id="import-bigquery-where-sql" placeholder="country = 'US'">
+                        </div>
+                    </div>
+                    <p class="subtle">Common column mappings</p>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="import-bigquery-canonical-user-id">Canonical User ID Column</label>
+                            <input type="text" id="import-bigquery-canonical-user-id" placeholder="player_id">
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-user-id">User ID Column (optional)</label>
+                            <input type="text" id="import-bigquery-user-id" placeholder="user_id">
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-email">Email Column (optional)</label>
+                            <input type="text" id="import-bigquery-email" placeholder="email">
+                        </div>
+                    </div>
+                    <div id="import-bigquery-prediction-fields">
+                        <p class="subtle">Prediction score mappings</p>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-predicted-risk">Predicted Risk Column (optional)</label>
+                                <input type="text" id="import-bigquery-predicted-risk" placeholder="risk">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-score">Score Column (optional)</label>
+                                <input type="text" id="import-bigquery-score" placeholder="score">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-score-timestamp">Score Timestamp Column (optional)</label>
+                                <input type="text" id="import-bigquery-score-timestamp" placeholder="scored_at">
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-suggested-action">Suggested Action Column (optional)</label>
+                                <input type="text" id="import-bigquery-suggested-action" placeholder="suggested_action">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-churn-state">Churn State Column (optional)</label>
+                                <input type="text" id="import-bigquery-churn-state" placeholder="churn_state">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-model-name">Model Name Column (optional)</label>
+                                <input type="text" id="import-bigquery-model-name" placeholder="model_name">
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-model-version">Model Version Column (optional)</label>
+                                <input type="text" id="import-bigquery-model-version" placeholder="model_version">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-template-id">Recommended Template Column (optional)</label>
+                                <input type="text" id="import-bigquery-template-id" placeholder="recommended_template_id">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-variant">Recommended Variant Column (optional)</label>
+                                <input type="text" id="import-bigquery-variant" placeholder="recommended_variant">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="import-bigquery-churn-fields" class="hidden">
+                        <p class="subtle">Churn list mappings</p>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-reason">Reason Column (optional)</label>
+                                <input type="text" id="import-bigquery-reason" placeholder="reason">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-segment">Segment Column (optional)</label>
+                                <input type="text" id="import-bigquery-segment" placeholder="segment">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-as-of-timestamp">As Of Timestamp Column (optional)</label>
+                                <input type="text" id="import-bigquery-as-of-timestamp" placeholder="as_of">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="import-bigquery-cohort-name">Cohort Name (optional)</label>
+                                <input type="text" id="import-bigquery-cohort-name" placeholder="bigquery_churn_list">
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: end;">
+                                <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                                    <input type="checkbox" id="import-bigquery-activate-cohort">
+                                    Activate cohort after import
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <button id="import-data-btn">Import Data</button>
             </div>

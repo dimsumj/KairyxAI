@@ -274,10 +274,20 @@ The import source form and imported-data list now wait for a resolved organizati
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Import Source` | Select | Choose the configured ingestion source. | `amplitude` | Import request uses that connector/source. |
-| `Start Date` | Date | Beginning of the import window for event connectors. For BigQuery table imports, this filter is optional and only applies when a mapped timestamp field is provided. | `2026-03-01` | Request converts to `20260301`. |
-| `End Date` | Date | End of the import window for event connectors. For BigQuery table imports, this filter is optional and only applies when a mapped timestamp field is provided. | `2026-03-07` | Request converts to `20260307`. |
-| `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
+| `Import Source` | Select | Choose a configured ingestion source or BigQuery connector. | `Warehouse Scores` | Import request uses that connector/source. |
+| `Start Date` | Date | Beginning of the import window for event connectors. For BigQuery table imports, this is an optional filter that is only sent when both dates are provided and a timestamp column is mapped. | `2026-03-01` | Event imports send `20260301`; BigQuery imports send `2026-03-01`. |
+| `End Date` | Date | End of the import window for event connectors. For BigQuery table imports, this is an optional filter that is only sent when both dates are provided and a timestamp column is mapped. | `2026-03-07` | Event imports send `20260307`; BigQuery imports send `2026-03-07`. |
+| `Browse Tables` | Select | For BigQuery sources, pick a discovered dataset table to prefill the table name. | `prediction_scores` | Table name field is populated from the discovered table list. |
+| `Refresh Tables` | Button | Reloads the BigQuery table list from the selected connector. | None | Updated table list and row counts are shown in the status copy. |
+| `Table Name` | Text | Enter the BigQuery table to import when you do not want to use the discovered table list. Letters, numbers, and underscores only. | `prediction_scores` | Request targets that BigQuery table. |
+| `Import Type` | Select | Choose whether the selected table becomes external prediction scores or a churn list. | `external_prediction_scores` | Mapping fields and validation switch to the selected import type. |
+| `WHERE Filter (optional)` | Text | Add a safe SQL filter expression for the table read. Semicolons, comments, and write statements are rejected in the browser before submit. | `country = 'US'` | BigQuery import reads only the filtered rows. |
+| `Canonical User ID Column` | Text | Required BigQuery mapping for the stable player identifier. | `player_id` | Request includes `column_mapping.canonical_user_id`. |
+| `Prediction score mappings` | Text inputs | For `external_prediction_scores`, map score, risk, timestamp, and optional enrichment columns. At least `Predicted Risk Column` or `Score Column` is required. | `score`, `risk`, `scored_at` | Request includes BigQuery score mappings. |
+| `Churn list mappings` | Text inputs | For `churn_list`, map reason, segment, and optional `as_of_timestamp` columns. | `reason`, `segment`, `as_of_timestamp` | Request includes BigQuery churn-list mappings. |
+| `Activate Cohort` | Checkbox | For `churn_list`, immediately make the imported churn roster available as a cohort. | Checked | Backend activates the generated cohort after import completion. |
+| `Cohort Name` | Text | Optional display name for an activated churn-list cohort. | `High Risk APAC` | Activated cohort uses that name instead of the default. |
+| `Import Data` / `Import BigQuery Table` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
@@ -291,7 +301,7 @@ The import source form and imported-data list now wait for a resolved organizati
 #### Sample import input
 ```json
 {
-  "source": "amplitude",
+  "source_name": "amplitude",
   "start_date": "20260301",
   "end_date": "20260307"
 }
@@ -333,8 +343,14 @@ The import source form and imported-data list now wait for a resolved organizati
 - In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
-#### BigQuery table import API
-The current browser import form remains event-connector oriented. BigQuery dataset table imports are available through the same `/api/v1/imports` API, but the dedicated table-import controls are not yet exposed in the browser form.
+#### BigQuery table import browser flow
+- Selecting a BigQuery connector in `Import Source` switches the form into table-import mode.
+- The browser can browse discovered tables, import one table at a time, and submit either `external_prediction_scores` or `churn_list` payloads through the same `/api/v1/imports` endpoint.
+- BigQuery date filters remain optional and only work when the matching timestamp column is mapped:
+  - `external_prediction_scores` uses `score_timestamp`
+  - `churn_list` uses `as_of_timestamp`
+- Column names and table names are validated in the browser to simple BigQuery identifiers before submit.
+- `WHERE Filter` is passed through only when it remains a read-only filter expression.
 
 #### Sample BigQuery external prediction import request
 ```json
