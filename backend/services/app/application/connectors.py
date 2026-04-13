@@ -27,6 +27,7 @@ class ConnectorService:
 
     def create_connector(self, name: str, connector_type: str, config: Dict[str, Any], connector_id: str | None = None) -> Dict[str, Any]:
         settings = get_settings()
+        config = self._normalize_connector_config_for_storage(connector_type, config)
         self._validate_connector_config(connector_type, config)
         config = self._persist_inline_secrets(config)
         if settings.app_env == "prod" and contains_inline_secret(config, secret_fields=CONNECTOR_SECRET_FIELDS):
@@ -58,7 +59,10 @@ class ConnectorService:
         connector_record = self.repository.get_connector(name)
         if connector_record is None:
             raise KeyError(name)
-        connector = create_connector(connector_record["type"], materialize_secret_refs(connector_record["config"]))
+        connector = create_connector(
+            connector_record["type"],
+            self._materialize_runtime_config(connector_record),
+        )
         health = connector.health_check()
         return {
             "tenant_id": connector_record.get("tenant_id"),
@@ -74,7 +78,10 @@ class ConnectorService:
         connector_record = self.repository.get_connector(name)
         if connector_record is None:
             raise KeyError(name)
-        connector = create_connector(connector_record["type"], materialize_secret_refs(connector_record["config"]))
+        connector = create_connector(
+            connector_record["type"],
+            self._materialize_runtime_config(connector_record),
+        )
         if not hasattr(connector, "list_tables"):
             raise ValueError(f"Connector '{name}' does not support table discovery.")
         return {
@@ -86,11 +93,33 @@ class ConnectorService:
             "items": list(connector.list_tables()),
         }
 
+    def get_table_row_count(self, name: str, table_name: str) -> Dict[str, Any]:
+        connector_record = self.repository.get_connector(name)
+        if connector_record is None:
+            raise KeyError(name)
+        connector = create_connector(
+            connector_record["type"],
+            self._materialize_runtime_config(connector_record),
+        )
+        if not hasattr(connector, "get_table_row_count"):
+            raise ValueError(f"Connector '{name}' does not support row-count discovery.")
+        payload = dict(connector.get_table_row_count(table_name))
+        return {
+            "tenant_id": connector_record.get("tenant_id"),
+            "project_id": connector_record.get("project_id"),
+            "connector_id": connector_record.get("connector_id"),
+            "name": connector_record["name"],
+            "type": connector_record["type"],
+            "table_name": payload.get("table_name") or str(table_name or "").strip(),
+            "table_type": payload.get("table_type"),
+            "row_count": int(payload.get("row_count") or 0),
+        }
+
     @staticmethod
     def _validate_connector_config(connector_type: str, config: Dict[str, Any]) -> None:
         if str(connector_type or "").strip().lower() != "bigquery":
             return
-        project_id = str((config or {}).get("project_id") or "").strip()
+        project_id = str((config or {}).get("gcp_project_id") or (config or {}).get("project_id") or "").strip()
         dataset_id = str((config or {}).get("dataset_id") or "").strip()
         if not project_id or not dataset_id:
             raise ValueError("BigQuery connectors require project_id and dataset_id.")
@@ -127,7 +156,47 @@ class ConnectorService:
             raise
 
     @staticmethod
-    def _to_response(connector_record: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_connector_config_for_storage(connector_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(config or {})
+        if str(connector_type or "").strip().lower() == "bigquery":
+            gcp_project_id = str(normalized.get("gcp_project_id") or normalized.get("project_id") or "").strip()
+            if gcp_project_id:
+                normalized["gcp_project_id"] = gcp_project_id
+                normalized["project_id"] = gcp_project_id
+        return normalized
+
+    @staticmethod
+    def _normalize_bigquery_runtime_config(connector_record: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(config or {})
+        workspace_project_id = str((connector_record or {}).get("project_id") or "").strip()
+        resolved_project_id = str(normalized.get("gcp_project_id") or "").strip()
+        if not resolved_project_id:
+            legacy_project_id = str(normalized.get("project_id") or "").strip()
+            if legacy_project_id and legacy_project_id != workspace_project_id:
+                resolved_project_id = legacy_project_id
+            else:
+                raw_service_account = normalized.get("service_account_json")
+                if raw_service_account in (None, ""):
+                    raw_service_account = normalized.get("service_account_info_json")
+                if raw_service_account not in (None, ""):
+                    try:
+                        service_account_info = BigQueryConnector.parse_service_account_info(raw_service_account)
+                    except ValueError:
+                        service_account_info = {}
+                    resolved_project_id = str(service_account_info.get("project_id") or "").strip()
+        if resolved_project_id:
+            normalized["gcp_project_id"] = resolved_project_id
+            normalized["project_id"] = resolved_project_id
+        return normalized
+
+    def _materialize_runtime_config(self, connector_record: Dict[str, Any]) -> Dict[str, Any]:
+        config = materialize_secret_refs(dict((connector_record or {}).get("config") or {}))
+        if str((connector_record or {}).get("type") or "").strip().lower() == "bigquery":
+            return self._normalize_bigquery_runtime_config(connector_record, config)
+        return config
+
+    def _to_response(self, connector_record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(connector_record or {})
-        payload["config"] = redact_secret_values(dict(payload.get("config") or {}))
+        config = self._materialize_runtime_config(payload)
+        payload["config"] = redact_secret_values(config)
         return payload

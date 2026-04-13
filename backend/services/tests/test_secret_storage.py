@@ -142,6 +142,44 @@ def test_connector_service_encrypts_browser_entered_bigquery_credentials(monkeyp
     assert materialize_secret_refs(saved["config"])["service_account_json"] == SERVICE_ACCOUNT_JSON
     assert created["config"]["service_account_json"] is None
     assert created["config"]["service_account_json_configured"] is True
+    assert created["config"]["project_id"] == "warehouse-project"
+    assert created["config"]["gcp_project_id"] == "warehouse-project"
+
+
+def test_connector_service_recovers_legacy_bigquery_project_id_from_service_account(monkeypatch):
+    repository = InMemoryConnectorRepository()
+    repository.records["Warehouse Scores"] = {
+        "tenant_id": "torpedo",
+        "project_id": "main",
+        "connector_id": "connector_1",
+        "name": "Warehouse Scores",
+        "type": "bigquery",
+        "config": {
+            "project_id": "main",
+            "dataset_id": "unity_prod_2",
+            "service_account_json": SERVICE_ACCOUNT_JSON,
+        },
+    }
+    service = ConnectorService(repository)
+    captured = {}
+
+    class FakeBigQueryConnector:
+        def list_tables(self):
+            return []
+
+    def _capture_create_connector(connector_type, config):
+        captured["connector_type"] = connector_type
+        captured["config"] = dict(config or {})
+        return FakeBigQueryConnector()
+
+    monkeypatch.setattr("app.application.connectors.create_connector", _capture_create_connector)
+
+    tables = service.list_tables("Warehouse Scores")
+
+    assert tables["items"] == []
+    assert captured["connector_type"] == "bigquery"
+    assert captured["config"]["project_id"] == "tenant-warehouse"
+    assert captured["config"]["gcp_project_id"] == "tenant-warehouse"
 
 
 def test_connector_service_requires_secure_storage_for_inline_browser_secrets(monkeypatch):

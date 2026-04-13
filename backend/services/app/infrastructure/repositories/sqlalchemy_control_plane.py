@@ -717,7 +717,7 @@ class SqlAlchemyControlPlaneRepository:
                 connector_id=resolved_connector_id,
                 name=name,
                 connector_type=connector_type,
-                config_json=_to_json_text(self._augment_payload(config, tenant_id=metadata["tenant_id"], project_id=metadata["project_id"], created_by=metadata["actor_id"], updated_by=metadata["actor_id"], correlation_id=metadata["correlation_id"])),
+                config_json=_to_json_text(dict(config or {})),
                 created_by=metadata["actor_id"],
                 updated_by=metadata["actor_id"],
                 correlation_id=metadata["correlation_id"],
@@ -728,7 +728,7 @@ class SqlAlchemyControlPlaneRepository:
             row.connector_type = connector_type
             row.connector_id = resolved_connector_id
             row.project_id = metadata["project_id"]
-            row.config_json = _to_json_text(self._augment_payload(config, tenant_id=metadata["tenant_id"], project_id=metadata["project_id"], created_by=row.created_by, updated_by=metadata["actor_id"], correlation_id=metadata["correlation_id"]))
+            row.config_json = _to_json_text(dict(config or {}))
             row.updated_by = metadata["actor_id"]
             row.correlation_id = metadata["correlation_id"]
             row.updated_at = datetime.utcnow()

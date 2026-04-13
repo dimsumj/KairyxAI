@@ -18,7 +18,7 @@ class BigQueryConnector:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = dict(config or {})
-        self.project_id = str(self.config.get("project_id") or "").strip()
+        self.project_id = str(self.config.get("gcp_project_id") or self.config.get("project_id") or "").strip()
         self.dataset_id = str(self.config.get("dataset_id") or "").strip()
         self.location = str(self.config.get("location") or "").strip()
         self.mock_tables = dict(self.config.get("mock_tables") or {})
@@ -85,6 +85,44 @@ class BigQueryConnector:
         except Exception as exc:
             raise ValueError(f"Unable to list BigQuery tables for dataset {dataset_ref}: {exc}") from exc
         return items
+
+    def get_table_row_count(self, table_name: str) -> Dict[str, Any]:
+        if not self.project_id or not self.dataset_id:
+            raise ValueError("BigQuery connector requires project_id and dataset_id.")
+        resolved_table = self._validate_identifier(table_name, field_name="table_name")
+        if self._is_mock_mode():
+            table_spec = self.mock_tables.get(resolved_table)
+            if table_spec is None:
+                raise ValueError(f"BigQuery table '{resolved_table}' was not found.")
+            if isinstance(table_spec, dict):
+                rows = list(table_spec.get("rows") or [])
+                table_type = str(table_spec.get("table_type") or "table").lower()
+            else:
+                rows = list(table_spec or [])
+                table_type = "table"
+            return {
+                "table_name": resolved_table,
+                "table_type": table_type,
+                "row_count": len(rows),
+            }
+
+        client = self._get_client()
+        table_ref = f"{self.project_id}.{self.dataset_id}.{resolved_table}"
+        quoted_table_ref = f"`{table_ref}`"
+        try:
+            table = client.get_table(table_ref)
+            table_type = str(getattr(table, "table_type", "table") or "table").lower()
+            row_count = getattr(table, "num_rows", None)
+            if row_count is None:
+                query = f"SELECT COUNT(*) AS total FROM {quoted_table_ref}"
+                row_count = int(next(iter(client.query(query).result()))["total"])
+            return {
+                "table_name": resolved_table,
+                "table_type": table_type,
+                "row_count": int(row_count),
+            }
+        except Exception as exc:
+            raise ValueError(f"Unable to fetch BigQuery row count for table {table_ref}: {exc}") from exc
 
     def fetch_table_rows_page(
         self,

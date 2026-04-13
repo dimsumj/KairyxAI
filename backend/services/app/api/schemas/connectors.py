@@ -43,3 +43,14 @@ class ConnectorTableListResponse(BaseModel):
     name: str
     type: str
     items: list[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ConnectorTableCountResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    connector_id: str | None = None
+    name: str
+    type: str
+    table_name: str
+    table_type: Optional[str] = None
+    row_count: int = 0

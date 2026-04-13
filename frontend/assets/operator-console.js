@@ -7706,6 +7706,7 @@ export function initializeOperatorConsole() {
             const importBigQueryFields = document.getElementById('import-bigquery-fields');
             const importBigQueryTableSelect = document.getElementById('import-bigquery-table-select');
             const importBigQueryRefreshTablesBtn = document.getElementById('import-bigquery-refresh-tables-btn');
+            const importBigQueryFetchRowCountBtn = document.getElementById('import-bigquery-fetch-row-count-btn');
             const importBigQueryStatus = document.getElementById('import-bigquery-status');
             const importBigQueryTableNameInput = document.getElementById('import-bigquery-table-name');
             const importBigQueryResourceKindSelect = document.getElementById('import-bigquery-resource-kind');
@@ -7734,6 +7735,28 @@ export function initializeOperatorConsole() {
                 return String((connector || {}).type || '').toLowerCase() === 'bigquery';
             }
 
+            function formatDiscoveredTableRowCount(rowCount) {
+                if (rowCount === null || rowCount === undefined || rowCount === '') {
+                    return 'unknown rows';
+                }
+                return `${formatCount(rowCount)} rows`;
+            }
+
+            function formatDiscoveredTableOptionLabel(item) {
+                return `${String(item.table_name || '').trim()} (${String(item.table_type || 'table').toLowerCase()}, ${formatDiscoveredTableRowCount(item.row_count)})`;
+            }
+
+            function getRequestedBigQueryTableName() {
+                return String(importBigQueryTableNameInput?.value || importBigQueryTableSelect?.value || '').trim();
+            }
+
+            function syncBigQueryRowCountButtonState() {
+                if (!importBigQueryFetchRowCountBtn) {
+                    return;
+                }
+                importBigQueryFetchRowCountBtn.disabled = !getRequestedBigQueryTableName();
+            }
+
             function resetBigQueryTableSelect(items = [], selectedTableName = '') {
                 if (!importBigQueryTableSelect) {
                     return;
@@ -7743,12 +7766,34 @@ export function initializeOperatorConsole() {
                 items.forEach((item) => {
                     const option = document.createElement('option');
                     option.value = String(item.table_name || '').trim();
-                    option.textContent = `${option.value} (${String(item.table_type || 'table').toLowerCase()}, ${formatCount(item.row_count || 0)} rows)`;
+                    option.textContent = formatDiscoveredTableOptionLabel(item);
                     importBigQueryTableSelect.appendChild(option);
                 });
                 if (requestedTableName && items.some((item) => String(item.table_name || '').trim() === requestedTableName)) {
                     importBigQueryTableSelect.value = requestedTableName;
                 }
+                syncBigQueryRowCountButtonState();
+            }
+
+            function mergeBigQueryTableMetadata(sourceName, tablePayload = {}) {
+                const normalizedSourceName = String(sourceName || '').trim();
+                const normalizedTableName = String(tablePayload.table_name || '').trim();
+                if (!normalizedSourceName || !normalizedTableName || !importBigQueryTableCache.has(normalizedSourceName)) {
+                    return;
+                }
+                const cachedTables = importBigQueryTableCache.get(normalizedSourceName) || [];
+                const mergedTables = cachedTables.map((item) => {
+                    if (String(item.table_name || '').trim() !== normalizedTableName) {
+                        return item;
+                    }
+                    return {
+                        ...item,
+                        table_type: tablePayload.table_type || item.table_type,
+                        row_count: tablePayload.row_count,
+                    };
+                });
+                importBigQueryTableCache.set(normalizedSourceName, mergedTables);
+                resetBigQueryTableSelect(mergedTables, normalizedTableName);
             }
 
             async function loadBigQueryTablesForSource(sourceName, { forceRefresh = false } = {}) {
@@ -7783,6 +7828,35 @@ export function initializeOperatorConsole() {
                         : 'No BigQuery tables were returned. Enter a table name manually if needed.',
                 );
                 return tables;
+            }
+
+            async function fetchBigQueryTableRowCount() {
+                const connectorName = String(importSourceSelect?.value || '').trim();
+                const tableName = getRequestedBigQueryTableName();
+                if (!connectorName || !tableName) {
+                    setInlineStatus(importBigQueryStatus, 'Select or enter a BigQuery table first.', true);
+                    syncBigQueryRowCountButtonState();
+                    return;
+                }
+                if (importBigQueryFetchRowCountBtn) {
+                    importBigQueryFetchRowCountBtn.disabled = true;
+                }
+                setInlineStatus(importBigQueryStatus, `Fetching exact row count for ${tableName}...`);
+                try {
+                    const payload = await apiRequest(`/connectors/${encodeURIComponent(connectorName)}/tables/${encodeURIComponent(tableName)}/count`);
+                    mergeBigQueryTableMetadata(connectorName, payload);
+                    if (importBigQueryTableNameInput) {
+                        importBigQueryTableNameInput.value = String(payload.table_name || tableName).trim();
+                    }
+                    setInlineStatus(
+                        importBigQueryStatus,
+                        `${payload.table_name} has ${formatCount(payload.row_count || 0)} row(s).`,
+                    );
+                } catch (error) {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to fetch BigQuery row count.', true);
+                } finally {
+                    syncBigQueryRowCountButtonState();
+                }
             }
 
             function getImportFieldValue(fieldId) {
@@ -7856,6 +7930,7 @@ export function initializeOperatorConsole() {
                 }
                 if (!isBigQuerySource) {
                     setInlineStatus(importBigQueryStatus, '');
+                    syncBigQueryRowCountButtonState();
                     return;
                 }
 
@@ -8425,12 +8500,19 @@ export function initializeOperatorConsole() {
                     setInlineStatus(importBigQueryStatus, error.message || 'Failed to refresh BigQuery tables.', true);
                 });
             });
+            importBigQueryFetchRowCountBtn?.addEventListener('click', () => {
+                fetchBigQueryTableRowCount().catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to fetch BigQuery row count.', true);
+                });
+            });
             importBigQueryTableSelect?.addEventListener('change', () => {
                 const selectedTableName = String(importBigQueryTableSelect.value || '').trim();
                 if (selectedTableName && importBigQueryTableNameInput) {
                     importBigQueryTableNameInput.value = selectedTableName;
                 }
+                syncBigQueryRowCountButtonState();
             });
+            importBigQueryTableNameInput?.addEventListener('input', syncBigQueryRowCountButtonState);
 
             function getActionButtonsHTML(job) {
                 if (['completed', 'failed', 'stopped'].includes(job.raw_status)) {
