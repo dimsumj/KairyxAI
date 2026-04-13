@@ -3041,6 +3041,7 @@ export function initializeOperatorConsole() {
             };
             let backendMode = 'unknown';
             let cachedConnectors = [];
+            let connectorListRenderRequestId = 0;
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedPredictionModelReadiness = null;
@@ -6390,44 +6391,65 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function buildConnectorCard(connector) {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `<span><strong>${connector.name}</strong>: ${formatConnectorLabel(connector.type)}</span>`;
+
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = 'Delete';
+                deleteButton.style.backgroundColor = 'var(--subtle-text)';
+                deleteButton.dataset.connectorName = connector.name;
+                deleteButton.addEventListener('click', async (event) => {
+                    const nameToDelete = event.target.dataset.connectorName;
+                    if (!confirm(`Are you sure you want to delete the ${connector.name} connector? This action cannot be undone.`)) {
+                        return;
+                    }
+                    try {
+                        await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
+                        publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
+                        loadSavedConnectors();
+                    } catch (error) {
+                        alert(`Error: ${error.message}`);
+                    }
+                });
+                card.appendChild(deleteButton);
+                return card;
+            }
+
+            function renderConnectorListContent(connectors) {
+                if (!connectorListDiv) {
+                    return;
+                }
+                if (!connectors.length) {
+                    const emptyState = document.createElement('div');
+                    emptyState.className = 'card connector-empty-state';
+                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p>';
+                    connectorListDiv.replaceChildren(emptyState);
+                    return;
+                }
+                const fragment = document.createDocumentFragment();
+                connectors.forEach((connector) => {
+                    fragment.appendChild(buildConnectorCard(connector));
+                });
+                connectorListDiv.replaceChildren(fragment);
+            }
+
             async function loadSavedConnectors() {
-                connectorListDiv.innerHTML = ''; // Clear existing list
+                const requestId = connectorListRenderRequestId + 1;
+                connectorListRenderRequestId = requestId;
+                connectorListDiv.replaceChildren();
                 try {
                     const connectors = await refreshConnectorsState();
-
-                    if (connectors.length > 0) {
-                        connectors.forEach(connector => {
-                            const card = document.createElement('div');
-                            card.className = 'card';
-                            card.innerHTML = `<span><strong>${connector.name}</strong>: ${formatConnectorLabel(connector.type)}</span>`;
-
-                            const deleteButton = document.createElement('button');
-                            deleteButton.textContent = 'Delete';
-                            deleteButton.style.backgroundColor = 'var(--subtle-text)';
-                            // Pass the unique name to the delete handler
-                            deleteButton.dataset.connectorName = connector.name;
-
-                            deleteButton.addEventListener('click', async (e) => {
-                                const nameToDelete = e.target.dataset.connectorName;
-                                if (!confirm(`Are you sure you want to delete the ${connector.name} connector? This action cannot be undone.`)) {
-                                    return;
-                                }
-                                try {
-                                    await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
-                                    publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
-                                    loadSavedConnectors(); // Refresh the list
-                                } catch (error) {
-                                    alert(`Error: ${error.message}`);
-                                }
-                            });
-                            connectorListDiv.appendChild(card);
-                            card.appendChild(deleteButton);
-                        });
-                    } else {
-                        connectorListDiv.innerHTML = '<div class="card connector-empty-state"><p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p></div>';
+                    if (requestId !== connectorListRenderRequestId) {
+                        return;
                     }
+                    renderConnectorListContent(connectors);
                 } catch (error) {
                     console.error('Error loading saved connectors:', error);
+                    if (requestId !== connectorListRenderRequestId) {
+                        return;
+                    }
                     if (isWorkspaceContextError(error)) {
                         connectorListDiv.innerHTML = '<p>Finish workspace setup to load connectors.</p>';
                         return;
