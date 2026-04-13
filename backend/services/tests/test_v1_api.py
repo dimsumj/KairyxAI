@@ -151,6 +151,8 @@ def test_root_serves_frontend_static_assets(client):
     assert "Connect Data Source" in js_resp.text
     assert "bigquery_credentials_entry_mode" in js_resp.text
     assert "Service Account JSON File" in js_resp.text
+    assert "Connected to source" in js_resp.text
+    assert "Show import status details" in js_resp.text
     assert "<code>*_ref</code> values through the API." in js_resp.text
     assert "`*_ref` values through the API." not in js_resp.text
 

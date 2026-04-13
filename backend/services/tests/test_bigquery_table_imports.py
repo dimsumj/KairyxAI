@@ -10,6 +10,7 @@ from app.application.imports import ImportService
 from app.core import db as db_module
 from app.core.deps import get_settings_dependency
 from app.core.settings import get_settings
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache
 
@@ -218,6 +219,159 @@ def test_bigquery_table_import_times_out_when_page_fetch_exceeds_budget(client: 
     assert failed_job.json()["status"] == "failed"
     assert failed_job.json()["progress"]["details"]["failure_stage"] == "bigquery_table_import"
 
+
+def test_bigquery_timed_out_import_can_be_deleted(client: TestClient, monkeypatch):
+    settings = replace(
+        get_settings(),
+        import_network_timeout_seconds=0.2,
+        import_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Lists",
+        mock_tables={"churned_users": []},
+    )
+
+    created = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Warehouse Lists",
+            "table_name": "churned_users",
+            "resource_kind": "churn_list",
+            "activate_cohort": True,
+            "cohort_name": "slow_bigquery_list",
+            "column_mapping": {
+                "canonical_user_id": "player_id",
+                "user_id": "player_id",
+                "email": "email",
+                "reason": "reason",
+                "segment": "segment",
+                "as_of_timestamp": "as_of",
+            },
+            "start_date": "2026-04-01",
+            "end_date": "2026-04-03",
+        },
+    )
+    assert created.status_code == 201, created.text
+    job_id = created.json()["id"]
+
+    class SlowBigQueryConnector:
+        def fetch_table_rows_page(self, *args, **kwargs):
+            time.sleep(0.45)
+            return {
+                "rows": [
+                    {
+                        "player_id": "u_1",
+                        "email": "u1@example.com",
+                        "reason": "inactive_7d",
+                        "segment": "vip",
+                        "as_of": "2026-04-01T10:00:00",
+                    }
+                ],
+                "total": 1,
+                "next_cursor": None,
+                "has_more": False,
+            }
+
+    monkeypatch.setattr(
+        "app.application.imports.create_connector",
+        lambda connector_type, config: SlowBigQueryConnector(),
+    )
+
+    run = client.post(f"/api/v1/imports/{job_id}/run")
+    assert run.status_code == 500, run.text
+
+    delete_job = client.delete(f"/api/v1/imports/{job_id}")
+    assert delete_job.status_code == 204, delete_job.text
+
+    deleted = client.get(f"/api/v1/imports/{job_id}")
+    assert deleted.status_code == 404
+
+
+def test_bigquery_completed_import_clears_stale_failure_details(client: TestClient, monkeypatch):
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Lists",
+        mock_tables={"churned_users": []},
+    )
+
+    created = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Warehouse Lists",
+            "table_name": "churned_users",
+            "resource_kind": "churn_list",
+            "activate_cohort": True,
+            "cohort_name": "warehouse_lists",
+            "column_mapping": {
+                "canonical_user_id": "player_id",
+                "user_id": "player_id",
+                "email": "email",
+                "reason": "reason",
+                "segment": "segment",
+                "as_of_timestamp": "as_of",
+            },
+            "start_date": "2026-04-01",
+            "end_date": "2026-04-03",
+        },
+    )
+    assert created.status_code == 201, created.text
+    job_id = created.json()["id"]
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        current_job = repository.get_import_job(job_id)
+        assert current_job is not None
+        repository.update_import_job(
+            job_id,
+            {
+                "status": "failed",
+                "error": "fetch bigquery table page timed out after 0.2s without progress.",
+                "progress": {
+                    "current": 0,
+                    "total": 0,
+                    "pct": 0.0,
+                    "details": {
+                        **dict((current_job.get("progress") or {}).get("details") or {}),
+                        "phase": "reading_bigquery_table",
+                        "failure_reason": "fetch bigquery table page timed out after 0.2s without progress.",
+                        "failure_stage": "bigquery_table_import",
+                    },
+                },
+            },
+        )
+        session.commit()
+
+    class SuccessfulBigQueryConnector:
+        def fetch_table_rows_page(self, *args, **kwargs):
+            return {
+                "rows": [
+                    {
+                        "player_id": "u_1",
+                        "email": "u1@example.com",
+                        "reason": "inactive_7d",
+                        "segment": "vip",
+                        "as_of": "2026-04-01T10:00:00",
+                    }
+                ],
+                "total": 1,
+                "next_cursor": None,
+                "has_more": False,
+            }
+
+    monkeypatch.setattr(
+        "app.application.imports.create_connector",
+        lambda connector_type, config: SuccessfulBigQueryConnector(),
+    )
+
+    run = client.post(f"/api/v1/imports/{job_id}/run")
+    assert run.status_code == 200, run.text
+    assert run.json()["status"] == "completed"
+    assert run.json()["error"] is None
+    assert run.json()["progress"]["details"].get("failure_reason") is None
+    assert run.json()["progress"]["details"].get("failure_stage") is None
 
 def test_bigquery_churn_list_import_creates_active_cohort_and_runs_closed_loop(client: TestClient):
     _create_bigquery_connector(

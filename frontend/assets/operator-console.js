@@ -5278,12 +5278,17 @@ export function initializeOperatorConsole() {
                 const sourceName = spec.source_name || job.source_name || details.source || '';
                 const connector = cachedConnectors.find((item) => item.name === sourceName) || null;
                 const displayName = String(spec.display_name || '').trim() || formatImportDisplayName(sourceName || 'Import', createdAt);
+                const rawStatus = String(job.status || '').toLowerCase();
+                const failureReason = String(job.error || details.failure_reason || '').trim();
+                const displayStatus = rawStatus === 'completed' && failureReason
+                    ? 'Failed'
+                    : mapImportStatus(job.status);
                 return {
                     id: job.id,
                     name: displayName,
-                    status: mapImportStatus(job.status),
-                    raw_status: job.status,
-                    current_step: mapImportStatus(job.status),
+                    status: displayStatus,
+                    raw_status: rawStatus,
+                    current_step: displayStatus,
                     progress_pct: Number(progress.pct || 0),
                     timestamp: createdAt,
                     created_at: createdAt,
@@ -5295,7 +5300,7 @@ export function initializeOperatorConsole() {
                         source: sourceName,
                         type: spec.connector_type || (connector && connector.type) || '',
                         ingested_events: Number(details.events_staged || progress.current || 0),
-                        status: mapImportStatus(job.status),
+                        status: displayStatus,
                         error: job.error || null,
                     }] : [],
                     processing_stats: details.processing || null,
@@ -5348,6 +5353,88 @@ export function initializeOperatorConsole() {
                 return lines.join('<br>');
             }
 
+            function getImportProcessTooltip(job) {
+                const rawStatus = String(job.raw_status || '').toLowerCase();
+                if (!['queued', 'running', 'stopping'].includes(rawStatus)) {
+                    return '';
+                }
+
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const spec = job.spec || {};
+                const phase = String(details.phase || '').toLowerCase();
+                const lines = [];
+
+                let stepLabel = 'Preparing import';
+                if (rawStatus === 'queued') {
+                    stepLabel = 'Queued to start';
+                } else if (rawStatus === 'stopping') {
+                    stepLabel = 'Stopping import';
+                } else if (phase === 'starting') {
+                    stepLabel = 'Connecting to source';
+                } else if (phase === 'staging') {
+                    stepLabel = 'Connected to source';
+                } else if (phase === 'processing') {
+                    stepLabel = 'Importing staged data';
+                } else if (phase === 'reading_bigquery_table') {
+                    stepLabel = 'Connected to BigQuery table';
+                }
+                lines.push(`<strong>Step:</strong> ${escapeHtml(stepLabel)}`);
+
+                const sourceName = String(spec.source_name || details.source || '').trim();
+                if (sourceName) {
+                    lines.push(`<strong>Source:</strong> ${escapeHtml(sourceName)}`);
+                }
+
+                if (phase === 'reading_bigquery_table') {
+                    const tableName = String(spec.table_name || ((details.bigquery_table_import || {}).table_name) || '').trim();
+                    const rowsSeen = Number(details.rows_seen || progress.current || 0);
+                    const totalRows = Number(progress.total || 0);
+                    const rowsLoaded = Number(details.rows_loaded || 0);
+                    const rowsRejected = Number(details.rows_rejected || 0);
+                    if (tableName) {
+                        lines.push(`<strong>Table:</strong> ${escapeHtml(tableName)}`);
+                    }
+                    if (rowsSeen || totalRows || rowsLoaded || rowsRejected) {
+                        const seenLabel = totalRows > 0
+                            ? `${formatCount(rowsSeen)}/${formatCount(totalRows)} seen`
+                            : `${formatCount(rowsSeen)} seen`;
+                        lines.push(
+                            `<strong>Rows:</strong> ${seenLabel}, ${formatCount(rowsLoaded)} loaded, ${formatCount(rowsRejected)} rejected`,
+                        );
+                    }
+                } else {
+                    const current = Number(
+                        progress.current
+                        || details.normalized_events
+                        || details.events_staged
+                        || 0
+                    );
+                    const total = Number(progress.total || 0);
+                    const processedManifests = Number(details.processed_manifests || 0);
+                    const totalManifests = Number(details.total_manifests || details.shards_created || 0);
+                    if (current || total) {
+                        const eventLabel = total > 0
+                            ? `${formatCount(current)}/${formatCount(total)} events`
+                            : `${formatCount(current)} events`;
+                        lines.push(`<strong>Importing:</strong> ${eventLabel}`);
+                    }
+                    if (processedManifests || totalManifests) {
+                        const manifestLabel = totalManifests > 0
+                            ? `${formatCount(processedManifests)}/${formatCount(totalManifests)} shards`
+                            : `${formatCount(processedManifests)} shards`;
+                        lines.push(`<strong>Shards:</strong> ${manifestLabel}`);
+                    }
+                }
+
+                const stopReason = String(details.stop_reason || '').trim();
+                if (stopReason) {
+                    lines.push(`<strong>Stop request:</strong> ${escapeHtml(stopReason)}`);
+                }
+
+                return lines.join('<br>');
+            }
+
             function getImportStatusClass(job) {
                 if (job.status === 'Ready to Use') return 'status-ok';
                 if (job.status === 'Stopped') return 'status-neutral';
@@ -5357,13 +5444,14 @@ export function initializeOperatorConsole() {
 
             function renderImportStatus(job, statusClass) {
                 const status = escapeHtml(job.status || 'Processing');
-                const tooltip = getImportFailureTooltip(job);
+                const failureTooltip = getImportFailureTooltip(job);
+                const tooltip = failureTooltip || getImportProcessTooltip(job);
                 const progressText = getImportProgressText(job);
                 const statusLabel = progressText
                     ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
                 const statusText = tooltip
-                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="Show import failure reason">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
+                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
                     : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
@@ -6841,6 +6929,22 @@ export function initializeOperatorConsole() {
                 const processedManifests = Number(details.processed_manifests || 0);
                 const totalManifests = Number(details.total_manifests || details.shards_created || 0);
                 const pageSize = Number(details.page_size || 0);
+                const rowsSeen = Number(details.rows_seen || progress.current || 0);
+                const rowsLoaded = Number(details.rows_loaded || 0);
+                const rowsRejected = Number(details.rows_rejected || 0);
+
+                if (phase === 'reading_bigquery_table') {
+                    let label = total > 0
+                        ? `${formatCount(rowsSeen)}/${formatCount(total)} rows`
+                        : `${formatCount(rowsSeen)} rows`;
+                    if (rowsLoaded || rowsRejected) {
+                        label += ` - ${formatCount(rowsLoaded)} loaded`;
+                        if (rowsRejected) {
+                            label += `, ${formatCount(rowsRejected)} rejected`;
+                        }
+                    }
+                    return label;
+                }
 
                 if (phase === 'processing') {
                     let label = total > 0

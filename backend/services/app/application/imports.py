@@ -267,12 +267,16 @@ class ImportService:
         job = self.repository.get_import_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        resolved_details_patch = dict(details_patch or {})
+        if str(status or "").lower() != JobStatus.FAILED.value:
+            resolved_details_patch.setdefault("failure_reason", None)
+            resolved_details_patch.setdefault("failure_stage", None)
         updated = self.repository.update_import_job(
             job_id,
             {
                 "status": status,
                 "error": error,
-                "progress": self._merge_progress(job, details_patch=details_patch),
+                "progress": self._merge_progress(job, details_patch=resolved_details_patch),
             },
         )
         self._record_status_transition(
@@ -280,7 +284,7 @@ class ImportService:
             from_status=str(job.get("status") or ""),
             to_status=status,
             reason=reason,
-            metadata=details_patch,
+            metadata=resolved_details_patch,
         )
         return updated
 
@@ -390,7 +394,15 @@ class ImportService:
             {
                 "status": JobStatus.STOPPED.value,
                 "error": None,
-                "progress": self._merge_progress(job, details_patch={"stop_reason": reason, "stop_requested": False}),
+                "progress": self._merge_progress(
+                    job,
+                    details_patch={
+                        "stop_reason": reason,
+                        "stop_requested": False,
+                        "failure_reason": None,
+                        "failure_stage": None,
+                    },
+                ),
             },
         )
         self._record_status_transition(
@@ -689,6 +701,8 @@ class ImportService:
                         "connector_type": connector_record["type"],
                         "events_staged": staged_events,
                         "phase": "completed",
+                        "failure_reason": None,
+                        "failure_stage": None,
                         "processing": processing_stats,
                         "quality_report": quality_report,
                         "identity_summary": identity_summary,
@@ -1888,6 +1902,8 @@ class ImportService:
                         pct=100.0,
                         details_patch={
                             "phase": "completed",
+                            "failure_reason": None,
+                            "failure_stage": None,
                             "rows_seen": rows_seen,
                             "rows_loaded": len(imported_rows),
                             "rows_rejected": rows_rejected,

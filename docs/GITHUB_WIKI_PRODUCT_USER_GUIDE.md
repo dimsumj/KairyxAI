@@ -328,6 +328,8 @@ The import source form and imported-data list now wait for a resolved organizati
 - The Imports page no longer auto-loads heavy diagnostics on first render.
 - Operations, quality, manifests, and schema-contract detail load only when you request them.
 - Import polling continues automatically only while at least one import job is still active.
+- Active import rows now expose a status `?` tooltip with the current step, such as connecting to the source, staging events, processing manifests, or reading rows from a BigQuery table.
+- Completed imports clear old failure and timeout metadata when a rerun succeeds, so `Ready to Use` rows no longer keep stale timeout tooltips after refresh.
 - In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
