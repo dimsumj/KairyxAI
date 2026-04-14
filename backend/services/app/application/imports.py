@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
+from app.application.connectors import ConnectorService
 from app.application.mappings import MappingService
 from app.application.cohorts import CohortService
 from app.application.predictions import PredictionService
@@ -62,6 +63,12 @@ class ImportService:
         session = getattr(self.repository, "session", None)
         if session is not None:
             session.rollback()
+
+    def _materialize_connector_runtime_config(self, connector_record: Dict[str, Any]) -> Dict[str, Any]:
+        config = materialize_secret_refs(dict((connector_record or {}).get("config") or {}))
+        if str((connector_record or {}).get("type") or "").strip().lower() == "bigquery":
+            return ConnectorService._normalize_bigquery_runtime_config(connector_record, config)
+        return config
 
     def _get_import_run_thread(self, job_id: str) -> threading.Thread | None:
         with _IMPORT_RUN_THREADS_LOCK:
@@ -1595,7 +1602,7 @@ class ImportService:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
-            connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
+            connector_config = self._materialize_connector_runtime_config(connector_record)
             connector_config["field_mapping"] = MappingService(self.repository).get_effective_mapping(
                 connector_record["name"],
                 job_id=job_id,
@@ -1797,7 +1804,7 @@ class ImportService:
         self._commit_session()
 
         spec = dict(running.get("spec") or job.get("spec") or {})
-        connector_config = materialize_secret_refs(dict(connector_record.get("config") or {}))
+        connector_config = self._materialize_connector_runtime_config(connector_record)
         connector = create_connector("bigquery", connector_config)
         selected_columns = sorted({str(value) for value in dict(spec.get("column_mapping") or {}).values()})
         cursor = None
