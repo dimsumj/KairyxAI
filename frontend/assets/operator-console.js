@@ -452,6 +452,149 @@ export function initializeOperatorConsole() {
 
             const settingsTabButtons = Array.from(document.querySelectorAll('.settings-tab-button'));
             const settingsTabPanels = Array.from(document.querySelectorAll('.settings-tab-panel'));
+            const statusTooltipLayer = document.createElement('div');
+            statusTooltipLayer.className = 'status-tooltip-layer hidden';
+            statusTooltipLayer.setAttribute('aria-hidden', 'true');
+            statusTooltipLayer.innerHTML = '<div id="status-tooltip-overlay" class="status-tooltip-overlay" role="tooltip"></div>';
+            document.body.appendChild(statusTooltipLayer);
+            const statusTooltipOverlay = statusTooltipLayer.firstElementChild;
+            let activeStatusTooltipTrigger = null;
+
+            function getStatusTooltipTrigger(target) {
+                return target instanceof Element
+                    ? target.closest('.status-help[data-status-tooltip-html]')
+                    : null;
+            }
+
+            function getStatusTooltipHtml(trigger) {
+                if (!trigger) {
+                    return '';
+                }
+                try {
+                    return decodeURIComponent(trigger.dataset.statusTooltipHtml || '');
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            function hideStatusTooltip() {
+                if (activeStatusTooltipTrigger) {
+                    activeStatusTooltipTrigger.setAttribute('aria-expanded', 'false');
+                }
+                activeStatusTooltipTrigger = null;
+                if (statusTooltipOverlay) {
+                    statusTooltipOverlay.innerHTML = '';
+                    statusTooltipOverlay.dataset.placement = '';
+                    statusTooltipOverlay.style.top = '';
+                    statusTooltipOverlay.style.left = '';
+                }
+                statusTooltipLayer.classList.add('hidden');
+                statusTooltipLayer.setAttribute('aria-hidden', 'true');
+            }
+
+            function positionStatusTooltip(trigger = activeStatusTooltipTrigger) {
+                if (!trigger || !statusTooltipOverlay || !document.body.contains(trigger)) {
+                    hideStatusTooltip();
+                    return;
+                }
+                const tooltipHtml = getStatusTooltipHtml(trigger);
+                if (!tooltipHtml) {
+                    hideStatusTooltip();
+                    return;
+                }
+                activeStatusTooltipTrigger = trigger;
+                trigger.setAttribute('aria-expanded', 'true');
+                statusTooltipOverlay.innerHTML = tooltipHtml;
+                statusTooltipLayer.classList.remove('hidden');
+                statusTooltipLayer.setAttribute('aria-hidden', 'false');
+                statusTooltipOverlay.style.left = '0px';
+                statusTooltipOverlay.style.top = '0px';
+                statusTooltipOverlay.dataset.placement = 'above';
+
+                const triggerRect = trigger.getBoundingClientRect();
+                const overlayRect = statusTooltipOverlay.getBoundingClientRect();
+                const viewportPadding = 12;
+                const offset = 10;
+
+                let top = triggerRect.top - overlayRect.height - offset;
+                let placement = 'above';
+                if (top < viewportPadding) {
+                    placement = 'below';
+                    top = triggerRect.bottom + offset;
+                }
+                top = Math.min(
+                    Math.max(viewportPadding, top),
+                    Math.max(viewportPadding, window.innerHeight - overlayRect.height - viewportPadding),
+                );
+
+                let left = triggerRect.left + (triggerRect.width / 2) - (overlayRect.width / 2);
+                left = Math.min(
+                    Math.max(viewportPadding, left),
+                    Math.max(viewportPadding, window.innerWidth - overlayRect.width - viewportPadding),
+                );
+
+                statusTooltipOverlay.dataset.placement = placement;
+                statusTooltipOverlay.style.top = `${top}px`;
+                statusTooltipOverlay.style.left = `${left}px`;
+            }
+
+            function showStatusTooltip(trigger) {
+                if (!trigger) {
+                    hideStatusTooltip();
+                    return;
+                }
+                positionStatusTooltip(trigger);
+            }
+
+            document.addEventListener('mouseover', (event) => {
+                const trigger = getStatusTooltipTrigger(event.target);
+                if (trigger) {
+                    showStatusTooltip(trigger);
+                }
+            });
+
+            document.addEventListener('mouseout', (event) => {
+                const trigger = getStatusTooltipTrigger(event.target);
+                if (!trigger || trigger !== activeStatusTooltipTrigger) {
+                    return;
+                }
+                const relatedTrigger = getStatusTooltipTrigger(event.relatedTarget);
+                if (relatedTrigger === trigger) {
+                    return;
+                }
+                hideStatusTooltip();
+            });
+
+            document.addEventListener('focusin', (event) => {
+                const trigger = getStatusTooltipTrigger(event.target);
+                if (trigger) {
+                    showStatusTooltip(trigger);
+                }
+            });
+
+            document.addEventListener('focusout', (event) => {
+                const trigger = getStatusTooltipTrigger(event.target);
+                if (!trigger || trigger !== activeStatusTooltipTrigger) {
+                    return;
+                }
+                const relatedTrigger = getStatusTooltipTrigger(event.relatedTarget);
+                if (relatedTrigger === trigger) {
+                    return;
+                }
+                hideStatusTooltip();
+            });
+
+            document.addEventListener('scroll', () => {
+                if (activeStatusTooltipTrigger) {
+                    positionStatusTooltip();
+                }
+            }, true);
+
+            window.addEventListener('resize', () => {
+                if (activeStatusTooltipTrigger) {
+                    positionStatusTooltip();
+                }
+            });
 
             function syncSettingsTabState(itemId = activeNavItemId) {
                 const resolvedItemId = findModuleItem('settings', itemId)?.id || getModuleItems('settings')[0]?.id;
@@ -5454,8 +5597,9 @@ export function initializeOperatorConsole() {
                 const statusLabel = progressText
                     ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
+                const encodedTooltip = tooltip ? encodeURIComponent(tooltip) : '';
                 const statusText = tooltip
-                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
+                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}" aria-expanded="false" data-status-tooltip-html="${encodedTooltip}">?</button></span></span>`
                     : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
