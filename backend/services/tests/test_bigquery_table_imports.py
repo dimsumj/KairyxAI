@@ -14,6 +14,16 @@ from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyC
 from app.main import create_app
 from bigquery_service import clear_shared_bigquery_service_cache
 
+SERVICE_ACCOUNT_JSON = """{
+  "type": "service_account",
+  "project_id": "tenant-warehouse",
+  "private_key_id": "key-id-1",
+  "private_key": "-----BEGIN PRIVATE KEY-----\\nabc123\\n-----END PRIVATE KEY-----\\n",
+  "client_email": "warehouse-reader@tenant-warehouse.iam.gserviceaccount.com",
+  "client_id": "1234567890",
+  "token_uri": "https://oauth2.googleapis.com/token"
+}"""
+
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
@@ -162,6 +172,27 @@ def test_bigquery_connector_row_count_falls_back_to_query_when_table_metadata_de
     assert count.json()["table_name"] == "prediction_scores"
     assert count.json()["table_type"] is None
     assert count.json()["row_count"] == 42
+
+
+def test_bigquery_import_runtime_config_recovers_legacy_project_id_from_service_account():
+    service = ImportService(repository=object(), settings=get_settings(), bigquery_service=object())
+    connector_record = {
+        "tenant_id": "torpedo",
+        "project_id": "main",
+        "name": "Warehouse Scores",
+        "type": "bigquery",
+        "config": {
+            "project_id": "main",
+            "dataset_id": "unity_prod_2",
+            "service_account_json": SERVICE_ACCOUNT_JSON,
+        },
+    }
+
+    runtime_config = service._materialize_connector_runtime_config(connector_record)
+
+    assert runtime_config["project_id"] == "tenant-warehouse"
+    assert runtime_config["gcp_project_id"] == "tenant-warehouse"
+    assert runtime_config["dataset_id"] == "unity_prod_2"
 
 
 def test_bigquery_prediction_table_import_materializes_prediction_job_without_mapping_gate(client: TestClient, monkeypatch):
