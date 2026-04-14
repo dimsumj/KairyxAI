@@ -368,13 +368,14 @@ class EmailCampaignService:
         payload = dict(audience or {})
         if not payload.get("prediction_job_id") and not payload.get("cohort_id"):
             raise ValueError("audience.prediction_job_id or audience.cohort_id is required.")
+        include_risks = payload.get("include_risks")
         normalized = {
             "prediction_job_id": EmailCampaignService._optional_text(payload.get("prediction_job_id")),
             "cohort_id": EmailCampaignService._optional_text(payload.get("cohort_id")),
             "include_churned": bool(payload.get("include_churned")),
             "include_risks": [
                 str(item).strip().lower()
-                for item in list(payload.get("include_risks") or ["high", "medium"])
+                for item in list(include_risks or [])
                 if str(item).strip()
             ],
         }
@@ -442,15 +443,16 @@ class EmailCampaignService:
 
     @staticmethod
     def _filter_prediction_rows(rows: List[Dict[str, Any]], *, include_churned: bool, include_risks: List[str]) -> List[Dict[str, Any]]:
-        risk_set = {str(value or "").strip().lower() for value in include_risks if str(value or "").strip()} or {"high", "medium"}
+        risk_set = {str(value or "").strip().lower() for value in include_risks if str(value or "").strip()}
         filtered: List[Dict[str, Any]] = []
         for row in rows:
             churn_state = str(row.get("churn_state", "")).lower()
             risk = str(row.get("predicted_churn_risk", "")).lower()
-            if include_churned and churn_state == "churned":
-                filtered.append(row)
+            if churn_state == "churned":
+                if include_churned:
+                    filtered.append(row)
                 continue
-            if risk in risk_set:
+            if not risk_set or risk in risk_set:
                 filtered.append(row)
         return filtered
 

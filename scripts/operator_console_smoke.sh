@@ -172,11 +172,17 @@ assert_email_campaign_ui() {
     const campaignProviderType = page.locator('#email-campaign-provider-type-select');
     const campaignProvider = page.locator('#email-campaign-provider-select');
     const campaignTemplate = page.locator('#email-campaign-template-select');
+    const campaignAudienceType = page.locator('#email-campaign-audience-type-select');
+    const campaignPredictionAudience = page.locator('#email-campaign-prediction-job-select');
+    const campaignCohortAudience = page.locator('#email-campaign-cohort-select');
     const campaignSend = page.locator('#email-campaign-send-now-btn');
     if (
       await campaignProviderType.count() === 0
       || await campaignProvider.count() === 0
       || await campaignTemplate.count() === 0
+      || await campaignAudienceType.count() === 0
+      || await campaignPredictionAudience.count() === 0
+      || await campaignCohortAudience.count() === 0
       || await campaignSend.count() === 0
     ) {
       throw new Error('Missing email campaign builder controls');
@@ -187,16 +193,32 @@ assert_email_campaign_ui() {
 
     const emailFieldGroup = page.locator('#email-campaign-recipient-email-field-group');
     const externalIdFieldGroup = page.locator('#email-campaign-recipient-external-id-field-group');
+    const emailFieldSelect = page.locator('#email-campaign-recipient-email-field-select');
+    const externalIdFieldSelect = page.locator('#email-campaign-recipient-external-id-field-select');
     const emailFieldDisplay = await emailFieldGroup.evaluate((element) => window.getComputedStyle(element).display);
     const externalIdFieldDisplay = await externalIdFieldGroup.evaluate((element) => window.getComputedStyle(element).display);
-    if (emailFieldDisplay !== 'none' || externalIdFieldDisplay === 'none') {
+    if (
+      emailFieldDisplay !== 'none'
+      || externalIdFieldDisplay === 'none'
+      || await emailFieldSelect.count() === 0
+      || await externalIdFieldSelect.count() === 0
+    ) {
       throw new Error('Campaign provider switch did not toggle recipient field groups');
+    }
+
+    await campaignAudienceType.selectOption('cohort');
+    await page.waitForTimeout(200);
+    const cohortGroupDisplay = await page.locator('#email-campaign-cohort-group').evaluate((element) => window.getComputedStyle(element).display);
+    const predictionGroupDisplay = await page.locator('#email-campaign-prediction-job-group').evaluate((element) => window.getComputedStyle(element).display);
+    if (cohortGroupDisplay === 'none' || predictionGroupDisplay !== 'none') {
+      throw new Error('Campaign audience source switch did not toggle prediction vs cohort selectors');
     }
 
     return {
       providerTypeValue: await providerType.inputValue(),
       providerSaveLabel: await providerSave.textContent() || '',
       campaignProviderTypeValue: await campaignProviderType.inputValue(),
+      campaignAudienceTypeValue: await campaignAudienceType.inputValue(),
       campaignTemplatePlaceholder: await campaignTemplate.first().locator('option').first().textContent() || '',
       campaignSendLabel: await campaignSend.textContent() || '',
       externalIdFieldDisplay,

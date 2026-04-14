@@ -961,29 +961,47 @@ WHERE predicted_churn_risk = 'high'
                             <span id="email-campaign-template-status" class="subtle"></span>
                         </div>
                     </div>
-                    <div class="grid-2">
+                    <div class="grid-3">
                         <div class="form-group">
+                            <label for="email-campaign-audience-type-select">Audience Source</label>
+                            <select id="email-campaign-audience-type-select">
+                                <option value="prediction" selected>Prediction Audience</option>
+                                <option value="cohort">Cohort</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-prediction-job-group">
                             <label for="email-campaign-prediction-job-select">Prediction Audience</label>
                             <select id="email-campaign-prediction-job-select">
                                 <option value="">Load predictions first</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="email-campaign-cohort-group" style="display: none;">
+                            <label for="email-campaign-cohort-select">Cohort Audience</label>
+                            <select id="email-campaign-cohort-select">
+                                <option value="">Load cohorts first</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-risk-filters-group">
                             <label for="email-campaign-risk-filters-input">Risk Filters</label>
-                            <input type="text" id="email-campaign-risk-filters-input" value="high,medium" placeholder="high,medium">
+                            <input type="text" id="email-campaign-risk-filters-input" value="" placeholder="Leave blank to send all risk levels">
                         </div>
                     </div>
                     <div class="grid-2">
                         <div class="form-group" id="email-campaign-recipient-email-field-group">
-                            <label for="email-campaign-recipient-email-field-input">Recipient Email Field</label>
-                            <input type="text" id="email-campaign-recipient-email-field-input" value="email" placeholder="email">
+                            <label for="email-campaign-recipient-email-field-select">Recipient Email Field</label>
+                            <select id="email-campaign-recipient-email-field-select">
+                                <option value="">Select an audience first</option>
+                            </select>
                         </div>
                         <div class="form-group" id="email-campaign-recipient-external-id-field-group" style="display: none;">
-                            <label for="email-campaign-recipient-external-id-field-input">Recipient External ID Field</label>
-                            <input type="text" id="email-campaign-recipient-external-id-field-input" value="user_id" placeholder="user_id">
+                            <label for="email-campaign-recipient-external-id-field-select">Recipient External ID Field</label>
+                            <select id="email-campaign-recipient-external-id-field-select">
+                                <option value="">Select an audience first</option>
+                            </select>
                         </div>
                     </div>
-                        <label style="display: inline-flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+                        <div id="email-campaign-audience-field-status" class="subtle" style="margin-bottom: 1rem;"></div>
+                        <label id="email-campaign-include-churned-group" style="display: inline-flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
                             <input type="checkbox" id="email-campaign-include-churned-checkbox">
                             Include already churned users
                         </label>

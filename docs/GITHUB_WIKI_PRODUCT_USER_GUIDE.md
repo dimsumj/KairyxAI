@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors` and save a campaign provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign.
+7. Go to `Data Core -> Connectors` and save a campaign provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -812,10 +812,12 @@ Provider behavior:
 | `Provider Connection` | Select | Chooses which saved SendGrid or Braze account to use. | `Lifecycle Braze` | Asset browsing and send execution use that provider connection. |
 | `Dynamic Template` / `Braze API Campaign` | Select | Chooses the provider-specific messaging asset. SendGrid loads dynamic templates; Braze loads API-triggered campaigns only. | `Winback Reward` | The campaign stores the selected `template_id` plus an asset summary snapshot. |
 | `Refresh Assets` | Button | Reloads templates or Braze campaigns for the selected provider connection. | None | The asset select refreshes from the current provider account. |
-| `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. | `pred_20260410_0900` | Campaign execution resolves recipients from that prediction job at send time. |
-| `Risk Filters` | Text box | Comma-separated risk values to keep from the selected prediction job. | `high,medium` | Only matching prediction rows are used at send time. |
-| `Recipient Email Field` | Text box | Visible when `Campaign Provider` is `SendGrid`. Sets the field path in the audience row that contains the recipient address. | `email` | Each SendGrid personalization uses that field as the `to` email. |
-| `Recipient External ID Field` | Text box | Visible when `Campaign Provider` is `Braze`. Sets the field path in the audience row that contains the Braze external user id. | `user_id` | Each Braze recipient uses that field as `external_user_id`. |
+| `Audience Source` | Select | Switches the audience input between prediction jobs and saved cohorts. | `Cohort` | The builder shows the matching audience selector and payload shape. |
+| `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. The label now prefers the prediction audience label or resolved import name instead of the raw job id. | `High Risk Winback Import (completed)` | Campaign execution resolves recipients from that prediction job at send time. |
+| `Cohort Audience` | Select | Chooses a saved cohort whose latest members already contain identifiers such as `user_id`, `canonical_user_id`, or `email`. | `VIP Returners (active)` | Campaign execution resolves recipients from that cohort at send time. |
+| `Risk Filters` | Text box | Prediction-only filter for risk values to keep. Leave it blank to send to all non-churned prediction rows. | blank | All non-churned prediction rows are eligible at send time. |
+| `Recipient Email Field` | Select | Visible when `Campaign Provider` is `SendGrid`. The options are sampled from JSON keys found in the selected audience rows. | `email` | Each SendGrid personalization uses that field as the `to` email. |
+| `Recipient External ID Field` | Select | Visible when `Campaign Provider` is `Braze`. The options are sampled from JSON keys found in the selected audience rows. | `braze_external_id` | Each Braze recipient uses that field as `external_user_id`. |
 | `Include already churned users` | Checkbox | Includes rows whose churn state is already marked as churned. | Checked | Churned rows are allowed into the send audience. |
 | `Template Deeplink Variable` | Text box | Variable name that receives the final deeplink URL in the provider payload. | `deeplink_url` | SendGrid receives it in `dynamic_template_data`; Braze receives it in `trigger_properties`. |
 | `Audience Deeplink Override Field (optional)` | Text box | If present on a row, this field wins over the campaign deeplink template. | `reward_deeplink_url` | Matching rows use the row-level deeplink directly. |
@@ -827,8 +829,10 @@ Provider behavior:
 | `Schedule Campaign` | Button | Creates or updates the campaign in `scheduled` status. | None | Campaign becomes editable scheduled work. |
 | `Send Now` | Button | Runs the selected campaign immediately. If no campaign is selected yet, the console saves a draft first and then sends it. | None | Campaign executes through the selected provider and moves to `sent`, `sent_with_errors`, or `failed`. |
 
-Current UI limit:
-- The browser builder currently edits prediction-audience campaigns only. The backend also supports cohort-based audiences, but those should be created or updated through the API for now.
+Audience behavior:
+- Prediction audiences keep the existing risk-filter and include-churned controls.
+- Cohort audiences skip prediction-only risk filtering and use the saved cohort member payload directly.
+- Recipient field selects are populated from sampled audience JSON keys so operators can choose a field instead of typing raw paths blind.
 
 #### Sample SendGrid email campaign request
 ```json

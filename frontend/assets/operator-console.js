@@ -3047,6 +3047,7 @@ export function initializeOperatorConsole() {
             let cachedProviderConnections = [];
             let cachedImports = [];
             let cachedPredictionJobs = [];
+            let cachedCohorts = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
@@ -3059,6 +3060,7 @@ export function initializeOperatorConsole() {
             let lastSeenImportsVersion = '';
             const importBigQueryTableCache = new Map();
             const emailCampaignAssetCache = new Map();
+            const emailCampaignAudienceFieldCache = new Map();
 
             function renderConnectorEntrySummary(message = '') {
                 const configuredCount = cachedConnectors.length;
@@ -5501,6 +5503,15 @@ export function initializeOperatorConsole() {
                 return cachedPredictionJobs;
             }
 
+            async function refreshCohortsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedCohorts;
+                }
+                const payload = await apiRequest('/cohorts');
+                cachedCohorts = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedCohorts;
+            }
+
             function buildDefaultPredictionModelReadiness() {
                 return {
                     state: 'untrained',
@@ -6313,6 +6324,55 @@ export function initializeOperatorConsole() {
                     current = current[part];
                 }
                 return current;
+            }
+
+            function collectObjectFieldPaths(raw, prefix = '', bucket = new Set(), depth = 0) {
+                if (!raw || typeof raw !== 'object' || Array.isArray(raw) || depth > 4) {
+                    return bucket;
+                }
+                Object.entries(raw).forEach(([key, value]) => {
+                    const path = prefix ? `${prefix}.${key}` : key;
+                    if (value && typeof value === 'object' && !Array.isArray(value)) {
+                        collectObjectFieldPaths(value, path, bucket, depth + 1);
+                        return;
+                    }
+                    bucket.add(path);
+                });
+                return bucket;
+            }
+
+            function getPreferredAudienceField(options = [], preferredKeys = []) {
+                const normalizedOptions = Array.isArray(options) ? options : [];
+                const lookup = new Set(normalizedOptions);
+                return preferredKeys.find((key) => lookup.has(key)) || normalizedOptions[0] || '';
+            }
+
+            function populateAudienceFieldSelect(select, fieldOptions = [], {
+                placeholder = 'Select an audience first',
+                preferredValue = '',
+                fallbackKeys = [],
+            } = {}) {
+                if (!select) {
+                    return '';
+                }
+                const options = Array.from(new Set((Array.isArray(fieldOptions) ? fieldOptions : []).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+                select.innerHTML = '';
+                const placeholderOption = document.createElement('option');
+                placeholderOption.value = '';
+                placeholderOption.textContent = placeholder;
+                select.appendChild(placeholderOption);
+                options.forEach((fieldPath) => {
+                    const option = document.createElement('option');
+                    option.value = fieldPath;
+                    option.textContent = fieldPath;
+                    select.appendChild(option);
+                });
+                const selectedValue = String(preferredValue || '').trim() || getPreferredAudienceField(options, fallbackKeys);
+                if (selectedValue) {
+                    ensureSelectOption(select, selectedValue, selectedValue);
+                    select.value = selectedValue;
+                }
+                return selectedValue;
             }
 
             function pickValue(raw, keys, overridePath) {
@@ -9181,17 +9241,24 @@ export function initializeOperatorConsole() {
             const emailCampaignTemplateLabel = document.getElementById('email-campaign-template-label');
             const emailCampaignTemplateSelect = document.getElementById('email-campaign-template-select');
             const emailCampaignTemplateRefreshBtn = document.getElementById('email-campaign-template-refresh-btn');
+            const emailCampaignAudienceTypeSelect = document.getElementById('email-campaign-audience-type-select');
+            const emailCampaignPredictionJobGroup = document.getElementById('email-campaign-prediction-job-group');
             const emailCampaignPredictionJobSelect = document.getElementById('email-campaign-prediction-job-select');
+            const emailCampaignCohortGroup = document.getElementById('email-campaign-cohort-group');
+            const emailCampaignCohortSelect = document.getElementById('email-campaign-cohort-select');
             const emailCampaignUpcomingList = document.getElementById('email-campaign-upcoming-list');
             const emailCampaignPastList = document.getElementById('email-campaign-past-list');
             const emailCampaignDetailOutput = document.getElementById('email-campaign-detail-output');
             const emailCampaignNameInput = document.getElementById('email-campaign-name-input');
+            const emailCampaignRiskFiltersGroup = document.getElementById('email-campaign-risk-filters-group');
             const emailCampaignRiskFiltersInput = document.getElementById('email-campaign-risk-filters-input');
+            const emailCampaignIncludeChurnedGroup = document.getElementById('email-campaign-include-churned-group');
             const emailCampaignIncludeChurnedCheckbox = document.getElementById('email-campaign-include-churned-checkbox');
             const emailCampaignRecipientEmailFieldGroup = document.getElementById('email-campaign-recipient-email-field-group');
-            const emailCampaignRecipientEmailFieldInput = document.getElementById('email-campaign-recipient-email-field-input');
+            const emailCampaignRecipientEmailFieldSelect = document.getElementById('email-campaign-recipient-email-field-select');
             const emailCampaignRecipientExternalIdFieldGroup = document.getElementById('email-campaign-recipient-external-id-field-group');
-            const emailCampaignRecipientExternalIdFieldInput = document.getElementById('email-campaign-recipient-external-id-field-input');
+            const emailCampaignRecipientExternalIdFieldSelect = document.getElementById('email-campaign-recipient-external-id-field-select');
+            const emailCampaignAudienceFieldStatus = document.getElementById('email-campaign-audience-field-status');
             const emailCampaignDeeplinkTemplateFieldInput = document.getElementById('email-campaign-deeplink-template-field-input');
             const emailCampaignDeeplinkTemplateInput = document.getElementById('email-campaign-deeplink-template-input');
             const emailCampaignDeeplinkOverrideFieldInput = document.getElementById('email-campaign-deeplink-override-field-input');
@@ -9358,6 +9425,76 @@ export function initializeOperatorConsole() {
                 });
                 if (cohorts.some((item) => item.cohort_id === previousValue)) {
                     select.value = previousValue;
+                }
+            }
+
+            function findCohort(cohortId) {
+                return (cachedCohorts || []).find((item) => item.cohort_id === cohortId) || null;
+            }
+
+            function getPredictionAudienceLabel(job) {
+                const details = (job && job.progress && job.progress.details) || {};
+                return String(
+                    details.audience_label
+                    || details.resolved_import_display_name
+                    || (job && job.spec && job.spec.source_name)
+                    || (job && job.id)
+                    || ''
+                ).trim();
+            }
+
+            function formatPredictionAudienceOption(job) {
+                const label = getPredictionAudienceLabel(job) || String(job?.id || 'Prediction');
+                const status = String(job?.status || 'unknown').trim();
+                return status ? `${label} (${status})` : label;
+            }
+
+            function getCurrentEmailCampaignAudienceType() {
+                return String(emailCampaignAudienceTypeSelect?.value || 'prediction').trim().toLowerCase() || 'prediction';
+            }
+
+            function getSelectedEmailCampaignAudienceSelection() {
+                const audienceType = getCurrentEmailCampaignAudienceType();
+                if (audienceType === 'cohort') {
+                    return {
+                        audienceType,
+                        audienceId: String(emailCampaignCohortSelect?.value || '').trim(),
+                    };
+                }
+                return {
+                    audienceType: 'prediction',
+                    audienceId: String(emailCampaignPredictionJobSelect?.value || '').trim(),
+                };
+            }
+
+            function formatEmailCampaignAudienceLabel(audience = {}) {
+                const cohortId = String((audience || {}).cohort_id || '').trim();
+                if (cohortId) {
+                    const cohort = findCohort(cohortId);
+                    const cohortName = String(cohort?.name || '').trim();
+                    return cohortName ? `${cohortName} (${cohortId})` : cohortId;
+                }
+                const predictionJobId = String((audience || {}).prediction_job_id || '').trim();
+                if (!predictionJobId) {
+                    return '-';
+                }
+                const job = (cachedPredictionJobs || []).find((item) => item.id === predictionJobId) || null;
+                const label = getPredictionAudienceLabel(job);
+                return label ? `${label} (${predictionJobId})` : predictionJobId;
+            }
+
+            function populateEmailCampaignCohortSelect(cohorts = cachedCohorts) {
+                const items = Array.isArray(cohorts) ? cohorts : [];
+                const previousValue = emailCampaignCohortSelect?.value || '';
+                emailCampaignCohortSelect.innerHTML = '<option value="">Select a cohort audience</option>';
+                items.forEach((cohort) => {
+                    const option = document.createElement('option');
+                    option.value = cohort.cohort_id;
+                    option.textContent = `${cohort.name || cohort.cohort_id} (${cohort.status || 'unknown'})`;
+                    emailCampaignCohortSelect.appendChild(option);
+                });
+                if (previousValue && items.some((item) => item.cohort_id === previousValue)) {
+                    emailCampaignCohortSelect.value = previousValue;
                 }
             }
 
@@ -9871,12 +10008,84 @@ export function initializeOperatorConsole() {
                 items.forEach((job) => {
                     const option = document.createElement('option');
                     option.value = job.id;
-                    option.textContent = `${job.id} (${job.status || 'unknown'})`;
+                    option.textContent = formatPredictionAudienceOption(job);
                     emailCampaignPredictionJobSelect.appendChild(option);
                 });
                 if (previousValue && items.some((item) => item.id === previousValue)) {
                     emailCampaignPredictionJobSelect.value = previousValue;
                 }
+            }
+
+            function resetEmailCampaignAudienceFieldSelects(message = 'Select an audience first.') {
+                populateAudienceFieldSelect(emailCampaignRecipientEmailFieldSelect, [], {
+                    placeholder: message,
+                });
+                populateAudienceFieldSelect(emailCampaignRecipientExternalIdFieldSelect, [], {
+                    placeholder: message,
+                });
+                setInlineStatus(emailCampaignAudienceFieldStatus, message);
+            }
+
+            function syncEmailCampaignAudienceSourceFields() {
+                const audienceType = getCurrentEmailCampaignAudienceType();
+                emailCampaignPredictionJobGroup.style.display = audienceType === 'prediction' ? 'block' : 'none';
+                emailCampaignCohortGroup.style.display = audienceType === 'cohort' ? 'block' : 'none';
+                emailCampaignRiskFiltersGroup.style.display = audienceType === 'prediction' ? 'block' : 'none';
+                emailCampaignIncludeChurnedGroup.style.display = audienceType === 'prediction' ? 'inline-flex' : 'none';
+                if (audienceType === 'cohort') {
+                    emailCampaignRiskFiltersInput.value = '';
+                    emailCampaignIncludeChurnedCheckbox.checked = false;
+                }
+            }
+
+            async function loadEmailCampaignAudienceFieldOptions({ forceRefresh = false, preserveSelection = true } = {}) {
+                const { audienceType, audienceId } = getSelectedEmailCampaignAudienceSelection();
+                const currentEmailField = preserveSelection ? String(emailCampaignRecipientEmailFieldSelect.value || '').trim() : '';
+                const currentExternalIdField = preserveSelection ? String(emailCampaignRecipientExternalIdFieldSelect.value || '').trim() : '';
+                if (!audienceId) {
+                    resetEmailCampaignAudienceFieldSelects(
+                        audienceType === 'cohort' ? 'Select a cohort audience first.' : 'Select a prediction audience first.',
+                    );
+                    return [];
+                }
+                const cacheKey = `${audienceType}:${audienceId}`;
+                let fieldOptions = forceRefresh ? null : emailCampaignAudienceFieldCache.get(cacheKey);
+                let sampleRows = [];
+                if (!Array.isArray(fieldOptions)) {
+                    const payload = audienceType === 'cohort'
+                        ? await apiRequest(`/cohorts/${encodeURIComponent(audienceId)}/members?page=1&page_size=100`)
+                        : await apiRequest(`/predictions/${encodeURIComponent(audienceId)}/results?page=1&page_size=100`);
+                    sampleRows = Array.isArray(payload.items) ? payload.items : [];
+                    const discoveredFields = new Set();
+                    sampleRows.forEach((row) => {
+                        collectObjectFieldPaths(row, '', discoveredFields);
+                    });
+                    fieldOptions = [...discoveredFields].sort((left, right) => left.localeCompare(right));
+                    emailCampaignAudienceFieldCache.set(cacheKey, fieldOptions);
+                    emailCampaignAudienceFieldCache.set(`${cacheKey}:sample-size`, sampleRows.length);
+                } else {
+                    sampleRows = new Array(Number(emailCampaignAudienceFieldCache.get(`${cacheKey}:sample-size`) || 0));
+                }
+                populateAudienceFieldSelect(emailCampaignRecipientEmailFieldSelect, fieldOptions, {
+                    placeholder: fieldOptions.length ? 'Select recipient email field' : 'No audience fields detected',
+                    preferredValue: currentEmailField,
+                    fallbackKeys: ['email', 'profile.email', 'attributes.email'],
+                });
+                populateAudienceFieldSelect(emailCampaignRecipientExternalIdFieldSelect, fieldOptions, {
+                    placeholder: fieldOptions.length ? 'Select recipient external id field' : 'No audience fields detected',
+                    preferredValue: currentExternalIdField,
+                    fallbackKeys: ['braze_external_id', 'external_user_id', 'user_id', 'canonical_user_id', 'email'],
+                });
+                if (!fieldOptions.length) {
+                    setInlineStatus(emailCampaignAudienceFieldStatus, 'No JSON keys were detected from the sampled audience rows.', true);
+                    return [];
+                }
+                const sampleCount = Number(emailCampaignAudienceFieldCache.get(`${cacheKey}:sample-size`) || sampleRows.length || 0);
+                setInlineStatus(
+                    emailCampaignAudienceFieldStatus,
+                    `Detected ${fieldOptions.length} JSON key${fieldOptions.length === 1 ? '' : 's'} from ${sampleCount} sampled row${sampleCount === 1 ? '' : 's'}.`,
+                );
+                return fieldOptions;
             }
 
             function syncEmailCampaignProviderFields({ preferredProviderConnectionId = '' } = {}) {
@@ -9885,12 +10094,6 @@ export function initializeOperatorConsole() {
                 emailCampaignTemplateLabel.textContent = descriptor.assetLabel;
                 emailCampaignRecipientEmailFieldGroup.style.display = providerType === 'braze' ? 'none' : 'block';
                 emailCampaignRecipientExternalIdFieldGroup.style.display = providerType === 'braze' ? 'block' : 'none';
-                if (!String(emailCampaignRecipientEmailFieldInput.value || '').trim()) {
-                    emailCampaignRecipientEmailFieldInput.value = 'email';
-                }
-                if (!String(emailCampaignRecipientExternalIdFieldInput.value || '').trim()) {
-                    emailCampaignRecipientExternalIdFieldInput.value = 'user_id';
-                }
                 populateEmailCampaignProviderSelect({ preferredValue: preferredProviderConnectionId });
             }
 
@@ -10005,13 +10208,15 @@ export function initializeOperatorConsole() {
                     || (findProviderConnection(campaign.provider_connection_id) || {}).provider
                     || 'sendgrid'
                 ).trim().toLowerCase() || 'sendgrid';
+                const audience = campaign.audience || {};
+                const audienceType = String(audience.cohort_id || '').trim() ? 'cohort' : 'prediction';
                 emailCampaignProviderTypeSelect.value = providerType;
+                emailCampaignAudienceTypeSelect.value = audienceType;
+                syncEmailCampaignAudienceSourceFields();
                 syncEmailCampaignProviderFields({ preferredProviderConnectionId: campaign.provider_connection_id });
                 emailCampaignNameInput.value = campaign.name || '';
-                emailCampaignRecipientEmailFieldInput.value = campaign.recipient_email_field || 'email';
-                emailCampaignRecipientExternalIdFieldInput.value = campaign.recipient_external_id_field || 'user_id';
-                emailCampaignRiskFiltersInput.value = ((campaign.audience || {}).include_risks || ['high', 'medium']).join(',');
-                emailCampaignIncludeChurnedCheckbox.checked = Boolean((campaign.audience || {}).include_churned);
+                emailCampaignRiskFiltersInput.value = Array.isArray(audience.include_risks) ? audience.include_risks.join(',') : '';
+                emailCampaignIncludeChurnedCheckbox.checked = Boolean(audience.include_churned);
                 emailCampaignDeeplinkTemplateFieldInput.value = campaign.deeplink_template_field || 'deeplink_url';
                 emailCampaignDeeplinkOverrideFieldInput.value = campaign.deeplink_override_field || '';
                 emailCampaignDeeplinkTemplateInput.value = campaign.deeplink_template || '';
@@ -10019,19 +10224,35 @@ export function initializeOperatorConsole() {
                 emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(campaign.schedule_at);
                 ensureSelectOption(emailCampaignProviderSelect, campaign.provider_connection_id, campaign.provider_connection_id);
                 emailCampaignProviderSelect.value = campaign.provider_connection_id || '';
-                const predictionJobId = ((campaign.audience || {}).prediction_job_id || '').trim();
+                const predictionJobId = String(audience.prediction_job_id || '').trim();
+                const cohortId = String(audience.cohort_id || '').trim();
                 if (predictionJobId) {
-                    ensureSelectOption(emailCampaignPredictionJobSelect, predictionJobId, `${predictionJobId} (selected)`);
+                    ensureSelectOption(emailCampaignPredictionJobSelect, predictionJobId, formatEmailCampaignAudienceLabel({ prediction_job_id: predictionJobId }));
                     emailCampaignPredictionJobSelect.value = predictionJobId;
                 } else {
                     emailCampaignPredictionJobSelect.value = '';
-                    if ((campaign.audience || {}).cohort_id) {
-                        setInlineStatus(
-                            emailCampaignStatus,
-                            'This campaign uses a cohort audience. Execution is supported, but the current form edits prediction-audience campaigns only.',
-                            true,
-                        );
-                    }
+                }
+                if (cohortId) {
+                    ensureSelectOption(emailCampaignCohortSelect, cohortId, formatEmailCampaignAudienceLabel({ cohort_id: cohortId }));
+                    emailCampaignCohortSelect.value = cohortId;
+                } else {
+                    emailCampaignCohortSelect.value = '';
+                }
+                await loadEmailCampaignAudienceFieldOptions({ preserveSelection: false });
+                if (providerType === 'braze') {
+                    ensureSelectOption(
+                        emailCampaignRecipientExternalIdFieldSelect,
+                        campaign.recipient_external_id_field || 'user_id',
+                        campaign.recipient_external_id_field || 'user_id',
+                    );
+                    emailCampaignRecipientExternalIdFieldSelect.value = campaign.recipient_external_id_field || 'user_id';
+                } else {
+                    ensureSelectOption(
+                        emailCampaignRecipientEmailFieldSelect,
+                        campaign.recipient_email_field || 'email',
+                        campaign.recipient_email_field || 'email',
+                    );
+                    emailCampaignRecipientEmailFieldSelect.value = campaign.recipient_email_field || 'email';
                 }
                 try {
                     await loadEmailCampaignAssets(campaign.provider_connection_id, {
@@ -10049,10 +10270,13 @@ export function initializeOperatorConsole() {
             function resetEmailCampaignForm() {
                 selectedEmailCampaignId = null;
                 emailCampaignNameInput.value = '';
-                emailCampaignRiskFiltersInput.value = 'high,medium';
+                emailCampaignAudienceTypeSelect.value = 'prediction';
+                emailCampaignPredictionJobSelect.value = '';
+                emailCampaignCohortSelect.value = '';
+                emailCampaignRiskFiltersInput.value = '';
                 emailCampaignIncludeChurnedCheckbox.checked = false;
-                emailCampaignRecipientEmailFieldInput.value = 'email';
-                emailCampaignRecipientExternalIdFieldInput.value = 'user_id';
+                syncEmailCampaignAudienceSourceFields();
+                resetEmailCampaignAudienceFieldSelects('Select an audience first.');
                 emailCampaignDeeplinkTemplateFieldInput.value = 'deeplink_url';
                 emailCampaignDeeplinkOverrideFieldInput.value = '';
                 emailCampaignDeeplinkTemplateInput.value = '';
@@ -10072,14 +10296,19 @@ export function initializeOperatorConsole() {
                 const descriptor = getCampaignProviderConfig(provider);
                 const providerConnectionId = String(emailCampaignProviderSelect.value || '').trim();
                 const templateId = String(emailCampaignTemplateSelect.value || '').trim();
+                const audienceType = getCurrentEmailCampaignAudienceType();
                 const predictionJobId = String(emailCampaignPredictionJobSelect.value || '').trim();
+                const cohortId = String(emailCampaignCohortSelect.value || '').trim();
                 if (!providerConnectionId) {
                     throw new Error(`Select a ${descriptor.label} provider connection.`);
                 }
                 if (!templateId) {
                     throw new Error(`Select a ${descriptor.assetLabel.toLowerCase()}.`);
                 }
-                if (!predictionJobId) {
+                if (audienceType === 'cohort' && !cohortId) {
+                    throw new Error('Select a cohort audience.');
+                }
+                if (audienceType !== 'cohort' && !predictionJobId) {
                     throw new Error('Select a prediction audience.');
                 }
                 const payload = {
@@ -10087,20 +10316,24 @@ export function initializeOperatorConsole() {
                     provider,
                     provider_connection_id: providerConnectionId,
                     template_id: templateId,
-                    audience: {
-                        prediction_job_id: predictionJobId,
-                        include_risks: splitCsv(emailCampaignRiskFiltersInput.value).map((item) => item.toLowerCase()),
-                        include_churned: Boolean(emailCampaignIncludeChurnedCheckbox.checked),
-                    },
+                    audience: audienceType === 'cohort'
+                        ? {
+                            cohort_id: cohortId,
+                        }
+                        : {
+                            prediction_job_id: predictionJobId,
+                            include_risks: splitCsv(emailCampaignRiskFiltersInput.value).map((item) => item.toLowerCase()),
+                            include_churned: Boolean(emailCampaignIncludeChurnedCheckbox.checked),
+                        },
                     merge_fields: mergeFields,
                     deeplink_template_field: String(emailCampaignDeeplinkTemplateFieldInput.value || '').trim() || 'deeplink_url',
                     deeplink_override_field: String(emailCampaignDeeplinkOverrideFieldInput.value || '').trim() || null,
                     deeplink_template: String(emailCampaignDeeplinkTemplateInput.value || '').trim() || null,
                 };
                 if (provider === 'braze') {
-                    payload.recipient_external_id_field = String(emailCampaignRecipientExternalIdFieldInput.value || '').trim() || 'user_id';
+                    payload.recipient_external_id_field = String(emailCampaignRecipientExternalIdFieldSelect.value || '').trim() || 'user_id';
                 } else {
-                    payload.recipient_email_field = String(emailCampaignRecipientEmailFieldInput.value || '').trim() || 'email';
+                    payload.recipient_email_field = String(emailCampaignRecipientEmailFieldSelect.value || '').trim() || 'email';
                 }
                 if (!payload.name) {
                     throw new Error('Campaign name is required.');
@@ -10191,7 +10424,7 @@ export function initializeOperatorConsole() {
                         { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
                         { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid'))}</span>` },
                         { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
-                        { label: 'Audience', render: (item) => escapeHtml(((item.audience || {}).prediction_job_id || (item.audience || {}).cohort_id || '-')) },
+                        { label: 'Audience', render: (item) => escapeHtml(formatEmailCampaignAudienceLabel(item.audience || {})) },
                         { label: 'Schedule', render: (item) => escapeHtml(formatDateTime(item.schedule_at)) },
                         {
                             label: 'Actions',
@@ -10232,14 +10465,17 @@ export function initializeOperatorConsole() {
 
             async function loadEmailCampaignWorkspace({ preserveSelection = true, forceTemplateRefresh = false } = {}) {
                 try {
-                    const [providers, predictionJobs, campaigns] = await Promise.all([
+                    const [providers, predictionJobs, cohorts, campaigns] = await Promise.all([
                         refreshProviderConnectionsState(),
                         refreshPredictionJobsState(),
+                        refreshCohortsState(),
                         refreshEmailCampaignsState(),
                     ]);
                     syncProviderConnectionFormFields();
                     renderProviderConnectionList(providers);
                     populateEmailCampaignPredictionSelect(predictionJobs);
+                    populateEmailCampaignCohortSelect(cohorts);
+                    syncEmailCampaignAudienceSourceFields();
                     syncEmailCampaignProviderFields();
                     renderEmailCampaignLists(campaigns);
                     const hasSelectedCampaign = preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId);
@@ -10257,6 +10493,7 @@ export function initializeOperatorConsole() {
                         } else {
                             resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
                         }
+                        await loadEmailCampaignAudienceFieldOptions({ forceRefresh: forceTemplateRefresh, preserveSelection: true });
                     }
                     if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
                         loadProviderConnectionIntoForm(selectedProviderConnectionId);
@@ -10266,10 +10503,12 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         cachedProviderConnections = [];
+                        cachedCohorts = [];
                         syncProviderConnectionFormFields();
                         renderProviderConnectionList([]);
                         renderEmailCampaignLists([]);
                         resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
+                        resetEmailCampaignAudienceFieldSelects('Finish workspace setup to inspect audience fields.');
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         setInlineStatus(emailCampaignStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         return;
@@ -10510,7 +10749,7 @@ export function initializeOperatorConsole() {
             async function loadAudienceEngine() {
                 try {
                     const [cohortPayload, savedQueryPayload] = await Promise.all([
-                        apiRequest('/cohorts'),
+                        refreshCohortsState().then((items) => ({ items })),
                         apiRequest('/sql-workspace/queries'),
                     ]);
                     const cohorts = Array.isArray(cohortPayload.items) ? cohortPayload.items : [];
@@ -11699,6 +11938,7 @@ export function initializeOperatorConsole() {
             emailCampaignProviderTypeSelect.addEventListener('change', async () => {
                 syncEmailCampaignProviderFields();
                 try {
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: true });
                     if (!emailCampaignProviderSelect.value) {
                         resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
                         return;
@@ -11719,9 +11959,36 @@ export function initializeOperatorConsole() {
                         emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
                     }
                     syncEmailCampaignProviderFields({ preferredProviderConnectionId: emailCampaignProviderSelect.value });
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: true });
                     await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: false });
                 } catch (error) {
                     setInlineStatus(emailCampaignStatus, error.message || 'Failed to load campaign messaging assets.', true);
+                }
+            });
+            emailCampaignAudienceTypeSelect.addEventListener('change', async () => {
+                syncEmailCampaignAudienceSourceFields();
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
+                }
+            });
+            emailCampaignPredictionJobSelect.addEventListener('change', async () => {
+                emailCampaignAudienceFieldCache.delete(`prediction:${String(emailCampaignPredictionJobSelect.value || '').trim()}`);
+                emailCampaignAudienceFieldCache.delete(`prediction:${String(emailCampaignPredictionJobSelect.value || '').trim()}:sample-size`);
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ forceRefresh: true, preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
+                }
+            });
+            emailCampaignCohortSelect.addEventListener('change', async () => {
+                emailCampaignAudienceFieldCache.delete(`cohort:${String(emailCampaignCohortSelect.value || '').trim()}`);
+                emailCampaignAudienceFieldCache.delete(`cohort:${String(emailCampaignCohortSelect.value || '').trim()}:sample-size`);
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ forceRefresh: true, preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
                 }
             });
             emailCampaignTemplateRefreshBtn.addEventListener('click', async () => {

@@ -113,6 +113,26 @@ def _create_braze_provider_connection(client: TestClient, *, name: str = "Lifecy
     return payload["provider_connection_id"]
 
 
+def _create_list_cohort(client: TestClient, *, name: str, members: list[dict]) -> str:
+    response = client.post(
+        "/api/v1/cohorts",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": name,
+            "type": "list",
+            "definition": {"members": members},
+            "refresh_mode": "manual",
+            "owner": "operator",
+            "description": "Email campaign cohort",
+            "activate": False,
+        },
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["member_count"] == len(members)
+    return payload["cohort_id"]
+
+
 def _seed_prediction_job(prediction_job_id: str, rows: list[dict]) -> None:
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
@@ -410,6 +430,86 @@ def test_email_campaign_send_now_uses_deeplink_override_and_template_payload(cli
     )
 
 
+def test_email_campaign_send_now_supports_cohort_audience(client: TestClient, monkeypatch):
+    provider_connection_id = _create_sendgrid_provider_connection(client, name="Cohort SendGrid")
+    cohort_id = _create_list_cohort(
+        client,
+        name="reward_cohort",
+        members=[
+            {
+                "canonical_user_id": "u_200",
+                "user_id": "u_200",
+                "email": "u200@example.com",
+                "first_name": "Cora",
+                "reward_id": "rw_200",
+            },
+            {
+                "canonical_user_id": "u_201",
+                "user_id": "u_201",
+                "email": "",
+                "first_name": "Drew",
+                "reward_id": "rw_201",
+            },
+        ],
+    )
+    call_log: list[dict] = []
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.requests.request",
+        _build_sendgrid_stub(
+            call_log,
+            {
+                ("GET", "/v3/templates/tmpl_cohort"): [
+                    _FakeSendGridResponse(200, _template_detail_payload("tmpl_cohort"))
+                ],
+                ("POST", "/v3/mail/send"): [
+                    _FakeSendGridResponse(202, {}, headers={"X-Message-Id": "msg-cohort-123"})
+                ],
+            },
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/email-campaigns",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": "cohort_reward_send",
+            "provider_connection_id": provider_connection_id,
+            "template_id": "tmpl_cohort",
+            "audience": {
+                "cohort_id": cohort_id,
+            },
+            "merge_fields": {
+                "first_name": {"source": "field", "value": "first_name"},
+            },
+            "recipient_email_field": "email",
+            "deeplink_template": "mygame://reward?user_id={user_id}&reward_id={reward_id}",
+        },
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    campaign = create_response.json()
+    assert campaign["audience"]["cohort_id"] == cohort_id
+    assert campaign["audience"]["prediction_job_id"] is None
+
+    send_response = client.post(
+        f"/api/v1/email-campaigns/{campaign['email_campaign_id']}/send-now",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert send_response.status_code == 200, send_response.text
+    payload = send_response.json()
+    assert payload["status"] == "sent_with_errors"
+    assert payload["result_summary"]["sent_count"] == 1
+    assert payload["result_summary"]["skipped_missing_email"] == 1
+
+    send_request = next(item for item in call_log if item["method"] == "POST")
+    assert len(send_request["json"]["personalizations"]) == 1
+    personalization = send_request["json"]["personalizations"][0]
+    assert personalization["to"][0]["email"] == "u200@example.com"
+    assert personalization["dynamic_template_data"]["first_name"] == "Cora"
+    assert personalization["dynamic_template_data"]["deeplink_url"] == "mygame://reward?user_id=u_200&reward_id=rw_200"
+
+
 def test_email_campaign_send_now_supports_braze_provider_switch(client: TestClient, monkeypatch):
     provider_connection_id = _create_braze_provider_connection(client)
     prediction_job_id = "pred_braze_now"
@@ -505,6 +605,101 @@ def test_email_campaign_send_now_supports_braze_provider_switch(client: TestClie
         recipient["trigger_properties"]["deeplink_url"]
         == f"mygame://reward?user_id=u_30&reward_id=rw_300&campaign={campaign['email_campaign_id']}"
     )
+
+
+def test_email_campaign_blank_risk_filters_send_all_prediction_rows(client: TestClient, monkeypatch):
+    provider_connection_id = _create_sendgrid_provider_connection(client, name="All Risk SendGrid")
+    prediction_job_id = "pred_sendgrid_all_risks"
+    _seed_prediction_job(
+        prediction_job_id,
+        [
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_40",
+                "canonical_user_id": "u_40",
+                "email": "u40@example.com",
+                "first_name": "Elle",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+            },
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_41",
+                "canonical_user_id": "u_41",
+                "email": "u41@example.com",
+                "first_name": "Finn",
+                "predicted_churn_risk": "low",
+                "churn_state": "active",
+            },
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_42",
+                "canonical_user_id": "u_42",
+                "email": "u42@example.com",
+                "first_name": "Gia",
+                "predicted_churn_risk": "medium",
+                "churn_state": "active",
+            },
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_43",
+                "canonical_user_id": "u_43",
+                "email": "u43@example.com",
+                "first_name": "Hale",
+                "predicted_churn_risk": "high",
+                "churn_state": "churned",
+            },
+        ],
+    )
+    call_log: list[dict] = []
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.requests.request",
+        _build_sendgrid_stub(
+            call_log,
+            {
+                ("GET", "/v3/templates/tmpl_all_risks"): [
+                    _FakeSendGridResponse(200, _template_detail_payload("tmpl_all_risks"))
+                ],
+                ("POST", "/v3/mail/send"): [
+                    _FakeSendGridResponse(202, {}, headers={"X-Message-Id": "msg-all-risk-123"})
+                ],
+            },
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/email-campaigns",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": "send_all_prediction_rows",
+            "provider_connection_id": provider_connection_id,
+            "template_id": "tmpl_all_risks",
+            "audience": {
+                "prediction_job_id": prediction_job_id,
+                "include_risks": [],
+                "include_churned": False,
+            },
+            "merge_fields": {
+                "first_name": {"source": "field", "value": "first_name"},
+            },
+        },
+    )
+
+    assert create_response.status_code == 201, create_response.text
+
+    send_response = client.post(
+        f"/api/v1/email-campaigns/{create_response.json()['email_campaign_id']}/send-now",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert send_response.status_code == 200, send_response.text
+    payload = send_response.json()
+    assert payload["status"] == "sent"
+    assert payload["result_summary"]["sent_count"] == 3
+
+    send_request = next(item for item in call_log if item["method"] == "POST")
+    recipient_emails = [item["to"][0]["email"] for item in send_request["json"]["personalizations"]]
+    assert sorted(recipient_emails) == ["u40@example.com", "u41@example.com", "u42@example.com"]
 
 
 def test_email_campaign_scheduler_tick_runs_due_campaigns_and_marks_partial_errors(client: TestClient, monkeypatch):
