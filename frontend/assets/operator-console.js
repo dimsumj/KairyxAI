@@ -9225,10 +9225,13 @@ export function initializeOperatorConsole() {
             const workflowDeliveryDiagnosticsOutput = document.getElementById('workflow-delivery-diagnostics-output');
             const workflowPolicyOutput = document.getElementById('workflow-policy-output');
             const emailCampaignsSummary = document.getElementById('email-campaigns-summary');
+            const addProviderConnectionBtn = document.getElementById('add-provider-connection-btn');
             const providerConnectionRefreshBtn = document.getElementById('provider-connection-refresh-btn');
             const providerConnectionSaveBtn = document.getElementById('provider-connection-save-btn');
+            const providerConnectionCancelBtn = document.getElementById('provider-connection-cancel-btn');
             const providerConnectionStatus = document.getElementById('provider-connection-status');
             const providerConnectionList = document.getElementById('provider-connection-list');
+            const providerConnectionFormContainer = document.getElementById('provider-connection-form-container');
             const providerConnectionTypeSelect = document.getElementById('provider-connection-type-select');
             const providerConnectionNameInput = document.getElementById('provider-connection-name-input');
             const providerConnectionConfigFields = document.getElementById('provider-connection-config-fields');
@@ -9678,6 +9681,36 @@ export function initializeOperatorConsole() {
                 return document.getElementById('provider-connection-sendgrid-api-key-input');
             }
 
+            function isProviderConnectionFormVisible() {
+                return providerConnectionFormContainer?.style.display !== 'none';
+            }
+
+            function setProviderConnectionFormVisible(isVisible, { providerType = '', preserveValues = false } = {}) {
+                if (addProviderConnectionBtn) {
+                    addProviderConnectionBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
+                if (providerConnectionFormContainer) {
+                    providerConnectionFormContainer.style.display = isVisible ? 'block' : 'none';
+                }
+                if (!isVisible) {
+                    selectedProviderConnectionId = null;
+                    providerConnectionTypeSelect.value = 'sendgrid';
+                    providerConnectionNameInput.value = '';
+                    syncProviderConnectionFormFields();
+                    setInlineStatus(providerConnectionStatus, '');
+                    return;
+                }
+                if (providerType) {
+                    providerConnectionTypeSelect.value = String(providerType || 'sendgrid').trim().toLowerCase() || 'sendgrid';
+                }
+                syncProviderConnectionFormFields();
+                if (!preserveValues) {
+                    selectedProviderConnectionId = null;
+                    providerConnectionNameInput.value = '';
+                    providerConnectionNameInput.focus();
+                }
+            }
+
             function syncProviderConnectionFormFields() {
                 if (!providerConnectionConfigFields) {
                     return;
@@ -9748,9 +9781,13 @@ export function initializeOperatorConsole() {
             function loadProviderConnectionIntoForm(providerConnectionId) {
                 const provider = findProviderConnection(providerConnectionId);
                 if (!provider) {
-                    resetProviderConnectionForm({ keepType: true });
+                    setProviderConnectionFormVisible(false);
                     return;
                 }
+                setProviderConnectionFormVisible(true, {
+                    providerType: provider.provider,
+                    preserveValues: true,
+                });
                 selectedProviderConnectionId = provider.provider_connection_id;
                 providerConnectionTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
                 providerConnectionNameInput.value = provider.name || '';
@@ -9794,6 +9831,29 @@ export function initializeOperatorConsole() {
                 providerConnectionNameInput.value = '';
                 syncProviderConnectionFormFields();
                 setInlineStatus(providerConnectionStatus, '');
+            }
+
+            async function deleteProviderConnection(providerConnectionId) {
+                const provider = findProviderConnection(providerConnectionId);
+                if (!provider) {
+                    throw new Error(`Provider connection '${providerConnectionId}' not found.`);
+                }
+                const providerLabel = formatConnectorLabel(provider.provider || 'sendgrid');
+                if (!confirm(`Delete ${provider.name} (${providerLabel})? This removes the saved campaign provider connection.`)) {
+                    return null;
+                }
+                setInlineStatus(providerConnectionStatus, `Deleting ${provider.name}...`);
+                await apiRequest(`/provider-connections/${encodeURIComponent(providerConnectionId)}`, { method: 'DELETE' });
+                emailCampaignAssetCache.delete(providerConnectionId);
+                if (selectedProviderConnectionId === providerConnectionId) {
+                    setProviderConnectionFormVisible(false);
+                }
+                if (String(emailCampaignProviderSelect?.value || '').trim() === providerConnectionId) {
+                    emailCampaignProviderSelect.value = '';
+                }
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                setInlineStatus(providerConnectionStatus, `Deleted ${provider.name}.`);
+                return provider;
             }
 
             async function saveProviderConnection() {
@@ -9896,12 +9956,13 @@ export function initializeOperatorConsole() {
                                 <div class="table-actions">
                                     <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
                                     <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                    <button type="button" data-provider-connection-action="delete" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
                                 </div>
                             `,
                         },
                     ],
                     items,
-                    'No SendGrid or Braze provider connections yet.',
+                    'No SendGrid or Braze provider connections yet. Use Connect Campaign Provider to add one.',
                 );
                 providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -9913,6 +9974,14 @@ export function initializeOperatorConsole() {
                         }
                         if (action === 'edit') {
                             loadProviderConnectionIntoForm(providerConnectionId);
+                            return;
+                        }
+                        if (action === 'delete') {
+                            try {
+                                await deleteProviderConnection(providerConnectionId);
+                            } catch (error) {
+                                setInlineStatus(providerConnectionStatus, error.message || 'Failed to delete provider connection.', true);
+                            }
                             return;
                         }
                         emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
@@ -9937,11 +10006,14 @@ export function initializeOperatorConsole() {
                 try {
                     const providers = await refreshProviderConnectionsState();
                     if (!preserveSelection) {
-                        resetProviderConnectionForm({ keepType: true });
+                        setProviderConnectionFormVisible(false);
                     } else if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
                         loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else if (isProviderConnectionFormVisible()) {
+                        syncProviderConnectionFormState();
                     } else {
                         syncProviderConnectionFormFields();
+                        syncProviderConnectionFormState();
                     }
                     renderProviderConnectionList(providers);
                     populateEmailCampaignProviderSelect();
@@ -9949,7 +10021,7 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         cachedProviderConnections = [];
-                        syncProviderConnectionFormFields();
+                        setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         updateEmailCampaignSummary();
@@ -10471,7 +10543,6 @@ export function initializeOperatorConsole() {
                         refreshCohortsState(),
                         refreshEmailCampaignsState(),
                     ]);
-                    syncProviderConnectionFormFields();
                     renderProviderConnectionList(providers);
                     populateEmailCampaignPredictionSelect(predictionJobs);
                     populateEmailCampaignCohortSelect(cohorts);
@@ -10497,14 +10568,17 @@ export function initializeOperatorConsole() {
                     }
                     if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
                         loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else if (isProviderConnectionFormVisible()) {
+                        syncProviderConnectionFormState();
                     } else {
+                        syncProviderConnectionFormFields();
                         syncProviderConnectionFormState();
                     }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         cachedProviderConnections = [];
                         cachedCohorts = [];
-                        syncProviderConnectionFormFields();
+                        setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
                         renderEmailCampaignLists([]);
                         resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
@@ -11918,12 +11992,19 @@ export function initializeOperatorConsole() {
             providerConnectionRefreshBtn.addEventListener('click', async () => {
                 await loadProviderConnectionWorkspace({ preserveSelection: true });
             });
+            addProviderConnectionBtn.addEventListener('click', () => {
+                setProviderConnectionFormVisible(true, { providerType: 'sendgrid' });
+                setInlineStatus(providerConnectionStatus, 'Creating a new SendGrid provider connection.');
+            });
             providerConnectionSaveBtn.addEventListener('click', async () => {
                 try {
                     await saveProviderConnection();
                 } catch (error) {
                     setInlineStatus(providerConnectionStatus, error.message || 'Failed to save provider connection.', true);
                 }
+            });
+            providerConnectionCancelBtn.addEventListener('click', () => {
+                setProviderConnectionFormVisible(false);
             });
             providerConnectionTypeSelect.addEventListener('change', () => {
                 resetProviderConnectionForm({ keepType: true });

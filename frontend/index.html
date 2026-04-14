@@ -626,27 +626,31 @@
                 <div class="module-section-header">
                     <h2>Campaign Provider Connections</h2>
                     <div class="inline-actions">
+                        <button id="add-provider-connection-btn" type="button">Connect Campaign Provider</button>
                         <button id="provider-connection-refresh-btn" type="button">Refresh</button>
                         <span id="provider-connection-status" class="subtle"></span>
                     </div>
                 </div>
-                <p class="subtle">Store tenant-scoped SendGrid and Braze credentials here, then switch between them in the email campaign builder. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
-                <div class="grid-2">
-                    <div class="form-group">
-                        <label for="provider-connection-type-select">Provider</label>
-                        <select id="provider-connection-type-select">
-                            <option value="sendgrid" selected>SendGrid</option>
-                            <option value="braze">Braze</option>
-                        </select>
+                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid and Braze credentials here, then switch between them in the email campaign builder. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
+                <div id="provider-connection-form-container" style="display: none;">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="provider-connection-type-select">Provider</label>
+                            <select id="provider-connection-type-select">
+                                <option value="sendgrid" selected>SendGrid</option>
+                                <option value="braze">Braze</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-connection-name-input">Connection Name</label>
+                            <input type="text" id="provider-connection-name-input" placeholder="e.g. Lifecycle SendGrid">
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="provider-connection-name-input">Connection Name</label>
-                        <input type="text" id="provider-connection-name-input" placeholder="e.g. Lifecycle SendGrid">
+                    <div id="provider-connection-config-fields"></div>
+                    <div class="inline-actions">
+                        <button id="provider-connection-save-btn" type="button">Save Provider Connection</button>
+                        <button id="provider-connection-cancel-btn" type="button" style="background-color: var(--subtle-text);">Cancel</button>
                     </div>
-                </div>
-                <div id="provider-connection-config-fields"></div>
-                <div class="inline-actions">
-                    <button id="provider-connection-save-btn" type="button">Save Provider Connection</button>
                 </div>
                 <div id="provider-connection-list"></div>
             </div>

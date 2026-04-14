@@ -286,6 +286,22 @@ def test_sendgrid_template_list_endpoint_surfaces_auth_failure(client: TestClien
     assert "wrong credentials" in response.json()["detail"].lower()
 
 
+def test_provider_connection_delete_endpoint_removes_unreferenced_connection(client: TestClient):
+    provider_connection_id = _create_sendgrid_provider_connection(client, name="Disposable SendGrid")
+
+    delete_response = client.delete(
+        f"/api/v1/provider-connections/{provider_connection_id}",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert delete_response.status_code == 204
+    get_response = client.get(
+        f"/api/v1/provider-connections/{provider_connection_id}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert get_response.status_code == 404
+
+
 def test_provider_messaging_assets_endpoint_lists_braze_api_campaigns(client: TestClient, monkeypatch):
     provider_connection_id = _create_braze_provider_connection(client)
     call_log: list[dict] = []
@@ -887,3 +903,53 @@ def test_email_campaign_edit_cancel_and_delete_rules(client: TestClient, monkeyp
 
     missing_response = client.get(f"/api/v1/email-campaigns/{draft_id}", headers=OPERATOR_HEADERS)
     assert missing_response.status_code == 404
+
+
+def test_provider_connection_delete_is_blocked_while_active_campaign_references_it(client: TestClient, monkeypatch):
+    provider_connection_id = _create_sendgrid_provider_connection(client, name="Protected SendGrid")
+    prediction_job_id = "pred_provider_delete_blocked"
+    _seed_prediction_job(
+        prediction_job_id,
+        [
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_70",
+                "canonical_user_id": "u_70",
+                "email": "u70@example.com",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.requests.request",
+        _build_sendgrid_stub(
+            [],
+            {
+                ("GET", "/v3/templates/tmpl_delete_guard"): [
+                    _FakeSendGridResponse(200, _template_detail_payload("tmpl_delete_guard"))
+                ],
+            },
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/email-campaigns",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": "guarded_provider_delete",
+            "provider_connection_id": provider_connection_id,
+            "template_id": "tmpl_delete_guard",
+            "audience": {"prediction_job_id": prediction_job_id, "include_risks": ["high"]},
+            "schedule_at": "2026-03-12T10:00:00Z",
+        },
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    delete_response = client.delete(
+        f"/api/v1/provider-connections/{provider_connection_id}",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert delete_response.status_code == 409
+    assert "active email campaigns" in delete_response.json()["detail"].lower()

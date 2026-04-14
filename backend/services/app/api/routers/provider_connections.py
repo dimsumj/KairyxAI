@@ -114,7 +114,10 @@ def list_provider_messaging_assets(
 @router.delete("/{provider_connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_provider_connection(provider_connection_id: str, request: Request, service: ProviderConnectionService = Depends(get_provider_connection_service)):
     ensure_permission(get_governance_context(request), "provider_connections.write")
-    deleted = service.delete_connection(provider_connection_id)
+    try:
+        deleted = service.delete_connection(provider_connection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Provider connection '{provider_connection_id}' not found.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

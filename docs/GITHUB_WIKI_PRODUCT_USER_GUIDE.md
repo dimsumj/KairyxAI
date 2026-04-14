@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors` and save a campaign provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid or Braze provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -458,18 +458,21 @@ For lifecycle email campaigns, use `Data Core -> Connectors -> Campaign Provider
 
 #### Campaign Provider Connections
 
-Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns. Browser-entered API keys are encrypted before storage and later reads expose only `api_key_configured`.
+Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns. Browser-entered API keys are encrypted before storage and later reads expose only `api_key_configured`. The credential form stays hidden until you click `Connect Campaign Provider`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
+| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid or Braze account. | None | The provider selector and credential fields appear. |
 | `Provider` | Select | Switches the form between SendGrid and Braze account setup. | `Braze` | The provider-specific credential fields change immediately. |
 | `Connection Name` | Text box | Sets the label that appears later in the email campaign builder. | `Lifecycle Braze` | The provider connection is listed under that name. |
 | SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
 | Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
 | `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder. |
+| `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
 | Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
 | Provider row `Use in Campaign` | Row button | Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
 ```json

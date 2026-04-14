@@ -145,15 +145,34 @@ assert_email_campaign_ui() {
     await connectorsLink.first().click();
     await page.waitForTimeout(700);
 
+    const connectProviderButton = page.locator('#add-provider-connection-btn');
+    const providerFormContainer = page.locator('#provider-connection-form-container');
     const providerType = page.locator('#provider-connection-type-select');
     const providerName = page.locator('#provider-connection-name-input');
     const providerSave = page.locator('#provider-connection-save-btn');
+    const providerCancel = page.locator('#provider-connection-cancel-btn');
+    if (await connectProviderButton.count() === 0 || await providerFormContainer.count() === 0) {
+      throw new Error('Missing Connect Campaign Provider entry point');
+    }
+    const providerFormDisplay = await providerFormContainer.evaluate((element) => window.getComputedStyle(element).display);
+    if (providerFormDisplay !== 'none') {
+      throw new Error('Campaign provider form should be hidden until Connect Campaign Provider is clicked');
+    }
+
+    await connectProviderButton.first().click();
+    await page.waitForTimeout(200);
+
     if (
       await providerType.count() === 0
       || await providerName.count() === 0
       || await providerSave.count() === 0
+      || await providerCancel.count() === 0
     ) {
       throw new Error('Missing campaign provider connection controls in Connectors');
+    }
+    const visibleProviderFormDisplay = await providerFormContainer.evaluate((element) => window.getComputedStyle(element).display);
+    if (visibleProviderFormDisplay === 'none') {
+      throw new Error('Campaign provider form did not open after clicking Connect Campaign Provider');
     }
 
     await providerType.selectOption('braze');
@@ -215,6 +234,7 @@ assert_email_campaign_ui() {
     }
 
     return {
+      providerButtonLabel: await connectProviderButton.first().textContent() || '',
       providerTypeValue: await providerType.inputValue(),
       providerSaveLabel: await providerSave.textContent() || '',
       campaignProviderTypeValue: await campaignProviderType.inputValue(),

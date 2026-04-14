@@ -86,10 +86,38 @@ class ProviderConnectionService:
         return self._to_response(saved)
 
     def delete_connection(self, provider_connection_id: str) -> bool:
+        active_campaigns = self._list_active_referencing_campaigns(provider_connection_id)
+        if active_campaigns:
+            campaign_names = ", ".join(
+                str(item.get("name") or item.get("email_campaign_id") or "unnamed_campaign")
+                for item in active_campaigns[:3]
+            )
+            raise ValueError(
+                "Provider connection is still used by active email campaigns. "
+                f"Cancel or delete those campaigns first: {campaign_names}."
+            )
         deleted = self.repository.delete_resource("provider_connection", provider_connection_id)
         if deleted:
             self.repository.record_action("provider_connection_deleted", "provider_connection", provider_connection_id, {"provider_connection_id": provider_connection_id})
         return deleted
+
+    def _list_active_referencing_campaigns(self, provider_connection_id: str) -> List[Dict[str, Any]]:
+        active_statuses = {"draft", "scheduled", "sending"}
+        items: List[Dict[str, Any]] = []
+        for record in self.repository.list_resources("email_campaign"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("provider_connection_id") or "").strip() != str(provider_connection_id or "").strip():
+                continue
+            status = str(payload.get("status") or record.get("status") or "").strip().lower()
+            if status in active_statuses:
+                items.append(
+                    {
+                        "email_campaign_id": payload.get("email_campaign_id") or record.get("resource_id"),
+                        "name": payload.get("name") or record.get("name"),
+                        "status": status,
+                    }
+                )
+        return items
 
     def resolve_connection(self, provider_connection_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("provider_connection", provider_connection_id)
