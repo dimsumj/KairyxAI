@@ -270,6 +270,8 @@ Prediction Engine: AI + Cloud
 
 The import source form and imported-data list now wait for a resolved organization and project workspace before they load. During Google-login session handoff or workspace switching, the page stays in a neutral waiting state instead of replacing the import form with a raw membership error.
 
+Import failure help tooltips now render above nearby controls so the failure reason stays readable even when the imported-data table sits above other cards and form fields.
+
 #### Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
@@ -291,7 +293,7 @@ The import source form and imported-data list now wait for a resolved organizati
 | `Import Data` / `Import BigQuery Table` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
-| `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
+| `Import Job` | Select | Choose a non-failed import job for detail views. Failed imports remain visible in the imported-data table, but they are excluded from downstream selectors such as `Import Operations`. | `import_20260322_101500` | Detail actions apply to the selected non-failed import. |
 | `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
 | `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |
 | `Load Manifests` | Button | Loads manifest detail for the selected import on demand. | None | Manifest JSON and list appear. |

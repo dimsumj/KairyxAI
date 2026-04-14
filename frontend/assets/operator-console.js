@@ -8041,29 +8041,35 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function shouldExposeImportInDownstreamSelectors(job = {}) {
+                const normalizedStatus = String(job.raw_status || job.status || '').trim().toLowerCase();
+                return !['failed', 'error'].includes(normalizedStatus);
+            }
+
             function populateImportDetailSelect(imports = []) {
                 if (!importDetailSelect) return;
                 const previous = selectedImportJobId || importDetailSelect.value;
+                const selectableImports = imports.filter(shouldExposeImportInDownstreamSelectors);
                 importDetailSelect.innerHTML = '';
-                if (!imports.length) {
-                    importDetailSelect.innerHTML = '<option value="">No import jobs available</option>';
+                if (!selectableImports.length) {
+                    importDetailSelect.innerHTML = '<option value="">No selectable import jobs available</option>';
                     selectedImportJobId = null;
-                    renderJsonOutput(importDetailOutput, null, 'Select an import job to inspect operations.');
+                    renderJsonOutput(importDetailOutput, null, 'Only non-failed import jobs can be inspected here.');
                     renderSimpleTable(importManifestsList, [], [], 'No manifests available.');
                     return;
                 }
-                imports.forEach((job) => {
+                selectableImports.forEach((job) => {
                     const option = document.createElement('option');
                     option.value = job.id;
                     option.textContent = `${job.name} (${job.status})`;
                     importDetailSelect.appendChild(option);
                 });
-                if (imports.some((job) => job.id === previous)) {
+                if (selectableImports.some((job) => job.id === previous)) {
                     importDetailSelect.value = previous;
                     selectedImportJobId = previous;
                 } else {
-                    importDetailSelect.value = imports[0].id;
-                    selectedImportJobId = imports[0].id;
+                    importDetailSelect.value = selectableImports[0].id;
+                    selectedImportJobId = selectableImports[0].id;
                 }
             }
 
