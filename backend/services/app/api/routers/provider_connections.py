@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.schemas.provider_connections import ProviderConnectionCreateRequest, ProviderConnectionResponse, ProviderConnectionUpdateRequest
 from app.application.provider_connections import ProviderConnectionService
-from app.core.deps import get_repository
+from app.application.sendgrid_provider import SendGridApiError, SendGridProviderService
+from app.core.deps import get_repository, get_sendgrid_provider_service
 from app.core.governance import ensure_permission, get_governance_context
 
 
@@ -55,6 +56,23 @@ def update_provider_connection(
         return service.update_connection(provider_connection_id, payload.model_dump(exclude_none=True))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Provider connection '{provider_connection_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/{provider_connection_id}/sendgrid/templates", response_model=dict)
+def list_sendgrid_templates(
+    provider_connection_id: str,
+    request: Request,
+    service: SendGridProviderService = Depends(get_sendgrid_provider_service),
+):
+    ensure_permission(get_governance_context(request), "provider_connections.read")
+    try:
+        return {"items": service.list_dynamic_templates(provider_connection_id)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Provider connection '{provider_connection_id}' not found.")
+    except SendGridApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

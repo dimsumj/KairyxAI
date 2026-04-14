@@ -888,6 +888,156 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="action-orchestrator" class="page">
             <h1>Action Orchestrator</h1>
+            <div id="email-campaigns-section" class="card">
+                <div class="module-section-header">
+                    <h2>Email Campaigns</h2>
+                    <div class="inline-actions">
+                        <button id="email-campaign-refresh-btn" type="button">Refresh</button>
+                        <span id="email-campaigns-summary" class="subtle">Load provider connections and campaigns to begin.</span>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>SendGrid Provider Connection</h2>
+                            <button id="sendgrid-provider-refresh-btn" type="button">Refresh</button>
+                        </div>
+                        <p class="subtle">Store SendGrid credentials and default sender settings in a tenant-scoped provider connection. API keys entered here are encrypted before storage and never returned to the browser after save.</p>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="sendgrid-provider-name-input">Connection Name</label>
+                                <input type="text" id="sendgrid-provider-name-input" placeholder="e.g. Lifecycle SendGrid">
+                            </div>
+                            <div class="form-group">
+                                <label for="sendgrid-provider-from-email-input">Default From Email</label>
+                                <input type="email" id="sendgrid-provider-from-email-input" placeholder="noreply@game.example">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="sendgrid-provider-api-key-input">SendGrid API Key</label>
+                                <input type="password" id="sendgrid-provider-api-key-input" placeholder="SG....">
+                            </div>
+                            <div class="form-group">
+                                <label for="sendgrid-provider-from-name-input">Default From Name (optional)</label>
+                                <input type="text" id="sendgrid-provider-from-name-input" placeholder="KairyxAI Rewards">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="sendgrid-provider-base-url-input">Base URL (optional)</label>
+                            <input type="text" id="sendgrid-provider-base-url-input" placeholder="https://api.eu.sendgrid.com">
+                        </div>
+                        <div class="inline-actions">
+                            <button id="sendgrid-provider-save-btn" type="button">Save Provider Connection</button>
+                            <span id="sendgrid-provider-status" class="subtle"></span>
+                        </div>
+                        <div id="sendgrid-provider-list"></div>
+                    </div>
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>Campaign Builder</h2>
+                            <span id="email-campaign-selected-label" class="pill">No campaign selected</span>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-name-input">Campaign Name</label>
+                                <input type="text" id="email-campaign-name-input" placeholder="e.g. spring_winback_reward">
+                            </div>
+                            <div class="form-group">
+                                <label for="email-campaign-provider-select">SendGrid Provider Connection</label>
+                                <select id="email-campaign-provider-select">
+                                    <option value="">Load provider connections first</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-template-select">Dynamic Template</label>
+                                <select id="email-campaign-template-select">
+                                    <option value="">Select a SendGrid provider first</option>
+                                </select>
+                            </div>
+                            <div class="inline-actions" style="align-items: end;">
+                                <button id="email-campaign-template-refresh-btn" type="button">Refresh Templates</button>
+                                <span id="email-campaign-template-status" class="subtle"></span>
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="email-campaign-prediction-job-select">Prediction Audience</label>
+                                <select id="email-campaign-prediction-job-select">
+                                    <option value="">Load predictions first</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="email-campaign-risk-filters-input">Risk Filters</label>
+                                <input type="text" id="email-campaign-risk-filters-input" value="high,medium" placeholder="high,medium">
+                            </div>
+                            <div class="form-group">
+                                <label for="email-campaign-recipient-email-field-input">Recipient Email Field</label>
+                                <input type="text" id="email-campaign-recipient-email-field-input" value="email" placeholder="email">
+                            </div>
+                        </div>
+                        <label style="display: inline-flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+                            <input type="checkbox" id="email-campaign-include-churned-checkbox">
+                            Include already churned users
+                        </label>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-deeplink-template-field-input">Template Deeplink Variable</label>
+                                <input type="text" id="email-campaign-deeplink-template-field-input" value="deeplink_url" placeholder="deeplink_url">
+                            </div>
+                            <div class="form-group">
+                                <label for="email-campaign-deeplink-override-field-input">Audience Deeplink Override Field (optional)</label>
+                                <input type="text" id="email-campaign-deeplink-override-field-input" placeholder="reward_deeplink_url">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-deeplink-template-input">Campaign Deeplink Template (optional)</label>
+                            <input type="text" id="email-campaign-deeplink-template-input" placeholder="mygame://reward?user_id={user_id}&reward_id={reward_id}">
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-merge-fields-input">Merge Fields JSON</label>
+                            <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
+  "first_name": { "source": "field", "value": "first_name" },
+  "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
+}</textarea>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-schedule-at-input">Schedule For (optional)</label>
+                                <input type="datetime-local" id="email-campaign-schedule-at-input">
+                            </div>
+                            <div class="inline-actions" style="align-items: end;">
+                                <button id="email-campaign-clear-selection-btn" type="button">Clear</button>
+                                <span id="email-campaign-status" class="subtle"></span>
+                            </div>
+                        </div>
+                        <div class="inline-actions">
+                            <button id="email-campaign-save-draft-btn" type="button">Save Draft</button>
+                            <button id="email-campaign-schedule-btn" type="button">Schedule Campaign</button>
+                            <button id="email-campaign-send-now-btn" type="button">Send Now</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid-2" style="margin-top: 1rem;">
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>Upcoming & Drafts</h2>
+                            <span class="pill">Editable</span>
+                        </div>
+                        <div id="email-campaign-upcoming-list"></div>
+                    </div>
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>Past Campaigns</h2>
+                            <span class="pill">Sent / Failed / Cancelled</span>
+                        </div>
+                        <div id="email-campaign-past-list"></div>
+                    </div>
+                </div>
+                <pre id="email-campaign-detail-output" class="json-output">Selected email campaign details will appear here.</pre>
+            </div>
             <div class="grid-2">
                 <div id="experiment-control-section" class="card split-card">
                     <div class="module-section-header">

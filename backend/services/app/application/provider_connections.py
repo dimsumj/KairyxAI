@@ -4,6 +4,9 @@ import uuid
 from typing import Any, Dict, List
 
 from app.application.secret_refs import (
+    SECRET_ENCRYPTED_SUFFIX,
+    SECRET_METADATA_SUFFIX,
+    SECRET_REF_SUFFIX,
     SENSITIVE_FIELDS,
     contains_inline_secret,
     materialize_secret_refs,
@@ -29,7 +32,10 @@ class ProviderConnectionService:
 
     def create_connection(self, name: str, provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
         settings = get_settings()
+        normalized_provider = str(provider or "").lower()
+        self._validate_provider_config(normalized_provider, dict(config or {}))
         config = self._persist_inline_secrets(config)
+        self._validate_provider_config(normalized_provider, config)
         if settings.app_env == "prod" and contains_inline_secret(config, secret_fields=SENSITIVE_FIELDS):
             raise ValueError(
                 "Inline provider secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
@@ -37,7 +43,7 @@ class ProviderConnectionService:
         payload = self._build_payload(
             provider_connection_id=f"pc_{uuid.uuid4().hex[:20]}",
             name=name,
-            provider=provider,
+            provider=normalized_provider,
             config=config,
         )
         record = self.repository.upsert_resource(
@@ -59,7 +65,11 @@ class ProviderConnectionService:
         if patch.get("name") is not None:
             payload["name"] = patch["name"]
         if patch.get("config") is not None:
-            next_config = self._persist_inline_secrets(patch["config"])
+            current_config = dict(payload.get("config") or {})
+            next_config_input = self._merge_config(current_config, dict(patch["config"] or {}))
+            self._validate_provider_config(str(payload.get("provider") or ""), next_config_input)
+            next_config = self._persist_inline_secrets(next_config_input)
+            self._validate_provider_config(str(payload.get("provider") or ""), next_config)
             if settings.app_env == "prod" and contains_inline_secret(next_config, secret_fields=SENSITIVE_FIELDS):
                 raise ValueError(
                     "Inline provider secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
@@ -108,6 +118,46 @@ class ProviderConnectionService:
                     "Secure provider secret storage is not configured; set CONTROL_PLANE_SECRET_KEY or use *_ref fields."
                 ) from exc
             raise
+
+    @staticmethod
+    def _merge_config(current_config: Dict[str, Any], patch_config: Dict[str, Any]) -> Dict[str, Any]:
+        merged = dict(current_config or {})
+        merged.update(dict(patch_config or {}))
+        for field in SENSITIVE_FIELDS:
+            if not merged.get(f"{field}{SECRET_METADATA_SUFFIX}"):
+                continue
+            if ProviderConnectionService._has_secret_reference(merged, field):
+                continue
+            if ProviderConnectionService._has_secret_reference(current_config, field):
+                for suffix in (SECRET_REF_SUFFIX, SECRET_ENCRYPTED_SUFFIX):
+                    current_key = f"{field}{suffix}"
+                    if current_key in current_config:
+                        merged[current_key] = current_config[current_key]
+        return merged
+
+    @staticmethod
+    def _validate_provider_config(provider: str, config: Dict[str, Any]) -> None:
+        if str(provider or "").strip().lower() != "sendgrid":
+            return
+        if not ProviderConnectionService._has_secret_reference(config, "api_key"):
+            raise ValueError("SendGrid provider connections require api_key.")
+        from_email = str((config or {}).get("from_email") or "").strip()
+        if not from_email:
+            raise ValueError("SendGrid provider connections require from_email.")
+        base_url = str((config or {}).get("base_url") or "").strip()
+        if base_url and not base_url.startswith(("https://", "http://")):
+            raise ValueError("SendGrid provider base_url must start with https:// or http://.")
+
+    @staticmethod
+    def _has_secret_reference(config: Dict[str, Any] | None, field: str) -> bool:
+        payload = dict(config or {})
+        raw_value = payload.get(field)
+        if isinstance(raw_value, str) and raw_value.strip():
+            return True
+        return any(
+            isinstance(payload.get(f"{field}{suffix}"), str) and str(payload.get(f"{field}{suffix}") or "").strip()
+            for suffix in (SECRET_REF_SUFFIX, SECRET_ENCRYPTED_SUFFIX)
+        )
 
     @staticmethod
     def _to_response(record: Dict[str, Any]) -> Dict[str, Any]:

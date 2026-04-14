@@ -137,6 +137,39 @@ assert_bigquery_connector_ui() {
   }"
 }
 
+assert_email_campaign_ui() {
+  log_step "Checking SendGrid campaign builder UI"
+  run_pw run-code "async (page) => {
+    const orchestratorLink = page.locator('[data-module=\"action-orchestrator\"]');
+    if (await orchestratorLink.count() === 0) throw new Error('Missing Action Orchestrator navigation');
+    await orchestratorLink.first().click();
+    await page.waitForTimeout(700);
+
+    const providerName = page.locator('#sendgrid-provider-name-input');
+    const providerApiKey = page.locator('#sendgrid-provider-api-key-input');
+    const providerSave = page.locator('#sendgrid-provider-save-btn');
+    const campaignProvider = page.locator('#email-campaign-provider-select');
+    const campaignTemplate = page.locator('#email-campaign-template-select');
+    const campaignSend = page.locator('#email-campaign-send-now-btn');
+    if (
+      await providerName.count() === 0
+      || await providerApiKey.count() === 0
+      || await providerSave.count() === 0
+      || await campaignProvider.count() === 0
+      || await campaignTemplate.count() === 0
+      || await campaignSend.count() === 0
+    ) {
+      throw new Error('Missing SendGrid provider or email campaign controls');
+    }
+
+    return {
+      providerSaveLabel: await providerSave.textContent() || '',
+      campaignTemplatePlaceholder: await campaignTemplate.first().locator('option').first().textContent() || '',
+      campaignSendLabel: await campaignSend.textContent() || '',
+    };
+  }"
+}
+
 exercise_copilot_agent() {
   log_step "Exercising global AI assistant"
   run_pw run-code "async (page) => {
@@ -253,6 +286,7 @@ assert_module "data-core" "#import-detail-output"
 assert_bigquery_connector_ui
 assert_module "audience-engine" "#audience-cohort-list"
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"
+assert_email_campaign_ui
 assert_module "experiment-hub" "#experiment-integrity-output"
 assert_module "insight-copilot" "#copilot-query-section"
 exercise_copilot_agent

@@ -9,6 +9,7 @@ from app.application.copilot import CopilotService
 from app.application.copilot_agent import CopilotAgentService
 from app.application.connectors import ConnectorService
 from app.application.control_loop import ControlLoopService
+from app.application.email_campaigns import EmailCampaignService
 from app.application.experiments import ExperimentConfigService
 from app.application.exports import ExportService
 from app.application.health_monitor import HealthMonitorService
@@ -16,6 +17,7 @@ from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
 from app.application.projects import ProjectWorkspaceService
+from app.application.sendgrid_provider import SendGridProviderService
 from app.application.sql_workspace import SqlWorkspaceService
 from app.application.templates import ScenarioTemplateService
 from app.application.workflows import WorkflowService
@@ -89,6 +91,19 @@ def get_workflow_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> WorkflowService:
     return WorkflowService(repository)
+
+
+def get_email_campaign_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
+) -> EmailCampaignService:
+    return EmailCampaignService(repository, settings)
+
+
+def get_sendgrid_provider_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> SendGridProviderService:
+    return SendGridProviderService(repository)
 
 
 def get_copilot_service(

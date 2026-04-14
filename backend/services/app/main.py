@@ -19,6 +19,7 @@ from app.api.routers import (
     cohorts,
     connectors,
     copilot,
+    email_campaigns,
     experiments,
     exports,
     health,
@@ -363,6 +364,7 @@ def create_app() -> FastAPI:
     app.include_router(experiments.router, prefix=settings.api_v1_prefix)
     app.include_router(cohorts.router, prefix=settings.api_v1_prefix)
     app.include_router(sql_workspace.router, prefix=settings.api_v1_prefix)
+    app.include_router(email_campaigns.router, prefix=settings.api_v1_prefix)
     app.include_router(workflows.workflow_router, prefix=settings.api_v1_prefix)
     app.include_router(workflows.orchestrator_router, prefix=settings.api_v1_prefix)
     app.include_router(activation.router, prefix=settings.api_v1_prefix)

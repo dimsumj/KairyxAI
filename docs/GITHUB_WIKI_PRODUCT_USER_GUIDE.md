@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Action Orchestrator` and create a workflow.
+7. Go to `Action Orchestrator` and either create a workflow or save a SendGrid provider connection and draft an email campaign.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -454,6 +454,8 @@ Credential storage behavior:
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
+For SendGrid dynamic transactional email campaigns, use `Action Orchestrator -> Email Campaigns -> SendGrid Provider Connection`. The `Data Core -> Connectors` SendGrid connector remains the legacy connector record and does not browse templates or power the new email campaign builder.
+
 #### Sample connector output
 ```json
 {
@@ -774,7 +776,112 @@ WHERE predicted_churn_risk = 'high'
 
 ## 5) Action Orchestrator
 
-### 5.1 Create Workflow
+### 5.1 Email Campaigns
+
+Use this section to save tenant-scoped SendGrid provider connections, browse existing dynamic transactional templates from the selected SendGrid account, and create one-time lifecycle campaigns that send now or later. Browser-entered SendGrid API keys are encrypted before persistence and later reads only expose `api_key_configured`.
+
+#### 5.1.1 SendGrid Provider Connection
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Connection Name` | Text box | Sets the provider connection label used in the campaign builder. | `Lifecycle SendGrid` | The saved provider connection uses this name. |
+| `Default From Email` | Email box | Sets the sender email used by templated sends unless the API caller overrides it. | `rewards@example.com` | Campaign sends default to this sender address. |
+| `SendGrid API Key` | Password box | Paste the account API key. When editing an existing connection, leaving this blank keeps the currently stored secret. | `SG.xxxxx` | The API key is encrypted before storage. |
+| `Default From Name (optional)` | Text box | Sets the sender display name. | `KairyxAI Rewards` | Campaign sends include this sender name. |
+| `Base URL (optional)` | Text box | Overrides the SendGrid API base URL for alternate regions such as EU. | `https://api.eu.sendgrid.com` | Template browse and send requests use the alternate base URL. |
+| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new SendGrid provider connection or updates the selected one. | None | The connection is saved and becomes selectable in the campaign builder. |
+| `Refresh` | Button | Reloads the provider-connection list and template cache. | None | The provider list and dependent template state refresh. |
+| Provider row `Edit` | Row button | Loads the selected connection into the provider form. | None | The form switches to update mode for that connection. |
+| Provider row `Use in Campaign` | Row button | Selects that connection in the campaign builder and loads templates. | None | The campaign builder points at that connection. |
+
+#### 5.1.2 Campaign Builder
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Campaign Name` | Text box | Friendly name for the campaign record. | `spring_winback_reward` | Stored as the campaign name. |
+| `SendGrid Provider Connection` | Select | Chooses which SendGrid account and sender defaults to use. | `Lifecycle SendGrid` | Template browsing and send execution use that provider connection. |
+| `Dynamic Template` | Select | Chooses an existing SendGrid dynamic transactional template. | `Winback Reward` | The campaign stores the selected `template_id` and template summary snapshot. |
+| `Refresh Templates` | Button | Reloads dynamic templates for the selected provider connection. | None | The template select refreshes from SendGrid. |
+| `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. | `pred_20260410_0900` | Campaign execution resolves recipients from that prediction job at send time. |
+| `Risk Filters` | Text box | Comma-separated risk values to keep from the selected prediction job. | `high,medium` | Only matching prediction rows are used at send time. |
+| `Recipient Email Field` | Text box | Field path in the audience row that contains the recipient address. | `email` | Each personalization uses that field as the `to` email. |
+| `Include already churned users` | Checkbox | Includes rows whose churn state is already marked as churned. | Checked | Churned rows are allowed into the send audience. |
+| `Template Deeplink Variable` | Text box | Variable name that receives the final deeplink URL in `dynamic_template_data`. | `deeplink_url` | The template receives the deeplink under that field. |
+| `Audience Deeplink Override Field (optional)` | Text box | If present on a row, this field wins over the campaign deeplink template. | `reward_deeplink_url` | Matching rows use the row-level deeplink directly. |
+| `Campaign Deeplink Template (optional)` | Text box | URL template with `{field_name}` placeholders resolved from the audience row and campaign context. | `mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}` | Rows without an override field receive a rendered deeplink URL. |
+| `Merge Fields JSON` | Text area | Maps SendGrid template variables to row fields or literals. | See sample below | `dynamic_template_data` is built from this mapping. |
+| `Schedule For (optional)` | Date/time picker | Sets the one-time scheduled send time in the operator's local timezone. | `2026-04-15 11:00` | Campaign status becomes `scheduled`. |
+| `Clear` | Button | Clears the selected campaign and resets the builder to a new draft. | None | The form is ready for a new campaign record. |
+| `Save Draft` | Button | Creates or updates the campaign in `draft` status. | None | Campaign saves without a schedule. |
+| `Schedule Campaign` | Button | Creates or updates the campaign in `scheduled` status. | None | Campaign becomes editable scheduled work. |
+| `Send Now` | Button | Runs the selected campaign immediately. If no campaign is selected yet, the console saves a draft first and then sends it. | None | Campaign executes through SendGrid and moves to `sent`, `sent_with_errors`, or `failed`. |
+
+Current UI limit:
+- The browser builder currently edits prediction-audience campaigns only. The backend also supports cohort-based audiences, but those should be created or updated through the API for now.
+
+#### Sample email campaign request
+```json
+{
+  "name": "spring_winback_reward",
+  "provider_connection_id": "pc_1234567890abcdef",
+  "template_id": "d-1234567890abcdef1234567890abcdef",
+  "audience": {
+    "prediction_job_id": "pred_20260410_0900",
+    "include_risks": ["high", "medium"],
+    "include_churned": false
+  },
+  "recipient_email_field": "email",
+  "merge_fields": {
+    "first_name": { "source": "field", "value": "first_name" },
+    "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
+  },
+  "deeplink_template_field": "deeplink_url",
+  "deeplink_override_field": "reward_deeplink_url",
+  "deeplink_template": "mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}",
+  "schedule_at": "2026-04-15T18:00:00Z"
+}
+```
+
+#### Sample email campaign response
+```json
+{
+  "email_campaign_id": "ec_1234567890abcdef",
+  "name": "spring_winback_reward",
+  "status": "scheduled",
+  "provider_connection_id": "pc_1234567890abcdef",
+  "template_id": "d-1234567890abcdef1234567890abcdef",
+  "template_summary": {
+    "id": "d-1234567890abcdef1234567890abcdef",
+    "name": "Winback Reward",
+    "generation": "dynamic",
+    "active_version": {
+      "id": "ver_active",
+      "subject": "Come back for a reward",
+      "active": true
+    }
+  },
+  "result_summary": {}
+}
+```
+
+#### 5.1.3 Upcoming And Past Campaigns
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Refresh` | Button | Reloads provider connections, prediction jobs, templates, and campaign lists. | None | The action-orchestrator campaign workspace refreshes. |
+| Upcoming row `Edit` | Row button | Loads the selected draft or scheduled campaign into the builder. | None | The builder switches to that campaign. |
+| Upcoming row `Send Now` | Row button | Executes the selected draft or scheduled campaign immediately. | None | Campaign leaves the editable queue and records execution results. |
+| Upcoming row `Cancel` | Row button | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
+| Upcoming row `Delete` | Row button | Deletes a draft campaign. | None | Draft is removed from the list. |
+| Past row `View` | Row button | Loads a sent, failed, or cancelled campaign into the detail panel. | None | The JSON detail panel shows the stored campaign snapshot and result summary. |
+
+State rules:
+- Only `draft` and `scheduled` campaigns are editable.
+- Only `scheduled` campaigns can be cancelled.
+- Only `draft` campaigns can be deleted.
+- `sent`, `sent_with_errors`, `failed`, and `cancelled` campaigns stay read-only in the browser list and detail view.
+
+### 5.2 Create Workflow
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -807,7 +914,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 5.2 Runtime Controls
+### 5.3 Runtime Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -853,7 +960,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 5.3 Workflow List, Executions, And Deliveries
+### 5.4 Workflow List, Executions, And Deliveries
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |

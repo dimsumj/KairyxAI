@@ -234,7 +234,7 @@ export function initializeOperatorConsole() {
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
-                    subtitle: 'Configure workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    subtitle: 'Configure SendGrid email campaigns, workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -242,6 +242,7 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
+                        { id: 'action-orchestrator-email-campaigns', label: 'Email Campaigns', pageId: 'action-orchestrator', targetId: 'email-campaigns-section' },
                         { id: 'action-orchestrator-create', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-create-section' },
                         { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-section' },
                         { id: 'action-orchestrator-workflows', label: 'Workflows', pageId: 'action-orchestrator', targetId: 'workflow-list-section' },
@@ -3042,11 +3043,13 @@ export function initializeOperatorConsole() {
             let backendMode = 'unknown';
             let cachedConnectors = [];
             let connectorListRenderRequestId = 0;
+            let cachedProviderConnections = [];
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
+            let cachedEmailCampaigns = [];
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
@@ -3054,6 +3057,7 @@ export function initializeOperatorConsole() {
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
             const importBigQueryTableCache = new Map();
+            const sendGridTemplateCache = new Map();
 
             function renderConnectorEntrySummary(message = '') {
                 const configuredCount = cachedConnectors.length;
@@ -9157,6 +9161,42 @@ export function initializeOperatorConsole() {
             const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
             const workflowDeliveryDiagnosticsOutput = document.getElementById('workflow-delivery-diagnostics-output');
             const workflowPolicyOutput = document.getElementById('workflow-policy-output');
+            const emailCampaignsSummary = document.getElementById('email-campaigns-summary');
+            const sendgridProviderRefreshBtn = document.getElementById('sendgrid-provider-refresh-btn');
+            const sendgridProviderSaveBtn = document.getElementById('sendgrid-provider-save-btn');
+            const sendgridProviderStatus = document.getElementById('sendgrid-provider-status');
+            const sendgridProviderList = document.getElementById('sendgrid-provider-list');
+            const sendgridProviderNameInput = document.getElementById('sendgrid-provider-name-input');
+            const sendgridProviderApiKeyInput = document.getElementById('sendgrid-provider-api-key-input');
+            const sendgridProviderFromEmailInput = document.getElementById('sendgrid-provider-from-email-input');
+            const sendgridProviderFromNameInput = document.getElementById('sendgrid-provider-from-name-input');
+            const sendgridProviderBaseUrlInput = document.getElementById('sendgrid-provider-base-url-input');
+            const emailCampaignRefreshBtn = document.getElementById('email-campaign-refresh-btn');
+            const emailCampaignSelectedLabel = document.getElementById('email-campaign-selected-label');
+            const emailCampaignStatus = document.getElementById('email-campaign-status');
+            const emailCampaignTemplateStatus = document.getElementById('email-campaign-template-status');
+            const emailCampaignProviderSelect = document.getElementById('email-campaign-provider-select');
+            const emailCampaignTemplateSelect = document.getElementById('email-campaign-template-select');
+            const emailCampaignTemplateRefreshBtn = document.getElementById('email-campaign-template-refresh-btn');
+            const emailCampaignPredictionJobSelect = document.getElementById('email-campaign-prediction-job-select');
+            const emailCampaignUpcomingList = document.getElementById('email-campaign-upcoming-list');
+            const emailCampaignPastList = document.getElementById('email-campaign-past-list');
+            const emailCampaignDetailOutput = document.getElementById('email-campaign-detail-output');
+            const emailCampaignNameInput = document.getElementById('email-campaign-name-input');
+            const emailCampaignRiskFiltersInput = document.getElementById('email-campaign-risk-filters-input');
+            const emailCampaignIncludeChurnedCheckbox = document.getElementById('email-campaign-include-churned-checkbox');
+            const emailCampaignRecipientEmailFieldInput = document.getElementById('email-campaign-recipient-email-field-input');
+            const emailCampaignDeeplinkTemplateFieldInput = document.getElementById('email-campaign-deeplink-template-field-input');
+            const emailCampaignDeeplinkTemplateInput = document.getElementById('email-campaign-deeplink-template-input');
+            const emailCampaignDeeplinkOverrideFieldInput = document.getElementById('email-campaign-deeplink-override-field-input');
+            const emailCampaignMergeFieldsInput = document.getElementById('email-campaign-merge-fields-input');
+            const emailCampaignScheduleAtInput = document.getElementById('email-campaign-schedule-at-input');
+            const emailCampaignSaveDraftBtn = document.getElementById('email-campaign-save-draft-btn');
+            const emailCampaignScheduleBtn = document.getElementById('email-campaign-schedule-btn');
+            const emailCampaignSendNowBtn = document.getElementById('email-campaign-send-now-btn');
+            const emailCampaignClearSelectionBtn = document.getElementById('email-campaign-clear-selection-btn');
+            let selectedEmailCampaignId = null;
+            let selectedSendgridProviderConnectionId = null;
             const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
             const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
             const activationIngestStatus = document.getElementById('activation-ingest-status');
@@ -9327,6 +9367,592 @@ export function initializeOperatorConsole() {
                 });
                 if (exportJobs.some((item) => item.id === previousValue)) {
                     select.value = previousValue;
+                }
+            }
+
+            function getDefaultEmailCampaignMergeFieldsText() {
+                return JSON.stringify({
+                    first_name: { source: 'field', value: 'first_name' },
+                    reward_name: { source: 'literal', value: 'Welcome Back Pack' },
+                }, null, 2);
+            }
+
+            function formatEmailCampaignStatusLabel(status) {
+                return String(status || 'draft')
+                    .replace(/[_-]+/g, ' ')
+                    .replace(/\b\w/g, (character) => character.toUpperCase());
+            }
+
+            function toIsoFromLocalDateTimeInput(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return null;
+                const parsed = new Date(raw);
+                if (Number.isNaN(parsed.getTime())) {
+                    throw new Error('Schedule time must be a valid date and time.');
+                }
+                return parsed.toISOString();
+            }
+
+            function fromIsoToLocalDateTimeInput(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return '';
+                const parsed = new Date(raw);
+                if (Number.isNaN(parsed.getTime())) {
+                    return '';
+                }
+                const pad = (part) => String(part).padStart(2, '0');
+                return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+            }
+
+            function getSendGridProviderConnections() {
+                return latestByCreatedAt(
+                    (cachedProviderConnections || []).filter((item) => String(item.provider || '').toLowerCase() === 'sendgrid'),
+                );
+            }
+
+            function findSendGridProviderConnection(providerConnectionId) {
+                return getSendGridProviderConnections().find((item) => item.provider_connection_id === providerConnectionId) || null;
+            }
+
+            function findEmailCampaign(emailCampaignId) {
+                return (cachedEmailCampaigns || []).find((item) => item.email_campaign_id === emailCampaignId) || null;
+            }
+
+            async function refreshProviderConnectionsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return getSendGridProviderConnections();
+                }
+                const payload = await apiRequest('/provider-connections');
+                const items = Array.isArray(payload.items) ? payload.items : [];
+                cachedProviderConnections = latestByCreatedAt(items);
+                return getSendGridProviderConnections();
+            }
+
+            async function refreshEmailCampaignsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedEmailCampaigns;
+                }
+                const payload = await apiRequest('/email-campaigns');
+                cachedEmailCampaigns = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedEmailCampaigns;
+            }
+
+            function ensureSelectOption(select, value, label) {
+                if (!select || !value) return;
+                if (Array.from(select.options).some((option) => option.value === value)) {
+                    return;
+                }
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = label;
+                select.appendChild(option);
+            }
+
+            function updateEmailCampaignSummary() {
+                const providers = getSendGridProviderConnections();
+                const campaigns = Array.isArray(cachedEmailCampaigns) ? cachedEmailCampaigns : [];
+                const draftCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'draft').length;
+                const scheduledCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'scheduled').length;
+                const pastCount = campaigns.filter((item) => ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(String(item.status || '').toLowerCase())).length;
+                emailCampaignsSummary.textContent = providers.length === 0
+                    ? 'Save a SendGrid provider connection to start browsing templates and building campaigns.'
+                    : `${providers.length} SendGrid connection${providers.length === 1 ? '' : 's'} · ${draftCount} draft${draftCount === 1 ? '' : 's'} · ${scheduledCount} scheduled · ${pastCount} past`;
+            }
+
+            function populateSendGridProviderSelect() {
+                const providers = getSendGridProviderConnections();
+                const preferredValue = (
+                    emailCampaignProviderSelect.value
+                    || selectedSendgridProviderConnectionId
+                    || (findEmailCampaign(selectedEmailCampaignId) || {}).provider_connection_id
+                    || ''
+                );
+                emailCampaignProviderSelect.innerHTML = '<option value="">Select a SendGrid connection</option>';
+                providers.forEach((provider) => {
+                    const option = document.createElement('option');
+                    option.value = provider.provider_connection_id;
+                    option.textContent = `${provider.name} (${(provider.config || {}).from_email || 'no sender'})`;
+                    emailCampaignProviderSelect.appendChild(option);
+                });
+                if (preferredValue && providers.some((item) => item.provider_connection_id === preferredValue)) {
+                    emailCampaignProviderSelect.value = preferredValue;
+                } else if (!preferredValue && providers.length === 1) {
+                    emailCampaignProviderSelect.value = providers[0].provider_connection_id;
+                }
+            }
+
+            function populateEmailCampaignPredictionSelect(predictionJobs = cachedPredictionJobs) {
+                const items = Array.isArray(predictionJobs) ? predictionJobs : [];
+                const previousValue = emailCampaignPredictionJobSelect.value;
+                emailCampaignPredictionJobSelect.innerHTML = '<option value="">Select a prediction audience</option>';
+                items.forEach((job) => {
+                    const option = document.createElement('option');
+                    option.value = job.id;
+                    option.textContent = `${job.id} (${job.status || 'unknown'})`;
+                    emailCampaignPredictionJobSelect.appendChild(option);
+                });
+                if (previousValue && items.some((item) => item.id === previousValue)) {
+                    emailCampaignPredictionJobSelect.value = previousValue;
+                }
+            }
+
+            function resetEmailCampaignTemplateSelect(message = 'Select a SendGrid provider first.') {
+                emailCampaignTemplateSelect.innerHTML = '<option value="">Select a SendGrid provider first</option>';
+                setInlineStatus(emailCampaignTemplateStatus, message);
+            }
+
+            function populateEmailCampaignTemplateSelect(templates = [], { selectedValue = '' } = {}) {
+                emailCampaignTemplateSelect.innerHTML = '<option value="">Select a dynamic template</option>';
+                templates.forEach((template) => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    const activeVersion = template.active_version || {};
+                    option.textContent = `${template.name || template.id}${activeVersion.subject ? ` (${activeVersion.subject})` : ''}`;
+                    emailCampaignTemplateSelect.appendChild(option);
+                });
+                if (selectedValue && templates.some((item) => item.id === selectedValue)) {
+                    emailCampaignTemplateSelect.value = selectedValue;
+                }
+            }
+
+            async function loadSendGridTemplates(providerConnectionId, { forceRefresh = false, preferredTemplateId = '' } = {}) {
+                const resolvedProviderId = String(providerConnectionId || emailCampaignProviderSelect.value || '').trim();
+                if (!resolvedProviderId) {
+                    resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
+                    return [];
+                }
+                const selectedTemplateId = preferredTemplateId || emailCampaignTemplateSelect.value || '';
+                if (!forceRefresh && sendGridTemplateCache.has(resolvedProviderId)) {
+                    const cachedTemplates = sendGridTemplateCache.get(resolvedProviderId) || [];
+                    populateEmailCampaignTemplateSelect(cachedTemplates, { selectedValue: selectedTemplateId });
+                    setInlineStatus(emailCampaignTemplateStatus, `Loaded ${cachedTemplates.length} template${cachedTemplates.length === 1 ? '' : 's'} from cache.`);
+                    return cachedTemplates;
+                }
+                try {
+                    setInlineStatus(emailCampaignTemplateStatus, 'Loading SendGrid templates...');
+                    const payload = await apiRequest(`/provider-connections/${encodeURIComponent(resolvedProviderId)}/sendgrid/templates`);
+                    const templates = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                    sendGridTemplateCache.set(resolvedProviderId, templates);
+                    populateEmailCampaignTemplateSelect(templates, { selectedValue: selectedTemplateId });
+                    setInlineStatus(
+                        emailCampaignTemplateStatus,
+                        templates.length
+                            ? `Loaded ${templates.length} template${templates.length === 1 ? '' : 's'}.`
+                            : 'No dynamic templates found for this provider connection.',
+                    );
+                    return templates;
+                } catch (error) {
+                    resetEmailCampaignTemplateSelect(error.message || 'Failed to load SendGrid templates.');
+                    setInlineStatus(emailCampaignTemplateStatus, error.message || 'Failed to load SendGrid templates.', true);
+                    throw error;
+                }
+            }
+
+            function syncSendGridProviderFormState() {
+                const editing = Boolean(selectedSendgridProviderConnectionId);
+                sendgridProviderSaveBtn.textContent = editing ? 'Update Provider Connection' : 'Save Provider Connection';
+                if (editing && !String(sendgridProviderApiKeyInput.value || '').trim()) {
+                    sendgridProviderApiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
+                } else if (!editing) {
+                    sendgridProviderApiKeyInput.placeholder = 'SG....';
+                }
+            }
+
+            function loadSendGridProviderIntoForm(providerConnectionId) {
+                const provider = findSendGridProviderConnection(providerConnectionId);
+                if (!provider) {
+                    selectedSendgridProviderConnectionId = null;
+                    syncSendGridProviderFormState();
+                    return;
+                }
+                selectedSendgridProviderConnectionId = provider.provider_connection_id;
+                sendgridProviderNameInput.value = provider.name || '';
+                sendgridProviderFromEmailInput.value = (provider.config || {}).from_email || '';
+                sendgridProviderFromNameInput.value = (provider.config || {}).from_name || '';
+                sendgridProviderBaseUrlInput.value = (provider.config || {}).base_url || '';
+                sendgridProviderApiKeyInput.value = '';
+                syncSendGridProviderFormState();
+                setInlineStatus(
+                    sendgridProviderStatus,
+                    (provider.config || {}).api_key_configured
+                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
+                        : `Editing ${provider.name}.`,
+                );
+            }
+
+            function resetSendGridProviderForm() {
+                selectedSendgridProviderConnectionId = null;
+                sendgridProviderNameInput.value = '';
+                sendgridProviderFromEmailInput.value = '';
+                sendgridProviderFromNameInput.value = '';
+                sendgridProviderBaseUrlInput.value = '';
+                sendgridProviderApiKeyInput.value = '';
+                setInlineStatus(sendgridProviderStatus, '');
+                syncSendGridProviderFormState();
+            }
+
+            async function saveSendGridProviderConnection() {
+                const name = String(sendgridProviderNameInput.value || '').trim();
+                const fromEmail = String(sendgridProviderFromEmailInput.value || '').trim();
+                const apiKey = String(sendgridProviderApiKeyInput.value || '').trim();
+                const fromName = String(sendgridProviderFromNameInput.value || '').trim();
+                const baseUrl = String(sendgridProviderBaseUrlInput.value || '').trim();
+                if (!name) {
+                    throw new Error('Connection name is required.');
+                }
+                if (!fromEmail) {
+                    throw new Error('Default From Email is required.');
+                }
+                const config = {
+                    from_email: fromEmail,
+                    ...(fromName ? { from_name: fromName } : {}),
+                    ...(baseUrl ? { base_url: baseUrl } : {}),
+                    ...(apiKey ? { api_key: apiKey } : {}),
+                };
+                if (!selectedSendgridProviderConnectionId && !apiKey) {
+                    throw new Error('SendGrid API key is required for a new provider connection.');
+                }
+                setInlineStatus(
+                    sendgridProviderStatus,
+                    selectedSendgridProviderConnectionId ? 'Updating provider connection...' : 'Saving provider connection...',
+                );
+                const response = selectedSendgridProviderConnectionId
+                    ? await apiRequest(`/provider-connections/${encodeURIComponent(selectedSendgridProviderConnectionId)}`, {
+                        method: 'PATCH',
+                        body: { name, config },
+                    })
+                    : await apiRequest('/provider-connections', {
+                        method: 'POST',
+                        body: { name, provider: 'sendgrid', config },
+                    });
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
+                loadSendGridProviderIntoForm(response.provider_connection_id);
+                emailCampaignProviderSelect.value = response.provider_connection_id;
+                await loadSendGridTemplates(response.provider_connection_id, { forceRefresh: true });
+                setInlineStatus(sendgridProviderStatus, `Saved SendGrid provider ${response.name}.`);
+                setInlineStatus(emailCampaignStatus, 'Provider connection is ready for campaign builder.');
+            }
+
+            function renderSendGridProviderList(items = getSendGridProviderConnections()) {
+                renderSimpleTable(
+                    sendgridProviderList,
+                    [
+                        { label: 'Connection', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.provider_connection_id || '-')}</div>` },
+                        { label: 'Sender', render: (item) => `<span>${escapeHtml((item.config || {}).from_email || '-')}</span><div class="subtle">${escapeHtml((item.config || {}).from_name || '')}</div>` },
+                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-sendgrid-provider-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
+                                    <button type="button" data-sendgrid-provider-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No SendGrid provider connections yet.',
+                );
+                sendgridProviderList.querySelectorAll('[data-sendgrid-provider-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const providerConnectionId = button.dataset.providerConnectionId;
+                        const action = button.dataset.sendgridProviderAction;
+                        if (!providerConnectionId) return;
+                        if (action === 'edit') {
+                            loadSendGridProviderIntoForm(providerConnectionId);
+                            return;
+                        }
+                        if (action === 'use') {
+                            emailCampaignProviderSelect.value = providerConnectionId;
+                            loadSendGridProviderIntoForm(providerConnectionId);
+                            try {
+                                await loadSendGridTemplates(providerConnectionId, { forceRefresh: false });
+                                setInlineStatus(emailCampaignStatus, 'Provider connection selected for campaign builder.');
+                            } catch (error) {
+                                setInlineStatus(emailCampaignStatus, error.message || 'Failed to load templates for the selected provider.', true);
+                            }
+                        }
+                    });
+                });
+            }
+
+            function syncEmailCampaignBuilderState(campaign = null) {
+                const status = String((campaign || {}).status || '').toLowerCase();
+                const locked = Boolean(campaign && !['draft', 'scheduled'].includes(status));
+                emailCampaignSaveDraftBtn.disabled = locked;
+                emailCampaignScheduleBtn.disabled = locked;
+                emailCampaignSendNowBtn.disabled = locked;
+                if (!campaign) {
+                    emailCampaignSelectedLabel.textContent = 'No campaign selected';
+                    return;
+                }
+                emailCampaignSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                if (locked) {
+                    setInlineStatus(
+                        emailCampaignStatus,
+                        `Campaign is ${formatEmailCampaignStatusLabel(status)}. Clear the form to create a new draft.`,
+                        true,
+                    );
+                }
+            }
+
+            async function loadEmailCampaignDetail(emailCampaignId) {
+                selectedEmailCampaignId = emailCampaignId || null;
+                if (!selectedEmailCampaignId) {
+                    syncEmailCampaignBuilderState(null);
+                    renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                    return;
+                }
+                const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
+                renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
+                syncEmailCampaignBuilderState(campaign);
+                emailCampaignNameInput.value = campaign.name || '';
+                emailCampaignRecipientEmailFieldInput.value = campaign.recipient_email_field || 'email';
+                emailCampaignRiskFiltersInput.value = ((campaign.audience || {}).include_risks || ['high', 'medium']).join(',');
+                emailCampaignIncludeChurnedCheckbox.checked = Boolean((campaign.audience || {}).include_churned);
+                emailCampaignDeeplinkTemplateFieldInput.value = campaign.deeplink_template_field || 'deeplink_url';
+                emailCampaignDeeplinkOverrideFieldInput.value = campaign.deeplink_override_field || '';
+                emailCampaignDeeplinkTemplateInput.value = campaign.deeplink_template || '';
+                emailCampaignMergeFieldsInput.value = JSON.stringify(campaign.merge_fields || {}, null, 2);
+                emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(campaign.schedule_at);
+                ensureSelectOption(emailCampaignProviderSelect, campaign.provider_connection_id, campaign.provider_connection_id);
+                emailCampaignProviderSelect.value = campaign.provider_connection_id || '';
+                const predictionJobId = ((campaign.audience || {}).prediction_job_id || '').trim();
+                if (predictionJobId) {
+                    ensureSelectOption(emailCampaignPredictionJobSelect, predictionJobId, `${predictionJobId} (selected)`);
+                    emailCampaignPredictionJobSelect.value = predictionJobId;
+                } else {
+                    emailCampaignPredictionJobSelect.value = '';
+                    if ((campaign.audience || {}).cohort_id) {
+                        setInlineStatus(
+                            emailCampaignStatus,
+                            'This campaign uses a cohort audience. Execution is supported, but the current form edits prediction-audience campaigns only.',
+                            true,
+                        );
+                    }
+                }
+                try {
+                    await loadSendGridTemplates(campaign.provider_connection_id, {
+                        forceRefresh: false,
+                        preferredTemplateId: campaign.template_id,
+                    });
+                    ensureSelectOption(emailCampaignTemplateSelect, campaign.template_id, campaign.template_summary?.name || campaign.template_id);
+                    emailCampaignTemplateSelect.value = campaign.template_id || '';
+                } catch (error) {
+                    ensureSelectOption(emailCampaignTemplateSelect, campaign.template_id, campaign.template_summary?.name || campaign.template_id);
+                    emailCampaignTemplateSelect.value = campaign.template_id || '';
+                }
+            }
+
+            function resetEmailCampaignForm() {
+                selectedEmailCampaignId = null;
+                emailCampaignNameInput.value = '';
+                emailCampaignRiskFiltersInput.value = 'high,medium';
+                emailCampaignIncludeChurnedCheckbox.checked = false;
+                emailCampaignRecipientEmailFieldInput.value = 'email';
+                emailCampaignDeeplinkTemplateFieldInput.value = 'deeplink_url';
+                emailCampaignDeeplinkOverrideFieldInput.value = '';
+                emailCampaignDeeplinkTemplateInput.value = '';
+                emailCampaignMergeFieldsInput.value = getDefaultEmailCampaignMergeFieldsText();
+                emailCampaignScheduleAtInput.value = '';
+                renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                setInlineStatus(emailCampaignStatus, 'Creating a new draft.');
+                syncEmailCampaignBuilderState(null);
+            }
+
+            function buildEmailCampaignPayload({ scheduleAtOverride = undefined } = {}) {
+                const mergeFields = parseJsonText(emailCampaignMergeFieldsInput.value, {});
+                if (!mergeFields || typeof mergeFields !== 'object' || Array.isArray(mergeFields)) {
+                    throw new Error('Merge fields must be a JSON object.');
+                }
+                const providerConnectionId = String(emailCampaignProviderSelect.value || '').trim();
+                const templateId = String(emailCampaignTemplateSelect.value || '').trim();
+                const predictionJobId = String(emailCampaignPredictionJobSelect.value || '').trim();
+                if (!providerConnectionId) {
+                    throw new Error('Select a SendGrid provider connection.');
+                }
+                if (!templateId) {
+                    throw new Error('Select a dynamic template.');
+                }
+                if (!predictionJobId) {
+                    throw new Error('Select a prediction audience.');
+                }
+                const payload = {
+                    name: String(emailCampaignNameInput.value || '').trim(),
+                    provider_connection_id: providerConnectionId,
+                    template_id: templateId,
+                    audience: {
+                        prediction_job_id: predictionJobId,
+                        include_risks: splitCsv(emailCampaignRiskFiltersInput.value).map((item) => item.toLowerCase()),
+                        include_churned: Boolean(emailCampaignIncludeChurnedCheckbox.checked),
+                    },
+                    recipient_email_field: String(emailCampaignRecipientEmailFieldInput.value || '').trim() || 'email',
+                    merge_fields: mergeFields,
+                    deeplink_template_field: String(emailCampaignDeeplinkTemplateFieldInput.value || '').trim() || 'deeplink_url',
+                    deeplink_override_field: String(emailCampaignDeeplinkOverrideFieldInput.value || '').trim() || null,
+                    deeplink_template: String(emailCampaignDeeplinkTemplateInput.value || '').trim() || null,
+                };
+                if (!payload.name) {
+                    throw new Error('Campaign name is required.');
+                }
+                if (scheduleAtOverride !== undefined) {
+                    payload.schedule_at = scheduleAtOverride;
+                } else {
+                    payload.schedule_at = toIsoFromLocalDateTimeInput(emailCampaignScheduleAtInput.value);
+                }
+                return payload;
+            }
+
+            async function persistEmailCampaign({ scheduled = false } = {}) {
+                const scheduleAt = scheduled ? toIsoFromLocalDateTimeInput(emailCampaignScheduleAtInput.value) : null;
+                if (scheduled && !scheduleAt) {
+                    throw new Error('Choose a schedule time before scheduling the campaign.');
+                }
+                const payload = buildEmailCampaignPayload({ scheduleAtOverride: scheduleAt });
+                if (selectedEmailCampaignId) {
+                    return apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`, {
+                        method: 'PATCH',
+                        body: payload,
+                    });
+                }
+                return apiRequest('/email-campaigns', {
+                    method: 'POST',
+                    body: payload,
+                });
+            }
+
+            async function sendEmailCampaignNow() {
+                let emailCampaignId = selectedEmailCampaignId;
+                if (!emailCampaignId) {
+                    setInlineStatus(emailCampaignStatus, 'Saving draft before sending...');
+                    const created = await persistEmailCampaign({ scheduled: false });
+                    emailCampaignId = created.email_campaign_id;
+                    selectedEmailCampaignId = emailCampaignId;
+                }
+                const response = await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/send-now`, {
+                    method: 'POST',
+                });
+                return response;
+            }
+
+            function bindEmailCampaignActionButtons(container) {
+                if (!container) return;
+                container.querySelectorAll('[data-email-campaign-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const emailCampaignId = button.dataset.emailCampaignId;
+                        const action = button.dataset.emailCampaignAction;
+                        if (!emailCampaignId || !action) return;
+                        try {
+                            if (action === 'view' || action === 'edit') {
+                                await loadEmailCampaignDetail(emailCampaignId);
+                                return;
+                            }
+                            if (action === 'send-now') {
+                                setInlineStatus(emailCampaignStatus, 'Sending campaign now...');
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/send-now`, { method: 'POST' });
+                            }
+                            if (action === 'cancel') {
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/cancel`, { method: 'POST' });
+                            }
+                            if (action === 'delete') {
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}`, { method: 'DELETE' });
+                                if (selectedEmailCampaignId === emailCampaignId) {
+                                    resetEmailCampaignForm();
+                                }
+                            }
+                            await loadEmailCampaignWorkspace({ preserveSelection: action !== 'delete', forceTemplateRefresh: false });
+                            if (action !== 'delete') {
+                                await loadEmailCampaignDetail(emailCampaignId);
+                            }
+                        } catch (error) {
+                            setInlineStatus(emailCampaignStatus, error.message || `Failed to ${action} campaign.`, true);
+                        }
+                    });
+                });
+            }
+
+            function renderEmailCampaignLists(items = cachedEmailCampaigns) {
+                const campaigns = Array.isArray(items) ? items : [];
+                const upcomingItems = campaigns.filter((item) => ['draft', 'scheduled'].includes(String(item.status || '').toLowerCase()));
+                const pastItems = campaigns.filter((item) => ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(String(item.status || '').toLowerCase()));
+                renderSimpleTable(
+                    emailCampaignUpcomingList,
+                    [
+                        { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
+                        { label: 'Audience', render: (item) => escapeHtml(((item.audience || {}).prediction_job_id || (item.audience || {}).cohort_id || '-')) },
+                        { label: 'Schedule', render: (item) => escapeHtml(formatDateTime(item.schedule_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => {
+                                const status = String(item.status || '').toLowerCase();
+                                return `
+                                    <div class="table-actions">
+                                        <button type="button" data-email-campaign-action="edit" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Edit</button>
+                                        <button type="button" data-email-campaign-action="send-now" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Send Now</button>
+                                        ${status === 'scheduled'
+                                            ? `<button type="button" data-email-campaign-action="cancel" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Cancel</button>`
+                                            : `<button type="button" data-email-campaign-action="delete" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Delete</button>`}
+                                    </div>
+                                `;
+                            },
+                        },
+                    ],
+                    upcomingItems,
+                    'No draft or scheduled campaigns yet.',
+                );
+                renderSimpleTable(
+                    emailCampaignPastList,
+                    [
+                        { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
+                        { label: 'Completed', render: (item) => escapeHtml(formatDateTime(item.last_send_completed_at || item.cancelled_at)) },
+                        { label: 'Sent', render: (item) => escapeHtml(String(((item.result_summary || {}).sent_count) || 0)) },
+                        { label: 'Actions', render: (item) => `<button type="button" data-email-campaign-action="view" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">View</button>` },
+                    ],
+                    pastItems,
+                    'No completed campaigns yet.',
+                );
+                bindEmailCampaignActionButtons(emailCampaignUpcomingList);
+                bindEmailCampaignActionButtons(emailCampaignPastList);
+                updateEmailCampaignSummary();
+            }
+
+            async function loadEmailCampaignWorkspace({ preserveSelection = true, forceTemplateRefresh = false } = {}) {
+                try {
+                    const [providers, predictionJobs, campaigns] = await Promise.all([
+                        refreshProviderConnectionsState(),
+                        refreshPredictionJobsState(),
+                        refreshEmailCampaignsState(),
+                    ]);
+                    renderSendGridProviderList(providers);
+                    populateSendGridProviderSelect();
+                    populateEmailCampaignPredictionSelect(predictionJobs);
+                    renderEmailCampaignLists(campaigns);
+                    if (emailCampaignProviderSelect.value) {
+                        await loadSendGridTemplates(emailCampaignProviderSelect.value, {
+                            forceRefresh: forceTemplateRefresh,
+                            preferredTemplateId: emailCampaignTemplateSelect.value,
+                        });
+                    } else {
+                        resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
+                    }
+                    if (preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId)) {
+                        await loadEmailCampaignDetail(selectedEmailCampaignId);
+                    }
+                    syncSendGridProviderFormState();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        renderSendGridProviderList([]);
+                        renderEmailCampaignLists([]);
+                        resetEmailCampaignTemplateSelect('Finish workspace setup to load SendGrid templates.');
+                        setInlineStatus(sendgridProviderStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        setInlineStatus(emailCampaignStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        return;
+                    }
+                    setInlineStatus(sendgridProviderStatus, error.message || 'Failed to load SendGrid provider connections.', true);
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load email campaigns.', true);
                 }
             }
 
@@ -9890,6 +10516,7 @@ export function initializeOperatorConsole() {
                     } else if (!workflows.length) {
                         await loadWorkflowDetail(null);
                     }
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
@@ -9897,6 +10524,7 @@ export function initializeOperatorConsole() {
                         populateWorkflowCohortSelect([]);
                         populateExportJobSelect([]);
                         await loadWorkflowDetail(null);
+                        await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
                         return;
                     }
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
@@ -10724,6 +11352,80 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 await createCohortFromSavedQuery(firstQuery.query_id);
+            });
+            sendgridProviderRefreshBtn.addEventListener('click', async () => {
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
+            });
+            sendgridProviderSaveBtn.addEventListener('click', async () => {
+                try {
+                    await saveSendGridProviderConnection();
+                } catch (error) {
+                    setInlineStatus(sendgridProviderStatus, error.message || 'Failed to save provider connection.', true);
+                }
+            });
+            emailCampaignRefreshBtn.addEventListener('click', async () => {
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
+            });
+            emailCampaignProviderSelect.addEventListener('change', async () => {
+                try {
+                    if (!emailCampaignProviderSelect.value) {
+                        resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
+                        return;
+                    }
+                    await loadSendGridTemplates(emailCampaignProviderSelect.value, { forceRefresh: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load SendGrid templates.', true);
+                }
+            });
+            emailCampaignTemplateRefreshBtn.addEventListener('click', async () => {
+                try {
+                    await loadSendGridTemplates(emailCampaignProviderSelect.value, { forceRefresh: true });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to refresh SendGrid templates.', true);
+                }
+            });
+            emailCampaignClearSelectionBtn.addEventListener('click', () => {
+                resetEmailCampaignForm();
+            });
+            emailCampaignSaveDraftBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Saving draft...');
+                    const response = await persistEmailCampaign({ scheduled: false });
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(emailCampaignStatus, `Saved draft ${response.name}.`);
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to save email campaign draft.', true);
+                }
+            });
+            emailCampaignScheduleBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Scheduling campaign...');
+                    const response = await persistEmailCampaign({ scheduled: true });
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(emailCampaignStatus, `Scheduled ${response.name} for ${formatDateTime(response.schedule_at)}.`);
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to schedule email campaign.', true);
+                }
+            });
+            emailCampaignSendNowBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Sending campaign now...');
+                    const response = await sendEmailCampaignNow();
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(
+                        emailCampaignStatus,
+                        `Campaign ${response.name} finished with status ${formatEmailCampaignStatusLabel(response.status)}.`,
+                        response.status !== 'sent',
+                    );
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to send email campaign.', true);
+                }
             });
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
             document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);
