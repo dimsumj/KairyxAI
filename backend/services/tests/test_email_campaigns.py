@@ -68,6 +68,10 @@ def _build_sendgrid_stub(call_log: list[dict], responses_by_key: dict[tuple[str,
     return _fake_request
 
 
+def _build_braze_stub(call_log: list[dict], responses_by_key: dict[tuple[str, str], list[_FakeSendGridResponse]]):
+    return _build_sendgrid_stub(call_log, responses_by_key)
+
+
 def _create_sendgrid_provider_connection(client: TestClient, *, name: str = "Lifecycle SendGrid") -> str:
     response = client.post(
         "/api/v1/provider-connections",
@@ -79,6 +83,26 @@ def _create_sendgrid_provider_connection(client: TestClient, *, name: str = "Lif
                 "api_key": "SG.test-key",
                 "from_email": "rewards@example.com",
                 "from_name": "Rewards Team",
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["config"]["api_key"] is None
+    assert payload["config"]["api_key_configured"] is True
+    return payload["provider_connection_id"]
+
+
+def _create_braze_provider_connection(client: TestClient, *, name: str = "Lifecycle Braze") -> str:
+    response = client.post(
+        "/api/v1/provider-connections",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": name,
+            "provider": "braze",
+            "config": {
+                "api_key": "brz-test-key",
+                "rest_endpoint": "https://rest.iad-01.braze.com",
             },
         },
     )
@@ -121,6 +145,20 @@ def _template_detail_payload(template_id: str, *, subject: str = "Come back for 
                 "editor": "code",
             }
         ],
+    }
+
+
+def _braze_campaign_detail_payload(campaign_id: str, *, name: str = "Braze Winback") -> dict:
+    return {
+        "message": "success",
+        "id": campaign_id,
+        "name": name,
+        "description": "API-triggered Braze campaign",
+        "last_edited": "2026-03-09T10:00:00Z",
+        "is_api_campaign": True,
+        "tags": ["winback", "email"],
+        "draft": False,
+        "archived": False,
     }
 
 
@@ -228,6 +266,55 @@ def test_sendgrid_template_list_endpoint_surfaces_auth_failure(client: TestClien
     assert "wrong credentials" in response.json()["detail"].lower()
 
 
+def test_provider_messaging_assets_endpoint_lists_braze_api_campaigns(client: TestClient, monkeypatch):
+    provider_connection_id = _create_braze_provider_connection(client)
+    call_log: list[dict] = []
+    monkeypatch.setattr(
+        "app.application.braze_provider.requests.request",
+        _build_braze_stub(
+            call_log,
+            {
+                ("GET", "/campaigns/list"): [
+                    _FakeSendGridResponse(
+                        200,
+                        {
+                            "message": "success",
+                            "campaigns": [
+                                {
+                                    "id": "cmp_api_1",
+                                    "name": "API Winback",
+                                    "last_edited": "2026-03-08T10:00:00Z",
+                                    "is_api_campaign": True,
+                                    "tags": ["winback"],
+                                },
+                                {
+                                    "id": "cmp_dashboard_1",
+                                    "name": "Dashboard Broadcast",
+                                    "last_edited": "2026-03-08T09:00:00Z",
+                                    "is_api_campaign": False,
+                                    "tags": ["broadcast"],
+                                },
+                            ],
+                        },
+                    )
+                ]
+            },
+        ),
+    )
+
+    response = client.get(
+        f"/api/v1/provider-connections/{provider_connection_id}/messaging-assets",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["provider"] == "braze"
+    assert [item["id"] for item in body["items"]] == ["cmp_api_1"]
+    assert body["items"][0]["asset_type"] == "braze_campaign"
+    assert call_log[0]["params"]["page"] == 0
+
+
 def test_email_campaign_send_now_uses_deeplink_override_and_template_payload(client: TestClient, monkeypatch):
     provider_connection_id = _create_sendgrid_provider_connection(client)
     prediction_job_id = "pred_sendgrid_now"
@@ -320,6 +407,103 @@ def test_email_campaign_send_now_uses_deeplink_override_and_template_payload(cli
     assert (
         personalizations_by_email["u2@example.com"]["dynamic_template_data"]["deeplink_url"]
         == f"mygame://reward?user_id=u_2&reward_id=rw_200&campaign={campaign['email_campaign_id']}"
+    )
+
+
+def test_email_campaign_send_now_supports_braze_provider_switch(client: TestClient, monkeypatch):
+    provider_connection_id = _create_braze_provider_connection(client)
+    prediction_job_id = "pred_braze_now"
+    _seed_prediction_job(
+        prediction_job_id,
+        [
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_30",
+                "braze_external_id": "braze_u_30",
+                "canonical_user_id": "u_30",
+                "email": "u30@example.com",
+                "first_name": "Ivy",
+                "reward_id": "rw_300",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+                "completed_at": "2026-03-09T10:00:00",
+            },
+            {
+                "prediction_job_id": prediction_job_id,
+                "canonical_user_id": "u_31",
+                "email": "u31@example.com",
+                "first_name": "Jae",
+                "reward_id": "rw_310",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+                "completed_at": "2026-03-09T10:00:00",
+            },
+        ],
+    )
+    call_log: list[dict] = []
+    monkeypatch.setattr(
+        "app.application.braze_provider.requests.request",
+        _build_braze_stub(
+            call_log,
+            {
+                ("GET", "/campaigns/details"): [
+                    _FakeSendGridResponse(200, _braze_campaign_detail_payload("cmp_winback")),
+                ],
+                ("POST", "/campaigns/trigger/send"): [
+                    _FakeSendGridResponse(201, {"dispatch_id": "dispatch-123", "message": "success"}),
+                ],
+            },
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/email-campaigns",
+        headers=OPERATOR_HEADERS,
+        json={
+            "name": "braze_winback_reward",
+            "provider_connection_id": provider_connection_id,
+            "template_id": "cmp_winback",
+            "audience": {
+                "prediction_job_id": prediction_job_id,
+                "include_risks": ["high"],
+                "include_churned": False,
+            },
+                "recipient_external_id_field": "braze_external_id",
+            "merge_fields": {
+                "first_name": {"source": "field", "value": "first_name"},
+                "reward_name": {"source": "literal", "value": "Welcome Back Pack"},
+            },
+            "deeplink_template": "mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}",
+        },
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    campaign = create_response.json()
+    assert campaign["provider"] == "braze"
+    assert campaign["recipient_external_id_field"] == "braze_external_id"
+
+    send_response = client.post(
+        f"/api/v1/email-campaigns/{campaign['email_campaign_id']}/send-now",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert send_response.status_code == 200, send_response.text
+    payload = send_response.json()
+    assert payload["status"] == "sent_with_errors"
+    assert payload["result_summary"]["provider"] == "braze"
+    assert payload["result_summary"]["sent_count"] == 1
+
+    send_request = next(item for item in call_log if item["method"] == "POST")
+    assert send_request["json"]["campaign_id"] == "cmp_winback"
+    assert send_request["json"]["broadcast"] is False
+    assert len(send_request["json"]["recipients"]) == 1
+    recipient = send_request["json"]["recipients"][0]
+    assert recipient["external_user_id"] == "braze_u_30"
+    assert recipient["trigger_properties"]["first_name"] == "Ivy"
+    assert recipient["trigger_properties"]["reward_name"] == "Welcome Back Pack"
+    assert (
+        recipient["trigger_properties"]["deeplink_url"]
+        == f"mygame://reward?user_id=u_30&reward_id=rw_300&campaign={campaign['email_campaign_id']}"
     )
 
 

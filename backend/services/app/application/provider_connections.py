@@ -137,16 +137,26 @@ class ProviderConnectionService:
 
     @staticmethod
     def _validate_provider_config(provider: str, config: Dict[str, Any]) -> None:
-        if str(provider or "").strip().lower() != "sendgrid":
+        normalized_provider = str(provider or "").strip().lower()
+        if normalized_provider == "sendgrid":
+            if not ProviderConnectionService._has_secret_reference(config, "api_key"):
+                raise ValueError("SendGrid provider connections require api_key.")
+            from_email = str((config or {}).get("from_email") or "").strip()
+            if not from_email:
+                raise ValueError("SendGrid provider connections require from_email.")
+            base_url = str((config or {}).get("base_url") or "").strip()
+            if base_url and not base_url.startswith(("https://", "http://")):
+                raise ValueError("SendGrid provider base_url must start with https:// or http://.")
+            return
+        if normalized_provider != "braze":
             return
         if not ProviderConnectionService._has_secret_reference(config, "api_key"):
-            raise ValueError("SendGrid provider connections require api_key.")
-        from_email = str((config or {}).get("from_email") or "").strip()
-        if not from_email:
-            raise ValueError("SendGrid provider connections require from_email.")
-        base_url = str((config or {}).get("base_url") or "").strip()
-        if base_url and not base_url.startswith(("https://", "http://")):
-            raise ValueError("SendGrid provider base_url must start with https:// or http://.")
+            raise ValueError("Braze provider connections require api_key.")
+        rest_endpoint = str((config or {}).get("rest_endpoint") or "").strip()
+        if not rest_endpoint:
+            raise ValueError("Braze provider connections require rest_endpoint.")
+        if not rest_endpoint.startswith(("https://", "http://")):
+            raise ValueError("Braze provider rest_endpoint must start with https:// or http://.")
 
     @staticmethod
     def _has_secret_reference(config: Dict[str, Any] | None, field: str) -> bool:

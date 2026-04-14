@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.api.schemas.email_campaigns import EmailCampaignCreateRequest, EmailCampaignResponse, EmailCampaignUpdateRequest
+from app.application.braze_provider import BrazeApiError
 from app.application.email_campaigns import EmailCampaignService
 from app.application.sendgrid_provider import SendGridApiError
 from app.core.deps import get_email_campaign_service
@@ -33,6 +34,8 @@ def create_email_campaign(
         return service.create_campaign(payload.model_dump(exclude_none=True))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Audience source '{exc.args[0]}' was not found.")
+    except BrazeApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except SendGridApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except ValueError as exc:
@@ -69,6 +72,8 @@ def update_email_campaign(
             else f"Audience source '{exc.args[0]}' was not found."
         )
         raise HTTPException(status_code=404, detail=detail)
+    except BrazeApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except SendGridApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except ValueError as exc:
@@ -86,6 +91,8 @@ def send_email_campaign_now(
         return service.send_now(email_campaign_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Email campaign '{email_campaign_id}' not found.")
+    except BrazeApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except SendGridApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except ValueError as exc:

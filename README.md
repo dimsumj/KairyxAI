@@ -6,7 +6,7 @@ The product is organized around five operator areas:
 
 - `Data Core` for connectors, mappings, imports, predictions, data quality, and governance
 - `Audience Engine` for cohort creation, refresh, comparison, and activation readiness
-- `Action Orchestrator` for SendGrid email campaigns, workflows, delivery, callbacks, and guardrails
+- `Action Orchestrator` for provider-aware lifecycle email campaigns, workflows, delivery, callbacks, and guardrails
 - `Experiment Hub` for assignment, exposure, outcomes, integrity, and decision support
 - `Insight Copilot` for grounded operator help, summaries, recommendations, and evidence-backed reporting
 
@@ -92,7 +92,7 @@ This repository already contains a working v1 control plane with:
 - BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery that defaults unresolved counts to `unknown rows`, on-demand exact row counts for a selected table with query-based fallback when table metadata access is blocked, and browser-based table imports for external prediction scores and churn lists
 - step-level import status tooltips for queued, staging, processing, stopping, and BigQuery table-read phases, with completed jobs no longer retaining stale timeout/failure badges after reruns, failure tooltips layering above adjacent controls, and failed imports excluded from downstream import-job selectors such as `Import Operations`
 - encrypted-at-rest storage for browser-entered connector and provider secrets when `CONTROL_PLANE_SECRET_KEY` is configured, while `*_ref` secret-manager references remain supported
-- SendGrid templated email campaigns in `Action Orchestrator`, including tenant-scoped provider connections, live template browsing, draft/save/send-now flows, scheduled one-time sends, deeplink merge-field injection, and separate upcoming versus past campaign views
+- provider-aware lifecycle email campaigns in `Action Orchestrator`, including tenant-scoped provider connections managed in `Data Core -> Connectors`, SendGrid dynamic template browsing, Braze API campaign selection, draft/save/send-now flows, scheduled one-time sends, deeplink merge-field injection, and separate upcoming versus past campaign views
 
 The remaining work is mostly production hardening, deeper provider-backed execution, and continued frontend productization rather than basic product existence.
 

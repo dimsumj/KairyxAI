@@ -234,7 +234,7 @@ export function initializeOperatorConsole() {
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
-                    subtitle: 'Configure SendGrid email campaigns, workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    subtitle: 'Build lifecycle email campaigns across SendGrid and Braze, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -2355,6 +2355,7 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'connectors') {
                     loadSavedConnectors();
+                    loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
                     loadDataSandboxGlance();
@@ -3057,24 +3058,26 @@ export function initializeOperatorConsole() {
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
             const importBigQueryTableCache = new Map();
-            const sendGridTemplateCache = new Map();
+            const emailCampaignAssetCache = new Map();
 
             function renderConnectorEntrySummary(message = '') {
                 const configuredCount = cachedConnectors.length;
+                const providerConnectionCount = getCampaignCapableProviderConnections().length;
                 const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
                 const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
                 const summaryText = message || (
-                    configuredCount === 0
-                        ? 'No connectors configured yet. Start with BigQuery or an ingestion source.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                    configuredCount === 0 && providerConnectionCount === 0
+                        ? 'No connectors configured yet. Start with BigQuery, an ingestion source, or a campaign provider.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
                 );
                 if (operatorHubConnectorsSummary) {
                     operatorHubConnectorsSummary.textContent = summaryText;
                 }
                 if (connectorsPageSummary && !message) {
-                    connectorsPageSummary.textContent = configuredCount === 0
-                        ? 'Connect your first source or provider to unlock imports, BigQuery access, predictions, and exports.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
+                    const totalConfigured = configuredCount + providerConnectionCount;
+                    connectorsPageSummary.textContent = totalConfigured === 0
+                        ? 'Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.'
+                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} and ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
                 }
             }
 
@@ -9162,20 +9165,20 @@ export function initializeOperatorConsole() {
             const workflowDeliveryDiagnosticsOutput = document.getElementById('workflow-delivery-diagnostics-output');
             const workflowPolicyOutput = document.getElementById('workflow-policy-output');
             const emailCampaignsSummary = document.getElementById('email-campaigns-summary');
-            const sendgridProviderRefreshBtn = document.getElementById('sendgrid-provider-refresh-btn');
-            const sendgridProviderSaveBtn = document.getElementById('sendgrid-provider-save-btn');
-            const sendgridProviderStatus = document.getElementById('sendgrid-provider-status');
-            const sendgridProviderList = document.getElementById('sendgrid-provider-list');
-            const sendgridProviderNameInput = document.getElementById('sendgrid-provider-name-input');
-            const sendgridProviderApiKeyInput = document.getElementById('sendgrid-provider-api-key-input');
-            const sendgridProviderFromEmailInput = document.getElementById('sendgrid-provider-from-email-input');
-            const sendgridProviderFromNameInput = document.getElementById('sendgrid-provider-from-name-input');
-            const sendgridProviderBaseUrlInput = document.getElementById('sendgrid-provider-base-url-input');
+            const providerConnectionRefreshBtn = document.getElementById('provider-connection-refresh-btn');
+            const providerConnectionSaveBtn = document.getElementById('provider-connection-save-btn');
+            const providerConnectionStatus = document.getElementById('provider-connection-status');
+            const providerConnectionList = document.getElementById('provider-connection-list');
+            const providerConnectionTypeSelect = document.getElementById('provider-connection-type-select');
+            const providerConnectionNameInput = document.getElementById('provider-connection-name-input');
+            const providerConnectionConfigFields = document.getElementById('provider-connection-config-fields');
             const emailCampaignRefreshBtn = document.getElementById('email-campaign-refresh-btn');
             const emailCampaignSelectedLabel = document.getElementById('email-campaign-selected-label');
             const emailCampaignStatus = document.getElementById('email-campaign-status');
             const emailCampaignTemplateStatus = document.getElementById('email-campaign-template-status');
+            const emailCampaignProviderTypeSelect = document.getElementById('email-campaign-provider-type-select');
             const emailCampaignProviderSelect = document.getElementById('email-campaign-provider-select');
+            const emailCampaignTemplateLabel = document.getElementById('email-campaign-template-label');
             const emailCampaignTemplateSelect = document.getElementById('email-campaign-template-select');
             const emailCampaignTemplateRefreshBtn = document.getElementById('email-campaign-template-refresh-btn');
             const emailCampaignPredictionJobSelect = document.getElementById('email-campaign-prediction-job-select');
@@ -9185,7 +9188,10 @@ export function initializeOperatorConsole() {
             const emailCampaignNameInput = document.getElementById('email-campaign-name-input');
             const emailCampaignRiskFiltersInput = document.getElementById('email-campaign-risk-filters-input');
             const emailCampaignIncludeChurnedCheckbox = document.getElementById('email-campaign-include-churned-checkbox');
+            const emailCampaignRecipientEmailFieldGroup = document.getElementById('email-campaign-recipient-email-field-group');
             const emailCampaignRecipientEmailFieldInput = document.getElementById('email-campaign-recipient-email-field-input');
+            const emailCampaignRecipientExternalIdFieldGroup = document.getElementById('email-campaign-recipient-external-id-field-group');
+            const emailCampaignRecipientExternalIdFieldInput = document.getElementById('email-campaign-recipient-external-id-field-input');
             const emailCampaignDeeplinkTemplateFieldInput = document.getElementById('email-campaign-deeplink-template-field-input');
             const emailCampaignDeeplinkTemplateInput = document.getElementById('email-campaign-deeplink-template-input');
             const emailCampaignDeeplinkOverrideFieldInput = document.getElementById('email-campaign-deeplink-override-field-input');
@@ -9196,7 +9202,7 @@ export function initializeOperatorConsole() {
             const emailCampaignSendNowBtn = document.getElementById('email-campaign-send-now-btn');
             const emailCampaignClearSelectionBtn = document.getElementById('email-campaign-clear-selection-btn');
             let selectedEmailCampaignId = null;
-            let selectedSendgridProviderConnectionId = null;
+            let selectedProviderConnectionId = null;
             const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
             const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
             const activationIngestStatus = document.getElementById('activation-ingest-status');
@@ -9404,14 +9410,48 @@ export function initializeOperatorConsole() {
                 return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
             }
 
-            function getSendGridProviderConnections() {
-                return latestByCreatedAt(
-                    (cachedProviderConnections || []).filter((item) => String(item.provider || '').toLowerCase() === 'sendgrid'),
-                );
+            function getCampaignProviderConfig(providerType = 'sendgrid') {
+                const normalizedProvider = String(providerType || 'sendgrid').trim().toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return {
+                        provider: 'braze',
+                        label: 'Braze',
+                        assetLabel: 'Braze API Campaign',
+                        assetOptionLabel: 'Select a Braze API campaign',
+                        selectProviderMessage: 'Select a Braze provider connection first.',
+                        emptyAssetMessage: 'No API-triggered Braze campaigns found for this provider connection.',
+                        loadingAssetsMessage: 'Loading Braze API campaigns...',
+                        loadedAssetNoun: 'campaign',
+                        namePlaceholder: 'e.g. Lifecycle Braze',
+                    };
+                }
+                return {
+                    provider: 'sendgrid',
+                    label: 'SendGrid',
+                    assetLabel: 'Dynamic Template',
+                    assetOptionLabel: 'Select a dynamic template',
+                    selectProviderMessage: 'Select a SendGrid provider connection first.',
+                    emptyAssetMessage: 'No dynamic templates found for this provider connection.',
+                    loadingAssetsMessage: 'Loading SendGrid templates...',
+                    loadedAssetNoun: 'template',
+                    namePlaceholder: 'e.g. Lifecycle SendGrid',
+                };
             }
 
-            function findSendGridProviderConnection(providerConnectionId) {
-                return getSendGridProviderConnections().find((item) => item.provider_connection_id === providerConnectionId) || null;
+            function getCampaignCapableProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                const items = Array.isArray(cachedProviderConnections) ? cachedProviderConnections : [];
+                return items.filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
+                    if (!['sendgrid', 'braze'].includes(provider)) {
+                        return false;
+                    }
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
+            }
+
+            function findProviderConnection(providerConnectionId) {
+                return (cachedProviderConnections || []).find((item) => item.provider_connection_id === providerConnectionId) || null;
             }
 
             function findEmailCampaign(emailCampaignId) {
@@ -9420,12 +9460,13 @@ export function initializeOperatorConsole() {
 
             async function refreshProviderConnectionsState() {
                 if (shouldBlockProtectedAppData()) {
-                    return getSendGridProviderConnections();
+                    return getCampaignCapableProviderConnections();
                 }
                 const payload = await apiRequest('/provider-connections');
                 const items = Array.isArray(payload.items) ? payload.items : [];
                 cachedProviderConnections = latestByCreatedAt(items);
-                return getSendGridProviderConnections();
+                renderConnectorEntrySummary();
+                return getCampaignCapableProviderConnections();
             }
 
             async function refreshEmailCampaignsState() {
@@ -9449,35 +9490,377 @@ export function initializeOperatorConsole() {
             }
 
             function updateEmailCampaignSummary() {
-                const providers = getSendGridProviderConnections();
+                const providers = getCampaignCapableProviderConnections();
                 const campaigns = Array.isArray(cachedEmailCampaigns) ? cachedEmailCampaigns : [];
                 const draftCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'draft').length;
                 const scheduledCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'scheduled').length;
                 const pastCount = campaigns.filter((item) => ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(String(item.status || '').toLowerCase())).length;
+                const sendGridCount = getCampaignCapableProviderConnections('sendgrid').length;
+                const brazeCount = getCampaignCapableProviderConnections('braze').length;
+                const providerBreakdown = [
+                    sendGridCount ? `${sendGridCount} SendGrid` : '',
+                    brazeCount ? `${brazeCount} Braze` : '',
+                ].filter(Boolean).join(' · ');
                 emailCampaignsSummary.textContent = providers.length === 0
-                    ? 'Save a SendGrid provider connection to start browsing templates and building campaigns.'
-                    : `${providers.length} SendGrid connection${providers.length === 1 ? '' : 's'} · ${draftCount} draft${draftCount === 1 ? '' : 's'} · ${scheduledCount} scheduled · ${pastCount} past`;
+                    ? 'Save a SendGrid or Braze provider connection under Connectors to start browsing assets and building campaigns.'
+                    : `${providers.length} provider connection${providers.length === 1 ? '' : 's'}${providerBreakdown ? ` (${providerBreakdown})` : ''} · ${draftCount} draft${draftCount === 1 ? '' : 's'} · ${scheduledCount} scheduled · ${pastCount} past`;
             }
 
-            function populateSendGridProviderSelect() {
-                const providers = getSendGridProviderConnections();
-                const preferredValue = (
-                    emailCampaignProviderSelect.value
-                    || selectedSendgridProviderConnectionId
-                    || (findEmailCampaign(selectedEmailCampaignId) || {}).provider_connection_id
-                    || ''
+            function getCurrentProviderConnectionType() {
+                return String(providerConnectionTypeSelect?.value || 'sendgrid').trim().toLowerCase() || 'sendgrid';
+            }
+
+            function getCurrentEmailCampaignProviderType() {
+                return String(
+                    emailCampaignProviderTypeSelect?.value
+                    || (findProviderConnection(String(emailCampaignProviderSelect?.value || '').trim()) || {}).provider
+                    || 'sendgrid'
+                ).trim().toLowerCase() || 'sendgrid';
+            }
+
+            function getSelectedEmailCampaignProviderConnection() {
+                return findProviderConnection(String(emailCampaignProviderSelect?.value || '').trim());
+            }
+
+            function sortMessagingAssets(items = []) {
+                return [...items].sort((left, right) => {
+                    const leftUpdatedAt = parseIsoDate(left.updated_at || left.last_edited || left.created_at).getTime();
+                    const rightUpdatedAt = parseIsoDate(right.updated_at || right.last_edited || right.created_at).getTime();
+                    if (leftUpdatedAt !== rightUpdatedAt) {
+                        return rightUpdatedAt - leftUpdatedAt;
+                    }
+                    return String(left.name || left.id || '').localeCompare(String(right.name || right.id || ''));
+                });
+            }
+
+            function getProviderConnectionApiKeyInput(providerType = getCurrentProviderConnectionType()) {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return document.getElementById('provider-connection-braze-api-key-input');
+                }
+                return document.getElementById('provider-connection-sendgrid-api-key-input');
+            }
+
+            function syncProviderConnectionFormFields() {
+                if (!providerConnectionConfigFields) {
+                    return;
+                }
+                const providerType = getCurrentProviderConnectionType();
+                if (providerType === 'braze') {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-braze-api-key-input">Braze API Key</label>
+                                <input type="password" id="provider-connection-braze-api-key-input" placeholder="Enter your Braze REST API key">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-braze-rest-endpoint-input">Braze REST Endpoint</label>
+                                <input type="text" id="provider-connection-braze-rest-endpoint-input" placeholder="https://rest.iad-01.braze.com">
+                            </div>
+                        </div>
+                        <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
+                    `;
+                } else {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-api-key-input">SendGrid API Key</label>
+                                <input type="password" id="provider-connection-sendgrid-api-key-input" placeholder="SG....">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-from-email-input">Default From Email</label>
+                                <input type="email" id="provider-connection-sendgrid-from-email-input" placeholder="rewards@example.com">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-from-name-input">Default From Name (optional)</label>
+                                <input type="text" id="provider-connection-sendgrid-from-name-input" placeholder="Rewards Team">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-base-url-input">Base URL (optional)</label>
+                                <input type="text" id="provider-connection-sendgrid-base-url-input" placeholder="https://api.sendgrid.com">
+                            </div>
+                        </div>
+                        <p class="subtle">Kairyx browses dynamic transactional templates from this SendGrid account and sends templated campaigns through the SendGrid Web API.</p>
+                    `;
+                }
+                syncProviderConnectionFormState();
+            }
+
+            function syncProviderConnectionFormState() {
+                const providerType = getCurrentProviderConnectionType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                const editingConnection = selectedProviderConnectionId ? findProviderConnection(selectedProviderConnectionId) : null;
+                const editing = Boolean(editingConnection && String(editingConnection.provider || '').toLowerCase() === providerType);
+                providerConnectionSaveBtn.textContent = editing ? 'Update Provider Connection' : 'Save Provider Connection';
+                if (providerConnectionNameInput) {
+                    providerConnectionNameInput.placeholder = descriptor.namePlaceholder;
+                }
+                const apiKeyInput = getProviderConnectionApiKeyInput(providerType);
+                if (!apiKeyInput) {
+                    return;
+                }
+                if (editing && !String(apiKeyInput.value || '').trim()) {
+                    apiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
+                    return;
+                }
+                apiKeyInput.placeholder = providerType === 'braze' ? 'Enter your Braze REST API key' : 'SG....';
+            }
+
+            function loadProviderConnectionIntoForm(providerConnectionId) {
+                const provider = findProviderConnection(providerConnectionId);
+                if (!provider) {
+                    resetProviderConnectionForm({ keepType: true });
+                    return;
+                }
+                selectedProviderConnectionId = provider.provider_connection_id;
+                providerConnectionTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                providerConnectionNameInput.value = provider.name || '';
+                syncProviderConnectionFormFields();
+                if (provider.provider === 'braze') {
+                    const restEndpointInput = document.getElementById('provider-connection-braze-rest-endpoint-input');
+                    if (restEndpointInput) {
+                        restEndpointInput.value = (provider.config || {}).rest_endpoint || '';
+                    }
+                } else {
+                    const fromEmailInput = document.getElementById('provider-connection-sendgrid-from-email-input');
+                    const fromNameInput = document.getElementById('provider-connection-sendgrid-from-name-input');
+                    const baseUrlInput = document.getElementById('provider-connection-sendgrid-base-url-input');
+                    if (fromEmailInput) {
+                        fromEmailInput.value = (provider.config || {}).from_email || '';
+                    }
+                    if (fromNameInput) {
+                        fromNameInput.value = (provider.config || {}).from_name || '';
+                    }
+                    if (baseUrlInput) {
+                        baseUrlInput.value = (provider.config || {}).base_url || '';
+                    }
+                }
+                const apiKeyInput = getProviderConnectionApiKeyInput(provider.provider);
+                if (apiKeyInput) {
+                    apiKeyInput.value = '';
+                }
+                syncProviderConnectionFormState();
+                setInlineStatus(
+                    providerConnectionStatus,
+                    (provider.config || {}).api_key_configured
+                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
+                        : `Editing ${provider.name}.`,
                 );
-                emailCampaignProviderSelect.innerHTML = '<option value="">Select a SendGrid connection</option>';
+            }
+
+            function resetProviderConnectionForm({ keepType = false } = {}) {
+                const preservedType = keepType ? getCurrentProviderConnectionType() : 'sendgrid';
+                selectedProviderConnectionId = null;
+                providerConnectionTypeSelect.value = preservedType;
+                providerConnectionNameInput.value = '';
+                syncProviderConnectionFormFields();
+                setInlineStatus(providerConnectionStatus, '');
+            }
+
+            async function saveProviderConnection() {
+                const providerType = getCurrentProviderConnectionType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                const name = String(providerConnectionNameInput.value || '').trim();
+                const apiKey = String(getProviderConnectionApiKeyInput(providerType)?.value || '').trim();
+                if (!name) {
+                    throw new Error('Connection name is required.');
+                }
+                let config = {};
+                if (providerType === 'braze') {
+                    const restEndpoint = String(document.getElementById('provider-connection-braze-rest-endpoint-input')?.value || '').trim();
+                    if (!restEndpoint) {
+                        throw new Error('Braze REST endpoint is required.');
+                    }
+                    config = {
+                        rest_endpoint: restEndpoint,
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    };
+                } else {
+                    const fromEmail = String(document.getElementById('provider-connection-sendgrid-from-email-input')?.value || '').trim();
+                    const fromName = String(document.getElementById('provider-connection-sendgrid-from-name-input')?.value || '').trim();
+                    const baseUrl = String(document.getElementById('provider-connection-sendgrid-base-url-input')?.value || '').trim();
+                    if (!fromEmail) {
+                        throw new Error('Default From Email is required.');
+                    }
+                    config = {
+                        from_email: fromEmail,
+                        ...(fromName ? { from_name: fromName } : {}),
+                        ...(baseUrl ? { base_url: baseUrl } : {}),
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    };
+                }
+                if (!selectedProviderConnectionId && !apiKey) {
+                    throw new Error(`${descriptor.label} API key is required for a new provider connection.`);
+                }
+                setInlineStatus(
+                    providerConnectionStatus,
+                    selectedProviderConnectionId ? 'Updating provider connection...' : 'Saving provider connection...',
+                );
+                const response = selectedProviderConnectionId
+                    ? await apiRequest(`/provider-connections/${encodeURIComponent(selectedProviderConnectionId)}`, {
+                        method: 'PATCH',
+                        body: { name, config },
+                    })
+                    : await apiRequest('/provider-connections', {
+                        method: 'POST',
+                        body: { name, provider: providerType, config },
+                    });
+                emailCampaignAssetCache.delete(response.provider_connection_id);
+                await loadProviderConnectionWorkspace({ preserveSelection: true });
+                loadProviderConnectionIntoForm(response.provider_connection_id);
+                if (getCurrentEmailCampaignProviderType() === providerType) {
+                    populateEmailCampaignProviderSelect({ preferredValue: response.provider_connection_id });
+                    emailCampaignProviderSelect.value = response.provider_connection_id;
+                    try {
+                        await loadEmailCampaignAssets(response.provider_connection_id, { forceRefresh: true });
+                        setInlineStatus(emailCampaignStatus, `${descriptor.label} connection is ready for the campaign builder.`);
+                    } catch (error) {
+                        setInlineStatus(emailCampaignStatus, error.message || `Failed to load ${descriptor.label} assets.`, true);
+                    }
+                }
+                setInlineStatus(providerConnectionStatus, `Saved ${descriptor.label} provider ${response.name}.`);
+                return response;
+            }
+
+            function formatProviderConnectionSummary(provider) {
+                const normalizedProvider = String(provider?.provider || '').toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return {
+                        detail: (provider?.config || {}).rest_endpoint || '-',
+                        hint: 'API-triggered campaigns',
+                    };
+                }
+                return {
+                    detail: (provider?.config || {}).from_email || '-',
+                    hint: (provider?.config || {}).from_name || '',
+                };
+            }
+
+            function renderProviderConnectionList(items = getCampaignCapableProviderConnections()) {
+                renderSimpleTable(
+                    providerConnectionList,
+                    [
+                        { label: 'Connection', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.provider_connection_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider))}</span>` },
+                        {
+                            label: 'Configuration',
+                            render: (item) => {
+                                const summary = formatProviderConnectionSummary(item);
+                                return `<span>${escapeHtml(summary.detail)}</span><div class="subtle">${escapeHtml(summary.hint || '')}</div>`;
+                            },
+                        },
+                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
+                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No SendGrid or Braze provider connections yet.',
+                );
+                providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const providerConnectionId = button.dataset.providerConnectionId;
+                        const action = button.dataset.providerConnectionAction;
+                        const provider = findProviderConnection(providerConnectionId);
+                        if (!providerConnectionId || !action || !provider) {
+                            return;
+                        }
+                        if (action === 'edit') {
+                            loadProviderConnectionIntoForm(providerConnectionId);
+                            return;
+                        }
+                        emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                        activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                            closeSidebar: true,
+                            scrollBehavior: 'smooth',
+                            reloadPage: true,
+                        });
+                        syncEmailCampaignProviderFields({ preferredProviderConnectionId: providerConnectionId });
+                        emailCampaignProviderSelect.value = providerConnectionId;
+                        try {
+                            await loadEmailCampaignAssets(providerConnectionId, { forceRefresh: false });
+                            setInlineStatus(emailCampaignStatus, `${provider.name} selected for the campaign builder.`);
+                        } catch (error) {
+                            setInlineStatus(emailCampaignStatus, error.message || 'Failed to load messaging assets for the selected provider.', true);
+                        }
+                    });
+                });
+            }
+
+            async function loadProviderConnectionWorkspace({ preserveSelection = true } = {}) {
+                try {
+                    const providers = await refreshProviderConnectionsState();
+                    if (!preserveSelection) {
+                        resetProviderConnectionForm({ keepType: true });
+                    } else if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
+                        loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else {
+                        syncProviderConnectionFormFields();
+                    }
+                    renderProviderConnectionList(providers);
+                    populateEmailCampaignProviderSelect();
+                    updateEmailCampaignSummary();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedProviderConnections = [];
+                        syncProviderConnectionFormFields();
+                        renderProviderConnectionList([]);
+                        setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        updateEmailCampaignSummary();
+                        return;
+                    }
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to load provider connections.', true);
+                }
+            }
+
+            function populateEmailCampaignProviderSelect({ preferredValue = '' } = {}) {
+                const providerType = getCurrentEmailCampaignProviderType();
+                const providers = getCampaignCapableProviderConnections(providerType);
+                const selectedCampaign = findEmailCampaign(selectedEmailCampaignId);
+                const preferredProviderId = String(
+                    preferredValue
+                    || emailCampaignProviderSelect.value
+                    || (
+                        selectedProviderConnectionId
+                        && String((findProviderConnection(selectedProviderConnectionId) || {}).provider || '').toLowerCase() === providerType
+                            ? selectedProviderConnectionId
+                            : ''
+                    )
+                    || (
+                        selectedCampaign
+                        && String(selectedCampaign.provider || '').toLowerCase() === providerType
+                            ? selectedCampaign.provider_connection_id
+                            : ''
+                    )
+                    || ''
+                ).trim();
+                emailCampaignProviderSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = `Select a ${getCampaignProviderConfig(providerType).label} connection`;
+                emailCampaignProviderSelect.appendChild(placeholder);
                 providers.forEach((provider) => {
                     const option = document.createElement('option');
                     option.value = provider.provider_connection_id;
-                    option.textContent = `${provider.name} (${(provider.config || {}).from_email || 'no sender'})`;
+                    const summary = formatProviderConnectionSummary(provider);
+                    option.textContent = `${provider.name} (${summary.detail || 'not configured'})`;
                     emailCampaignProviderSelect.appendChild(option);
                 });
-                if (preferredValue && providers.some((item) => item.provider_connection_id === preferredValue)) {
-                    emailCampaignProviderSelect.value = preferredValue;
+                if (preferredProviderId && providers.some((item) => item.provider_connection_id === preferredProviderId)) {
+                    emailCampaignProviderSelect.value = preferredProviderId;
                 } else if (!preferredValue && providers.length === 1) {
                     emailCampaignProviderSelect.value = providers[0].provider_connection_id;
+                } else {
+                    emailCampaignProviderSelect.value = '';
                 }
             }
 
@@ -9496,185 +9879,95 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function resetEmailCampaignTemplateSelect(message = 'Select a SendGrid provider first.') {
-                emailCampaignTemplateSelect.innerHTML = '<option value="">Select a SendGrid provider first</option>';
-                setInlineStatus(emailCampaignTemplateStatus, message);
+            function syncEmailCampaignProviderFields({ preferredProviderConnectionId = '' } = {}) {
+                const providerType = getCurrentEmailCampaignProviderType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                emailCampaignTemplateLabel.textContent = descriptor.assetLabel;
+                emailCampaignRecipientEmailFieldGroup.style.display = providerType === 'braze' ? 'none' : 'block';
+                emailCampaignRecipientExternalIdFieldGroup.style.display = providerType === 'braze' ? 'block' : 'none';
+                if (!String(emailCampaignRecipientEmailFieldInput.value || '').trim()) {
+                    emailCampaignRecipientEmailFieldInput.value = 'email';
+                }
+                if (!String(emailCampaignRecipientExternalIdFieldInput.value || '').trim()) {
+                    emailCampaignRecipientExternalIdFieldInput.value = 'user_id';
+                }
+                populateEmailCampaignProviderSelect({ preferredValue: preferredProviderConnectionId });
             }
 
-            function populateEmailCampaignTemplateSelect(templates = [], { selectedValue = '' } = {}) {
-                emailCampaignTemplateSelect.innerHTML = '<option value="">Select a dynamic template</option>';
-                templates.forEach((template) => {
+            function resetEmailCampaignTemplateSelect(message = '') {
+                const descriptor = getCampaignProviderConfig(getCurrentEmailCampaignProviderType());
+                emailCampaignTemplateSelect.innerHTML = '';
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = descriptor.selectProviderMessage;
+                emailCampaignTemplateSelect.appendChild(option);
+                setInlineStatus(emailCampaignTemplateStatus, message || descriptor.selectProviderMessage);
+            }
+
+            function formatMessagingAssetOptionLabel(asset, providerType = getCurrentEmailCampaignProviderType()) {
+                if (providerType === 'braze') {
+                    const tags = Array.isArray(asset.tags) && asset.tags.length ? ` (${asset.tags.join(', ')})` : '';
+                    return `${asset.name || asset.id}${tags}`;
+                }
+                const activeVersion = asset.active_version || {};
+                return `${asset.name || asset.id}${activeVersion.subject ? ` (${activeVersion.subject})` : ''}`;
+            }
+
+            function populateEmailCampaignAssetSelect(items = [], { selectedValue = '' } = {}) {
+                const descriptor = getCampaignProviderConfig(getCurrentEmailCampaignProviderType());
+                emailCampaignTemplateSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = descriptor.assetOptionLabel;
+                emailCampaignTemplateSelect.appendChild(placeholder);
+                items.forEach((asset) => {
                     const option = document.createElement('option');
-                    option.value = template.id;
-                    const activeVersion = template.active_version || {};
-                    option.textContent = `${template.name || template.id}${activeVersion.subject ? ` (${activeVersion.subject})` : ''}`;
+                    option.value = asset.id;
+                    option.textContent = formatMessagingAssetOptionLabel(asset);
                     emailCampaignTemplateSelect.appendChild(option);
                 });
-                if (selectedValue && templates.some((item) => item.id === selectedValue)) {
+                if (selectedValue && items.some((item) => item.id === selectedValue)) {
                     emailCampaignTemplateSelect.value = selectedValue;
                 }
             }
 
-            async function loadSendGridTemplates(providerConnectionId, { forceRefresh = false, preferredTemplateId = '' } = {}) {
-                const resolvedProviderId = String(providerConnectionId || emailCampaignProviderSelect.value || '').trim();
+            async function loadEmailCampaignAssets(providerConnectionId, { forceRefresh = false, preferredTemplateId = '' } = {}) {
+                const provider = findProviderConnection(String(providerConnectionId || emailCampaignProviderSelect.value || '').trim()) || getSelectedEmailCampaignProviderConnection();
+                const resolvedProviderId = String(provider?.provider_connection_id || providerConnectionId || emailCampaignProviderSelect.value || '').trim();
+                const providerType = String(provider?.provider || getCurrentEmailCampaignProviderType()).trim().toLowerCase() || 'sendgrid';
+                const descriptor = getCampaignProviderConfig(providerType);
                 if (!resolvedProviderId) {
-                    resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
+                    resetEmailCampaignTemplateSelect(descriptor.selectProviderMessage);
                     return [];
                 }
                 const selectedTemplateId = preferredTemplateId || emailCampaignTemplateSelect.value || '';
-                if (!forceRefresh && sendGridTemplateCache.has(resolvedProviderId)) {
-                    const cachedTemplates = sendGridTemplateCache.get(resolvedProviderId) || [];
-                    populateEmailCampaignTemplateSelect(cachedTemplates, { selectedValue: selectedTemplateId });
-                    setInlineStatus(emailCampaignTemplateStatus, `Loaded ${cachedTemplates.length} template${cachedTemplates.length === 1 ? '' : 's'} from cache.`);
-                    return cachedTemplates;
-                }
-                try {
-                    setInlineStatus(emailCampaignTemplateStatus, 'Loading SendGrid templates...');
-                    const payload = await apiRequest(`/provider-connections/${encodeURIComponent(resolvedProviderId)}/sendgrid/templates`);
-                    const templates = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
-                    sendGridTemplateCache.set(resolvedProviderId, templates);
-                    populateEmailCampaignTemplateSelect(templates, { selectedValue: selectedTemplateId });
+                if (!forceRefresh && emailCampaignAssetCache.has(resolvedProviderId)) {
+                    const cachedAssets = emailCampaignAssetCache.get(resolvedProviderId) || [];
+                    populateEmailCampaignAssetSelect(cachedAssets, { selectedValue: selectedTemplateId });
                     setInlineStatus(
                         emailCampaignTemplateStatus,
-                        templates.length
-                            ? `Loaded ${templates.length} template${templates.length === 1 ? '' : 's'}.`
-                            : 'No dynamic templates found for this provider connection.',
+                        `Loaded ${cachedAssets.length} ${descriptor.loadedAssetNoun}${cachedAssets.length === 1 ? '' : 's'} from cache.`,
                     );
-                    return templates;
+                    return cachedAssets;
+                }
+                try {
+                    setInlineStatus(emailCampaignTemplateStatus, descriptor.loadingAssetsMessage);
+                    const payload = await apiRequest(`/provider-connections/${encodeURIComponent(resolvedProviderId)}/messaging-assets`);
+                    const assets = sortMessagingAssets(Array.isArray(payload.items) ? payload.items : []);
+                    emailCampaignAssetCache.set(resolvedProviderId, assets);
+                    populateEmailCampaignAssetSelect(assets, { selectedValue: selectedTemplateId });
+                    setInlineStatus(
+                        emailCampaignTemplateStatus,
+                        assets.length
+                            ? `Loaded ${assets.length} ${descriptor.loadedAssetNoun}${assets.length === 1 ? '' : 's'}.`
+                            : descriptor.emptyAssetMessage,
+                    );
+                    return assets;
                 } catch (error) {
-                    resetEmailCampaignTemplateSelect(error.message || 'Failed to load SendGrid templates.');
-                    setInlineStatus(emailCampaignTemplateStatus, error.message || 'Failed to load SendGrid templates.', true);
+                    resetEmailCampaignTemplateSelect(error.message || descriptor.selectProviderMessage);
+                    setInlineStatus(emailCampaignTemplateStatus, error.message || `Failed to load ${descriptor.label} assets.`, true);
                     throw error;
                 }
-            }
-
-            function syncSendGridProviderFormState() {
-                const editing = Boolean(selectedSendgridProviderConnectionId);
-                sendgridProviderSaveBtn.textContent = editing ? 'Update Provider Connection' : 'Save Provider Connection';
-                if (editing && !String(sendgridProviderApiKeyInput.value || '').trim()) {
-                    sendgridProviderApiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
-                } else if (!editing) {
-                    sendgridProviderApiKeyInput.placeholder = 'SG....';
-                }
-            }
-
-            function loadSendGridProviderIntoForm(providerConnectionId) {
-                const provider = findSendGridProviderConnection(providerConnectionId);
-                if (!provider) {
-                    selectedSendgridProviderConnectionId = null;
-                    syncSendGridProviderFormState();
-                    return;
-                }
-                selectedSendgridProviderConnectionId = provider.provider_connection_id;
-                sendgridProviderNameInput.value = provider.name || '';
-                sendgridProviderFromEmailInput.value = (provider.config || {}).from_email || '';
-                sendgridProviderFromNameInput.value = (provider.config || {}).from_name || '';
-                sendgridProviderBaseUrlInput.value = (provider.config || {}).base_url || '';
-                sendgridProviderApiKeyInput.value = '';
-                syncSendGridProviderFormState();
-                setInlineStatus(
-                    sendgridProviderStatus,
-                    (provider.config || {}).api_key_configured
-                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
-                        : `Editing ${provider.name}.`,
-                );
-            }
-
-            function resetSendGridProviderForm() {
-                selectedSendgridProviderConnectionId = null;
-                sendgridProviderNameInput.value = '';
-                sendgridProviderFromEmailInput.value = '';
-                sendgridProviderFromNameInput.value = '';
-                sendgridProviderBaseUrlInput.value = '';
-                sendgridProviderApiKeyInput.value = '';
-                setInlineStatus(sendgridProviderStatus, '');
-                syncSendGridProviderFormState();
-            }
-
-            async function saveSendGridProviderConnection() {
-                const name = String(sendgridProviderNameInput.value || '').trim();
-                const fromEmail = String(sendgridProviderFromEmailInput.value || '').trim();
-                const apiKey = String(sendgridProviderApiKeyInput.value || '').trim();
-                const fromName = String(sendgridProviderFromNameInput.value || '').trim();
-                const baseUrl = String(sendgridProviderBaseUrlInput.value || '').trim();
-                if (!name) {
-                    throw new Error('Connection name is required.');
-                }
-                if (!fromEmail) {
-                    throw new Error('Default From Email is required.');
-                }
-                const config = {
-                    from_email: fromEmail,
-                    ...(fromName ? { from_name: fromName } : {}),
-                    ...(baseUrl ? { base_url: baseUrl } : {}),
-                    ...(apiKey ? { api_key: apiKey } : {}),
-                };
-                if (!selectedSendgridProviderConnectionId && !apiKey) {
-                    throw new Error('SendGrid API key is required for a new provider connection.');
-                }
-                setInlineStatus(
-                    sendgridProviderStatus,
-                    selectedSendgridProviderConnectionId ? 'Updating provider connection...' : 'Saving provider connection...',
-                );
-                const response = selectedSendgridProviderConnectionId
-                    ? await apiRequest(`/provider-connections/${encodeURIComponent(selectedSendgridProviderConnectionId)}`, {
-                        method: 'PATCH',
-                        body: { name, config },
-                    })
-                    : await apiRequest('/provider-connections', {
-                        method: 'POST',
-                        body: { name, provider: 'sendgrid', config },
-                    });
-                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
-                loadSendGridProviderIntoForm(response.provider_connection_id);
-                emailCampaignProviderSelect.value = response.provider_connection_id;
-                await loadSendGridTemplates(response.provider_connection_id, { forceRefresh: true });
-                setInlineStatus(sendgridProviderStatus, `Saved SendGrid provider ${response.name}.`);
-                setInlineStatus(emailCampaignStatus, 'Provider connection is ready for campaign builder.');
-            }
-
-            function renderSendGridProviderList(items = getSendGridProviderConnections()) {
-                renderSimpleTable(
-                    sendgridProviderList,
-                    [
-                        { label: 'Connection', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.provider_connection_id || '-')}</div>` },
-                        { label: 'Sender', render: (item) => `<span>${escapeHtml((item.config || {}).from_email || '-')}</span><div class="subtle">${escapeHtml((item.config || {}).from_name || '')}</div>` },
-                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
-                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
-                        {
-                            label: 'Actions',
-                            render: (item) => `
-                                <div class="table-actions">
-                                    <button type="button" data-sendgrid-provider-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
-                                    <button type="button" data-sendgrid-provider-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
-                                </div>
-                            `,
-                        },
-                    ],
-                    items,
-                    'No SendGrid provider connections yet.',
-                );
-                sendgridProviderList.querySelectorAll('[data-sendgrid-provider-action]').forEach((button) => {
-                    button.addEventListener('click', async () => {
-                        const providerConnectionId = button.dataset.providerConnectionId;
-                        const action = button.dataset.sendgridProviderAction;
-                        if (!providerConnectionId) return;
-                        if (action === 'edit') {
-                            loadSendGridProviderIntoForm(providerConnectionId);
-                            return;
-                        }
-                        if (action === 'use') {
-                            emailCampaignProviderSelect.value = providerConnectionId;
-                            loadSendGridProviderIntoForm(providerConnectionId);
-                            try {
-                                await loadSendGridTemplates(providerConnectionId, { forceRefresh: false });
-                                setInlineStatus(emailCampaignStatus, 'Provider connection selected for campaign builder.');
-                            } catch (error) {
-                                setInlineStatus(emailCampaignStatus, error.message || 'Failed to load templates for the selected provider.', true);
-                            }
-                        }
-                    });
-                });
             }
 
             function syncEmailCampaignBuilderState(campaign = null) {
@@ -9707,8 +10000,16 @@ export function initializeOperatorConsole() {
                 const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
                 renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
                 syncEmailCampaignBuilderState(campaign);
+                const providerType = String(
+                    campaign.provider
+                    || (findProviderConnection(campaign.provider_connection_id) || {}).provider
+                    || 'sendgrid'
+                ).trim().toLowerCase() || 'sendgrid';
+                emailCampaignProviderTypeSelect.value = providerType;
+                syncEmailCampaignProviderFields({ preferredProviderConnectionId: campaign.provider_connection_id });
                 emailCampaignNameInput.value = campaign.name || '';
                 emailCampaignRecipientEmailFieldInput.value = campaign.recipient_email_field || 'email';
+                emailCampaignRecipientExternalIdFieldInput.value = campaign.recipient_external_id_field || 'user_id';
                 emailCampaignRiskFiltersInput.value = ((campaign.audience || {}).include_risks || ['high', 'medium']).join(',');
                 emailCampaignIncludeChurnedCheckbox.checked = Boolean((campaign.audience || {}).include_churned);
                 emailCampaignDeeplinkTemplateFieldInput.value = campaign.deeplink_template_field || 'deeplink_url';
@@ -9733,7 +10034,7 @@ export function initializeOperatorConsole() {
                     }
                 }
                 try {
-                    await loadSendGridTemplates(campaign.provider_connection_id, {
+                    await loadEmailCampaignAssets(campaign.provider_connection_id, {
                         forceRefresh: false,
                         preferredTemplateId: campaign.template_id,
                     });
@@ -9751,6 +10052,7 @@ export function initializeOperatorConsole() {
                 emailCampaignRiskFiltersInput.value = 'high,medium';
                 emailCampaignIncludeChurnedCheckbox.checked = false;
                 emailCampaignRecipientEmailFieldInput.value = 'email';
+                emailCampaignRecipientExternalIdFieldInput.value = 'user_id';
                 emailCampaignDeeplinkTemplateFieldInput.value = 'deeplink_url';
                 emailCampaignDeeplinkOverrideFieldInput.value = '';
                 emailCampaignDeeplinkTemplateInput.value = '';
@@ -9766,20 +10068,23 @@ export function initializeOperatorConsole() {
                 if (!mergeFields || typeof mergeFields !== 'object' || Array.isArray(mergeFields)) {
                     throw new Error('Merge fields must be a JSON object.');
                 }
+                const provider = getSelectedEmailCampaignProviderConnection()?.provider || getCurrentEmailCampaignProviderType();
+                const descriptor = getCampaignProviderConfig(provider);
                 const providerConnectionId = String(emailCampaignProviderSelect.value || '').trim();
                 const templateId = String(emailCampaignTemplateSelect.value || '').trim();
                 const predictionJobId = String(emailCampaignPredictionJobSelect.value || '').trim();
                 if (!providerConnectionId) {
-                    throw new Error('Select a SendGrid provider connection.');
+                    throw new Error(`Select a ${descriptor.label} provider connection.`);
                 }
                 if (!templateId) {
-                    throw new Error('Select a dynamic template.');
+                    throw new Error(`Select a ${descriptor.assetLabel.toLowerCase()}.`);
                 }
                 if (!predictionJobId) {
                     throw new Error('Select a prediction audience.');
                 }
                 const payload = {
                     name: String(emailCampaignNameInput.value || '').trim(),
+                    provider,
                     provider_connection_id: providerConnectionId,
                     template_id: templateId,
                     audience: {
@@ -9787,12 +10092,16 @@ export function initializeOperatorConsole() {
                         include_risks: splitCsv(emailCampaignRiskFiltersInput.value).map((item) => item.toLowerCase()),
                         include_churned: Boolean(emailCampaignIncludeChurnedCheckbox.checked),
                     },
-                    recipient_email_field: String(emailCampaignRecipientEmailFieldInput.value || '').trim() || 'email',
                     merge_fields: mergeFields,
                     deeplink_template_field: String(emailCampaignDeeplinkTemplateFieldInput.value || '').trim() || 'deeplink_url',
                     deeplink_override_field: String(emailCampaignDeeplinkOverrideFieldInput.value || '').trim() || null,
                     deeplink_template: String(emailCampaignDeeplinkTemplateInput.value || '').trim() || null,
                 };
+                if (provider === 'braze') {
+                    payload.recipient_external_id_field = String(emailCampaignRecipientExternalIdFieldInput.value || '').trim() || 'user_id';
+                } else {
+                    payload.recipient_email_field = String(emailCampaignRecipientEmailFieldInput.value || '').trim() || 'email';
+                }
                 if (!payload.name) {
                     throw new Error('Campaign name is required.');
                 }
@@ -9880,6 +10189,7 @@ export function initializeOperatorConsole() {
                     emailCampaignUpcomingList,
                     [
                         { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid'))}</span>` },
                         { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
                         { label: 'Audience', render: (item) => escapeHtml(((item.audience || {}).prediction_job_id || (item.audience || {}).cohort_id || '-')) },
                         { label: 'Schedule', render: (item) => escapeHtml(formatDateTime(item.schedule_at)) },
@@ -9906,6 +10216,7 @@ export function initializeOperatorConsole() {
                     emailCampaignPastList,
                     [
                         { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid'))}</span>` },
                         { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
                         { label: 'Completed', render: (item) => escapeHtml(formatDateTime(item.last_send_completed_at || item.cancelled_at)) },
                         { label: 'Sent', render: (item) => escapeHtml(String(((item.result_summary || {}).sent_count) || 0)) },
@@ -9926,32 +10237,44 @@ export function initializeOperatorConsole() {
                         refreshPredictionJobsState(),
                         refreshEmailCampaignsState(),
                     ]);
-                    renderSendGridProviderList(providers);
-                    populateSendGridProviderSelect();
+                    syncProviderConnectionFormFields();
+                    renderProviderConnectionList(providers);
                     populateEmailCampaignPredictionSelect(predictionJobs);
+                    syncEmailCampaignProviderFields();
                     renderEmailCampaignLists(campaigns);
-                    if (emailCampaignProviderSelect.value) {
-                        await loadSendGridTemplates(emailCampaignProviderSelect.value, {
-                            forceRefresh: forceTemplateRefresh,
-                            preferredTemplateId: emailCampaignTemplateSelect.value,
-                        });
-                    } else {
-                        resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
-                    }
-                    if (preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId)) {
+                    const hasSelectedCampaign = preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId);
+                    if (hasSelectedCampaign) {
                         await loadEmailCampaignDetail(selectedEmailCampaignId);
+                    } else {
+                        if (selectedEmailCampaignId && !campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId)) {
+                            resetEmailCampaignForm();
+                        }
+                        if (emailCampaignProviderSelect.value) {
+                            await loadEmailCampaignAssets(emailCampaignProviderSelect.value, {
+                                forceRefresh: forceTemplateRefresh,
+                                preferredTemplateId: emailCampaignTemplateSelect.value,
+                            });
+                        } else {
+                            resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
+                        }
                     }
-                    syncSendGridProviderFormState();
+                    if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
+                        loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else {
+                        syncProviderConnectionFormState();
+                    }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
-                        renderSendGridProviderList([]);
+                        cachedProviderConnections = [];
+                        syncProviderConnectionFormFields();
+                        renderProviderConnectionList([]);
                         renderEmailCampaignLists([]);
-                        resetEmailCampaignTemplateSelect('Finish workspace setup to load SendGrid templates.');
-                        setInlineStatus(sendgridProviderStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
+                        setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         setInlineStatus(emailCampaignStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         return;
                     }
-                    setInlineStatus(sendgridProviderStatus, error.message || 'Failed to load SendGrid provider connections.', true);
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to load provider connections.', true);
                     setInlineStatus(emailCampaignStatus, error.message || 'Failed to load email campaigns.', true);
                 }
             }
@@ -11353,35 +11676,59 @@ export function initializeOperatorConsole() {
                 }
                 await createCohortFromSavedQuery(firstQuery.query_id);
             });
-            sendgridProviderRefreshBtn.addEventListener('click', async () => {
-                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
+            providerConnectionRefreshBtn.addEventListener('click', async () => {
+                await loadProviderConnectionWorkspace({ preserveSelection: true });
             });
-            sendgridProviderSaveBtn.addEventListener('click', async () => {
+            providerConnectionSaveBtn.addEventListener('click', async () => {
                 try {
-                    await saveSendGridProviderConnection();
+                    await saveProviderConnection();
                 } catch (error) {
-                    setInlineStatus(sendgridProviderStatus, error.message || 'Failed to save provider connection.', true);
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to save provider connection.', true);
                 }
+            });
+            providerConnectionTypeSelect.addEventListener('change', () => {
+                resetProviderConnectionForm({ keepType: true });
+                setInlineStatus(
+                    providerConnectionStatus,
+                    `Creating a new ${formatConnectorLabel(getCurrentProviderConnectionType())} provider connection.`,
+                );
             });
             emailCampaignRefreshBtn.addEventListener('click', async () => {
                 await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
             });
+            emailCampaignProviderTypeSelect.addEventListener('change', async () => {
+                syncEmailCampaignProviderFields();
+                try {
+                    if (!emailCampaignProviderSelect.value) {
+                        resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
+                        return;
+                    }
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load campaign messaging assets.', true);
+                }
+            });
             emailCampaignProviderSelect.addEventListener('change', async () => {
                 try {
                     if (!emailCampaignProviderSelect.value) {
-                        resetEmailCampaignTemplateSelect('Select a SendGrid provider first.');
+                        resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
                         return;
                     }
-                    await loadSendGridTemplates(emailCampaignProviderSelect.value, { forceRefresh: false });
+                    const provider = getSelectedEmailCampaignProviderConnection();
+                    if (provider) {
+                        emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                    }
+                    syncEmailCampaignProviderFields({ preferredProviderConnectionId: emailCampaignProviderSelect.value });
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: false });
                 } catch (error) {
-                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load SendGrid templates.', true);
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load campaign messaging assets.', true);
                 }
             });
             emailCampaignTemplateRefreshBtn.addEventListener('click', async () => {
                 try {
-                    await loadSendGridTemplates(emailCampaignProviderSelect.value, { forceRefresh: true });
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: true });
                 } catch (error) {
-                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to refresh SendGrid templates.', true);
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to refresh campaign messaging assets.', true);
                 }
             });
             emailCampaignClearSelectionBtn.addEventListener('click', () => {

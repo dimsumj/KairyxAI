@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
 
+from app.application.braze_provider import BrazeApiError, BrazeProviderService
 from app.application.cohorts import CohortService
+from app.application.provider_connections import ProviderConnectionService
 from app.application.sendgrid_provider import SendGridApiError, SendGridProviderService
 from app.core.settings import Settings, get_settings
 from bigquery_service import BigQueryService, get_shared_bigquery_service
@@ -14,6 +16,7 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 class EmailCampaignService:
     _RESOURCE_TYPE = "email_campaign"
     _SENDGRID_MAX_PERSONALIZATIONS = 1000
+    _BRAZE_MAX_RECIPIENTS = 50
     _DEEPLINK_FIELD_DEFAULT = "deeplink_url"
 
     def __init__(
@@ -25,7 +28,9 @@ class EmailCampaignService:
         self.repository = repository
         self.settings = settings or get_settings()
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+        self.provider_connections = ProviderConnectionService(repository)
         self.sendgrid = SendGridProviderService(repository)
+        self.braze = BrazeProviderService(repository)
         self.cohorts = CohortService(repository, self.bigquery_service)
 
     def list_campaigns(self, *, status: str | None = None) -> List[Dict[str, Any]]:
@@ -152,36 +157,55 @@ class EmailCampaignService:
         self.repository.upsert_resource(self._RESOURCE_TYPE, email_campaign_id, status="sending", name=payload.get("name"), payload=payload)
 
         audience_rows = self._resolve_audience_rows(dict(payload.get("audience") or {}))
+        provider = str(payload.get("provider") or "").strip().lower() or self._resolve_campaign_provider(
+            str(payload.get("provider_connection_id") or "")
+        )[0]
         recipient_email_field = str(payload.get("recipient_email_field") or "email").strip() or "email"
+        recipient_external_id_field = str(payload.get("recipient_external_id_field") or "user_id").strip() or "user_id"
         deeplink_field = str(payload.get("deeplink_template_field") or self._DEEPLINK_FIELD_DEFAULT).strip() or self._DEEPLINK_FIELD_DEFAULT
-        prepared_personalizations: List[Dict[str, Any]] = []
+        prepared_recipients: List[Dict[str, Any]] = []
         skipped_missing_email = 0
+        skipped_missing_recipient = 0
         preparation_errors: List[Dict[str, Any]] = []
 
         for row in audience_rows:
-            recipient_email = str(self._lookup_row_value(row, recipient_email_field) or "").strip()
-            if not recipient_email:
-                skipped_missing_email += 1
-                continue
             try:
-                dynamic_data = self._build_dynamic_template_data(dict(row or {}), payload, deeplink_field=deeplink_field)
+                merge_payload = self._build_merge_payload(dict(row or {}), payload, deeplink_field=deeplink_field)
             except ValueError as exc:
                 preparation_errors.append(
                     {
                         "user_id": self._row_user_identifier(row),
-                        "email": recipient_email,
+                        "provider": provider,
                         "error": str(exc),
                     }
                 )
                 continue
-            prepared_personalizations.append(
+            if provider == "sendgrid":
+                recipient_email = self._normalized_lookup_text(self._lookup_row_value(row, recipient_email_field))
+                if not recipient_email:
+                    skipped_missing_email += 1
+                    skipped_missing_recipient += 1
+                    continue
+                prepared_recipients.append(
+                    {
+                        "to": [{"email": recipient_email}],
+                        "dynamic_template_data": merge_payload,
+                        "custom_args": {
+                            "email_campaign_id": str(payload.get("email_campaign_id") or email_campaign_id),
+                            "user_id": self._row_user_identifier(row),
+                        },
+                    }
+                )
+                continue
+            recipient_external_id = self._normalized_lookup_text(self._lookup_row_value(row, recipient_external_id_field))
+            if not recipient_external_id:
+                skipped_missing_recipient += 1
+                continue
+            prepared_recipients.append(
                 {
-                    "to": [{"email": recipient_email}],
-                    "dynamic_template_data": dynamic_data,
-                    "custom_args": {
-                        "email_campaign_id": str(payload.get("email_campaign_id") or email_campaign_id),
-                        "user_id": self._row_user_identifier(row),
-                    },
+                    "external_user_id": recipient_external_id,
+                    "trigger_properties": merge_payload,
+                    "send_to_existing_only": True,
                 }
             )
 
@@ -193,32 +217,50 @@ class EmailCampaignService:
         sender_name = str(payload.get("from_name") or "").strip() or None
         subject = str(payload.get("subject") or "").strip() or None
 
-        for chunk in self._chunk_list(prepared_personalizations, self._SENDGRID_MAX_PERSONALIZATIONS):
-            try:
-                result = self.sendgrid.send_templated_mail(
-                    str(payload.get("provider_connection_id") or ""),
-                    template_id=str(payload.get("template_id") or ""),
-                    personalizations=chunk,
-                    from_email=sender_email,
-                    from_name=sender_name,
-                    subject=subject,
-                )
-                chunk_results.append({**result, "recipient_count": len(chunk)})
-                sent_count += len(chunk)
-            except (SendGridApiError, ValueError) as exc:
-                failed_count += len(chunk)
-                chunk_errors.append({"error": str(exc), "recipient_count": len(chunk)})
+        if provider == "sendgrid":
+            for chunk in self._chunk_list(prepared_recipients, self._SENDGRID_MAX_PERSONALIZATIONS):
+                try:
+                    result = self.sendgrid.send_templated_mail(
+                        str(payload.get("provider_connection_id") or ""),
+                        template_id=str(payload.get("template_id") or ""),
+                        personalizations=chunk,
+                        from_email=sender_email,
+                        from_name=sender_name,
+                        subject=subject,
+                    )
+                    chunk_results.append({**result, "recipient_count": len(chunk)})
+                    sent_count += len(chunk)
+                except (SendGridApiError, ValueError) as exc:
+                    failed_count += len(chunk)
+                    chunk_errors.append({"error": str(exc), "recipient_count": len(chunk)})
+        elif provider == "braze":
+            for chunk in self._chunk_list(prepared_recipients, self._BRAZE_MAX_RECIPIENTS):
+                try:
+                    result = self.braze.send_campaign(
+                        str(payload.get("provider_connection_id") or ""),
+                        campaign_id=str(payload.get("template_id") or ""),
+                        recipients=chunk,
+                    )
+                    chunk_results.append({**result, "recipient_count": len(chunk)})
+                    sent_count += len(chunk)
+                except (BrazeApiError, ValueError) as exc:
+                    failed_count += len(chunk)
+                    chunk_errors.append({"error": str(exc), "recipient_count": len(chunk)})
+        else:
+            raise ValueError(f"Unsupported email campaign provider '{provider}'.")
 
-        final_status = self._final_status(sent_count, failed_count, skipped_missing_email, preparation_errors, chunk_errors)
+        final_status = self._final_status(sent_count, failed_count, skipped_missing_recipient, preparation_errors, chunk_errors)
         payload["status"] = final_status
         payload["last_send_completed_at"] = datetime.utcnow().isoformat()
         payload["last_error"] = self._compose_last_error(preparation_errors, chunk_errors)
         payload["result_summary"] = {
             "trigger": trigger,
+            "provider": provider,
             "audience_count": len(audience_rows),
-            "prepared_recipients": len(prepared_personalizations),
+            "prepared_recipients": len(prepared_recipients),
             "sent_count": sent_count,
             "failed_count": failed_count,
+            "skipped_missing_recipient": skipped_missing_recipient,
             "skipped_missing_email": skipped_missing_email,
             "chunk_results": chunk_results,
             "errors": [*preparation_errors[:10], *chunk_errors[:10]],
@@ -261,26 +303,44 @@ class EmailCampaignService:
         if not template_id:
             raise ValueError("template_id is required.")
 
+        provider, connection = self._resolve_campaign_provider(provider_connection_id)
         audience = self._normalize_audience(dict(payload.get("audience") or {}))
         merge_fields = self._normalize_merge_fields(dict(payload.get("merge_fields") or {}))
         schedule_at = self._normalize_schedule_at(payload.get("schedule_at"))
         from_email = self._optional_text(payload.get("from_email"))
         from_name = self._optional_text(payload.get("from_name"))
         subject = self._optional_text(payload.get("subject"))
-        sender_defaults = self._resolve_sender_defaults(provider_connection_id)
-        if not (from_email or sender_defaults.get("from_email")):
-            raise ValueError("SendGrid campaigns require from_email either on the provider connection or the campaign override.")
-        template_summary = self.sendgrid.get_template_summary(provider_connection_id, template_id)
+        existing_payload = dict(existing or {})
+        recipient_email_field = self._optional_text(payload.get("recipient_email_field")) or self._optional_text(existing_payload.get("recipient_email_field"))
+        recipient_external_id_field = self._optional_text(payload.get("recipient_external_id_field")) or self._optional_text(
+            existing_payload.get("recipient_external_id_field")
+        )
+        if provider == "sendgrid":
+            sender_defaults = dict(connection.get("config") or {})
+            if not (from_email or sender_defaults.get("from_email")):
+                raise ValueError("SendGrid campaigns require from_email either on the provider connection or the campaign override.")
+            template_summary = self.sendgrid.get_template_summary(provider_connection_id, template_id)
+            recipient_email_field = recipient_email_field or "email"
+            recipient_external_id_field = recipient_external_id_field or None
+        elif provider == "braze":
+            template_summary = self.braze.get_campaign_summary(provider_connection_id, template_id)
+            from_email = None
+            from_name = None
+            subject = None
+            recipient_email_field = recipient_email_field or "email"
+            recipient_external_id_field = recipient_external_id_field or "user_id"
+        else:
+            raise ValueError(f"Provider '{provider}' is not supported for email campaigns.")
         current_status = str((existing or {}).get("status") or "").lower()
         normalized_status = "scheduled" if schedule_at else "draft"
         if current_status in {"draft", "scheduled"}:
             normalized_status = "scheduled" if schedule_at else "draft"
 
-        existing_payload = dict(existing or {})
         return {
             "email_campaign_id": email_campaign_id,
             "name": name,
             "status": normalized_status,
+            "provider": provider,
             "provider_connection_id": provider_connection_id,
             "template_id": template_id,
             "template_summary": template_summary,
@@ -288,7 +348,8 @@ class EmailCampaignService:
             "from_name": from_name,
             "subject": subject,
             "audience": audience,
-            "recipient_email_field": self._optional_text(payload.get("recipient_email_field")) or "email",
+            "recipient_email_field": recipient_email_field,
+            "recipient_external_id_field": recipient_external_id_field,
             "merge_fields": merge_fields,
             "deeplink_template": self._optional_text(payload.get("deeplink_template")),
             "deeplink_override_field": self._optional_text(payload.get("deeplink_override_field")),
@@ -341,9 +402,10 @@ class EmailCampaignService:
             normalized[key] = {"source": source, "value": value}
         return normalized
 
-    def _resolve_sender_defaults(self, provider_connection_id: str) -> Dict[str, Any]:
-        connection = self.sendgrid.provider_connections.resolve_connection(provider_connection_id)
-        return dict(connection.get("config") or {})
+    def _resolve_campaign_provider(self, provider_connection_id: str) -> tuple[str, Dict[str, Any]]:
+        connection = self.provider_connections.resolve_connection(provider_connection_id)
+        provider = str(connection.get("provider") or "").strip().lower()
+        return provider, connection
 
     def _resolve_audience_rows(self, audience: Dict[str, Any]) -> List[Dict[str, Any]]:
         cohort_id = str(audience.get("cohort_id") or "").strip()
@@ -392,21 +454,21 @@ class EmailCampaignService:
                 filtered.append(row)
         return filtered
 
-    def _build_dynamic_template_data(self, row: Dict[str, Any], campaign: Dict[str, Any], *, deeplink_field: str) -> Dict[str, Any]:
-        dynamic_data: Dict[str, Any] = {}
+    def _build_merge_payload(self, row: Dict[str, Any], campaign: Dict[str, Any], *, deeplink_field: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
         for template_var, spec in dict(campaign.get("merge_fields") or {}).items():
             source = str((spec or {}).get("source") or "field").lower()
             value = (spec or {}).get("value")
             if source == "literal":
-                dynamic_data[template_var] = value
+                payload[template_var] = value
                 continue
-            dynamic_data[template_var] = self._lookup_row_value(row, value)
+            payload[template_var] = self._lookup_row_value(row, value)
 
         deeplink_url = self._resolve_deeplink_url(row, campaign)
         if deeplink_url:
-            dynamic_data[deeplink_field] = deeplink_url
-            dynamic_data.setdefault(self._DEEPLINK_FIELD_DEFAULT, deeplink_url)
-        return dynamic_data
+            payload[deeplink_field] = deeplink_url
+            payload.setdefault(self._DEEPLINK_FIELD_DEFAULT, deeplink_url)
+        return payload
 
     def _resolve_deeplink_url(self, row: Dict[str, Any], campaign: Dict[str, Any]) -> str | None:
         override_field = str(campaign.get("deeplink_override_field") or "").strip()
@@ -452,6 +514,15 @@ class EmailCampaignService:
         return current
 
     @staticmethod
+    def _normalized_lookup_text(value: Any) -> str | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return None
+        return text
+
+    @staticmethod
     def _row_user_identifier(row: Dict[str, Any]) -> str:
         return str(row.get("user_id") or row.get("canonical_user_id") or row.get("email") or "").strip()
 
@@ -467,11 +538,11 @@ class EmailCampaignService:
     def _final_status(
         sent_count: int,
         failed_count: int,
-        skipped_missing_email: int,
+        skipped_missing_recipient: int,
         preparation_errors: List[Dict[str, Any]],
         chunk_errors: List[Dict[str, Any]],
     ) -> str:
-        if sent_count > 0 and (failed_count > 0 or skipped_missing_email > 0 or preparation_errors or chunk_errors):
+        if sent_count > 0 and (failed_count > 0 or skipped_missing_recipient > 0 or preparation_errors or chunk_errors):
             return "sent_with_errors"
         if sent_count > 0:
             return "sent"
@@ -534,6 +605,7 @@ class EmailCampaignService:
             "email_campaign_id": payload.get("email_campaign_id") or record.get("resource_id"),
             "name": payload.get("name") or record.get("name"),
             "status": payload.get("status") or record.get("status") or "draft",
+            "provider": payload.get("provider") or "sendgrid",
             "provider_connection_id": payload.get("provider_connection_id"),
             "template_id": payload.get("template_id"),
             "template_summary": dict(payload.get("template_summary") or {}),
@@ -542,6 +614,7 @@ class EmailCampaignService:
             "subject": payload.get("subject"),
             "audience": dict(payload.get("audience") or {}),
             "recipient_email_field": payload.get("recipient_email_field") or "email",
+            "recipient_external_id_field": payload.get("recipient_external_id_field"),
             "merge_fields": dict(payload.get("merge_fields") or {}),
             "deeplink_template": payload.get("deeplink_template"),
             "deeplink_override_field": payload.get("deeplink_override_field"),

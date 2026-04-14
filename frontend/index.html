@@ -588,7 +588,7 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
-            <p id="connectors-page-summary" class="subtle">Connect your first source or provider to unlock imports, BigQuery access, predictions, and exports.</p>
+            <p id="connectors-page-summary" class="subtle">Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.</p>
             <div id="connector-list">
                 <!-- Saved connectors will be dynamically added here -->
             </div>
@@ -620,6 +620,35 @@
                 </div>
                 <button id="save-connector-btn" style="display: none;">Save Connector</button>
                 <button id="cancel-add-connector-btn" style="background-color: var(--subtle-text); margin-left: 10px;">Cancel</button>
+            </div>
+
+            <div id="provider-connections-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2>Campaign Provider Connections</h2>
+                    <div class="inline-actions">
+                        <button id="provider-connection-refresh-btn" type="button">Refresh</button>
+                        <span id="provider-connection-status" class="subtle"></span>
+                    </div>
+                </div>
+                <p class="subtle">Store tenant-scoped SendGrid and Braze credentials here, then switch between them in the email campaign builder. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="provider-connection-type-select">Provider</label>
+                        <select id="provider-connection-type-select">
+                            <option value="sendgrid" selected>SendGrid</option>
+                            <option value="braze">Braze</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="provider-connection-name-input">Connection Name</label>
+                        <input type="text" id="provider-connection-name-input" placeholder="e.g. Lifecycle SendGrid">
+                    </div>
+                </div>
+                <div id="provider-connection-config-fields"></div>
+                <div class="inline-actions">
+                    <button id="provider-connection-save-btn" type="button">Save Provider Connection</button>
+                </div>
+                <div id="provider-connection-list"></div>
             </div>
         </section>
 
@@ -896,88 +925,64 @@ WHERE predicted_churn_risk = 'high'
                         <span id="email-campaigns-summary" class="subtle">Load provider connections and campaigns to begin.</span>
                     </div>
                 </div>
-                <div class="grid-2">
-                    <div class="card split-card">
-                        <div class="module-section-header">
-                            <h2>SendGrid Provider Connection</h2>
-                            <button id="sendgrid-provider-refresh-btn" type="button">Refresh</button>
-                        </div>
-                        <p class="subtle">Store SendGrid credentials and default sender settings in a tenant-scoped provider connection. API keys entered here are encrypted before storage and never returned to the browser after save.</p>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="sendgrid-provider-name-input">Connection Name</label>
-                                <input type="text" id="sendgrid-provider-name-input" placeholder="e.g. Lifecycle SendGrid">
-                            </div>
-                            <div class="form-group">
-                                <label for="sendgrid-provider-from-email-input">Default From Email</label>
-                                <input type="email" id="sendgrid-provider-from-email-input" placeholder="noreply@game.example">
-                            </div>
-                        </div>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="sendgrid-provider-api-key-input">SendGrid API Key</label>
-                                <input type="password" id="sendgrid-provider-api-key-input" placeholder="SG....">
-                            </div>
-                            <div class="form-group">
-                                <label for="sendgrid-provider-from-name-input">Default From Name (optional)</label>
-                                <input type="text" id="sendgrid-provider-from-name-input" placeholder="KairyxAI Rewards">
-                            </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Campaign Builder</h2>
+                        <span id="email-campaign-selected-label" class="pill">No campaign selected</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="email-campaign-name-input">Campaign Name</label>
+                            <input type="text" id="email-campaign-name-input" placeholder="e.g. spring_winback_reward">
                         </div>
                         <div class="form-group">
-                            <label for="sendgrid-provider-base-url-input">Base URL (optional)</label>
-                            <input type="text" id="sendgrid-provider-base-url-input" placeholder="https://api.eu.sendgrid.com">
+                            <label for="email-campaign-provider-type-select">Campaign Provider</label>
+                            <select id="email-campaign-provider-type-select">
+                                <option value="sendgrid" selected>SendGrid</option>
+                                <option value="braze">Braze</option>
+                            </select>
                         </div>
-                        <div class="inline-actions">
-                            <button id="sendgrid-provider-save-btn" type="button">Save Provider Connection</button>
-                            <span id="sendgrid-provider-status" class="subtle"></span>
+                        <div class="form-group">
+                            <label for="email-campaign-provider-select">Provider Connection</label>
+                            <select id="email-campaign-provider-select">
+                                <option value="">Load provider connections first</option>
+                            </select>
                         </div>
-                        <div id="sendgrid-provider-list"></div>
                     </div>
-                    <div class="card split-card">
-                        <div class="module-section-header">
-                            <h2>Campaign Builder</h2>
-                            <span id="email-campaign-selected-label" class="pill">No campaign selected</span>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label id="email-campaign-template-label" for="email-campaign-template-select">Dynamic Template</label>
+                            <select id="email-campaign-template-select">
+                                <option value="">Select a provider connection first</option>
+                            </select>
                         </div>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="email-campaign-name-input">Campaign Name</label>
-                                <input type="text" id="email-campaign-name-input" placeholder="e.g. spring_winback_reward">
-                            </div>
-                            <div class="form-group">
-                                <label for="email-campaign-provider-select">SendGrid Provider Connection</label>
-                                <select id="email-campaign-provider-select">
-                                    <option value="">Load provider connections first</option>
-                                </select>
-                            </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="email-campaign-template-refresh-btn" type="button">Refresh Assets</button>
+                            <span id="email-campaign-template-status" class="subtle"></span>
                         </div>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="email-campaign-template-select">Dynamic Template</label>
-                                <select id="email-campaign-template-select">
-                                    <option value="">Select a SendGrid provider first</option>
-                                </select>
-                            </div>
-                            <div class="inline-actions" style="align-items: end;">
-                                <button id="email-campaign-template-refresh-btn" type="button">Refresh Templates</button>
-                                <span id="email-campaign-template-status" class="subtle"></span>
-                            </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="email-campaign-prediction-job-select">Prediction Audience</label>
+                            <select id="email-campaign-prediction-job-select">
+                                <option value="">Load predictions first</option>
+                            </select>
                         </div>
-                        <div class="grid-3">
-                            <div class="form-group">
-                                <label for="email-campaign-prediction-job-select">Prediction Audience</label>
-                                <select id="email-campaign-prediction-job-select">
-                                    <option value="">Load predictions first</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="email-campaign-risk-filters-input">Risk Filters</label>
-                                <input type="text" id="email-campaign-risk-filters-input" value="high,medium" placeholder="high,medium">
-                            </div>
-                            <div class="form-group">
-                                <label for="email-campaign-recipient-email-field-input">Recipient Email Field</label>
-                                <input type="text" id="email-campaign-recipient-email-field-input" value="email" placeholder="email">
-                            </div>
+                        <div class="form-group">
+                            <label for="email-campaign-risk-filters-input">Risk Filters</label>
+                            <input type="text" id="email-campaign-risk-filters-input" value="high,medium" placeholder="high,medium">
                         </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group" id="email-campaign-recipient-email-field-group">
+                            <label for="email-campaign-recipient-email-field-input">Recipient Email Field</label>
+                            <input type="text" id="email-campaign-recipient-email-field-input" value="email" placeholder="email">
+                        </div>
+                        <div class="form-group" id="email-campaign-recipient-external-id-field-group" style="display: none;">
+                            <label for="email-campaign-recipient-external-id-field-input">Recipient External ID Field</label>
+                            <input type="text" id="email-campaign-recipient-external-id-field-input" value="user_id" placeholder="user_id">
+                        </div>
+                    </div>
                         <label style="display: inline-flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
                             <input type="checkbox" id="email-campaign-include-churned-checkbox">
                             Include already churned users
@@ -1018,7 +1023,6 @@ WHERE predicted_churn_risk = 'high'
                             <button id="email-campaign-schedule-btn" type="button">Schedule Campaign</button>
                             <button id="email-campaign-send-now-btn" type="button">Send Now</button>
                         </div>
-                    </div>
                 </div>
                 <div class="grid-2" style="margin-top: 1rem;">
                     <div class="card split-card">

@@ -4,6 +4,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.application.audit import AuditService
+from app.application.braze_provider import BrazeProviderService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
 from app.application.copilot_agent import CopilotAgentService
@@ -104,6 +105,12 @@ def get_sendgrid_provider_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> SendGridProviderService:
     return SendGridProviderService(repository)
+
+
+def get_braze_provider_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> BrazeProviderService:
+    return BrazeProviderService(repository)
 
 
 def get_copilot_service(

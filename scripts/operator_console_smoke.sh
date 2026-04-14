@@ -138,34 +138,68 @@ assert_bigquery_connector_ui() {
 }
 
 assert_email_campaign_ui() {
-  log_step "Checking SendGrid campaign builder UI"
+  log_step "Checking provider-aware email campaign UI"
   run_pw run-code "async (page) => {
+    const connectorsLink = page.locator('[data-item=\"data-core-connectors\"]');
+    if (await connectorsLink.count() === 0) throw new Error('Missing Data Core -> Connectors navigation');
+    await connectorsLink.first().click();
+    await page.waitForTimeout(700);
+
+    const providerType = page.locator('#provider-connection-type-select');
+    const providerName = page.locator('#provider-connection-name-input');
+    const providerSave = page.locator('#provider-connection-save-btn');
+    if (
+      await providerType.count() === 0
+      || await providerName.count() === 0
+      || await providerSave.count() === 0
+    ) {
+      throw new Error('Missing campaign provider connection controls in Connectors');
+    }
+
+    await providerType.selectOption('braze');
+    await page.waitForTimeout(200);
+    const brazeApiKey = page.locator('#provider-connection-braze-api-key-input');
+    const brazeEndpoint = page.locator('#provider-connection-braze-rest-endpoint-input');
+    if (await brazeApiKey.count() === 0 || await brazeEndpoint.count() === 0) {
+      throw new Error('Missing Braze provider connection fields');
+    }
+
     const orchestratorLink = page.locator('[data-module=\"action-orchestrator\"]');
     if (await orchestratorLink.count() === 0) throw new Error('Missing Action Orchestrator navigation');
     await orchestratorLink.first().click();
     await page.waitForTimeout(700);
 
-    const providerName = page.locator('#sendgrid-provider-name-input');
-    const providerApiKey = page.locator('#sendgrid-provider-api-key-input');
-    const providerSave = page.locator('#sendgrid-provider-save-btn');
+    const campaignProviderType = page.locator('#email-campaign-provider-type-select');
     const campaignProvider = page.locator('#email-campaign-provider-select');
     const campaignTemplate = page.locator('#email-campaign-template-select');
     const campaignSend = page.locator('#email-campaign-send-now-btn');
     if (
-      await providerName.count() === 0
-      || await providerApiKey.count() === 0
-      || await providerSave.count() === 0
+      await campaignProviderType.count() === 0
       || await campaignProvider.count() === 0
       || await campaignTemplate.count() === 0
       || await campaignSend.count() === 0
     ) {
-      throw new Error('Missing SendGrid provider or email campaign controls');
+      throw new Error('Missing email campaign builder controls');
+    }
+
+    await campaignProviderType.selectOption('braze');
+    await page.waitForTimeout(200);
+
+    const emailFieldGroup = page.locator('#email-campaign-recipient-email-field-group');
+    const externalIdFieldGroup = page.locator('#email-campaign-recipient-external-id-field-group');
+    const emailFieldDisplay = await emailFieldGroup.evaluate((element) => window.getComputedStyle(element).display);
+    const externalIdFieldDisplay = await externalIdFieldGroup.evaluate((element) => window.getComputedStyle(element).display);
+    if (emailFieldDisplay !== 'none' || externalIdFieldDisplay === 'none') {
+      throw new Error('Campaign provider switch did not toggle recipient field groups');
     }
 
     return {
+      providerTypeValue: await providerType.inputValue(),
       providerSaveLabel: await providerSave.textContent() || '',
+      campaignProviderTypeValue: await campaignProviderType.inputValue(),
       campaignTemplatePlaceholder: await campaignTemplate.first().locator('option').first().textContent() || '',
       campaignSendLabel: await campaignSend.textContent() || '',
+      externalIdFieldDisplay,
     };
   }"
 }
