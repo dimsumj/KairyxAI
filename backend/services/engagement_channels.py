@@ -35,7 +35,7 @@ class PushSimulatorAdapter(ChannelAdapter):
     channel_name = "push_notification"
 
     def send(self, player_id: Any, action: Dict[str, Any], action_id: str) -> Dict[str, Any]:
-        msg = action.get("content", "")
+        msg = action.get("body") or action.get("content", "")
         print("\n--- SIMULATING PUSH NOTIFICATION ---")
         print(f"TO: Player {player_id}")
         print(f"MESSAGE: {msg}")
@@ -51,6 +51,192 @@ class PushSimulatorAdapter(ChannelAdapter):
             provider_mode="simulator",
             simulated=True,
         )
+
+
+class WynnPushNotifierAdapter(ChannelAdapter):
+    channel_name = "push_notification"
+
+    def send(self, player_id: Any, action: Dict[str, Any], action_id: str) -> Dict[str, Any]:
+        base_url = str(action.get("base_url") or "").rstrip("/")
+        api_token = str(action.get("api_token") or "").strip()
+        title = str(action.get("title") or "").strip()
+        body = str(action.get("body") or action.get("content") or "").strip()
+        provider_request_id = str(action.get("provider_request_id") or action_id).strip() or action_id
+        if not base_url:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 422,
+                    "error": "provider_config_missing:base_url",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+        if not api_token:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 422,
+                    "error": "provider_config_missing:api_token",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+        if not title:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 422,
+                    "error": "invalid_target:missing_title",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+        if not body:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 422,
+                    "error": "invalid_target:missing_body",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+
+        context = dict(action.get("context") or {})
+        context = {
+            **context,
+            "workflow_id": action.get("workflow_id") or context.get("workflow_id"),
+            "execution_id": action.get("execution_id") or context.get("execution_id"),
+            "tenant_id": action.get("tenant_id") or context.get("tenant_id"),
+            "project_id": action.get("project_id") or context.get("project_id"),
+        }
+        context = {key: value for key, value in context.items() if value not in (None, "")}
+        player_ids = player_id if isinstance(player_id, list) else [player_id]
+        player_ids = [str(item).strip() for item in player_ids if str(item).strip()]
+        request_payload = {
+            "provider_request_id": provider_request_id,
+            "campaign_name": str(action.get("campaign_name") or f"kairyx_push_{action_id}").strip(),
+            "title": title,
+            "body": body,
+            "player_ids": player_ids,
+            "data": dict(action.get("data") or {}),
+            "scheduled_at": action.get("scheduled_at"),
+            "deep_link": action.get("deep_link"),
+            "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
+            "provider_options": dict(action.get("provider_options") or {}),
+            "context": context,
+        }
+        try:
+            resp = requests.post(
+                f"{base_url}/pushNotificationAPI/kairyx/campaigns",
+                headers={
+                    "Authorization": f"Bearer {api_token}",
+                    "Content-Type": "application/json",
+                },
+                json=request_payload,
+                timeout=15,
+            )
+        except requests.Timeout:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 504,
+                    "error": "provider_timeout",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+        except requests.RequestException as exc:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": body,
+                    "status_code": 502,
+                    "error": f"provider_request_failed:{exc.__class__.__name__.lower()}",
+                },
+                provider="wynn_push_notifier",
+                provider_mode="live",
+            )
+
+        response_payload: Dict[str, Any]
+        try:
+            response_payload = dict(resp.json() or {})
+        except ValueError:
+            response_payload = {}
+        accepted = bool(response_payload.get("accepted")) if response_payload else False
+        ok = 200 <= resp.status_code < 300 and accepted
+        error_message = response_payload.get("error") or response_payload.get("message") or resp.text[:400]
+        return self._wrap_result(
+            {
+                "ok": ok,
+                "channel": self.channel_name,
+                "status_code": resp.status_code,
+                "content": body,
+                "error": None if ok else str(error_message or "provider_error"),
+                "accepted": accepted,
+                "duplicate": bool(response_payload.get("duplicate")),
+                "provider_campaign_id": response_payload.get("campaign_id"),
+                "scheduled_at": response_payload.get("scheduled_at"),
+                "provider_response_body": response_payload,
+            },
+            provider="wynn_push_notifier",
+            provider_mode="live",
+        )
+
+
+class PushNotificationAdapter(ChannelAdapter):
+    channel_name = "push_notification"
+
+    def __init__(self):
+        self.simulator = PushSimulatorAdapter()
+        self.wynn_push_notifier = WynnPushNotifierAdapter()
+
+    def send(self, player_id: Any, action: Dict[str, Any], action_id: str) -> Dict[str, Any]:
+        provider = str(action.get("provider") or "").strip().lower()
+        has_live_config = bool(
+            str(action.get("provider_connection_id") or "").strip()
+            or str(action.get("base_url") or "").strip()
+            or str(action.get("api_token") or "").strip()
+        )
+        if not has_live_config and provider not in {"", "simulator"}:
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": str(action.get("body") or action.get("content") or ""),
+                    "status_code": 422,
+                    "error": f"unsupported_provider_connection:{provider}",
+                },
+                provider=provider or "unsupported",
+                provider_mode="live",
+            )
+        if provider in {"", "simulator"} and not has_live_config:
+            return self.simulator.send(player_id, action, action_id)
+        if provider and provider != "wynn_push_notifier":
+            return self._wrap_result(
+                {
+                    "ok": False,
+                    "channel": self.channel_name,
+                    "content": str(action.get("body") or action.get("content") or ""),
+                    "status_code": 422,
+                    "error": f"unsupported_provider_connection:{provider}",
+                },
+                provider=provider,
+                provider_mode="live",
+            )
+        return self.wynn_push_notifier.send(player_id, action, action_id)
 
 
 class EmailSimulatorAdapter(ChannelAdapter):

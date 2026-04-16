@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid or Braze provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Wynn PushNotifier provider connection, then go to `Action Orchestrator` to either draft an email campaign or create a workflow against a cohort.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -454,24 +454,26 @@ Credential storage behavior:
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
-For lifecycle email campaigns, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid or Braze accounts, then use `Action Orchestrator -> Email Campaigns` to choose the provider connection and messaging asset. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
+For lifecycle email campaigns and Wynn-backed push workflows, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Wynn PushNotifier accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Wynn PushNotifier provider connections are used by `Action Orchestrator -> Create Workflow` when a `push_notification` workflow should create a visible campaign in Wynn PushNotifier instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
 
 #### Campaign Provider Connections
 
-Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns. Browser-entered API keys are encrypted before storage and later reads expose only `api_key_configured`. The credential form stays hidden until you click `Connect Campaign Provider`.
+Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns and Wynn-backed push workflows. Browser-entered API keys and bearer tokens are encrypted before storage and later reads expose only the matching `*_configured` flag. The credential form stays hidden until you click `Connect Campaign Provider`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid or Braze account. | None | The provider selector and credential fields appear. |
-| `Provider` | Select | Switches the form between SendGrid and Braze account setup. | `Braze` | The provider-specific credential fields change immediately. |
-| `Connection Name` | Text box | Sets the label that appears later in the email campaign builder. | `Lifecycle Braze` | The provider connection is listed under that name. |
+| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid, Braze, or Wynn PushNotifier account. | None | The provider selector and credential fields appear. |
+| `Provider` | Select | Switches the form between SendGrid, Braze, and Wynn PushNotifier account setup. | `Wynn PushNotifier` | The provider-specific credential fields change immediately. |
+| `Connection Name` | Text box | Sets the label that appears later in the email campaign builder or workflow composer. | `Wynn PushNotifier Production` | The provider connection is listed under that name. |
 | SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
 | Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
-| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder. |
+| Wynn PushNotifier fields | Text box, password boxes | When `Provider` is `Wynn PushNotifier`, fill `PushNotifier Base URL`, `PushNotifier API Token`, optional `Default Deep Link Token`, and optional `Callback Signing Secret`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token` | The connection becomes selectable for push workflows and Kairyx can create visible Wynn PushNotifier campaigns for explicit player IDs. |
+| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key or API token blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder or workflow composer. |
 | `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
 | Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
-| Provider row `Use in Campaign` | Row button | Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Use in Campaign` | Row button | Visible for SendGrid and Braze rows. Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Use in Workflow` | Row button | Visible for Wynn PushNotifier rows. Jumps to `Action Orchestrator -> Create Workflow` and preselects that provider connection in the push workflow composer. | None | The workflow form is preloaded for Wynn-backed `push_notification` delivery. |
 | Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
@@ -941,9 +943,73 @@ State rules:
 | `Quiet Hours End` | Number box | End of no-send window. | `7` | Sends resume at 07:00. |
 | `Daily Budget Limit` | Number box | Workflow budget cap. | `25` | Policy blocks sends beyond budget. |
 | `Blacklist IDs (comma separated)` | Text box | Users who should never receive this workflow. | `user_1,user_2` | Those users are always skipped. |
-| `Content` | Text area | Message body. | `Come back for a reward.` | Used as workflow content. |
+| `Email Content` | Text area | Visible only when `Channel` is `Email`. Sets the body used by the legacy email workflow path. | `Come back for a reward.` | Used as workflow content for the email channel. |
+| `Provider Connection` | Select | Visible only when `Channel` is `Push Notification`. Leave it blank to keep simulator delivery, or choose a Wynn PushNotifier connection for live Wynn delivery. | `Wynn PushNotifier Production` | The workflow uses the selected provider connection at execution time. |
+| `Campaign Name` | Text box | Visible only when `Channel` is `Push Notification`. Sets the Wynn campaign label created for the workflow send. | `winback_push` | The outbound payload includes `campaign_name`. |
+| `Title` | Text box | Visible only when `Channel` is `Push Notification`. Required for live Wynn delivery. | `Come back` | The outbound payload includes `title`. |
+| `Schedule Override (optional)` | Date/time picker | Visible only when `Channel` is `Push Notification`. Converts the local date and time into an ISO timestamp and sends it as a one-time override for Wynn PushNotifier. | `2026-04-16 11:30` | The outbound payload includes `scheduled_at`. |
+| `Body` | Text area | Visible only when `Channel` is `Push Notification`. Required for live Wynn delivery and also used as simulator content when no provider connection is selected. | `Rewards are waiting for you.` | The outbound payload includes `body`. |
+| `Deep Link (optional)` | Text box | Visible only when `Channel` is `Push Notification`. Sets the deep link metadata stored on the push request. | `wynn://promotions/welcome-back` | The outbound payload includes `deep_link`. |
+| `Deep Link Token (optional)` | Text box | Visible only when `Channel` is `Push Notification`. Overrides the provider connection's default deep link token for this workflow. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
+| `Push Data JSON` | Text area | Visible only when `Channel` is `Push Notification`. Must be valid JSON object text. | `{"reward_id":"reward_pack"}` | The outbound payload includes `data`. |
+| `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for push workflows. | None | The advanced JSON field becomes visible. |
+| `Provider Options JSON` | Text area | Visible inside `Advanced Provider Options` for `Push Notification`. Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
 | `Requires manual confirmation` | Checkbox | Require manual confirmation before high-risk execution. | Checked | Workflow is marked confirmation-required. |
 | `Create Workflow` | Button | Creates the workflow draft. | None | Workflow appears in the workflow list. |
+
+Channel behavior:
+- When `Channel` is `Push Notification`, the email content field is hidden and the push composer fields are shown.
+- Leaving `Provider Connection` blank keeps the legacy simulator path for push workflows.
+- Selecting a Wynn PushNotifier provider connection switches the workflow to live Wynn delivery. Kairyx sends explicit cohort member `canonical_user_id` values as Wynn `player_ids`.
+- Live Wynn push workflows require both `Title` and `Body`.
+- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be created.
+
+#### Sample push workflow request
+```json
+{
+  "name": "daily_churn_rescue_push",
+  "cohort_id": "cohort_20260322_1200",
+  "experiment_id": "churn_rescue_v1",
+  "schedule": { "type": "daily" },
+  "trigger": {
+    "type": "daily_schedule",
+    "hour": 10,
+    "minute": 0
+  },
+  "action": {
+    "channel": "push_notification",
+    "provider_connection_id": "pc_wynn_1234567890",
+    "campaign_name": "winback_push",
+    "title": "Come back",
+    "body": "Rewards are waiting for you.",
+    "deep_link": "wynn://promotions/welcome-back",
+    "deep_link_token": "campaign-default-token",
+    "scheduled_at": "2026-04-16T18:30:00Z",
+    "data": {
+      "reward_id": "reward_pack"
+    },
+    "provider_options": {
+      "priority": "high"
+    }
+  },
+  "channel_config": {
+    "channel": "push_notification",
+    "provider_connection_id": "pc_wynn_1234567890",
+    "campaign_name": "winback_push",
+    "title": "Come back",
+    "body": "Rewards are waiting for you.",
+    "deep_link": "wynn://promotions/welcome-back",
+    "deep_link_token": "campaign-default-token",
+    "scheduled_at": "2026-04-16T18:30:00Z",
+    "data": {
+      "reward_id": "reward_pack"
+    },
+    "provider_options": {
+      "priority": "high"
+    }
+  }
+}
+```
 
 #### Sample workflow output
 ```json
@@ -1013,6 +1079,12 @@ State rules:
 | Workflow row `Resume` | Row button | Resumes a paused workflow. | None | Workflow status becomes published or active again. |
 | Workflow row `Test Run` | Row button | Runs the workflow in test mode. | None | Test run output appears in runtime output panel. |
 | `Load Diagnostics` | Button | Loads delivery diagnostics for the selected workflow. | None | Diagnostics JSON appears. |
+
+Delivery detail behavior:
+- Push workflow deliveries created through Wynn PushNotifier keep the selected `provider_connection_id`.
+- The delivery record stores `provider_campaign_id` and `provider_accepted` when Wynn accepts the request.
+- Delivery detail JSON also records the normalized `provider_request` and `provider_response` payloads for operator inspection.
+- In v1, Wynn delivery success means the push campaign request was accepted and created in PushNotifier. It does not mean the device-level notification has already been delivered.
 
 #### Sample workflow diagnostics output
 ```json
