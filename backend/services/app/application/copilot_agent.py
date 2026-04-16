@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
+from app.application.secret_refs import materialize_secret_refs
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from gemini_client import GeminiClient
 
@@ -279,10 +280,14 @@ class GeminiCopilotAgentModel:
 
     def _build_gemini_client(self) -> GeminiClient | None:
         google_connectors = [
-            connector
+            {**connector, "config": materialize_secret_refs(dict(connector.get("config") or {}))}
             for connector in self.repository.list_connectors()
             if str(connector.get("type") or "").lower() == "google"
-            and str((connector.get("config") or {}).get("api_key") or "").strip()
+        ]
+        google_connectors = [
+            connector
+            for connector in google_connectors
+            if str((connector.get("config") or {}).get("api_key") or "").strip()
         ]
         if google_connectors:
             connector = max(google_connectors, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))

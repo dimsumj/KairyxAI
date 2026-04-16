@@ -18,7 +18,7 @@ from app.core import db as db_module
 from app.core.deps import get_settings_dependency
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
 from app.core.settings import get_settings
-from app.infrastructure.db_models import ImportJobModel, PredictionJobModel
+from app.infrastructure.db_models import ControlPlaneResourceModel, ImportJobModel, PredictionJobModel
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 from bigquery_service import BigQueryService, get_shared_bigquery_service
@@ -120,7 +120,8 @@ def test_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="root"' in resp.text
+    assert 'id="sidebar-nav"' in resp.text
+    assert '<main class="content">' in resp.text
 
 
 def test_org_root_serves_frontend_shell(client):
@@ -130,7 +131,12 @@ def test_org_root_serves_frontend_shell(client):
     assert "/static/operator-console.css" in resp.text
     assert "/static/operator-console.js" in resp.text
     assert "Player Engagement Platform" in resp.text
-    assert 'id="root"' in resp.text
+    assert 'id="sidebar-nav"' in resp.text
+    assert '<main class="content">' in resp.text
+    assert "Browse Tables" in resp.text
+    assert "Fetch Row Count" in resp.text
+    assert "Import Type" in resp.text
+    assert "WHERE Filter (optional)" in resp.text
 
 
 def test_root_serves_frontend_static_assets(client):
@@ -146,6 +152,19 @@ def test_root_serves_frontend_static_assets(client):
     assert "workspace-org-url-input" in js_resp.text
     assert "syncBrowserOrganizationPath" in js_resp.text
     assert "/api/v1" in js_resp.text
+    assert "Connect Data Source" in js_resp.text
+    assert "bigquery_credentials_entry_mode" in js_resp.text
+    assert "Service Account JSON File" in js_resp.text
+    assert "Import BigQuery Table" in js_resp.text
+    assert "BigQuery imports read one table at a time." in js_resp.text
+    assert "Column mappings must use simple BigQuery identifiers." in js_resp.text
+    assert "forceRefresh: forceTableRefresh" in js_resp.text
+    assert "unknown rows" in js_resp.text
+    assert "Fetching exact row count" in js_resp.text
+    assert "Connected to source" in js_resp.text
+    assert "Show import status details" in js_resp.text
+    assert "<code>*_ref</code> values through the API." in js_resp.text
+    assert "`*_ref` values through the API." not in js_resp.text
 
 def test_root_health_alias(client):
     resp = client.get("/health")
@@ -242,6 +261,57 @@ def test_health_reports_database_mock_storage(monkeypatch, tmp_path):
     assert payload["control_plane_database_fallback_active"] is False
     assert payload["local_cache"]["storage_backend"] == "database"
     assert payload["local_cache"]["persistent"] is True
+
+
+def test_upsert_resource_recovers_from_concurrent_insert(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    db_module.clear_runtime_database_fallback()
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+    db_module.init_db()
+
+    session = db_module.get_session_factory()()
+    repository = SqlAlchemyControlPlaneRepository(session)
+    original_flush = session.flush
+    resource_id = "data_core:canonical_coverage_low"
+    injected_race = False
+
+    def flush_with_race(*args, **kwargs):
+        nonlocal injected_race
+        if not injected_race:
+            injected_race = True
+            with db_module.session_scope() as competing_session:
+                competing_repository = SqlAlchemyControlPlaneRepository(competing_session)
+                competing_repository.upsert_resource(
+                    "health_alert",
+                    resource_id,
+                    status="open",
+                    name="canonical_coverage_low",
+                    payload={"alert_id": resource_id, "code": "canonical_coverage_low", "status": "open"},
+                )
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(session, "flush", flush_with_race)
+
+    try:
+        saved = repository.upsert_resource(
+            "health_alert",
+            resource_id,
+            status="open",
+            name="canonical_coverage_low",
+            payload={"alert_id": resource_id, "code": "canonical_coverage_low", "status": "open", "message": "latest"},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert saved["resource_id"] == resource_id
+    with db_module.session_scope() as verification_session:
+        rows = verification_session.query(ControlPlaneResourceModel).filter_by(resource_type="health_alert", resource_id=resource_id).all()
+    assert len(rows) == 1
 
 
 def test_prediction_model_runs_reports_untrained_readiness(client):
@@ -1372,21 +1442,22 @@ def test_prediction_stops_when_shutdown_requested(client, monkeypatch):
 
 
 def test_prediction_uses_merged_history_for_selected_import_roster(client):
-    old_updated_at = datetime(2026, 3, 1, 12, 0, 0)
-    new_updated_at = datetime(2026, 3, 23, 12, 0, 0)
+    now = datetime.utcnow().replace(microsecond=0)
+    old_updated_at = now - timedelta(days=40)
+    new_updated_at = now - timedelta(days=1)
     old_import = _create_completed_import_job(
         "imp_old_history",
         source_name="Manual Old Import",
-        start_date="20260201",
-        end_date="20260228",
+        start_date=(now - timedelta(days=60)).strftime("%Y%m%d"),
+        end_date=(now - timedelta(days=30)).strftime("%Y%m%d"),
         created_at=old_updated_at,
         updated_at=old_updated_at,
     )
     _create_completed_import_job(
         "imp_new_history",
         source_name="Manual New Import",
-        start_date="20260320",
-        end_date="20260323",
+        start_date=(now - timedelta(days=3)).strftime("%Y%m%d"),
+        end_date=(now - timedelta(days=1)).strftime("%Y%m%d"),
         created_at=new_updated_at,
         updated_at=new_updated_at,
     )
@@ -1403,7 +1474,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "old-evt-1",
                 "event_fingerprint": "old-fp-1",
                 "event_type": "session_start",
-                "event_time": "2026-02-15T00:00:00",
+                "event_time": (now - timedelta(days=42)).isoformat(),
                 "event_properties": {},
                 "user_properties": {"email": "player-1@example.com"},
             },
@@ -1416,7 +1487,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "old-evt-2",
                 "event_fingerprint": "old-fp-2",
                 "event_type": "session_start",
-                "event_time": "2026-02-16T00:00:00",
+                "event_time": (now - timedelta(days=41)).isoformat(),
                 "event_properties": {},
                 "user_properties": {"email": "player-2@example.com"},
             },
@@ -1429,7 +1500,7 @@ def test_prediction_uses_merged_history_for_selected_import_roster(client):
                 "source_event_id": "new-evt-1",
                 "event_fingerprint": "new-fp-1",
                 "event_type": "session_start",
-                "event_time": "2026-03-23T00:00:00",
+                "event_time": (now - timedelta(days=1)).isoformat(),
                 "event_properties": {"campaign": "revive"},
                 "user_properties": {"email": "player-1@example.com"},
             },
@@ -1709,7 +1780,16 @@ def test_import_processing_progress_reports_event_counts(client, monkeypatch):
     release_processing = threading.Event()
     run_result = {}
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         if callable(progress_callback):
             progress_callback(1000, 1, {})
             progress_callback(2000, 2, {})
@@ -1842,7 +1922,16 @@ def test_import_staging_progress_resets_timeout_budget(client, monkeypatch):
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def slow_but_progressing_fetch(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def slow_but_progressing_fetch(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         for index in range(3):
             time.sleep(0.12)
             if callable(progress_callback):
@@ -1898,7 +1987,16 @@ def test_import_staging_startup_grace_allows_first_progress_heartbeat(client, mo
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def delayed_first_progress_fetch(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def delayed_first_progress_fetch(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         time.sleep(0.22)
         if callable(progress_callback):
             progress_callback(1000, 1, {})
@@ -1925,6 +2023,61 @@ def test_import_staging_startup_grace_allows_first_progress_heartbeat(client, mo
     assert run_import.json()["progress"]["details"]["events_staged"] == 1000
 
 
+def test_import_staging_upload_delay_does_not_consume_network_timeout_budget(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        data_backend_mode="gcp",
+        import_network_timeout_seconds=0.2,
+        import_stop_poll_interval_seconds=0.05,
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def single_page(self, start_date, end_date, page_size=None):
+        yield [
+            {
+                "player_id": "u_1",
+                "event_name": "session_start",
+                "timestamp": "2026-02-01T00:00:00",
+            }
+        ]
+
+    original_upload = GcsService.upload_raw_events
+
+    def slow_upload(self, events, destination_blob_name):
+        time.sleep(0.3)
+        return original_upload(self, events, destination_blob_name)
+
+    monkeypatch.setattr("ingestion_service.IngestionService._iter_event_pages", single_page)
+    monkeypatch.setattr("gcs_service.GcsService.upload_raw_events", slow_upload)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    assert run_import.json()["status"] == "completed"
+    assert run_import.json()["progress"]["current"] == 1
+    assert run_import.json()["progress"]["details"]["events_staged"] == 1
+
+
 def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -1947,7 +2100,16 @@ def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch)
     assert create_import.status_code == 201
     import_job = create_import.json()
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         if callable(progress_callback):
             progress_callback(1000, 1, {})
             progress_callback(2000, 2, {})
@@ -2021,6 +2183,202 @@ def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch)
     checkpoints = client.get(import_job["links"]["checkpoints"])
     assert checkpoints.status_code == 200
     assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
+
+
+def test_delete_failed_import_skips_warehouse_cleanup_without_processed_rows(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                },
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 2,
+                    "source_config_id": "Amplitude 1",
+                },
+            ],
+            "stopped": False,
+        }
+
+    def fail_before_processing_writes(self, notifications, progress_callback=None):
+        raise RuntimeError("Normalization failed before warehouse writes")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fail_before_processing_writes,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+    assert run_import.json()["detail"] == "Normalization failed before warehouse writes"
+
+    checkpoints = client.get(import_job["links"]["checkpoints"])
+    assert checkpoints.status_code == 200
+    assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
+
+    def fail_if_called(self, job_identifier):
+        raise AssertionError("Warehouse cleanup should be skipped for failed imports without processed rows.")
+
+    monkeypatch.setattr(BigQueryService, "delete_data_for_job", fail_if_called)
+
+    delete_import = client.delete(import_job["links"]["self"])
+    assert delete_import.status_code == 204
+
+    get_deleted = client.get(import_job["links"]["self"])
+    assert get_deleted.status_code == 404
+
+
+def test_delete_failed_import_ignores_raw_storage_cleanup_errors(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 1,
+            "events_staged": 1000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00001.jsonl", "event_count": 1000},
+            "shard_manifests": [
+                {
+                    "job_id": job_id,
+                    "source": self.connector_type,
+                    "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+                    "event_count": 1000,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Amplitude 1",
+                }
+            ],
+            "stopped": False,
+        }
+
+    def fail_before_processing_writes(self, notifications, progress_callback=None):
+        raise RuntimeError("Normalization failed before warehouse writes")
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fail_before_processing_writes,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 500
+
+    def fail_raw_cleanup(self, job_identifier):
+        raise RuntimeError("raw storage backend unavailable")
+
+    def fail_if_called(self, job_identifier):
+        raise AssertionError("Warehouse cleanup should still be skipped for failed imports without processed rows.")
+
+    monkeypatch.setattr(GcsService, "delete_data_for_job", fail_raw_cleanup)
+    monkeypatch.setattr(BigQueryService, "delete_data_for_job", fail_if_called)
+
+    delete_import = client.delete(import_job["links"]["self"])
+    assert delete_import.status_code == 204
+
+    get_deleted = client.get(import_job["links"]["self"])
+    assert get_deleted.status_code == 404
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        actions = repository.list_actions(limit=20)
+    deleted_action = next(
+        action for action in actions
+        if action["action_type"] == "import_job_deleted" and action["resource_id"] == import_job["id"]
+    )
+    assert deleted_action["payload"]["delete_cleanup_warnings"] == [
+        {
+            "cleanup_target": "raw_storage",
+            "error": "raw storage backend unavailable",
+            "ignored_for_failed_job": True,
+        }
+    ]
 
 
 def test_run_import_returns_original_error_after_session_flush_failure(client, monkeypatch):
@@ -2287,7 +2645,16 @@ def test_stop_running_import_job_transitions_to_stopped(client, monkeypatch):
     started = threading.Event()
     run_result = {}
 
-    def slow_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def slow_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         started.set()
         while True:
             if callable(should_stop) and should_stop():
@@ -2359,7 +2726,16 @@ def test_stop_running_import_returns_immediately_even_if_staging_call_is_stuck(c
     release_worker = threading.Event()
     run_result = {}
 
-    def stuck_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def stuck_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         started.set()
         release_worker.wait(timeout=5)
         return {
@@ -2426,7 +2802,16 @@ def test_delete_stopped_import_cleans_raw_and_warehouse_state(client, monkeypatc
     processing_started = threading.Event()
     seeded = {"done": False, "gcs_uri": ""}
 
-    def fake_fetch_and_stage_events(self, start_date, end_date, job_id=None, page_size=None, should_stop=None, progress_callback=None):
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
         gcs_uri = gcs_service.upload_raw_events(
             [
                 {

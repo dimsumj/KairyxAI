@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.request_context import get_request_context
@@ -120,6 +121,23 @@ class SqlAlchemyControlPlaneRepository:
             "updated_by": updated_by or payload.get("updated_by") or created_by or payload.get("updated_by") or "system",
             "correlation_id": correlation_id or payload.get("correlation_id") or "",
         }
+
+    def _get_resource_row(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        tenant_id: str,
+        project_id: str,
+    ) -> ControlPlaneResourceModel | None:
+        return self.session.execute(
+            select(ControlPlaneResourceModel).where(
+                ControlPlaneResourceModel.tenant_id == tenant_id,
+                ControlPlaneResourceModel.project_id == project_id,
+                ControlPlaneResourceModel.resource_type == resource_type,
+                ControlPlaneResourceModel.resource_id == resource_id,
+            )
+        ).scalar_one_or_none()
 
     def ensure_tenant(self, tenant_id: str, name: str | None = None, *, status: str = "active") -> Dict[str, Any]:
         resolved_id = str(tenant_id).strip() or self._bootstrap_tenant_id()
@@ -699,7 +717,7 @@ class SqlAlchemyControlPlaneRepository:
                 connector_id=resolved_connector_id,
                 name=name,
                 connector_type=connector_type,
-                config_json=_to_json_text(self._augment_payload(config, tenant_id=metadata["tenant_id"], project_id=metadata["project_id"], created_by=metadata["actor_id"], updated_by=metadata["actor_id"], correlation_id=metadata["correlation_id"])),
+                config_json=_to_json_text(dict(config or {})),
                 created_by=metadata["actor_id"],
                 updated_by=metadata["actor_id"],
                 correlation_id=metadata["correlation_id"],
@@ -710,7 +728,7 @@ class SqlAlchemyControlPlaneRepository:
             row.connector_type = connector_type
             row.connector_id = resolved_connector_id
             row.project_id = metadata["project_id"]
-            row.config_json = _to_json_text(self._augment_payload(config, tenant_id=metadata["tenant_id"], project_id=metadata["project_id"], created_by=row.created_by, updated_by=metadata["actor_id"], correlation_id=metadata["correlation_id"]))
+            row.config_json = _to_json_text(dict(config or {}))
             row.updated_by = metadata["actor_id"]
             row.correlation_id = metadata["correlation_id"]
             row.updated_at = datetime.utcnow()
@@ -1188,17 +1206,15 @@ class SqlAlchemyControlPlaneRepository:
         project_id: str | None = None,
     ) -> Dict[str, Any]:
         metadata = self._metadata(tenant_id, project_id)
-        row = self.session.execute(
-            select(ControlPlaneResourceModel).where(
-                ControlPlaneResourceModel.tenant_id == metadata["tenant_id"],
-                ControlPlaneResourceModel.project_id == metadata["project_id"],
-                ControlPlaneResourceModel.resource_type == resource_type,
-                ControlPlaneResourceModel.resource_id == resource_id,
-            )
-        ).scalar_one_or_none()
+        row = self._get_resource_row(
+            resource_type,
+            resource_id,
+            tenant_id=metadata["tenant_id"],
+            project_id=metadata["project_id"],
+        )
         enriched_payload = self._augment_payload(payload, tenant_id=metadata["tenant_id"], project_id=metadata["project_id"], created_by=metadata["actor_id"], updated_by=metadata["actor_id"], correlation_id=metadata["correlation_id"])
         if row is None:
-            row = ControlPlaneResourceModel(
+            pending_row = ControlPlaneResourceModel(
                 tenant_id=metadata["tenant_id"],
                 project_id=metadata["project_id"],
                 resource_type=resource_type,
@@ -1210,7 +1226,30 @@ class SqlAlchemyControlPlaneRepository:
                 updated_by=metadata["actor_id"],
                 correlation_id=metadata["correlation_id"],
             )
-            self.session.add(row)
+            try:
+                with self.session.begin_nested():
+                    self.session.add(pending_row)
+                    self.session.flush()
+                row = pending_row
+            except IntegrityError:
+                if pending_row in self.session:
+                    self.session.expunge(pending_row)
+                row = self._get_resource_row(
+                    resource_type,
+                    resource_id,
+                    tenant_id=metadata["tenant_id"],
+                    project_id=metadata["project_id"],
+                )
+                if row is None:
+                    raise
+                enriched_payload["created_by"] = row.created_by
+                enriched_payload["updated_by"] = metadata["actor_id"]
+                row.name = name if name is not None else row.name
+                row.status = status
+                row.payload_json = _to_json_text(enriched_payload)
+                row.updated_by = metadata["actor_id"]
+                row.correlation_id = metadata["correlation_id"]
+                row.updated_at = datetime.utcnow()
         else:
             enriched_payload["created_by"] = row.created_by
             enriched_payload["updated_by"] = metadata["actor_id"]

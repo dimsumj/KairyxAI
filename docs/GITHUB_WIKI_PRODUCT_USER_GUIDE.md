@@ -1,6 +1,6 @@
 # KairyxAI Product User Guide
 
-> GitHub Wiki source document. Keep this file aligned with the live operator console, `README.md`, and any user-facing product changes.
+> GitHub Wiki source document. Keep this file aligned with the live operator console, `README.md`, and any user-facing product changes. `README.md` is intentionally brief; this guide is the canonical detailed reference for modules, controls, workflows, sample input, and representative output.
 
 ## 1) What This Guide Covers
 This guide explains how to use the current KairyxAI operator console module by module.
@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one connector.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Action Orchestrator` and create a workflow.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid or Braze provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -66,7 +66,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Continue with Google` | Button | Starts the Google PKCE login flow before any onboarding or workspace selection is shown. | None | Browser redirects to Google, returns to the base app URL, then the console restores the active organization path after session resolution by using the returned Google ID token as the backend bearer JWT. |
+| `Continue with Google` | Button | Opens Google's browser popup sign-in flow before any onboarding or workspace selection is shown. If the account chooser is dismissed, the same button can be used again immediately. | None | Google opens in a browser popup, returns a Google ID token-backed bearer session, and the console keeps the browser on the base app URL until the organization and project are resolved. |
 | Workspace startup status | Status line | Read-only. Visible before login. | `Application start completed (mock)` | Confirms the backend is up before the user signs in. |
 
 Every user now passes through the Google login gate first. After successful sign-in, the console keeps the browser on the base gateway URL and then does one of these things:
@@ -136,8 +136,8 @@ Gateway validation rules for the org step are:
 | --- | --- | --- | --- | --- |
 | `Your organizations` | Select or list | When the signed-in Google account belongs to two or more orgs, choose one of the accessible organizations first. | `North Star Games` | The console loads the projects for that organization and keeps the gateway on `/` until a project is confirmed. |
 | `Organization URL` | Text box | Type the organization URL you want to open. | `northstar` | The console resolves that organization, loads its projects, and moves to the project step. |
+| `Cancel` | Button | Closes the workspace switcher overlay without applying a new workspace. This button sits inline in the main action row beside the primary continue action. | None | Returns to the prior app state. |
 | `Continue` | Button | Resolves the typed organization URL. | None | The project list for that organization loads. |
-| `Close` | Button | Closes the gateway overlay without applying a new workspace. The button sits in the bottom action row and uses red styling so it does not read like a primary continue action. | None | Returns to the prior app state. |
 | `Existing Project` | Select | Choose a project that already exists inside the selected organization. If multiple active projects exist, the oldest active project is preselected as the default. | `sandbox` | The selected project becomes the active console context after continue. |
 | `Use Existing Project` | Button | Confirms the selected existing project. Available to any member of the selected organization. | None | The gate closes, the console reloads data for that org/project, and the browser URL becomes `/<organization_id>`. |
 | `New Project Name` | Text box | Enter a new project name if you want to create another project in the selected organization. | `Growth Sandbox` | The console generates the internal project id automatically. |
@@ -149,6 +149,8 @@ When the typed organization already exists and the signed-in Google user has acc
 
 If the same signed-in user wants a different organization instead, they can use `Switcher`, return to the base gateway, type a new organization URL, and continue into the create-org flow from the same base gateway page. The gateway now preserves that newly typed organization URL through session validation instead of snapping back to the previously active org, and once the first project is created the browser lands on the new `/{organization_id}` path.
 
+The switcher overlay does not use the shared footer `Close` button. In this mode the red inline `Cancel` button sits in the same main action row as `Continue`, matching the alignment used in the create-project overlay.
+
 All org members can access all active projects in that organization. Project selection is a workspace choice, not a project-membership permission check.
 
 #### New-project overlay
@@ -158,6 +160,8 @@ All org members can access all active projects in that organization. Project sel
 | `Project Name` | Text box | Enter the display name for the new project. | `Growth Sandbox` | The project is created with this name. |
 | `Create Project` | Button | Creates the project in the selected organization. Available only to `owner` and `admin` users. | None | The project is created, it joins the org-wide project list, and the console switches into it. |
 | `Cancel` | Button | Closes the new-project overlay. This button uses red styling to distinguish it from `Create Project`. | None | Returns to the prior workspace selection state. |
+
+The create-project overlay does not show the shared footer `Close` button. In this mode the only exit action is the inline red `Cancel` button beside `Create Project`.
 
 As in onboarding, the current new-project UI generates the internal `project_id` automatically from the typed project name and keeps the id field hidden.
 
@@ -179,6 +183,7 @@ This page is the quickest end-to-end operator view for running prediction and ex
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
+| `Connect Data Source` | Button | Opens the connector setup flow from the main workbench so operators can configure data access before imports or prediction. | None | Routes to `Connectors` and opens the connector form. |
 | `Prediction Target` | Select | Choose whether to run prediction by `Source` or by explicit `Import`. | `Source` | The audience selector switches between source-level and import-level options. |
 | `Select Source` / `Select Import` | Select | In `Source` mode, choose a source such as `Amplitude 1`. In `Import` mode, choose a specific completed import. | `Amplitude 1` | Source mode resolves to the latest completed import for that source when the job starts; import mode uses the selected import directly. |
 | `Prediction Engine` | Select | Choose the prediction execution mode. | `AI + Cloud` | The request uses the selected prediction mode. |
@@ -265,17 +270,30 @@ Prediction Engine: AI + Cloud
 
 The import source form and imported-data list now wait for a resolved organization and project workspace before they load. During Google-login session handoff or workspace switching, the page stays in a neutral waiting state instead of replacing the import form with a raw membership error.
 
+Import failure help tooltips now render above nearby controls so the failure reason stays readable even when the imported-data table sits above other cards and form fields.
+
 #### Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Import Source` | Select | Choose the configured ingestion source. | `amplitude` | Import request uses that connector/source. |
-| `Start Date` | Date | Beginning of the import window. | `2026-03-01` | Request converts to `20260301`. |
-| `End Date` | Date | End of the import window. | `2026-03-07` | Request converts to `20260307`. |
-| `Import Data` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
+| `Import Source` | Select | Choose a configured ingestion source or BigQuery connector. | `Warehouse Scores` | Import request uses that connector/source. |
+| `Start Date` | Date | Beginning of the import window for event connectors. For BigQuery table imports, this is an optional filter that is only sent when both dates are provided and a timestamp column is mapped. | `2026-03-01` | Event imports send `20260301`; BigQuery imports send `2026-03-01`. |
+| `End Date` | Date | End of the import window for event connectors. For BigQuery table imports, this is an optional filter that is only sent when both dates are provided and a timestamp column is mapped. | `2026-03-07` | Event imports send `20260307`; BigQuery imports send `2026-03-07`. |
+| `Browse Tables` | Select | For BigQuery sources, pick a discovered dataset table to prefill the table name. When the connector has not fetched an exact count yet, the picker shows `unknown rows` instead of a fake `0`. | `prediction_scores` | Table name field is populated from the discovered table list. |
+| `Refresh Tables` | Button | Reloads the BigQuery table list from the selected connector. | None | Updated table list is shown in the status copy. |
+| `Fetch Row Count` | Button | Runs an exact row-count lookup for the selected or manually entered BigQuery table without reloading the whole table list. If table metadata access is blocked but the connector can still run queries, the count falls back to a direct `COUNT(*)` query. | `prediction_scores` | Status copy shows the exact count, and the discovered table label is updated for that table. |
+| `Table Name` | Text | Enter the BigQuery table to import when you do not want to use the discovered table list. Letters, numbers, and underscores only. | `prediction_scores` | Request targets that BigQuery table. |
+| `Import Type` | Select | Choose whether the selected table becomes external prediction scores or a churn list. | `external_prediction_scores` | Mapping fields and validation switch to the selected import type. |
+| `WHERE Filter (optional)` | Text | Add a safe SQL filter expression for the table read. Semicolons, comments, and write statements are rejected in the browser before submit. | `country = 'US'` | BigQuery import reads only the filtered rows. |
+| `Canonical User ID Column` | Text | Required BigQuery mapping for the stable player identifier. | `player_id` | Request includes `column_mapping.canonical_user_id`. |
+| `Prediction score mappings` | Text inputs | For `external_prediction_scores`, map score, risk, timestamp, and optional enrichment columns. At least `Predicted Risk Column` or `Score Column` is required. | `score`, `risk`, `scored_at` | Request includes BigQuery score mappings. |
+| `Churn list mappings` | Text inputs | For `churn_list`, map reason, segment, and optional `as_of_timestamp` columns. | `reason`, `segment`, `as_of_timestamp` | Request includes BigQuery churn-list mappings. |
+| `Activate Cohort` | Checkbox | For `churn_list`, immediately make the imported churn roster available as a cohort. | Checked | Backend activates the generated cohort after import completion. |
+| `Cohort Name` | Text | Optional display name for an activated churn-list cohort. | `High Risk APAC` | Activated cohort uses that name instead of the default. |
+| `Import Data` / `Import BigQuery Table` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
-| `Import Job` | Select | Choose an import job for detail views. | `import_20260322_101500` | Detail actions apply to the selected import. |
+| `Import Job` | Select | Choose a non-failed import job for detail views. Failed imports remain visible in the imported-data table, but they are excluded from downstream selectors such as `Import Operations`. | `import_20260322_101500` | Detail actions apply to the selected non-failed import. |
 | `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
 | `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |
 | `Load Manifests` | Button | Loads manifest detail for the selected import on demand. | None | Manifest JSON and list appear. |
@@ -286,7 +304,7 @@ The import source form and imported-data list now wait for a resolved organizati
 #### Sample import input
 ```json
 {
-  "source": "amplitude",
+  "source_name": "amplitude",
   "start_date": "20260301",
   "end_date": "20260307"
 }
@@ -323,8 +341,87 @@ The import source form and imported-data list now wait for a resolved organizati
 - The Imports page no longer auto-loads heavy diagnostics on first render.
 - Operations, quality, manifests, and schema-contract detail load only when you request them.
 - Import polling continues automatically only while at least one import job is still active.
+- Active import rows now expose a status `?` tooltip with the current step, such as connecting to the source, staging events, processing manifests, or reading rows from a BigQuery table.
+- Completed imports clear old failure and timeout metadata when a rerun succeeds, so `Ready to Use` rows no longer keep stale timeout tooltips after refresh.
 - In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
+
+#### BigQuery table import browser flow
+- Selecting a BigQuery connector in `Import Source` switches the form into table-import mode.
+- The browser can browse discovered tables, import one table at a time, and submit either `external_prediction_scores` or `churn_list` payloads through the same `/api/v1/imports` endpoint.
+- BigQuery date filters remain optional and only work when the matching timestamp column is mapped:
+  - `external_prediction_scores` uses `score_timestamp`
+  - `churn_list` uses `as_of_timestamp`
+- Column names and table names are validated in the browser to simple BigQuery identifiers before submit.
+- `WHERE Filter` is passed through only when it remains a read-only filter expression.
+
+#### Sample BigQuery external prediction import request
+```json
+{
+  "source_name": "Warehouse Scores",
+  "table_name": "prediction_scores",
+  "resource_kind": "external_prediction_scores",
+  "column_mapping": {
+    "canonical_user_id": "player_id",
+    "user_id": "player_id",
+    "email": "email",
+    "predicted_churn_risk": "risk",
+    "score": "score",
+    "score_timestamp": "scored_at"
+  },
+  "start_date": "2026-04-01",
+  "end_date": "2026-04-03"
+}
+```
+
+#### Sample BigQuery churn-list import request
+```json
+{
+  "source_name": "Warehouse Lists",
+  "table_name": "churned_users",
+  "resource_kind": "churn_list",
+  "activate_cohort": true,
+  "cohort_name": "vip_churn_list",
+  "column_mapping": {
+    "canonical_user_id": "player_id",
+    "user_id": "player_id",
+    "email": "email",
+    "reason": "reason",
+    "segment": "segment",
+    "as_of_timestamp": "as_of"
+  }
+}
+```
+
+#### Sample BigQuery import completion detail
+```json
+{
+  "id": "imp_20260406_101500",
+  "status": "completed",
+  "progress": {
+    "details": {
+      "rows_seen": 3,
+      "rows_loaded": 2,
+      "duplicate_rows": 1,
+      "linked_prediction_job_id": "pred_20260406_101700",
+      "bigquery_table_import": {
+        "table_name": "prediction_scores",
+        "resource_kind": "external_prediction_scores",
+        "row_count": 3,
+        "duplicate_rows": 1
+      }
+    }
+  }
+}
+```
+
+BigQuery table import behavior:
+- `resource_kind="external_prediction_scores"` requires `canonical_user_id` and either `predicted_churn_risk` or `score`.
+- `resource_kind="churn_list"` requires `canonical_user_id` and can materialize a list cohort directly.
+- `score_timestamp` or `as_of_timestamp` only becomes required when `start_date` and `end_date` are supplied.
+- Duplicate rows are suppressed by `canonical_user_id`; later rows win and duplicate counts are recorded in the import detail.
+- Completed prediction imports create a linked external prediction job and native prediction results.
+- Completed churn-list imports can create and activate a linked list cohort.
 
 ### 3.3 Connectors
 Use this page to register upstream ingestion sources and downstream service credentials.
@@ -333,23 +430,49 @@ Use this page to register upstream ingestion sources and downstream service cred
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Add New Connector` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Connect Data Source` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Display Name` | Text box | Sets the connector name shown in the saved connector list and used by downstream flows. | `Warehouse Scores` | The connector is saved under this name. |
 | `Select Connector Source` | Select | Chooses which connector form to render. | `Amplitude` | Connector-specific fields appear. |
 | `Save Connector` | Button | Saves the connector after the required fields are filled. | None | Connector is created and shown in the saved connector list. |
 | `Cancel` | Button | Resets the form and returns to the empty state. | None | Dynamic fields disappear and the add card returns. |
 | Saved connector `Delete` | Row button | Deletes the connector after confirmation. | None | Connector is removed from the saved list. |
 
+Credential storage behavior:
+- Browser-entered secret fields are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
+- Connector reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
+- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
+
 #### Connector-specific fields
 
-| Connector type | Fields | Sample input |
+| Connector type | Fields / API payload | Sample input |
 | --- | --- | --- |
 | `Amplitude` | `Amplitude API Key`, `Amplitude Secret Key` | `api_key=amp_public_123`, `secret_key=amp_secret_456` |
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
 | `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
-| `BigQuery` | `Google Cloud Project ID` | `project_id=my-prod-project` |
+| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
+
+For lifecycle email campaigns, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid or Braze accounts, then use `Action Orchestrator -> Email Campaigns` to choose the provider connection and messaging asset. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
+
+#### Campaign Provider Connections
+
+Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns. Browser-entered API keys are encrypted before storage and later reads expose only `api_key_configured`. The credential form stays hidden until you click `Connect Campaign Provider`.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid or Braze account. | None | The provider selector and credential fields appear. |
+| `Provider` | Select | Switches the form between SendGrid and Braze account setup. | `Braze` | The provider-specific credential fields change immediately. |
+| `Connection Name` | Text box | Sets the label that appears later in the email campaign builder. | `Lifecycle Braze` | The provider connection is listed under that name. |
+| SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
+| Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
+| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder. |
+| `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
+| `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
+| Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
+| Provider row `Use in Campaign` | Row button | Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
 ```json
@@ -360,6 +483,57 @@ Use this page to register upstream ingestion sources and downstream service cred
   "tenant_id": "default",
   "project_id": "default",
   "created_by": "admin"
+}
+```
+
+#### BigQuery connector API
+Once a BigQuery connector is saved with `project_id`, `dataset_id`, and tenant-scoped service account credentials, operators can use the connector health and dataset-discovery routes directly. If the runtime has `CONTROL_PLANE_SECRET_KEY`, browser-entered BigQuery credentials are encrypted before storage. Connector responses redact the saved credential payload and expose only the `*_configured` metadata flag.
+
+#### Sample BigQuery connector request
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "config": {
+    "project_id": "warehouse-project",
+    "dataset_id": "growth_inputs",
+    "location": "US",
+    "service_account_json": "{\"type\":\"service_account\",\"client_email\":\"warehouse-reader@tenant-warehouse.iam.gserviceaccount.com\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\",\"token_uri\":\"https://oauth2.googleapis.com/token\"}"
+  }
+}
+```
+
+Teams that keep warehouse credentials in Secret Manager can still use:
+
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "config": {
+    "project_id": "warehouse-project",
+    "dataset_id": "growth_inputs",
+    "service_account_json_ref": "gsm://tenant-connectors/warehouse-scores"
+  }
+}
+```
+
+#### Sample BigQuery table listing output
+```json
+{
+  "name": "Warehouse Scores",
+  "type": "bigquery",
+  "items": [
+    {
+      "table_name": "prediction_scores",
+      "table_type": "table",
+      "row_count": 120034
+    },
+    {
+      "table_name": "churned_users_view",
+      "table_type": "view",
+      "row_count": null
+    }
+  ]
 }
 ```
 
@@ -620,7 +794,136 @@ WHERE predicted_churn_risk = 'high'
 
 ## 5) Action Orchestrator
 
-### 5.1 Create Workflow
+### 5.1 Email Campaigns
+
+Use this section to build one-time lifecycle email campaigns across SendGrid and Braze. Provider connections are managed in `Data Core -> Connectors -> Campaign Provider Connections`; this page reuses those saved accounts, lets the operator switch providers, and loads the matching messaging assets for the selected provider connection.
+
+#### 5.1.1 Provider Connections
+
+Provider connections are no longer created inside `Action Orchestrator`. Create or update them in `Data Core -> Connectors`, then return here to build campaigns.
+
+Provider behavior:
+- `SendGrid` provider connections expose dynamic transactional templates and use the saved sender defaults.
+- `Braze` provider connections expose API-triggered Braze campaigns and use Braze-side campaign configuration for sender behavior.
+
+#### 5.1.2 Campaign Builder
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Campaign Name` | Text box | Friendly name for the campaign record. | `spring_winback_reward` | Stored as the campaign name. |
+| `Campaign Provider` | Select | Switches the builder between SendGrid and Braze mode. The provider switch filters the provider-connection list and changes the recipient identifier field that is shown. | `Braze` | The builder shows only Braze provider connections and Braze campaign assets. |
+| `Provider Connection` | Select | Chooses which saved SendGrid or Braze account to use. | `Lifecycle Braze` | Asset browsing and send execution use that provider connection. |
+| `Dynamic Template` / `Braze API Campaign` | Select | Chooses the provider-specific messaging asset. SendGrid loads dynamic templates; Braze loads API-triggered campaigns only. | `Winback Reward` | The campaign stores the selected `template_id` plus an asset summary snapshot. |
+| `Refresh Assets` | Button | Reloads templates or Braze campaigns for the selected provider connection. | None | The asset select refreshes from the current provider account. |
+| `Audience Source` | Select | Switches the audience input between prediction jobs and saved cohorts. | `Cohort` | The builder shows the matching audience selector and payload shape. |
+| `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. The label now prefers the prediction audience label or resolved import name instead of the raw job id. | `High Risk Winback Import (completed)` | Campaign execution resolves recipients from that prediction job at send time. |
+| `Cohort Audience` | Select | Chooses a saved cohort whose latest members already contain identifiers such as `user_id`, `canonical_user_id`, or `email`. | `VIP Returners (active)` | Campaign execution resolves recipients from that cohort at send time. |
+| `Risk Filters` | Text box | Prediction-only filter for risk values to keep. Leave it blank to send to all non-churned prediction rows. | blank | All non-churned prediction rows are eligible at send time. |
+| `Recipient Email Field` | Select | Visible when `Campaign Provider` is `SendGrid`. The options are sampled from JSON keys found in the selected audience rows. | `email` | Each SendGrid personalization uses that field as the `to` email. |
+| `Recipient External ID Field` | Select | Visible when `Campaign Provider` is `Braze`. The options are sampled from JSON keys found in the selected audience rows. | `braze_external_id` | Each Braze recipient uses that field as `external_user_id`. |
+| `Include already churned users` | Checkbox | Includes rows whose churn state is already marked as churned. | Checked | Churned rows are allowed into the send audience. |
+| `Template Deeplink Variable` | Text box | Variable name that receives the final deeplink URL in the provider payload. | `deeplink_url` | SendGrid receives it in `dynamic_template_data`; Braze receives it in `trigger_properties`. |
+| `Audience Deeplink Override Field (optional)` | Text box | If present on a row, this field wins over the campaign deeplink template. | `reward_deeplink_url` | Matching rows use the row-level deeplink directly. |
+| `Campaign Deeplink Template (optional)` | Text box | URL template with `{field_name}` placeholders resolved from the audience row and campaign context. | `mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}` | Rows without an override field receive a rendered deeplink URL. |
+| `Merge Fields JSON` | Text area | Maps provider template variables to row fields or literals. | See sample below | SendGrid builds `dynamic_template_data`; Braze builds `trigger_properties`. |
+| `Schedule For (optional)` | Date/time picker | Sets the one-time scheduled send time in the operator's local timezone. | `2026-04-15 11:00` | Campaign status becomes `scheduled`. |
+| `Clear` | Button | Clears the selected campaign and resets the builder to a new draft. | None | The form is ready for a new campaign record. |
+| `Save Draft` | Button | Creates or updates the campaign in `draft` status. | None | Campaign saves without a schedule. |
+| `Schedule Campaign` | Button | Creates or updates the campaign in `scheduled` status. | None | Campaign becomes editable scheduled work. |
+| `Send Now` | Button | Runs the selected campaign immediately. If no campaign is selected yet, the console saves a draft first and then sends it. | None | Campaign executes through the selected provider and moves to `sent`, `sent_with_errors`, or `failed`. |
+
+Audience behavior:
+- Prediction audiences keep the existing risk-filter and include-churned controls.
+- Cohort audiences skip prediction-only risk filtering and use the saved cohort member payload directly.
+- Recipient field selects are populated from sampled audience JSON keys so operators can choose a field instead of typing raw paths blind.
+
+#### Sample SendGrid email campaign request
+```json
+{
+  "name": "spring_winback_reward",
+  "provider": "sendgrid",
+  "provider_connection_id": "pc_1234567890abcdef",
+  "template_id": "d-1234567890abcdef1234567890abcdef",
+  "audience": {
+    "prediction_job_id": "pred_20260410_0900",
+    "include_risks": ["high", "medium"],
+    "include_churned": false
+  },
+  "recipient_email_field": "email",
+  "merge_fields": {
+    "first_name": { "source": "field", "value": "first_name" },
+    "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
+  },
+  "deeplink_template_field": "deeplink_url",
+  "deeplink_override_field": "reward_deeplink_url",
+  "deeplink_template": "mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}",
+  "schedule_at": "2026-04-15T18:00:00Z"
+}
+```
+
+#### Sample Braze email campaign request
+```json
+{
+  "name": "spring_winback_braze",
+  "provider": "braze",
+  "provider_connection_id": "pc_braze_1234567890",
+  "template_id": "cmp_api_1234567890",
+  "audience": {
+    "prediction_job_id": "pred_20260410_0900",
+    "include_risks": ["high", "medium"],
+    "include_churned": false
+  },
+  "recipient_external_id_field": "user_id",
+  "merge_fields": {
+    "first_name": { "source": "field", "value": "first_name" },
+    "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
+  },
+  "deeplink_template_field": "deeplink_url",
+  "deeplink_template": "mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}"
+}
+```
+
+#### Sample email campaign response
+```json
+{
+  "email_campaign_id": "ec_1234567890abcdef",
+  "name": "spring_winback_reward",
+  "status": "scheduled",
+  "provider": "sendgrid",
+  "provider_connection_id": "pc_1234567890abcdef",
+  "template_id": "d-1234567890abcdef1234567890abcdef",
+  "template_summary": {
+    "id": "d-1234567890abcdef1234567890abcdef",
+    "name": "Winback Reward",
+    "generation": "dynamic",
+    "active_version": {
+      "id": "ver_active",
+      "subject": "Come back for a reward",
+      "active": true
+    }
+  },
+  "result_summary": {}
+}
+```
+
+#### 5.1.3 Upcoming And Past Campaigns
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Refresh` | Button | Reloads provider connections, prediction jobs, provider-specific messaging assets, and campaign lists. | None | The action-orchestrator campaign workspace refreshes. |
+| Upcoming row `Edit` | Row button | Loads the selected draft or scheduled campaign into the builder. | None | The builder switches to that campaign. |
+| Upcoming row `Send Now` | Row button | Executes the selected draft or scheduled campaign immediately. | None | Campaign leaves the editable queue and records execution results. |
+| Upcoming row `Cancel` | Row button | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
+| Upcoming row `Delete` | Row button | Deletes a draft campaign. | None | Draft is removed from the list. |
+| Past row `View` | Row button | Loads a sent, failed, or cancelled campaign into the detail panel. | None | The JSON detail panel shows the stored campaign snapshot and result summary. |
+
+State rules:
+- Only `draft` and `scheduled` campaigns are editable.
+- Only `scheduled` campaigns can be cancelled.
+- Only `draft` campaigns can be deleted.
+- `sent`, `sent_with_errors`, `failed`, and `cancelled` campaigns stay read-only in the browser list and detail view.
+
+### 5.2 Create Workflow
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -653,7 +956,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 5.2 Runtime Controls
+### 5.3 Runtime Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -699,7 +1002,7 @@ WHERE predicted_churn_risk = 'high'
 }
 ```
 
-### 5.3 Workflow List, Executions, And Deliveries
+### 5.4 Workflow List, Executions, And Deliveries
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1048,7 +1351,7 @@ The `Organization` tab holds the live shell controls that still drive workspace 
 | Current workspace card | Read-only summary | Shows the active organization and project. | `North Star Games / Live Ops` | Confirms the live context before using shell shortcuts. |
 | Session state card | Read-only summary | Shows the current login state and the org role that applies across all projects in the active organization. | `Google alice@example.com @ northstar / liveops (owner)` | Confirms the current authenticated session. |
 | Auth session card | Read-only summary | Shows the current login or local/demo state from inside Settings. | `Google alice@example.com @ northstar / liveops (admin)` | Confirms the current authenticated session before you switch workspaces or log out. |
-| `Continue with Google` | Button | Starts the Google PKCE login flow from inside Settings. | None | Browser redirects to Google and returns with a Google ID token-backed bearer session. |
+| `Continue with Google` | Button | Opens Google's browser popup sign-in flow from inside Settings. | None | Google opens in a browser popup and returns with a Google ID token-backed bearer session. |
 | `Logout` | Button | Clears the current bearer token and ends the authenticated session. | None | Session returns to the organization URL gate so the next sign-in starts from org selection. |
 | `API Key` | Password box | Optional legacy/demo API key entry. This stays hidden when Google login is configured or an OIDC bearer session is active. | `local-demo-key` | Local/demo requests reuse the stored API key in the browser. |
 | Application startup status | Read-only status line | Shows the latest startup or health result from inside Settings. | `Application start completed (mock)` | Confirms whether the backend is reachable from the console. |

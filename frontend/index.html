@@ -140,6 +140,19 @@
         <div class="content-scroll">
         <section id="operator-hub" class="page active">
             <h1>Churn Rescue Workbench</h1>
+            <div class="card" id="operator-hub-connectors-entry">
+                <div>
+                    <p class="card-eyebrow">Start Here</p>
+                    <h2 style="margin-bottom: 0.5rem;">Connect your data sources first</h2>
+                    <p style="margin: 0; color: var(--text-secondary);">
+                        Connectors unlock imports, BigQuery table access, predictions, and downstream activation. BigQuery setup now uses tenant-provided credentials instead of shared backend credentials.
+                    </p>
+                </div>
+                <div class="inline-actions" style="margin-top: 1rem;">
+                    <button id="operator-hub-connectors-btn" type="button">Connect Data Source</button>
+                    <span id="operator-hub-connectors-summary" class="subtle">Checking connector status...</span>
+                </div>
+            </div>
             <div class="card" id="operator-hub-controls">
                 <p>Select a source or a completed import and run churn prediction on that audience. Source mode resolves to the latest completed import when the job starts.</p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
@@ -272,8 +285,9 @@
         <section id="player-cohorts" class="page">
             <h1>Import Control Plane</h1>
             <div class="card">
-                <p>Import and process data from a connected source. Once imported, the system will analyze the data and automatically generate player cohorts.</p>
+                <p>Import and process data from a connected source. Event connectors use a date window, and BigQuery connectors can import one table directly into predictions or churn cohorts.</p>
                 <span id="import-source-status" class="subtle"></span>
+                <p id="import-form-help" class="subtle">Choose a configured source to start an import.</p>
                 <div class="form-group">
                     <label for="cohort-source-select">Import Source</label>
                     <select id="cohort-source-select">
@@ -281,13 +295,136 @@
                         <!-- Other configured sources could be added here dynamically -->
                     </select>
                 </div>
-                <div class="form-group">
-                    <label for="start-date-cohort">Start Date</label>
-                    <input type="date" id="start-date-cohort">
+                <div id="import-date-range-fields" class="grid-2">
+                    <div class="form-group">
+                        <label id="start-date-cohort-label" for="start-date-cohort">Start Date</label>
+                        <input type="date" id="start-date-cohort">
+                    </div>
+                    <div class="form-group">
+                        <label id="end-date-cohort-label" for="end-date-cohort">End Date</label>
+                        <input type="date" id="end-date-cohort">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="end-date-cohort">End Date</label>
-                    <input type="date" id="end-date-cohort">
+                <div id="import-bigquery-fields" class="hidden">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-bigquery-table-select">Browse Tables</label>
+                            <select id="import-bigquery-table-select">
+                                <option value="">Select a discovered table</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="import-bigquery-refresh-tables-btn" type="button">Refresh Tables</button>
+                            <button id="import-bigquery-fetch-row-count-btn" type="button">Fetch Row Count</button>
+                            <span id="import-bigquery-status" class="subtle"></span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="import-bigquery-table-name">Table Name</label>
+                        <input type="text" id="import-bigquery-table-name" placeholder="prediction_scores">
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="import-bigquery-resource-kind">Import Type</label>
+                            <select id="import-bigquery-resource-kind">
+                                <option value="external_prediction_scores">External Prediction Scores</option>
+                                <option value="churn_list">Churn List</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-where-sql">WHERE Filter (optional)</label>
+                            <input type="text" id="import-bigquery-where-sql" placeholder="country = 'US'">
+                        </div>
+                    </div>
+                    <p class="subtle">Common column mappings</p>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="import-bigquery-canonical-user-id">Canonical User ID Column</label>
+                            <input type="text" id="import-bigquery-canonical-user-id" placeholder="player_id">
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-user-id">User ID Column (optional)</label>
+                            <input type="text" id="import-bigquery-user-id" placeholder="user_id">
+                        </div>
+                        <div class="form-group">
+                            <label for="import-bigquery-email">Email Column (optional)</label>
+                            <input type="text" id="import-bigquery-email" placeholder="email">
+                        </div>
+                    </div>
+                    <div id="import-bigquery-prediction-fields">
+                        <p class="subtle">Prediction score mappings</p>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-predicted-risk">Predicted Risk Column (optional)</label>
+                                <input type="text" id="import-bigquery-predicted-risk" placeholder="risk">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-score">Score Column (optional)</label>
+                                <input type="text" id="import-bigquery-score" placeholder="score">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-score-timestamp">Score Timestamp Column (optional)</label>
+                                <input type="text" id="import-bigquery-score-timestamp" placeholder="scored_at">
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-suggested-action">Suggested Action Column (optional)</label>
+                                <input type="text" id="import-bigquery-suggested-action" placeholder="suggested_action">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-churn-state">Churn State Column (optional)</label>
+                                <input type="text" id="import-bigquery-churn-state" placeholder="churn_state">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-model-name">Model Name Column (optional)</label>
+                                <input type="text" id="import-bigquery-model-name" placeholder="model_name">
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-model-version">Model Version Column (optional)</label>
+                                <input type="text" id="import-bigquery-model-version" placeholder="model_version">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-template-id">Recommended Template Column (optional)</label>
+                                <input type="text" id="import-bigquery-template-id" placeholder="recommended_template_id">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-variant">Recommended Variant Column (optional)</label>
+                                <input type="text" id="import-bigquery-variant" placeholder="recommended_variant">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="import-bigquery-churn-fields" class="hidden">
+                        <p class="subtle">Churn list mappings</p>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="import-bigquery-reason">Reason Column (optional)</label>
+                                <input type="text" id="import-bigquery-reason" placeholder="reason">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-segment">Segment Column (optional)</label>
+                                <input type="text" id="import-bigquery-segment" placeholder="segment">
+                            </div>
+                            <div class="form-group">
+                                <label for="import-bigquery-as-of-timestamp">As Of Timestamp Column (optional)</label>
+                                <input type="text" id="import-bigquery-as-of-timestamp" placeholder="as_of">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="import-bigquery-cohort-name">Cohort Name (optional)</label>
+                                <input type="text" id="import-bigquery-cohort-name" placeholder="bigquery_churn_list">
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: end;">
+                                <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                                    <input type="checkbox" id="import-bigquery-activate-cohort">
+                                    Activate cohort after import
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <button id="import-data-btn">Import Data</button>
             </div>
@@ -451,15 +588,20 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
+            <p id="connectors-page-summary" class="subtle">Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.</p>
             <div id="connector-list">
                 <!-- Saved connectors will be dynamically added here -->
             </div>
             <div class="card" id="add-connector-card">
-                <button id="add-connector-btn">Add New Connector</button>
+                <button id="add-connector-btn">Connect Data Source</button>
             </div>
 
             <div id="add-connector-form-container" class="card" style="display: none;">
-                <h2>Add New Connector</h2>
+                <h2>Connect Data Source</h2>
+                <div class="form-group">
+                    <label for="connector-display-name">Display Name</label>
+                    <input type="text" id="connector-display-name" placeholder="e.g. Warehouse Scores">
+                </div>
                 <div class="form-group">
                     <label for="connector-type">Select Connector Source</label>
                     <select id="connector-type">
@@ -478,6 +620,39 @@
                 </div>
                 <button id="save-connector-btn" style="display: none;">Save Connector</button>
                 <button id="cancel-add-connector-btn" style="background-color: var(--subtle-text); margin-left: 10px;">Cancel</button>
+            </div>
+
+            <div id="provider-connections-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2>Campaign Provider Connections</h2>
+                    <div class="inline-actions">
+                        <button id="add-provider-connection-btn" type="button">Connect Campaign Provider</button>
+                        <button id="provider-connection-refresh-btn" type="button">Refresh</button>
+                        <span id="provider-connection-status" class="subtle"></span>
+                    </div>
+                </div>
+                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid and Braze credentials here, then switch between them in the email campaign builder. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
+                <div id="provider-connection-form-container" style="display: none;">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="provider-connection-type-select">Provider</label>
+                            <select id="provider-connection-type-select">
+                                <option value="sendgrid" selected>SendGrid</option>
+                                <option value="braze">Braze</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="provider-connection-name-input">Connection Name</label>
+                            <input type="text" id="provider-connection-name-input" placeholder="e.g. Lifecycle SendGrid">
+                        </div>
+                    </div>
+                    <div id="provider-connection-config-fields"></div>
+                    <div class="inline-actions">
+                        <button id="provider-connection-save-btn" type="button">Save Provider Connection</button>
+                        <button id="provider-connection-cancel-btn" type="button" style="background-color: var(--subtle-text);">Cancel</button>
+                    </div>
+                </div>
+                <div id="provider-connection-list"></div>
             </div>
         </section>
 
@@ -746,6 +921,149 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="action-orchestrator" class="page">
             <h1>Action Orchestrator</h1>
+            <div id="email-campaigns-section" class="card">
+                <div class="module-section-header">
+                    <h2>Email Campaigns</h2>
+                    <div class="inline-actions">
+                        <button id="email-campaign-refresh-btn" type="button">Refresh</button>
+                        <span id="email-campaigns-summary" class="subtle">Load provider connections and campaigns to begin.</span>
+                    </div>
+                </div>
+                <div class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Campaign Builder</h2>
+                        <span id="email-campaign-selected-label" class="pill">No campaign selected</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="email-campaign-name-input">Campaign Name</label>
+                            <input type="text" id="email-campaign-name-input" placeholder="e.g. spring_winback_reward">
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-provider-type-select">Campaign Provider</label>
+                            <select id="email-campaign-provider-type-select">
+                                <option value="sendgrid" selected>SendGrid</option>
+                                <option value="braze">Braze</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-provider-select">Provider Connection</label>
+                            <select id="email-campaign-provider-select">
+                                <option value="">Load provider connections first</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label id="email-campaign-template-label" for="email-campaign-template-select">Dynamic Template</label>
+                            <select id="email-campaign-template-select">
+                                <option value="">Select a provider connection first</option>
+                            </select>
+                        </div>
+                        <div class="inline-actions" style="align-items: end;">
+                            <button id="email-campaign-template-refresh-btn" type="button">Refresh Assets</button>
+                            <span id="email-campaign-template-status" class="subtle"></span>
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="email-campaign-audience-type-select">Audience Source</label>
+                            <select id="email-campaign-audience-type-select">
+                                <option value="prediction" selected>Prediction Audience</option>
+                                <option value="cohort">Cohort</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-prediction-job-group">
+                            <label for="email-campaign-prediction-job-select">Prediction Audience</label>
+                            <select id="email-campaign-prediction-job-select">
+                                <option value="">Load predictions first</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-cohort-group" style="display: none;">
+                            <label for="email-campaign-cohort-select">Cohort Audience</label>
+                            <select id="email-campaign-cohort-select">
+                                <option value="">Load cohorts first</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-risk-filters-group">
+                            <label for="email-campaign-risk-filters-input">Risk Filters</label>
+                            <input type="text" id="email-campaign-risk-filters-input" value="" placeholder="Leave blank to send all risk levels">
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group" id="email-campaign-recipient-email-field-group">
+                            <label for="email-campaign-recipient-email-field-select">Recipient Email Field</label>
+                            <select id="email-campaign-recipient-email-field-select">
+                                <option value="">Select an audience first</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="email-campaign-recipient-external-id-field-group" style="display: none;">
+                            <label for="email-campaign-recipient-external-id-field-select">Recipient External ID Field</label>
+                            <select id="email-campaign-recipient-external-id-field-select">
+                                <option value="">Select an audience first</option>
+                            </select>
+                        </div>
+                    </div>
+                        <div id="email-campaign-audience-field-status" class="subtle" style="margin-bottom: 1rem;"></div>
+                        <label id="email-campaign-include-churned-group" style="display: inline-flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+                            <input type="checkbox" id="email-campaign-include-churned-checkbox">
+                            Include already churned users
+                        </label>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-deeplink-template-field-input">Template Deeplink Variable</label>
+                                <input type="text" id="email-campaign-deeplink-template-field-input" value="deeplink_url" placeholder="deeplink_url">
+                            </div>
+                            <div class="form-group">
+                                <label for="email-campaign-deeplink-override-field-input">Audience Deeplink Override Field (optional)</label>
+                                <input type="text" id="email-campaign-deeplink-override-field-input" placeholder="reward_deeplink_url">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-deeplink-template-input">Campaign Deeplink Template (optional)</label>
+                            <input type="text" id="email-campaign-deeplink-template-input" placeholder="mygame://reward?user_id={user_id}&reward_id={reward_id}">
+                        </div>
+                        <div class="form-group">
+                            <label for="email-campaign-merge-fields-input">Merge Fields JSON</label>
+                            <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
+  "first_name": { "source": "field", "value": "first_name" },
+  "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
+}</textarea>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="email-campaign-schedule-at-input">Schedule For (optional)</label>
+                                <input type="datetime-local" id="email-campaign-schedule-at-input">
+                            </div>
+                            <div class="inline-actions" style="align-items: end;">
+                                <button id="email-campaign-clear-selection-btn" type="button">Clear</button>
+                                <span id="email-campaign-status" class="subtle"></span>
+                            </div>
+                        </div>
+                        <div class="inline-actions">
+                            <button id="email-campaign-save-draft-btn" type="button">Save Draft</button>
+                            <button id="email-campaign-schedule-btn" type="button">Schedule Campaign</button>
+                            <button id="email-campaign-send-now-btn" type="button">Send Now</button>
+                        </div>
+                </div>
+                <div class="grid-2" style="margin-top: 1rem;">
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>Upcoming & Drafts</h2>
+                            <span class="pill">Editable</span>
+                        </div>
+                        <div id="email-campaign-upcoming-list"></div>
+                    </div>
+                    <div class="card split-card">
+                        <div class="module-section-header">
+                            <h2>Past Campaigns</h2>
+                            <span class="pill">Sent / Failed / Cancelled</span>
+                        </div>
+                        <div id="email-campaign-past-list"></div>
+                    </div>
+                </div>
+                <pre id="email-campaign-detail-output" class="json-output">Selected email campaign details will appear here.</pre>
+            </div>
             <div class="grid-2">
                 <div id="experiment-control-section" class="card split-card">
                     <div class="module-section-header">
@@ -1465,7 +1783,6 @@ WHERE predicted_churn_risk = 'high'
             <span class="copilot-agent-launcher-icon" aria-hidden="true">AI</span>
             <span class="copilot-agent-launcher-copy">
                 <span class="copilot-agent-launcher-title">Ask AI</span>
-                <span id="copilot-agent-launcher-context" class="copilot-agent-launcher-context">Grounded help and safe setup</span>
             </span>
             <span id="copilot-agent-launcher-badge" class="copilot-agent-launcher-badge hidden">0</span>
         </button>
@@ -1567,6 +1884,7 @@ WHERE predicted_churn_risk = 'high'
                     <div id="workspace-selection-status" class="workspace-panel-status"></div>
                     <div class="workspace-modal-actions">
                         <button type="button" id="workspace-selection-back-btn" class="hidden">Back</button>
+                        <button type="button" id="workspace-selection-cancel-btn" class="workspace-cancel-action hidden">Cancel</button>
                         <button type="button" id="workspace-selection-resolve-btn">Continue</button>
                         <button type="button" id="workspace-selection-switch-account-btn" class="secondary-action hidden">Use Different Google Account</button>
                         <button type="button" id="workspace-selection-continue-btn" class="hidden">Use Existing Project</button>

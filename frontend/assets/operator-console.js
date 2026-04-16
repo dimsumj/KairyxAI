@@ -27,7 +27,6 @@ export function initializeOperatorConsole() {
             const topbarSearchInput = document.getElementById('topbar-search-input');
             const topbarSearchStatus = document.getElementById('topbar-search-status');
             const copilotAgentLauncherBtn = document.getElementById('copilot-agent-launcher-btn');
-            const copilotAgentLauncherContext = document.getElementById('copilot-agent-launcher-context');
             const copilotAgentLauncherBadge = document.getElementById('copilot-agent-launcher-badge');
             const copilotAgentDrawer = document.getElementById('copilot-agent-drawer');
             const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
@@ -83,6 +82,7 @@ export function initializeOperatorConsole() {
             const workspaceModalEyebrow = document.getElementById('workspace-modal-eyebrow');
             const workspaceStartupStatus = document.getElementById('workspace-startup-status');
             const workspaceModalCloseBtn = document.getElementById('workspace-modal-close-btn');
+            const workspaceModalFooter = workspaceModalCloseBtn?.parentElement || null;
             const workspaceLoginPanel = document.getElementById('workspace-login-panel');
             const workspaceLoginStatus = document.getElementById('workspace-login-status');
             const workspaceGoogleLoginBtn = document.getElementById('workspace-google-login-btn');
@@ -106,6 +106,7 @@ export function initializeOperatorConsole() {
             const workspaceSelectionCopy = document.getElementById('workspace-selection-copy');
             const workspaceSelectionStatus = document.getElementById('workspace-selection-status');
             const workspaceSelectionBackBtn = document.getElementById('workspace-selection-back-btn');
+            const workspaceSelectionCancelBtn = document.getElementById('workspace-selection-cancel-btn');
             const workspaceSelectionResolveBtn = document.getElementById('workspace-selection-resolve-btn');
             const workspaceSelectionSwitchAccountBtn = document.getElementById('workspace-selection-switch-account-btn');
             const workspaceSelectionContinueBtn = document.getElementById('workspace-selection-continue-btn');
@@ -205,9 +206,9 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
+                        { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
                         { id: 'data-core-churn-rescue', label: 'Churn Rescue', pageId: 'operator-hub' },
                         { id: 'data-core-imports', label: 'Imports', pageId: 'player-cohorts' },
-                        { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
                         { id: 'data-core-mappings', label: 'Mappings', pageId: 'data-sandbox' },
                         { id: 'data-core-audit-trail', label: 'Audit Trail', pageId: 'action-history' },
                         { id: 'data-core-templates', label: 'Templates', pageId: 'scenario-templates' },
@@ -233,7 +234,7 @@ export function initializeOperatorConsole() {
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
-                    subtitle: 'Configure workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    subtitle: 'Build lifecycle email campaigns across SendGrid and Braze, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -241,6 +242,7 @@ export function initializeOperatorConsole() {
                         </svg>
                     `,
                     items: [
+                        { id: 'action-orchestrator-email-campaigns', label: 'Email Campaigns', pageId: 'action-orchestrator', targetId: 'email-campaigns-section' },
                         { id: 'action-orchestrator-create', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-create-section' },
                         { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-section' },
                         { id: 'action-orchestrator-workflows', label: 'Workflows', pageId: 'action-orchestrator', targetId: 'workflow-list-section' },
@@ -882,16 +884,40 @@ export function initializeOperatorConsole() {
                 return isGoogleProvider();
             }
 
+            function shouldRenderGoogleIdentityButtons() {
+                return Boolean(isGoogleLoginConfigured() && isGoogleProvider() && !accessToken);
+            }
+
             function ensureGoogleLoginButtonContainer(button, container, id) {
                 if (!button || !container || container.parentElement) {
                     return container;
                 }
                 container.id = id;
                 container.classList.add('hidden');
+                container.style.display = 'flex';
+                container.style.justifyContent = 'center';
                 container.style.alignItems = 'center';
+                container.style.width = '100%';
                 container.style.minHeight = '40px';
                 button.insertAdjacentElement('afterend', container);
                 return container;
+            }
+
+            function syncGoogleIdentityButtonVisibility() {
+                const usingGoogleLogin = isGoogleLoginConfigured();
+                const usingOidc = Boolean(accessToken);
+                const useRenderedButtons = shouldRenderGoogleIdentityButtons();
+                oidcLoginBtn?.classList.toggle('hidden', !usingGoogleLogin || usingOidc || useRenderedButtons);
+                workspaceGoogleLoginBtn?.classList.toggle('hidden', !usingGoogleLogin || usingOidc || useRenderedButtons);
+                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
+                    if (!container) {
+                        return;
+                    }
+                    container.classList.toggle('hidden', !useRenderedButtons);
+                    if (!useRenderedButtons) {
+                        container.innerHTML = '';
+                    }
+                });
             }
 
             function loadGoogleIdentityScript() {
@@ -982,14 +1008,11 @@ export function initializeOperatorConsole() {
                 }
                 containers.forEach((container, index) => {
                     if (!container) return;
-                    if (container.classList.contains('hidden')) {
-                        return;
-                    }
                     container.innerHTML = '';
                     window.google.accounts.id.renderButton(container, {
                         theme: 'outline',
                         size: index === 0 ? 'large' : 'large',
-                        text: 'signin_with',
+                        text: 'continue_with',
                         shape: 'pill',
                     });
                 });
@@ -999,11 +1022,7 @@ export function initializeOperatorConsole() {
                 if (!isGoogleLoginConfigured() || accessToken || !isGoogleProvider()) {
                     return;
                 }
-                oidcLoginBtn?.classList.remove('hidden');
-                workspaceGoogleLoginBtn?.classList.remove('hidden');
-                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
-                    container?.classList.add('hidden');
-                });
+                syncGoogleIdentityButtonVisibility();
             }
 
             function isAuthenticatedWorkspaceReady() {
@@ -1484,18 +1503,10 @@ export function initializeOperatorConsole() {
                     legacyApiKeyGroup.classList.toggle('hidden', usingOidc || usingGoogleLogin);
                 }
                 oidcWorkspaceControls.classList.toggle('hidden', !usingOidc);
-                oidcLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
                 oidcLogoutBtn.classList.toggle('hidden', !usingOidc);
                 workspaceOpenSwitcherBtn.disabled = !usingOidc;
                 workspaceCreateProjectBtn.disabled = !usingOidc;
-                if (workspaceGoogleLoginBtn) {
-                    workspaceGoogleLoginBtn.classList.toggle('hidden', !usingGoogleLogin || usingOidc);
-                }
-                [googleLoginContainer, workspaceGoogleLoginContainer].forEach((container) => {
-                    if (!container) return;
-                    container.classList.add('hidden');
-                    container.innerHTML = '';
-                });
+                syncGoogleIdentityButtonVisibility();
                 if (usingGoogleLogin && !usingOidc && isGoogleProvider()) {
                     ensureGoogleIdentityButtons().catch((error) => {
                         const message = error.message || 'Google Sign-In is unavailable.';
@@ -1677,7 +1688,12 @@ export function initializeOperatorConsole() {
                 workspaceOverlayAllowClose = Boolean(allowClose);
                 workspaceOverlay.classList.remove('hidden');
                 workspaceOverlay.setAttribute('aria-hidden', 'false');
-                workspaceModalCloseBtn.classList.toggle('hidden', !workspaceOverlayAllowClose);
+                const showFooterCloseButton = workspaceOverlayAllowClose && mode !== 'create-project' && mode !== 'selection';
+                workspaceModalCloseBtn.classList.toggle('hidden', !showFooterCloseButton);
+                workspaceModalFooter?.classList.toggle('hidden', !showFooterCloseButton);
+                if (workspaceSelectionCancelBtn) {
+                    workspaceSelectionCancelBtn.classList.toggle('hidden', mode !== 'selection' || !workspaceOverlayAllowClose);
+                }
                 if (mode === 'login') {
                     const invitePending = Boolean(readPendingInvite());
                     workspaceModalEyebrow.textContent = 'Google Login';
@@ -2339,6 +2355,7 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'connectors') {
                     loadSavedConnectors();
+                    loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
                     loadDataSandboxGlance();
@@ -2991,14 +3008,18 @@ export function initializeOperatorConsole() {
 
 
             // Connectors Page Logic
+            const operatorHubConnectorsBtn = document.getElementById('operator-hub-connectors-btn');
+            const operatorHubConnectorsSummary = document.getElementById('operator-hub-connectors-summary');
             const addConnectorBtn = document.getElementById('add-connector-btn');
             const addConnectorCard = document.getElementById('add-connector-card');
             const addConnectorFormContainer = document.getElementById('add-connector-form-container');
             const cancelBtn = document.getElementById('cancel-add-connector-btn');
+            const connectorDisplayNameInput = document.getElementById('connector-display-name');
             const connectorTypeSelect = document.getElementById('connector-type');
             const connectorFieldsDiv = document.getElementById('connector-fields');
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
+            const connectorsPageSummary = document.getElementById('connectors-page-summary');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -3008,6 +3029,8 @@ export function initializeOperatorConsole() {
             const HEALTH_CACHE_TTL_MS = 30000;
             const HEALTH_LIVE_TIMEOUT_MS = 3000;
             const PREDICTION_POLL_INTERVAL_MS = 1000;
+            const simpleBigQueryIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+            const unsafeBigQueryWherePattern = /(;|--|\/\*|\*\/|\b(insert|update|delete|merge|drop|alter|create)\b)/i;
             const ingestionConnectorTypes = new Set(['amplitude', 'adjust', 'appsflyer']);
             const connectorTypeLabels = {
                 amplitude: 'Amplitude',
@@ -3020,17 +3043,110 @@ export function initializeOperatorConsole() {
             };
             let backendMode = 'unknown';
             let cachedConnectors = [];
+            let connectorListRenderRequestId = 0;
+            let cachedProviderConnections = [];
             let cachedImports = [];
             let cachedPredictionJobs = [];
+            let cachedCohorts = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
+            let cachedEmailCampaigns = [];
             let cachedHealthState = null;
             let cachedHealthStateFetchedAt = 0;
             let healthStateRequest = null;
             let mockStorageEnabled = false;
             let lastSeenConnectorsVersion = '';
             let lastSeenImportsVersion = '';
+            const importBigQueryTableCache = new Map();
+            const emailCampaignAssetCache = new Map();
+            const emailCampaignAudienceFieldCache = new Map();
+
+            function renderConnectorEntrySummary(message = '') {
+                const configuredCount = cachedConnectors.length;
+                const providerConnectionCount = getCampaignCapableProviderConnections().length;
+                const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
+                const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
+                const summaryText = message || (
+                    configuredCount === 0 && providerConnectionCount === 0
+                        ? 'No connectors configured yet. Start with BigQuery, an ingestion source, or a campaign provider.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                );
+                if (operatorHubConnectorsSummary) {
+                    operatorHubConnectorsSummary.textContent = summaryText;
+                }
+                if (connectorsPageSummary && !message) {
+                    const totalConfigured = configuredCount + providerConnectionCount;
+                    connectorsPageSummary.textContent = totalConfigured === 0
+                        ? 'Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.'
+                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} and ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
+                }
+            }
+
+            function setConnectorFormVisible(isVisible, { connectorType = '' } = {}) {
+                addConnectorCard.style.display = isVisible ? 'none' : 'block';
+                addConnectorFormContainer.style.display = isVisible ? 'block' : 'none';
+                if (!isVisible) {
+                    connectorTypeSelect.value = '';
+                    connectorDisplayNameInput.value = '';
+                    connectorDisplayNameInput.dataset.suggestedName = '';
+                    connectorFieldsDiv.innerHTML = '';
+                    saveConnectorBtn.style.display = 'none';
+                    return;
+                }
+                const normalizedType = String(connectorType || '').trim();
+                if (normalizedType) {
+                    connectorTypeSelect.value = normalizedType;
+                    connectorTypeSelect.dispatchEvent(new Event('change'));
+                } else {
+                    connectorTypeSelect.value = '';
+                    connectorFieldsDiv.innerHTML = '';
+                    saveConnectorBtn.style.display = 'none';
+                }
+                connectorDisplayNameInput.focus();
+            }
+
+            function openConnectorWorkspace(options = {}) {
+                activateModule('data-core', 'data-core-connectors');
+                setConnectorFormVisible(true, options);
+            }
+
+            function syncConnectorDisplayName(type) {
+                const normalizedType = String(type || '').trim();
+                if (!connectorDisplayNameInput) {
+                    return;
+                }
+                if (!normalizedType) {
+                    connectorDisplayNameInput.dataset.suggestedName = '';
+                    return;
+                }
+                const suggestedName = nextConnectorName(normalizedType);
+                const previousSuggestedName = connectorDisplayNameInput.dataset.suggestedName || '';
+                const currentName = connectorDisplayNameInput.value.trim();
+                if (!currentName || currentName === previousSuggestedName) {
+                    connectorDisplayNameInput.value = suggestedName;
+                }
+                connectorDisplayNameInput.dataset.suggestedName = suggestedName;
+            }
+
+            function syncBigQueryCredentialMode() {
+                const modeSelect = document.getElementById('bigquery_credentials_entry_mode');
+                const uploadGroup = document.getElementById('bigquery_credentials_upload_group');
+                const pasteGroup = document.getElementById('bigquery_credentials_paste_group');
+                if (!modeSelect || !uploadGroup || !pasteGroup) {
+                    return;
+                }
+                const selectedMode = String(modeSelect.value || 'upload').toLowerCase();
+                uploadGroup.style.display = selectedMode === 'upload' ? 'block' : 'none';
+                pasteGroup.style.display = selectedMode === 'paste' ? 'block' : 'none';
+            }
+
+            async function readConnectorFileAsText(file) {
+                if (!file) {
+                    return '';
+                }
+                return file.text();
+            }
 
             function readStoredVersion(key) {
                 try {
@@ -3717,15 +3833,15 @@ export function initializeOperatorConsole() {
                         refreshWorkspaceLoginStatus(resolvedOrganizationId);
                     }
                     await ensureGoogleIdentityButtons();
+                    syncGoogleIdentityButtonVisibility();
                     disableGoogleAutoSelect();
-                    setAuthStatus('Choose a Google account to continue.');
+                    setAuthStatus('Use the Google button to continue.');
                     setWorkspaceTextStatus(
                         workspaceLoginStatus,
                         resolvedOrganizationId
-                            ? `Choose the Google account you want to use for "${resolvedOrganizationId}".`
-                            : 'Choose the Google account you want to use.',
+                            ? `Use the Google button to continue with "${resolvedOrganizationId}".`
+                            : 'Use the Google button to continue.',
                     );
-                    window.google.accounts.id.prompt();
                     return;
                 }
                 if (!oidcConfig || !oidcConfig.authorize_url || !oidcConfig.client_id) {
@@ -3993,7 +4109,7 @@ export function initializeOperatorConsole() {
                 if (normalizedMode === 'parallel') return 'AI + Cloud';
                 return connectors.some((connector) => (
                     String(connector.type || '').toLowerCase() === 'google'
-                    && Boolean((connector.config || {}).api_key)
+                    && Boolean((connector.config || {}).api_key_configured)
                 )) ? 'AI' : 'Local Model';
             }
 
@@ -4737,6 +4853,7 @@ export function initializeOperatorConsole() {
                 clearWorkspaceSelectionContext({ preserveOrganization: true });
                 setWorkspaceSelectionStage('org');
             });
+            workspaceSelectionCancelBtn?.addEventListener('click', () => closeWorkspaceOverlay());
             workspaceSelectionResolveBtn.addEventListener('click', async () => {
                 const requestedOrganizationInput = workspaceOrgUrlInput.value || workspaceModalOrgSelect.value;
                 setWorkspaceSelectionSwitchAccountVisible(false);
@@ -5174,12 +5291,17 @@ export function initializeOperatorConsole() {
                 const sourceName = spec.source_name || job.source_name || details.source || '';
                 const connector = cachedConnectors.find((item) => item.name === sourceName) || null;
                 const displayName = String(spec.display_name || '').trim() || formatImportDisplayName(sourceName || 'Import', createdAt);
+                const rawStatus = String(job.status || '').toLowerCase();
+                const failureReason = String(job.error || details.failure_reason || '').trim();
+                const displayStatus = rawStatus === 'completed' && failureReason
+                    ? 'Failed'
+                    : mapImportStatus(job.status);
                 return {
                     id: job.id,
                     name: displayName,
-                    status: mapImportStatus(job.status),
-                    raw_status: job.status,
-                    current_step: mapImportStatus(job.status),
+                    status: displayStatus,
+                    raw_status: rawStatus,
+                    current_step: displayStatus,
                     progress_pct: Number(progress.pct || 0),
                     timestamp: createdAt,
                     created_at: createdAt,
@@ -5191,7 +5313,7 @@ export function initializeOperatorConsole() {
                         source: sourceName,
                         type: spec.connector_type || (connector && connector.type) || '',
                         ingested_events: Number(details.events_staged || progress.current || 0),
-                        status: mapImportStatus(job.status),
+                        status: displayStatus,
                         error: job.error || null,
                     }] : [],
                     processing_stats: details.processing || null,
@@ -5244,6 +5366,88 @@ export function initializeOperatorConsole() {
                 return lines.join('<br>');
             }
 
+            function getImportProcessTooltip(job) {
+                const rawStatus = String(job.raw_status || '').toLowerCase();
+                if (!['queued', 'running', 'stopping'].includes(rawStatus)) {
+                    return '';
+                }
+
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const spec = job.spec || {};
+                const phase = String(details.phase || '').toLowerCase();
+                const lines = [];
+
+                let stepLabel = 'Preparing import';
+                if (rawStatus === 'queued') {
+                    stepLabel = 'Queued to start';
+                } else if (rawStatus === 'stopping') {
+                    stepLabel = 'Stopping import';
+                } else if (phase === 'starting') {
+                    stepLabel = 'Connecting to source';
+                } else if (phase === 'staging') {
+                    stepLabel = 'Connected to source';
+                } else if (phase === 'processing') {
+                    stepLabel = 'Importing staged data';
+                } else if (phase === 'reading_bigquery_table') {
+                    stepLabel = 'Connected to BigQuery table';
+                }
+                lines.push(`<strong>Step:</strong> ${escapeHtml(stepLabel)}`);
+
+                const sourceName = String(spec.source_name || details.source || '').trim();
+                if (sourceName) {
+                    lines.push(`<strong>Source:</strong> ${escapeHtml(sourceName)}`);
+                }
+
+                if (phase === 'reading_bigquery_table') {
+                    const tableName = String(spec.table_name || ((details.bigquery_table_import || {}).table_name) || '').trim();
+                    const rowsSeen = Number(details.rows_seen || progress.current || 0);
+                    const totalRows = Number(progress.total || 0);
+                    const rowsLoaded = Number(details.rows_loaded || 0);
+                    const rowsRejected = Number(details.rows_rejected || 0);
+                    if (tableName) {
+                        lines.push(`<strong>Table:</strong> ${escapeHtml(tableName)}`);
+                    }
+                    if (rowsSeen || totalRows || rowsLoaded || rowsRejected) {
+                        const seenLabel = totalRows > 0
+                            ? `${formatCount(rowsSeen)}/${formatCount(totalRows)} seen`
+                            : `${formatCount(rowsSeen)} seen`;
+                        lines.push(
+                            `<strong>Rows:</strong> ${seenLabel}, ${formatCount(rowsLoaded)} loaded, ${formatCount(rowsRejected)} rejected`,
+                        );
+                    }
+                } else {
+                    const current = Number(
+                        progress.current
+                        || details.normalized_events
+                        || details.events_staged
+                        || 0
+                    );
+                    const total = Number(progress.total || 0);
+                    const processedManifests = Number(details.processed_manifests || 0);
+                    const totalManifests = Number(details.total_manifests || details.shards_created || 0);
+                    if (current || total) {
+                        const eventLabel = total > 0
+                            ? `${formatCount(current)}/${formatCount(total)} events`
+                            : `${formatCount(current)} events`;
+                        lines.push(`<strong>Importing:</strong> ${eventLabel}`);
+                    }
+                    if (processedManifests || totalManifests) {
+                        const manifestLabel = totalManifests > 0
+                            ? `${formatCount(processedManifests)}/${formatCount(totalManifests)} shards`
+                            : `${formatCount(processedManifests)} shards`;
+                        lines.push(`<strong>Shards:</strong> ${manifestLabel}`);
+                    }
+                }
+
+                const stopReason = String(details.stop_reason || '').trim();
+                if (stopReason) {
+                    lines.push(`<strong>Stop request:</strong> ${escapeHtml(stopReason)}`);
+                }
+
+                return lines.join('<br>');
+            }
+
             function getImportStatusClass(job) {
                 if (job.status === 'Ready to Use') return 'status-ok';
                 if (job.status === 'Stopped') return 'status-neutral';
@@ -5253,13 +5457,14 @@ export function initializeOperatorConsole() {
 
             function renderImportStatus(job, statusClass) {
                 const status = escapeHtml(job.status || 'Processing');
-                const tooltip = getImportFailureTooltip(job);
+                const failureTooltip = getImportFailureTooltip(job);
+                const tooltip = failureTooltip || getImportProcessTooltip(job);
                 const progressText = getImportProgressText(job);
                 const statusLabel = progressText
                     ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
                 const statusText = tooltip
-                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="Show import failure reason">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
+                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
                     : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
@@ -5274,6 +5479,8 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                importBigQueryTableCache.clear();
+                renderConnectorEntrySummary();
                 return cachedConnectors;
             }
 
@@ -5294,6 +5501,15 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest('/predictions');
                 cachedPredictionJobs = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedPredictionJobs;
+            }
+
+            async function refreshCohortsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedCohorts;
+                }
+                const payload = await apiRequest('/cohorts');
+                cachedCohorts = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedCohorts;
             }
 
             function buildDefaultPredictionModelReadiness() {
@@ -5349,7 +5565,10 @@ export function initializeOperatorConsole() {
 
             function getConfiguredSourcesFromState() {
                 return cachedConnectors
-                    .filter((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()))
+                    .filter((connector) => {
+                        const connectorType = String(connector.type || '').toLowerCase();
+                        return ingestionConnectorTypes.has(connectorType) || connectorType === 'bigquery';
+                    })
                     .map((connector) => ({
                         id: connector.name,
                         name: connector.name,
@@ -5360,7 +5579,7 @@ export function initializeOperatorConsole() {
             function hasConfiguredGeminiConnector() {
                 return cachedConnectors.some((connector) => (
                     String(connector.type || '').toLowerCase() === 'google'
-                    && Boolean((connector.config || {}).api_key)
+                    && Boolean((connector.config || {}).api_key_configured)
                 ));
             }
 
@@ -5666,12 +5885,12 @@ export function initializeOperatorConsole() {
                 return healthStateRequest;
             }
 
-            async function createConnectorRecord(type, config) {
-                const name = nextConnectorName(type);
+            async function createConnectorRecord(type, config, name = null) {
+                const resolvedName = String(name || '').trim() || nextConnectorName(type);
                 const connector = await apiRequest('/connectors', {
                     method: 'POST',
                     body: {
-                        name,
+                        name: resolvedName,
                         type,
                         config,
                     },
@@ -5681,15 +5900,11 @@ export function initializeOperatorConsole() {
                 return connector;
             }
 
-            async function createImportRecord(sourceName, startDate, endDate) {
+            async function createImportRecord(requestBody) {
                 await ensureHealthState().catch(() => null);
                 const created = await apiRequest('/imports', {
                     method: 'POST',
-                    body: {
-                        source_name: sourceName,
-                        start_date: startDate,
-                        end_date: endDate,
-                    },
+                    body: requestBody,
                 });
                 if (backendMode === 'mock') {
                     setInlineStatus(importListStatus, `Created import ${created.id}. Running locally...`);
@@ -5700,6 +5915,83 @@ export function initializeOperatorConsole() {
                 });
                 publishDataVersion(IMPORTS_VERSION_STORAGE_KEY);
                 return normalizeImportJob(created);
+            }
+
+            function buildImportRequestBodyFromForm() {
+                const sourceName = String(importSourceSelect?.value || '').trim();
+                if (!sourceName) {
+                    throw new Error('No data source is available. Use Connect Data Source to configure one first.');
+                }
+
+                const connector = getImportConnectorByName(sourceName);
+                const startDate = String(startDateInput?.value || '').trim();
+                const endDate = String(endDateInput?.value || '').trim();
+                if (!isBigQueryImportSource(connector)) {
+                    if (!startDate || !endDate) {
+                        throw new Error('Please select a valid start and end date.');
+                    }
+                    return {
+                        source_name: sourceName,
+                        start_date: startDate.replace(/-/g, ''),
+                        end_date: endDate.replace(/-/g, ''),
+                    };
+                }
+
+                const resourceKind = String(importBigQueryResourceKindSelect?.value || 'external_prediction_scores').toLowerCase();
+                const tableName = String(importBigQueryTableNameInput?.value || importBigQueryTableSelect?.value || '').trim();
+                if (!tableName) {
+                    throw new Error('Select or enter a BigQuery table name.');
+                }
+                if (!isSimpleBigQueryIdentifier(tableName)) {
+                    throw new Error('BigQuery table names must use letters, numbers, and underscores, and start with a letter or underscore.');
+                }
+
+                const columnMapping = buildBigQueryColumnMapping(resourceKind);
+                if (!columnMapping.canonical_user_id) {
+                    throw new Error('Canonical User ID Column is required for BigQuery imports.');
+                }
+                const invalidColumn = Object.entries(columnMapping).find(([, value]) => !isSimpleBigQueryIdentifier(value));
+                if (invalidColumn) {
+                    throw new Error(`Column mappings must use simple BigQuery identifiers. Invalid value: ${invalidColumn[1]}.`);
+                }
+                if (resourceKind === 'external_prediction_scores' && !columnMapping.predicted_churn_risk && !columnMapping.score) {
+                    throw new Error('External Prediction Scores imports require a Predicted Risk Column or Score Column.');
+                }
+                if ((startDate && !endDate) || (!startDate && endDate)) {
+                    throw new Error('Provide both Start Date Filter and End Date Filter together.');
+                }
+                const timestampField = resourceKind === 'external_prediction_scores'
+                    ? columnMapping.score_timestamp
+                    : columnMapping.as_of_timestamp;
+                if ((startDate || endDate) && !timestampField) {
+                    throw new Error('Date filtering requires a mapped timestamp column for the selected BigQuery import type.');
+                }
+
+                const requestBody = {
+                    source_name: sourceName,
+                    table_name: tableName,
+                    resource_kind: resourceKind,
+                    column_mapping: columnMapping,
+                };
+                if (startDate) {
+                    requestBody.start_date = startDate;
+                    requestBody.end_date = endDate;
+                }
+                const whereSql = String(importBigQueryWhereSqlInput?.value || '').trim();
+                if (whereSql) {
+                    if (unsafeBigQueryWherePattern.test(whereSql)) {
+                        throw new Error('WHERE Filter can only contain a safe filter expression. Remove semicolons, comments, or write statements.');
+                    }
+                    requestBody.where_sql = whereSql;
+                }
+                if (resourceKind === 'churn_list') {
+                    requestBody.activate_cohort = Boolean(importBigQueryActivateCohortCheckbox?.checked);
+                    const cohortName = String(importBigQueryCohortNameInput?.value || '').trim();
+                    if (cohortName) {
+                        requestBody.cohort_name = cohortName;
+                    }
+                }
+                return requestBody;
             }
 
             async function queueMockImportRun(jobId) {
@@ -6034,6 +6326,55 @@ export function initializeOperatorConsole() {
                 return current;
             }
 
+            function collectObjectFieldPaths(raw, prefix = '', bucket = new Set(), depth = 0) {
+                if (!raw || typeof raw !== 'object' || Array.isArray(raw) || depth > 4) {
+                    return bucket;
+                }
+                Object.entries(raw).forEach(([key, value]) => {
+                    const path = prefix ? `${prefix}.${key}` : key;
+                    if (value && typeof value === 'object' && !Array.isArray(value)) {
+                        collectObjectFieldPaths(value, path, bucket, depth + 1);
+                        return;
+                    }
+                    bucket.add(path);
+                });
+                return bucket;
+            }
+
+            function getPreferredAudienceField(options = [], preferredKeys = []) {
+                const normalizedOptions = Array.isArray(options) ? options : [];
+                const lookup = new Set(normalizedOptions);
+                return preferredKeys.find((key) => lookup.has(key)) || normalizedOptions[0] || '';
+            }
+
+            function populateAudienceFieldSelect(select, fieldOptions = [], {
+                placeholder = 'Select an audience first',
+                preferredValue = '',
+                fallbackKeys = [],
+            } = {}) {
+                if (!select) {
+                    return '';
+                }
+                const options = Array.from(new Set((Array.isArray(fieldOptions) ? fieldOptions : []).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+                select.innerHTML = '';
+                const placeholderOption = document.createElement('option');
+                placeholderOption.value = '';
+                placeholderOption.textContent = placeholder;
+                select.appendChild(placeholderOption);
+                options.forEach((fieldPath) => {
+                    const option = document.createElement('option');
+                    option.value = fieldPath;
+                    option.textContent = fieldPath;
+                    select.appendChild(option);
+                });
+                const selectedValue = String(preferredValue || '').trim() || getPreferredAudienceField(options, fallbackKeys);
+                if (selectedValue) {
+                    ensureSelectOption(select, selectedValue, selectedValue);
+                    select.value = selectedValue;
+                }
+                return selectedValue;
+            }
+
             function pickValue(raw, keys, overridePath) {
                 if (overridePath) {
                     const overrideValue = getPathValue(raw, overridePath);
@@ -6117,42 +6458,65 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function buildConnectorCard(connector) {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `<span><strong>${connector.name}</strong>: ${formatConnectorLabel(connector.type)}</span>`;
+
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = 'Delete';
+                deleteButton.style.backgroundColor = 'var(--subtle-text)';
+                deleteButton.dataset.connectorName = connector.name;
+                deleteButton.addEventListener('click', async (event) => {
+                    const nameToDelete = event.target.dataset.connectorName;
+                    if (!confirm(`Are you sure you want to delete the ${connector.name} connector? This action cannot be undone.`)) {
+                        return;
+                    }
+                    try {
+                        await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
+                        publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
+                        loadSavedConnectors();
+                    } catch (error) {
+                        alert(`Error: ${error.message}`);
+                    }
+                });
+                card.appendChild(deleteButton);
+                return card;
+            }
+
+            function renderConnectorListContent(connectors) {
+                if (!connectorListDiv) {
+                    return;
+                }
+                if (!connectors.length) {
+                    const emptyState = document.createElement('div');
+                    emptyState.className = 'card connector-empty-state';
+                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p>';
+                    connectorListDiv.replaceChildren(emptyState);
+                    return;
+                }
+                const fragment = document.createDocumentFragment();
+                connectors.forEach((connector) => {
+                    fragment.appendChild(buildConnectorCard(connector));
+                });
+                connectorListDiv.replaceChildren(fragment);
+            }
+
             async function loadSavedConnectors() {
-                connectorListDiv.innerHTML = ''; // Clear existing list
+                const requestId = connectorListRenderRequestId + 1;
+                connectorListRenderRequestId = requestId;
+                connectorListDiv.replaceChildren();
                 try {
                     const connectors = await refreshConnectorsState();
-
-                    if (connectors.length > 0) {
-                        connectors.forEach(connector => {
-                            const card = document.createElement('div');
-                            card.className = 'card';
-                            card.innerHTML = `<span><strong>${connector.name}</strong>: ${formatConnectorLabel(connector.type)}</span>`;
-
-                            const deleteButton = document.createElement('button');
-                            deleteButton.textContent = 'Delete';
-                            deleteButton.style.backgroundColor = 'var(--subtle-text)';
-                            // Pass the unique name to the delete handler
-                            deleteButton.dataset.connectorName = connector.name;
-
-                            deleteButton.addEventListener('click', async (e) => {
-                                const nameToDelete = e.target.dataset.connectorName;
-                                if (!confirm(`Are you sure you want to delete the ${connector.name} connector? This action cannot be undone.`)) {
-                                    return;
-                                }
-                                try {
-                                    await apiRequest(`/connectors/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
-                                    publishDataVersion(CONNECTORS_VERSION_STORAGE_KEY);
-                                    loadSavedConnectors(); // Refresh the list
-                                } catch (error) {
-                                    alert(`Error: ${error.message}`);
-                                }
-                            });
-                            connectorListDiv.appendChild(card);
-                            card.appendChild(deleteButton);
-                        });
+                    if (requestId !== connectorListRenderRequestId) {
+                        return;
                     }
+                    renderConnectorListContent(connectors);
                 } catch (error) {
                     console.error('Error loading saved connectors:', error);
+                    if (requestId !== connectorListRenderRequestId) {
+                        return;
+                    }
                     if (isWorkspaceContextError(error)) {
                         connectorListDiv.innerHTML = '<p>Finish workspace setup to load connectors.</p>';
                         return;
@@ -6211,7 +6575,32 @@ export function initializeOperatorConsole() {
                         <input type="text" id="bigquery_project_id" placeholder="Enter your GCP Project ID">
                     </div>
                     <div class="form-group">
-                        <p style="font-size: 0.8rem; color: var(--subtle-text);">Note: For authentication, ensure your backend service has Application Default Credentials (ADC) configured (e.g., by running 'gcloud auth application-default login') or that a service account is correctly set up in your server environment.</p>
+                        <label for="bigquery_dataset_id">BigQuery Dataset ID</label>
+                        <input type="text" id="bigquery_dataset_id" placeholder="growth_inputs">
+                    </div>
+                    <div class="form-group">
+                        <label for="bigquery_location">BigQuery Location (optional)</label>
+                        <input type="text" id="bigquery_location" placeholder="US">
+                    </div>
+                    <div class="form-group">
+                        <label for="bigquery_credentials_entry_mode">How do you want to enter service account credentials?</label>
+                        <select id="bigquery_credentials_entry_mode">
+                            <option value="upload" selected>Upload JSON file</option>
+                            <option value="paste">Paste JSON text</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="bigquery_credentials_upload_group">
+                        <label for="bigquery_service_account_file">Service Account JSON File</label>
+                        <input type="file" id="bigquery_service_account_file" accept=".json,application/json">
+                    </div>
+                    <div class="form-group" id="bigquery_credentials_paste_group" style="display: none;">
+                        <label for="bigquery_service_account_json">Service Account JSON</label>
+                        <textarea id="bigquery_service_account_json" rows="8" placeholder='{"type":"service_account","client_email":"...","private_key":"..."}'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <p style="font-size: 0.8rem; color: var(--subtle-text); margin-bottom: 0;">
+                            Credentials entered here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use <code>*_ref</code> values through the API.
+                        </p>
                     </div>`,
                 sendgrid: `
                     <div class="form-group">
@@ -6229,17 +6618,16 @@ export function initializeOperatorConsole() {
                     </div>`
             };
 
+            operatorHubConnectorsBtn?.addEventListener('click', () => {
+                openConnectorWorkspace();
+            });
+
             addConnectorBtn.addEventListener('click', () => {
-                addConnectorCard.style.display = 'none';
-                addConnectorFormContainer.style.display = 'block';
+                setConnectorFormVisible(true);
             });
 
             cancelBtn.addEventListener('click', () => {
-                addConnectorFormContainer.style.display = 'none';
-                addConnectorCard.style.display = 'block';
-                connectorTypeSelect.value = '';
-                connectorFieldsDiv.innerHTML = '';
-                saveConnectorBtn.style.display = 'none';
+                setConnectorFormVisible(false);
             });
 
             connectorTypeSelect.addEventListener('change', (e) => {
@@ -6247,14 +6635,21 @@ export function initializeOperatorConsole() {
                 if (type && connectorFields[type]) {
                     connectorFieldsDiv.innerHTML = connectorFields[type];
                     saveConnectorBtn.style.display = 'inline-block';
+                    syncConnectorDisplayName(type);
+                    if (type === 'bigquery') {
+                        document.getElementById('bigquery_credentials_entry_mode')?.addEventListener('change', syncBigQueryCredentialMode);
+                        syncBigQueryCredentialMode();
+                    }
                 } else {
                     connectorFieldsDiv.innerHTML = '';
                     saveConnectorBtn.style.display = 'none';
+                    syncConnectorDisplayName('');
                 }
             });
 
             saveConnectorBtn.addEventListener('click', async () => {
                 const type = connectorTypeSelect.value;
+                const connectorName = String(connectorDisplayNameInput.value || '').trim() || nextConnectorName(type);
                 let payload = {};
 
                 if (type === 'amplitude') {
@@ -6279,8 +6674,21 @@ export function initializeOperatorConsole() {
                         model_name: document.getElementById('model_name').value || null
                     };
                 } else if (type === 'bigquery') {
+                    const credentialMode = String(document.getElementById('bigquery_credentials_entry_mode')?.value || 'upload').toLowerCase();
+                    const selectedFile = document.getElementById('bigquery_service_account_file')?.files?.[0] || null;
+                    const pastedServiceAccountJson = String(document.getElementById('bigquery_service_account_json')?.value || '').trim();
+                    const serviceAccountJson = credentialMode === 'paste'
+                        ? pastedServiceAccountJson
+                        : await readConnectorFileAsText(selectedFile);
+                    if (!serviceAccountJson) {
+                        alert('BigQuery requires a tenant service account JSON file or pasted JSON text.');
+                        return;
+                    }
                     payload = {
-                        project_id: document.getElementById('bigquery_project_id').value
+                        project_id: document.getElementById('bigquery_project_id').value,
+                        dataset_id: document.getElementById('bigquery_dataset_id').value,
+                        location: document.getElementById('bigquery_location').value || undefined,
+                        service_account_json: serviceAccountJson,
                     };
                 } else if (type === 'sendgrid') {
                     payload = {
@@ -6296,7 +6704,7 @@ export function initializeOperatorConsole() {
                 if (!type) return;
 
                 try {
-                    const connector = await createConnectorRecord(type, payload);
+                    const connector = await createConnectorRecord(type, payload, connectorName);
                     alert(`${formatConnectorLabel(connector.type)} connector '${connector.name}' saved.`);
 
                     loadSavedConnectors(); // Refresh the list of connectors
@@ -6690,6 +7098,22 @@ export function initializeOperatorConsole() {
                 const processedManifests = Number(details.processed_manifests || 0);
                 const totalManifests = Number(details.total_manifests || details.shards_created || 0);
                 const pageSize = Number(details.page_size || 0);
+                const rowsSeen = Number(details.rows_seen || progress.current || 0);
+                const rowsLoaded = Number(details.rows_loaded || 0);
+                const rowsRejected = Number(details.rows_rejected || 0);
+
+                if (phase === 'reading_bigquery_table') {
+                    let label = total > 0
+                        ? `${formatCount(rowsSeen)}/${formatCount(total)} rows`
+                        : `${formatCount(rowsSeen)} rows`;
+                    if (rowsLoaded || rowsRejected) {
+                        label += ` - ${formatCount(rowsLoaded)} loaded`;
+                        if (rowsRejected) {
+                            label += `, ${formatCount(rowsRejected)} rejected`;
+                        }
+                    }
+                    return label;
+                }
 
                 if (phase === 'processing') {
                     let label = total > 0
@@ -7339,6 +7763,25 @@ export function initializeOperatorConsole() {
             // Player Cohorts Page Logic
             const importDataBtn = document.getElementById('import-data-btn');
             const importSourceStatus = document.getElementById('import-source-status');
+            const importFormHelp = document.getElementById('import-form-help');
+            const importSourceSelect = document.getElementById('cohort-source-select');
+            const importDateRangeFields = document.getElementById('import-date-range-fields');
+            const startDateInput = document.getElementById('start-date-cohort');
+            const endDateInput = document.getElementById('end-date-cohort');
+            const startDateLabel = document.getElementById('start-date-cohort-label');
+            const endDateLabel = document.getElementById('end-date-cohort-label');
+            const importBigQueryFields = document.getElementById('import-bigquery-fields');
+            const importBigQueryTableSelect = document.getElementById('import-bigquery-table-select');
+            const importBigQueryRefreshTablesBtn = document.getElementById('import-bigquery-refresh-tables-btn');
+            const importBigQueryFetchRowCountBtn = document.getElementById('import-bigquery-fetch-row-count-btn');
+            const importBigQueryStatus = document.getElementById('import-bigquery-status');
+            const importBigQueryTableNameInput = document.getElementById('import-bigquery-table-name');
+            const importBigQueryResourceKindSelect = document.getElementById('import-bigquery-resource-kind');
+            const importBigQueryWhereSqlInput = document.getElementById('import-bigquery-where-sql');
+            const importBigQueryPredictionFields = document.getElementById('import-bigquery-prediction-fields');
+            const importBigQueryChurnFields = document.getElementById('import-bigquery-churn-fields');
+            const importBigQueryActivateCohortCheckbox = document.getElementById('import-bigquery-activate-cohort');
+            const importBigQueryCohortNameInput = document.getElementById('import-bigquery-cohort-name');
             const importListContainer = document.getElementById('import-list-container');
             const importListStatus = document.getElementById('import-list-status');
             const importDetailSelect = document.getElementById('import-detail-select');
@@ -7350,18 +7793,240 @@ export function initializeOperatorConsole() {
             let importListInterval = null;
             let selectedImportJobId = null;
 
+            function getImportConnectorByName(sourceName = '') {
+                const normalizedSourceName = String(sourceName || '').trim();
+                return cachedConnectors.find((connector) => String(connector.name || '').trim() === normalizedSourceName) || null;
+            }
+
+            function isBigQueryImportSource(connector = null) {
+                return String((connector || {}).type || '').toLowerCase() === 'bigquery';
+            }
+
+            function formatDiscoveredTableRowCount(rowCount) {
+                if (rowCount === null || rowCount === undefined || rowCount === '') {
+                    return 'unknown rows';
+                }
+                return `${formatCount(rowCount)} rows`;
+            }
+
+            function formatDiscoveredTableOptionLabel(item) {
+                return `${String(item.table_name || '').trim()} (${String(item.table_type || 'table').toLowerCase()}, ${formatDiscoveredTableRowCount(item.row_count)})`;
+            }
+
+            function getRequestedBigQueryTableName() {
+                return String(importBigQueryTableNameInput?.value || importBigQueryTableSelect?.value || '').trim();
+            }
+
+            function syncBigQueryRowCountButtonState() {
+                if (!importBigQueryFetchRowCountBtn) {
+                    return;
+                }
+                importBigQueryFetchRowCountBtn.disabled = !getRequestedBigQueryTableName();
+            }
+
+            function resetBigQueryTableSelect(items = [], selectedTableName = '') {
+                if (!importBigQueryTableSelect) {
+                    return;
+                }
+                const requestedTableName = String(selectedTableName || importBigQueryTableNameInput?.value || '').trim();
+                importBigQueryTableSelect.innerHTML = '<option value="">Select a discovered table</option>';
+                items.forEach((item) => {
+                    const option = document.createElement('option');
+                    option.value = String(item.table_name || '').trim();
+                    option.textContent = formatDiscoveredTableOptionLabel(item);
+                    importBigQueryTableSelect.appendChild(option);
+                });
+                if (requestedTableName && items.some((item) => String(item.table_name || '').trim() === requestedTableName)) {
+                    importBigQueryTableSelect.value = requestedTableName;
+                }
+                syncBigQueryRowCountButtonState();
+            }
+
+            function mergeBigQueryTableMetadata(sourceName, tablePayload = {}) {
+                const normalizedSourceName = String(sourceName || '').trim();
+                const normalizedTableName = String(tablePayload.table_name || '').trim();
+                if (!normalizedSourceName || !normalizedTableName || !importBigQueryTableCache.has(normalizedSourceName)) {
+                    return;
+                }
+                const cachedTables = importBigQueryTableCache.get(normalizedSourceName) || [];
+                const mergedTables = cachedTables.map((item) => {
+                    if (String(item.table_name || '').trim() !== normalizedTableName) {
+                        return item;
+                    }
+                    return {
+                        ...item,
+                        table_type: tablePayload.table_type || item.table_type,
+                        row_count: tablePayload.row_count,
+                    };
+                });
+                importBigQueryTableCache.set(normalizedSourceName, mergedTables);
+                resetBigQueryTableSelect(mergedTables, normalizedTableName);
+            }
+
+            async function loadBigQueryTablesForSource(sourceName, { forceRefresh = false } = {}) {
+                const normalizedSourceName = String(sourceName || '').trim();
+                if (!normalizedSourceName) {
+                    resetBigQueryTableSelect([]);
+                    setInlineStatus(importBigQueryStatus, '');
+                    return [];
+                }
+
+                if (!forceRefresh && importBigQueryTableCache.has(normalizedSourceName)) {
+                    const cachedTables = importBigQueryTableCache.get(normalizedSourceName) || [];
+                    resetBigQueryTableSelect(cachedTables);
+                    setInlineStatus(
+                        importBigQueryStatus,
+                        cachedTables.length
+                            ? `Loaded ${cachedTables.length} BigQuery table${cachedTables.length === 1 ? '' : 's'} from cache.`
+                            : 'No BigQuery tables discovered yet. Enter a table name manually if needed.',
+                    );
+                    return cachedTables;
+                }
+
+                setInlineStatus(importBigQueryStatus, 'Loading BigQuery tables...');
+                const payload = await apiRequest(`/connectors/${encodeURIComponent(normalizedSourceName)}/tables`);
+                const tables = Array.isArray(payload.items) ? payload.items : [];
+                importBigQueryTableCache.set(normalizedSourceName, tables);
+                resetBigQueryTableSelect(tables);
+                setInlineStatus(
+                    importBigQueryStatus,
+                    tables.length
+                        ? `Loaded ${tables.length} BigQuery table${tables.length === 1 ? '' : 's'} for ${normalizedSourceName}.`
+                        : 'No BigQuery tables were returned. Enter a table name manually if needed.',
+                );
+                return tables;
+            }
+
+            async function fetchBigQueryTableRowCount() {
+                const connectorName = String(importSourceSelect?.value || '').trim();
+                const tableName = getRequestedBigQueryTableName();
+                if (!connectorName || !tableName) {
+                    setInlineStatus(importBigQueryStatus, 'Select or enter a BigQuery table first.', true);
+                    syncBigQueryRowCountButtonState();
+                    return;
+                }
+                if (importBigQueryFetchRowCountBtn) {
+                    importBigQueryFetchRowCountBtn.disabled = true;
+                }
+                setInlineStatus(importBigQueryStatus, `Fetching exact row count for ${tableName}...`);
+                try {
+                    const payload = await apiRequest(`/connectors/${encodeURIComponent(connectorName)}/tables/${encodeURIComponent(tableName)}/count`);
+                    mergeBigQueryTableMetadata(connectorName, payload);
+                    if (importBigQueryTableNameInput) {
+                        importBigQueryTableNameInput.value = String(payload.table_name || tableName).trim();
+                    }
+                    setInlineStatus(
+                        importBigQueryStatus,
+                        `${payload.table_name} has ${formatCount(payload.row_count || 0)} row(s).`,
+                    );
+                } catch (error) {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to fetch BigQuery row count.', true);
+                } finally {
+                    syncBigQueryRowCountButtonState();
+                }
+            }
+
+            function getImportFieldValue(fieldId) {
+                return String(document.getElementById(fieldId)?.value || '').trim();
+            }
+
+            function isSimpleBigQueryIdentifier(value = '') {
+                return simpleBigQueryIdentifierPattern.test(String(value || '').trim());
+            }
+
+            function buildBigQueryColumnMapping(resourceKind) {
+                const mapping = {
+                    canonical_user_id: getImportFieldValue('import-bigquery-canonical-user-id'),
+                    user_id: getImportFieldValue('import-bigquery-user-id'),
+                    email: getImportFieldValue('import-bigquery-email'),
+                };
+                if (resourceKind === 'external_prediction_scores') {
+                    Object.assign(mapping, {
+                        predicted_churn_risk: getImportFieldValue('import-bigquery-predicted-risk'),
+                        score: getImportFieldValue('import-bigquery-score'),
+                        score_timestamp: getImportFieldValue('import-bigquery-score-timestamp'),
+                        suggested_action: getImportFieldValue('import-bigquery-suggested-action'),
+                        churn_state: getImportFieldValue('import-bigquery-churn-state'),
+                        model_name: getImportFieldValue('import-bigquery-model-name'),
+                        model_version: getImportFieldValue('import-bigquery-model-version'),
+                        recommended_template_id: getImportFieldValue('import-bigquery-template-id'),
+                        recommended_variant: getImportFieldValue('import-bigquery-variant'),
+                    });
+                } else if (resourceKind === 'churn_list') {
+                    Object.assign(mapping, {
+                        reason: getImportFieldValue('import-bigquery-reason'),
+                        segment: getImportFieldValue('import-bigquery-segment'),
+                        as_of_timestamp: getImportFieldValue('import-bigquery-as-of-timestamp'),
+                    });
+                }
+                return Object.fromEntries(
+                    Object.entries(mapping).filter(([, value]) => String(value || '').trim()),
+                );
+            }
+
+            function syncBigQueryResourceKindFields() {
+                const resourceKind = String(importBigQueryResourceKindSelect?.value || 'external_prediction_scores').toLowerCase();
+                if (importBigQueryPredictionFields) {
+                    importBigQueryPredictionFields.classList.toggle('hidden', resourceKind !== 'external_prediction_scores');
+                }
+                if (importBigQueryChurnFields) {
+                    importBigQueryChurnFields.classList.toggle('hidden', resourceKind !== 'churn_list');
+                }
+            }
+
+            async function syncImportSourceMode({ forceTableRefresh = false } = {}) {
+                const connector = getImportConnectorByName(importSourceSelect?.value || '');
+                const isBigQuerySource = isBigQueryImportSource(connector);
+
+                if (importBigQueryFields) {
+                    importBigQueryFields.classList.toggle('hidden', !isBigQuerySource);
+                }
+                if (importFormHelp) {
+                    importFormHelp.textContent = isBigQuerySource
+                        ? 'BigQuery imports read one table at a time. Date filters are optional and require a mapped timestamp column.'
+                        : 'Choose a configured ingestion source and a date window to create an import job.';
+                }
+                if (startDateLabel) {
+                    startDateLabel.textContent = isBigQuerySource ? 'Start Date Filter (optional)' : 'Start Date';
+                }
+                if (endDateLabel) {
+                    endDateLabel.textContent = isBigQuerySource ? 'End Date Filter (optional)' : 'End Date';
+                }
+                if (importDataBtn) {
+                    importDataBtn.textContent = isBigQuerySource ? 'Import BigQuery Table' : 'Import Data';
+                }
+                if (!isBigQuerySource) {
+                    setInlineStatus(importBigQueryStatus, '');
+                    syncBigQueryRowCountButtonState();
+                    return;
+                }
+
+                syncBigQueryResourceKindFields();
+                try {
+                    await loadBigQueryTablesForSource(connector?.name || '', { forceRefresh: forceTableRefresh });
+                } catch (error) {
+                    resetBigQueryTableSelect([]);
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to load BigQuery tables.', true);
+                }
+            }
+
     
             async function loadConfiguredSources() {
                 const importCard = importDataBtn.parentElement;
-                const sourceSelect = document.getElementById('cohort-source-select');
-                const sourceGroup = document.getElementById('cohort-source-select').parentElement;
+                const sourceSelect = importSourceSelect;
+                const sourceGroup = importSourceSelect.parentElement;
                 const startDateGroup = document.getElementById('start-date-cohort').parentElement;
                 const endDateGroup = document.getElementById('end-date-cohort').parentElement;
                 const setImportSourceFormVisible = (visible) => {
                     sourceGroup.style.display = visible ? 'block' : 'none';
                     startDateGroup.style.display = visible ? 'block' : 'none';
                     endDateGroup.style.display = visible ? 'block' : 'none';
+                    importDateRangeFields.style.display = visible ? 'grid' : 'none';
+                    importBigQueryFields.classList.toggle('hidden', !visible);
                     importDataBtn.style.display = visible ? 'inline-block' : 'none';
+                    if (importFormHelp) {
+                        importFormHelp.style.display = visible ? 'block' : 'none';
+                    }
                 };
                 const ensureConfigMessage = (message = '') => {
                     let messageEl = importCard.querySelector('.config-message');
@@ -7395,14 +8060,16 @@ export function initializeOperatorConsole() {
 
                     if (!sources || sources.length === 0) {
                         setImportSourceFormVisible(false);
-                        ensureConfigMessage('Please configure a data source in the Connectors section first.');
+                        ensureConfigMessage('Use Connect Data Source to configure a source before starting imports.');
                         setInlineStatus(importSourceStatus, '');
                     } else {
                         sourceSelect.innerHTML = ''; // Clear existing options
                         sources.forEach(source => {
                             const option = document.createElement('option');
                             option.value = source.id;
-                            option.textContent = source.name;
+                            option.textContent = isBigQueryImportSource(source)
+                                ? `${source.name} (${formatConnectorLabel(source.type)})`
+                                : source.name;
                             sourceSelect.appendChild(option);
                         });
                         if (sources.some((source) => source.id === previousSelection)) {
@@ -7411,6 +8078,7 @@ export function initializeOperatorConsole() {
                         setImportSourceFormVisible(true);
                         ensureConfigMessage('');
                         setInlineStatus(importSourceStatus, '');
+                        await syncImportSourceMode();
                     }
                 } catch (error) {
                     setImportSourceFormVisible(false);
@@ -7440,29 +8108,35 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function shouldExposeImportInDownstreamSelectors(job = {}) {
+                const normalizedStatus = String(job.raw_status || job.status || '').trim().toLowerCase();
+                return !['failed', 'error'].includes(normalizedStatus);
+            }
+
             function populateImportDetailSelect(imports = []) {
                 if (!importDetailSelect) return;
                 const previous = selectedImportJobId || importDetailSelect.value;
+                const selectableImports = imports.filter(shouldExposeImportInDownstreamSelectors);
                 importDetailSelect.innerHTML = '';
-                if (!imports.length) {
-                    importDetailSelect.innerHTML = '<option value="">No import jobs available</option>';
+                if (!selectableImports.length) {
+                    importDetailSelect.innerHTML = '<option value="">No selectable import jobs available</option>';
                     selectedImportJobId = null;
-                    renderJsonOutput(importDetailOutput, null, 'Select an import job to inspect operations.');
+                    renderJsonOutput(importDetailOutput, null, 'Only non-failed import jobs can be inspected here.');
                     renderSimpleTable(importManifestsList, [], [], 'No manifests available.');
                     return;
                 }
-                imports.forEach((job) => {
+                selectableImports.forEach((job) => {
                     const option = document.createElement('option');
                     option.value = job.id;
                     option.textContent = `${job.name} (${job.status})`;
                     importDetailSelect.appendChild(option);
                 });
-                if (imports.some((job) => job.id === previous)) {
+                if (selectableImports.some((job) => job.id === previous)) {
                     importDetailSelect.value = previous;
                     selectedImportJobId = previous;
                 } else {
-                    importDetailSelect.value = imports[0].id;
-                    selectedImportJobId = imports[0].id;
+                    importDetailSelect.value = selectableImports[0].id;
+                    selectedImportJobId = selectableImports[0].id;
                 }
             }
 
@@ -7888,6 +8562,31 @@ export function initializeOperatorConsole() {
                 toggle.textContent = expanded ? 'Show Less' : 'Show Full Text';
             });
 
+            importSourceSelect?.addEventListener('change', () => {
+                syncImportSourceMode().catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to update import source mode.', true);
+                });
+            });
+            importBigQueryResourceKindSelect?.addEventListener('change', syncBigQueryResourceKindFields);
+            importBigQueryRefreshTablesBtn?.addEventListener('click', () => {
+                syncImportSourceMode({ forceTableRefresh: true }).catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to refresh BigQuery tables.', true);
+                });
+            });
+            importBigQueryFetchRowCountBtn?.addEventListener('click', () => {
+                fetchBigQueryTableRowCount().catch((error) => {
+                    setInlineStatus(importBigQueryStatus, error.message || 'Failed to fetch BigQuery row count.', true);
+                });
+            });
+            importBigQueryTableSelect?.addEventListener('change', () => {
+                const selectedTableName = String(importBigQueryTableSelect.value || '').trim();
+                if (selectedTableName && importBigQueryTableNameInput) {
+                    importBigQueryTableNameInput.value = selectedTableName;
+                }
+                syncBigQueryRowCountButtonState();
+            });
+            importBigQueryTableNameInput?.addEventListener('input', syncBigQueryRowCountButtonState);
+
             function getActionButtonsHTML(job) {
                 if (['completed', 'failed', 'stopped'].includes(job.raw_status)) {
                     return `<button type="button" data-import-action="delete" data-job-id="${escapeHtml(job.id)}" style="background-color: var(--subtle-text);">Delete</button>`;
@@ -7961,28 +8660,9 @@ export function initializeOperatorConsole() {
             }
 
             importDataBtn.addEventListener('click', async () => {
-                const startDate = document.getElementById('start-date-cohort').value;
-                const endDate = document.getElementById('end-date-cohort').value;
-                const source = document.getElementById('cohort-source-select').value;
-
-                if (!source) {
-                    alert('No data source is available. Please configure one in the Connectors section.');
-                    return;
-                }
-
-                if (!startDate || !endDate) {
-                    alert('Please select a valid start and end date.');
-                    return;
-                }
-
-                const payload = {
-                    start_date: startDate.replace(/-/g, ''),
-                    end_date: endDate.replace(/-/g, ''),
-                    source: source
-                };
-
                 try {
-                    const result = await createImportRecord(payload.source, payload.start_date, payload.end_date);
+                    const requestBody = buildImportRequestBodyFromForm();
+                    const result = await createImportRecord(requestBody);
                     const modeSuffix = result.raw_status === 'stopped'
                         ? 'was stopped.'
                         : backendMode === 'mock'
@@ -8544,6 +9224,55 @@ export function initializeOperatorConsole() {
             const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
             const workflowDeliveryDiagnosticsOutput = document.getElementById('workflow-delivery-diagnostics-output');
             const workflowPolicyOutput = document.getElementById('workflow-policy-output');
+            const emailCampaignsSummary = document.getElementById('email-campaigns-summary');
+            const addProviderConnectionBtn = document.getElementById('add-provider-connection-btn');
+            const providerConnectionRefreshBtn = document.getElementById('provider-connection-refresh-btn');
+            const providerConnectionSaveBtn = document.getElementById('provider-connection-save-btn');
+            const providerConnectionCancelBtn = document.getElementById('provider-connection-cancel-btn');
+            const providerConnectionStatus = document.getElementById('provider-connection-status');
+            const providerConnectionList = document.getElementById('provider-connection-list');
+            const providerConnectionFormContainer = document.getElementById('provider-connection-form-container');
+            const providerConnectionTypeSelect = document.getElementById('provider-connection-type-select');
+            const providerConnectionNameInput = document.getElementById('provider-connection-name-input');
+            const providerConnectionConfigFields = document.getElementById('provider-connection-config-fields');
+            const emailCampaignRefreshBtn = document.getElementById('email-campaign-refresh-btn');
+            const emailCampaignSelectedLabel = document.getElementById('email-campaign-selected-label');
+            const emailCampaignStatus = document.getElementById('email-campaign-status');
+            const emailCampaignTemplateStatus = document.getElementById('email-campaign-template-status');
+            const emailCampaignProviderTypeSelect = document.getElementById('email-campaign-provider-type-select');
+            const emailCampaignProviderSelect = document.getElementById('email-campaign-provider-select');
+            const emailCampaignTemplateLabel = document.getElementById('email-campaign-template-label');
+            const emailCampaignTemplateSelect = document.getElementById('email-campaign-template-select');
+            const emailCampaignTemplateRefreshBtn = document.getElementById('email-campaign-template-refresh-btn');
+            const emailCampaignAudienceTypeSelect = document.getElementById('email-campaign-audience-type-select');
+            const emailCampaignPredictionJobGroup = document.getElementById('email-campaign-prediction-job-group');
+            const emailCampaignPredictionJobSelect = document.getElementById('email-campaign-prediction-job-select');
+            const emailCampaignCohortGroup = document.getElementById('email-campaign-cohort-group');
+            const emailCampaignCohortSelect = document.getElementById('email-campaign-cohort-select');
+            const emailCampaignUpcomingList = document.getElementById('email-campaign-upcoming-list');
+            const emailCampaignPastList = document.getElementById('email-campaign-past-list');
+            const emailCampaignDetailOutput = document.getElementById('email-campaign-detail-output');
+            const emailCampaignNameInput = document.getElementById('email-campaign-name-input');
+            const emailCampaignRiskFiltersGroup = document.getElementById('email-campaign-risk-filters-group');
+            const emailCampaignRiskFiltersInput = document.getElementById('email-campaign-risk-filters-input');
+            const emailCampaignIncludeChurnedGroup = document.getElementById('email-campaign-include-churned-group');
+            const emailCampaignIncludeChurnedCheckbox = document.getElementById('email-campaign-include-churned-checkbox');
+            const emailCampaignRecipientEmailFieldGroup = document.getElementById('email-campaign-recipient-email-field-group');
+            const emailCampaignRecipientEmailFieldSelect = document.getElementById('email-campaign-recipient-email-field-select');
+            const emailCampaignRecipientExternalIdFieldGroup = document.getElementById('email-campaign-recipient-external-id-field-group');
+            const emailCampaignRecipientExternalIdFieldSelect = document.getElementById('email-campaign-recipient-external-id-field-select');
+            const emailCampaignAudienceFieldStatus = document.getElementById('email-campaign-audience-field-status');
+            const emailCampaignDeeplinkTemplateFieldInput = document.getElementById('email-campaign-deeplink-template-field-input');
+            const emailCampaignDeeplinkTemplateInput = document.getElementById('email-campaign-deeplink-template-input');
+            const emailCampaignDeeplinkOverrideFieldInput = document.getElementById('email-campaign-deeplink-override-field-input');
+            const emailCampaignMergeFieldsInput = document.getElementById('email-campaign-merge-fields-input');
+            const emailCampaignScheduleAtInput = document.getElementById('email-campaign-schedule-at-input');
+            const emailCampaignSaveDraftBtn = document.getElementById('email-campaign-save-draft-btn');
+            const emailCampaignScheduleBtn = document.getElementById('email-campaign-schedule-btn');
+            const emailCampaignSendNowBtn = document.getElementById('email-campaign-send-now-btn');
+            const emailCampaignClearSelectionBtn = document.getElementById('email-campaign-clear-selection-btn');
+            let selectedEmailCampaignId = null;
+            let selectedProviderConnectionId = null;
             const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
             const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
             const activationIngestStatus = document.getElementById('activation-ingest-status');
@@ -8702,6 +9431,76 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function findCohort(cohortId) {
+                return (cachedCohorts || []).find((item) => item.cohort_id === cohortId) || null;
+            }
+
+            function getPredictionAudienceLabel(job) {
+                const details = (job && job.progress && job.progress.details) || {};
+                return String(
+                    details.audience_label
+                    || details.resolved_import_display_name
+                    || (job && job.spec && job.spec.source_name)
+                    || (job && job.id)
+                    || ''
+                ).trim();
+            }
+
+            function formatPredictionAudienceOption(job) {
+                const label = getPredictionAudienceLabel(job) || String(job?.id || 'Prediction');
+                const status = String(job?.status || 'unknown').trim();
+                return status ? `${label} (${status})` : label;
+            }
+
+            function getCurrentEmailCampaignAudienceType() {
+                return String(emailCampaignAudienceTypeSelect?.value || 'prediction').trim().toLowerCase() || 'prediction';
+            }
+
+            function getSelectedEmailCampaignAudienceSelection() {
+                const audienceType = getCurrentEmailCampaignAudienceType();
+                if (audienceType === 'cohort') {
+                    return {
+                        audienceType,
+                        audienceId: String(emailCampaignCohortSelect?.value || '').trim(),
+                    };
+                }
+                return {
+                    audienceType: 'prediction',
+                    audienceId: String(emailCampaignPredictionJobSelect?.value || '').trim(),
+                };
+            }
+
+            function formatEmailCampaignAudienceLabel(audience = {}) {
+                const cohortId = String((audience || {}).cohort_id || '').trim();
+                if (cohortId) {
+                    const cohort = findCohort(cohortId);
+                    const cohortName = String(cohort?.name || '').trim();
+                    return cohortName ? `${cohortName} (${cohortId})` : cohortId;
+                }
+                const predictionJobId = String((audience || {}).prediction_job_id || '').trim();
+                if (!predictionJobId) {
+                    return '-';
+                }
+                const job = (cachedPredictionJobs || []).find((item) => item.id === predictionJobId) || null;
+                const label = getPredictionAudienceLabel(job);
+                return label ? `${label} (${predictionJobId})` : predictionJobId;
+            }
+
+            function populateEmailCampaignCohortSelect(cohorts = cachedCohorts) {
+                const items = Array.isArray(cohorts) ? cohorts : [];
+                const previousValue = emailCampaignCohortSelect?.value || '';
+                emailCampaignCohortSelect.innerHTML = '<option value="">Select a cohort audience</option>';
+                items.forEach((cohort) => {
+                    const option = document.createElement('option');
+                    option.value = cohort.cohort_id;
+                    option.textContent = `${cohort.name || cohort.cohort_id} (${cohort.status || 'unknown'})`;
+                    emailCampaignCohortSelect.appendChild(option);
+                });
+                if (previousValue && items.some((item) => item.cohort_id === previousValue)) {
+                    emailCampaignCohortSelect.value = previousValue;
+                }
+            }
+
             function populateExportJobSelect(exportJobs = []) {
                 const select = document.getElementById('export-diagnostics-select');
                 const previousValue = select.value;
@@ -8714,6 +9513,1082 @@ export function initializeOperatorConsole() {
                 });
                 if (exportJobs.some((item) => item.id === previousValue)) {
                     select.value = previousValue;
+                }
+            }
+
+            function getDefaultEmailCampaignMergeFieldsText() {
+                return JSON.stringify({
+                    first_name: { source: 'field', value: 'first_name' },
+                    reward_name: { source: 'literal', value: 'Welcome Back Pack' },
+                }, null, 2);
+            }
+
+            function formatEmailCampaignStatusLabel(status) {
+                return String(status || 'draft')
+                    .replace(/[_-]+/g, ' ')
+                    .replace(/\b\w/g, (character) => character.toUpperCase());
+            }
+
+            function toIsoFromLocalDateTimeInput(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return null;
+                const parsed = new Date(raw);
+                if (Number.isNaN(parsed.getTime())) {
+                    throw new Error('Schedule time must be a valid date and time.');
+                }
+                return parsed.toISOString();
+            }
+
+            function fromIsoToLocalDateTimeInput(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return '';
+                const parsed = new Date(raw);
+                if (Number.isNaN(parsed.getTime())) {
+                    return '';
+                }
+                const pad = (part) => String(part).padStart(2, '0');
+                return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+            }
+
+            function getCampaignProviderConfig(providerType = 'sendgrid') {
+                const normalizedProvider = String(providerType || 'sendgrid').trim().toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return {
+                        provider: 'braze',
+                        label: 'Braze',
+                        assetLabel: 'Braze API Campaign',
+                        assetOptionLabel: 'Select a Braze API campaign',
+                        selectProviderMessage: 'Select a Braze provider connection first.',
+                        emptyAssetMessage: 'No API-triggered Braze campaigns found for this provider connection.',
+                        loadingAssetsMessage: 'Loading Braze API campaigns...',
+                        loadedAssetNoun: 'campaign',
+                        namePlaceholder: 'e.g. Lifecycle Braze',
+                    };
+                }
+                return {
+                    provider: 'sendgrid',
+                    label: 'SendGrid',
+                    assetLabel: 'Dynamic Template',
+                    assetOptionLabel: 'Select a dynamic template',
+                    selectProviderMessage: 'Select a SendGrid provider connection first.',
+                    emptyAssetMessage: 'No dynamic templates found for this provider connection.',
+                    loadingAssetsMessage: 'Loading SendGrid templates...',
+                    loadedAssetNoun: 'template',
+                    namePlaceholder: 'e.g. Lifecycle SendGrid',
+                };
+            }
+
+            function getCampaignCapableProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                const items = Array.isArray(cachedProviderConnections) ? cachedProviderConnections : [];
+                return items.filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
+                    if (!['sendgrid', 'braze'].includes(provider)) {
+                        return false;
+                    }
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
+            }
+
+            function findProviderConnection(providerConnectionId) {
+                return (cachedProviderConnections || []).find((item) => item.provider_connection_id === providerConnectionId) || null;
+            }
+
+            function findEmailCampaign(emailCampaignId) {
+                return (cachedEmailCampaigns || []).find((item) => item.email_campaign_id === emailCampaignId) || null;
+            }
+
+            async function refreshProviderConnectionsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return getCampaignCapableProviderConnections();
+                }
+                const payload = await apiRequest('/provider-connections');
+                const items = Array.isArray(payload.items) ? payload.items : [];
+                cachedProviderConnections = latestByCreatedAt(items);
+                renderConnectorEntrySummary();
+                return getCampaignCapableProviderConnections();
+            }
+
+            async function refreshEmailCampaignsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedEmailCampaigns;
+                }
+                const payload = await apiRequest('/email-campaigns');
+                cachedEmailCampaigns = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedEmailCampaigns;
+            }
+
+            function ensureSelectOption(select, value, label) {
+                if (!select || !value) return;
+                if (Array.from(select.options).some((option) => option.value === value)) {
+                    return;
+                }
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = label;
+                select.appendChild(option);
+            }
+
+            function updateEmailCampaignSummary() {
+                const providers = getCampaignCapableProviderConnections();
+                const campaigns = Array.isArray(cachedEmailCampaigns) ? cachedEmailCampaigns : [];
+                const draftCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'draft').length;
+                const scheduledCount = campaigns.filter((item) => String(item.status || '').toLowerCase() === 'scheduled').length;
+                const pastCount = campaigns.filter((item) => ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(String(item.status || '').toLowerCase())).length;
+                const sendGridCount = getCampaignCapableProviderConnections('sendgrid').length;
+                const brazeCount = getCampaignCapableProviderConnections('braze').length;
+                const providerBreakdown = [
+                    sendGridCount ? `${sendGridCount} SendGrid` : '',
+                    brazeCount ? `${brazeCount} Braze` : '',
+                ].filter(Boolean).join(' · ');
+                emailCampaignsSummary.textContent = providers.length === 0
+                    ? 'Save a SendGrid or Braze provider connection under Connectors to start browsing assets and building campaigns.'
+                    : `${providers.length} provider connection${providers.length === 1 ? '' : 's'}${providerBreakdown ? ` (${providerBreakdown})` : ''} · ${draftCount} draft${draftCount === 1 ? '' : 's'} · ${scheduledCount} scheduled · ${pastCount} past`;
+            }
+
+            function getCurrentProviderConnectionType() {
+                return String(providerConnectionTypeSelect?.value || 'sendgrid').trim().toLowerCase() || 'sendgrid';
+            }
+
+            function getCurrentEmailCampaignProviderType() {
+                return String(
+                    emailCampaignProviderTypeSelect?.value
+                    || (findProviderConnection(String(emailCampaignProviderSelect?.value || '').trim()) || {}).provider
+                    || 'sendgrid'
+                ).trim().toLowerCase() || 'sendgrid';
+            }
+
+            function getSelectedEmailCampaignProviderConnection() {
+                return findProviderConnection(String(emailCampaignProviderSelect?.value || '').trim());
+            }
+
+            function sortMessagingAssets(items = []) {
+                return [...items].sort((left, right) => {
+                    const leftUpdatedAt = parseIsoDate(left.updated_at || left.last_edited || left.created_at).getTime();
+                    const rightUpdatedAt = parseIsoDate(right.updated_at || right.last_edited || right.created_at).getTime();
+                    if (leftUpdatedAt !== rightUpdatedAt) {
+                        return rightUpdatedAt - leftUpdatedAt;
+                    }
+                    return String(left.name || left.id || '').localeCompare(String(right.name || right.id || ''));
+                });
+            }
+
+            function getProviderConnectionApiKeyInput(providerType = getCurrentProviderConnectionType()) {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return document.getElementById('provider-connection-braze-api-key-input');
+                }
+                return document.getElementById('provider-connection-sendgrid-api-key-input');
+            }
+
+            function isProviderConnectionFormVisible() {
+                return providerConnectionFormContainer?.style.display !== 'none';
+            }
+
+            function setProviderConnectionFormVisible(isVisible, { providerType = '', preserveValues = false } = {}) {
+                if (addProviderConnectionBtn) {
+                    addProviderConnectionBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
+                if (providerConnectionFormContainer) {
+                    providerConnectionFormContainer.style.display = isVisible ? 'block' : 'none';
+                }
+                if (!isVisible) {
+                    selectedProviderConnectionId = null;
+                    providerConnectionTypeSelect.value = 'sendgrid';
+                    providerConnectionNameInput.value = '';
+                    syncProviderConnectionFormFields();
+                    setInlineStatus(providerConnectionStatus, '');
+                    return;
+                }
+                if (providerType) {
+                    providerConnectionTypeSelect.value = String(providerType || 'sendgrid').trim().toLowerCase() || 'sendgrid';
+                }
+                syncProviderConnectionFormFields();
+                if (!preserveValues) {
+                    selectedProviderConnectionId = null;
+                    providerConnectionNameInput.value = '';
+                    providerConnectionNameInput.focus();
+                }
+            }
+
+            function syncProviderConnectionFormFields() {
+                if (!providerConnectionConfigFields) {
+                    return;
+                }
+                const providerType = getCurrentProviderConnectionType();
+                if (providerType === 'braze') {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-braze-api-key-input">Braze API Key</label>
+                                <input type="password" id="provider-connection-braze-api-key-input" placeholder="Enter your Braze REST API key">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-braze-rest-endpoint-input">Braze REST Endpoint</label>
+                                <input type="text" id="provider-connection-braze-rest-endpoint-input" placeholder="https://rest.iad-01.braze.com">
+                            </div>
+                        </div>
+                        <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
+                    `;
+                } else {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-api-key-input">SendGrid API Key</label>
+                                <input type="password" id="provider-connection-sendgrid-api-key-input" placeholder="SG....">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-from-email-input">Default From Email</label>
+                                <input type="email" id="provider-connection-sendgrid-from-email-input" placeholder="rewards@example.com">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-from-name-input">Default From Name (optional)</label>
+                                <input type="text" id="provider-connection-sendgrid-from-name-input" placeholder="Rewards Team">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-sendgrid-base-url-input">Base URL (optional)</label>
+                                <input type="text" id="provider-connection-sendgrid-base-url-input" placeholder="https://api.sendgrid.com">
+                            </div>
+                        </div>
+                        <p class="subtle">Kairyx browses dynamic transactional templates from this SendGrid account and sends templated campaigns through the SendGrid Web API.</p>
+                    `;
+                }
+                syncProviderConnectionFormState();
+            }
+
+            function syncProviderConnectionFormState() {
+                const providerType = getCurrentProviderConnectionType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                const editingConnection = selectedProviderConnectionId ? findProviderConnection(selectedProviderConnectionId) : null;
+                const editing = Boolean(editingConnection && String(editingConnection.provider || '').toLowerCase() === providerType);
+                providerConnectionSaveBtn.textContent = editing ? 'Update Provider Connection' : 'Save Provider Connection';
+                if (providerConnectionNameInput) {
+                    providerConnectionNameInput.placeholder = descriptor.namePlaceholder;
+                }
+                const apiKeyInput = getProviderConnectionApiKeyInput(providerType);
+                if (!apiKeyInput) {
+                    return;
+                }
+                if (editing && !String(apiKeyInput.value || '').trim()) {
+                    apiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
+                    return;
+                }
+                apiKeyInput.placeholder = providerType === 'braze' ? 'Enter your Braze REST API key' : 'SG....';
+            }
+
+            function loadProviderConnectionIntoForm(providerConnectionId) {
+                const provider = findProviderConnection(providerConnectionId);
+                if (!provider) {
+                    setProviderConnectionFormVisible(false);
+                    return;
+                }
+                setProviderConnectionFormVisible(true, {
+                    providerType: provider.provider,
+                    preserveValues: true,
+                });
+                selectedProviderConnectionId = provider.provider_connection_id;
+                providerConnectionTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                providerConnectionNameInput.value = provider.name || '';
+                syncProviderConnectionFormFields();
+                if (provider.provider === 'braze') {
+                    const restEndpointInput = document.getElementById('provider-connection-braze-rest-endpoint-input');
+                    if (restEndpointInput) {
+                        restEndpointInput.value = (provider.config || {}).rest_endpoint || '';
+                    }
+                } else {
+                    const fromEmailInput = document.getElementById('provider-connection-sendgrid-from-email-input');
+                    const fromNameInput = document.getElementById('provider-connection-sendgrid-from-name-input');
+                    const baseUrlInput = document.getElementById('provider-connection-sendgrid-base-url-input');
+                    if (fromEmailInput) {
+                        fromEmailInput.value = (provider.config || {}).from_email || '';
+                    }
+                    if (fromNameInput) {
+                        fromNameInput.value = (provider.config || {}).from_name || '';
+                    }
+                    if (baseUrlInput) {
+                        baseUrlInput.value = (provider.config || {}).base_url || '';
+                    }
+                }
+                const apiKeyInput = getProviderConnectionApiKeyInput(provider.provider);
+                if (apiKeyInput) {
+                    apiKeyInput.value = '';
+                }
+                syncProviderConnectionFormState();
+                setInlineStatus(
+                    providerConnectionStatus,
+                    (provider.config || {}).api_key_configured
+                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
+                        : `Editing ${provider.name}.`,
+                );
+            }
+
+            function resetProviderConnectionForm({ keepType = false } = {}) {
+                const preservedType = keepType ? getCurrentProviderConnectionType() : 'sendgrid';
+                selectedProviderConnectionId = null;
+                providerConnectionTypeSelect.value = preservedType;
+                providerConnectionNameInput.value = '';
+                syncProviderConnectionFormFields();
+                setInlineStatus(providerConnectionStatus, '');
+            }
+
+            async function deleteProviderConnection(providerConnectionId) {
+                const provider = findProviderConnection(providerConnectionId);
+                if (!provider) {
+                    throw new Error(`Provider connection '${providerConnectionId}' not found.`);
+                }
+                const providerLabel = formatConnectorLabel(provider.provider || 'sendgrid');
+                if (!confirm(`Delete ${provider.name} (${providerLabel})? This removes the saved campaign provider connection.`)) {
+                    return null;
+                }
+                setInlineStatus(providerConnectionStatus, `Deleting ${provider.name}...`);
+                await apiRequest(`/provider-connections/${encodeURIComponent(providerConnectionId)}`, { method: 'DELETE' });
+                emailCampaignAssetCache.delete(providerConnectionId);
+                if (selectedProviderConnectionId === providerConnectionId) {
+                    setProviderConnectionFormVisible(false);
+                }
+                if (String(emailCampaignProviderSelect?.value || '').trim() === providerConnectionId) {
+                    emailCampaignProviderSelect.value = '';
+                }
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                setInlineStatus(providerConnectionStatus, `Deleted ${provider.name}.`);
+                return provider;
+            }
+
+            async function saveProviderConnection() {
+                const providerType = getCurrentProviderConnectionType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                const name = String(providerConnectionNameInput.value || '').trim();
+                const apiKey = String(getProviderConnectionApiKeyInput(providerType)?.value || '').trim();
+                if (!name) {
+                    throw new Error('Connection name is required.');
+                }
+                let config = {};
+                if (providerType === 'braze') {
+                    const restEndpoint = String(document.getElementById('provider-connection-braze-rest-endpoint-input')?.value || '').trim();
+                    if (!restEndpoint) {
+                        throw new Error('Braze REST endpoint is required.');
+                    }
+                    config = {
+                        rest_endpoint: restEndpoint,
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    };
+                } else {
+                    const fromEmail = String(document.getElementById('provider-connection-sendgrid-from-email-input')?.value || '').trim();
+                    const fromName = String(document.getElementById('provider-connection-sendgrid-from-name-input')?.value || '').trim();
+                    const baseUrl = String(document.getElementById('provider-connection-sendgrid-base-url-input')?.value || '').trim();
+                    if (!fromEmail) {
+                        throw new Error('Default From Email is required.');
+                    }
+                    config = {
+                        from_email: fromEmail,
+                        ...(fromName ? { from_name: fromName } : {}),
+                        ...(baseUrl ? { base_url: baseUrl } : {}),
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    };
+                }
+                if (!selectedProviderConnectionId && !apiKey) {
+                    throw new Error(`${descriptor.label} API key is required for a new provider connection.`);
+                }
+                setInlineStatus(
+                    providerConnectionStatus,
+                    selectedProviderConnectionId ? 'Updating provider connection...' : 'Saving provider connection...',
+                );
+                const response = selectedProviderConnectionId
+                    ? await apiRequest(`/provider-connections/${encodeURIComponent(selectedProviderConnectionId)}`, {
+                        method: 'PATCH',
+                        body: { name, config },
+                    })
+                    : await apiRequest('/provider-connections', {
+                        method: 'POST',
+                        body: { name, provider: providerType, config },
+                    });
+                emailCampaignAssetCache.delete(response.provider_connection_id);
+                await loadProviderConnectionWorkspace({ preserveSelection: true });
+                loadProviderConnectionIntoForm(response.provider_connection_id);
+                if (getCurrentEmailCampaignProviderType() === providerType) {
+                    populateEmailCampaignProviderSelect({ preferredValue: response.provider_connection_id });
+                    emailCampaignProviderSelect.value = response.provider_connection_id;
+                    try {
+                        await loadEmailCampaignAssets(response.provider_connection_id, { forceRefresh: true });
+                        setInlineStatus(emailCampaignStatus, `${descriptor.label} connection is ready for the campaign builder.`);
+                    } catch (error) {
+                        setInlineStatus(emailCampaignStatus, error.message || `Failed to load ${descriptor.label} assets.`, true);
+                    }
+                }
+                setInlineStatus(providerConnectionStatus, `Saved ${descriptor.label} provider ${response.name}.`);
+                return response;
+            }
+
+            function formatProviderConnectionSummary(provider) {
+                const normalizedProvider = String(provider?.provider || '').toLowerCase();
+                if (normalizedProvider === 'braze') {
+                    return {
+                        detail: (provider?.config || {}).rest_endpoint || '-',
+                        hint: 'API-triggered campaigns',
+                    };
+                }
+                return {
+                    detail: (provider?.config || {}).from_email || '-',
+                    hint: (provider?.config || {}).from_name || '',
+                };
+            }
+
+            function renderProviderConnectionList(items = getCampaignCapableProviderConnections()) {
+                renderSimpleTable(
+                    providerConnectionList,
+                    [
+                        { label: 'Connection', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.provider_connection_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider))}</span>` },
+                        {
+                            label: 'Configuration',
+                            render: (item) => {
+                                const summary = formatProviderConnectionSummary(item);
+                                return `<span>${escapeHtml(summary.detail)}</span><div class="subtle">${escapeHtml(summary.hint || '')}</div>`;
+                            },
+                        },
+                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
+                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                    <button type="button" data-provider-connection-action="delete" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No SendGrid or Braze provider connections yet. Use Connect Campaign Provider to add one.',
+                );
+                providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const providerConnectionId = button.dataset.providerConnectionId;
+                        const action = button.dataset.providerConnectionAction;
+                        const provider = findProviderConnection(providerConnectionId);
+                        if (!providerConnectionId || !action || !provider) {
+                            return;
+                        }
+                        if (action === 'edit') {
+                            loadProviderConnectionIntoForm(providerConnectionId);
+                            return;
+                        }
+                        if (action === 'delete') {
+                            try {
+                                await deleteProviderConnection(providerConnectionId);
+                            } catch (error) {
+                                setInlineStatus(providerConnectionStatus, error.message || 'Failed to delete provider connection.', true);
+                            }
+                            return;
+                        }
+                        emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                        activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                            closeSidebar: true,
+                            scrollBehavior: 'smooth',
+                            reloadPage: true,
+                        });
+                        syncEmailCampaignProviderFields({ preferredProviderConnectionId: providerConnectionId });
+                        emailCampaignProviderSelect.value = providerConnectionId;
+                        try {
+                            await loadEmailCampaignAssets(providerConnectionId, { forceRefresh: false });
+                            setInlineStatus(emailCampaignStatus, `${provider.name} selected for the campaign builder.`);
+                        } catch (error) {
+                            setInlineStatus(emailCampaignStatus, error.message || 'Failed to load messaging assets for the selected provider.', true);
+                        }
+                    });
+                });
+            }
+
+            async function loadProviderConnectionWorkspace({ preserveSelection = true } = {}) {
+                try {
+                    const providers = await refreshProviderConnectionsState();
+                    if (!preserveSelection) {
+                        setProviderConnectionFormVisible(false);
+                    } else if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
+                        loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else if (isProviderConnectionFormVisible()) {
+                        syncProviderConnectionFormState();
+                    } else {
+                        syncProviderConnectionFormFields();
+                        syncProviderConnectionFormState();
+                    }
+                    renderProviderConnectionList(providers);
+                    populateEmailCampaignProviderSelect();
+                    updateEmailCampaignSummary();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedProviderConnections = [];
+                        setProviderConnectionFormVisible(false);
+                        renderProviderConnectionList([]);
+                        setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        updateEmailCampaignSummary();
+                        return;
+                    }
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to load provider connections.', true);
+                }
+            }
+
+            function populateEmailCampaignProviderSelect({ preferredValue = '' } = {}) {
+                const providerType = getCurrentEmailCampaignProviderType();
+                const providers = getCampaignCapableProviderConnections(providerType);
+                const selectedCampaign = findEmailCampaign(selectedEmailCampaignId);
+                const preferredProviderId = String(
+                    preferredValue
+                    || emailCampaignProviderSelect.value
+                    || (
+                        selectedProviderConnectionId
+                        && String((findProviderConnection(selectedProviderConnectionId) || {}).provider || '').toLowerCase() === providerType
+                            ? selectedProviderConnectionId
+                            : ''
+                    )
+                    || (
+                        selectedCampaign
+                        && String(selectedCampaign.provider || '').toLowerCase() === providerType
+                            ? selectedCampaign.provider_connection_id
+                            : ''
+                    )
+                    || ''
+                ).trim();
+                emailCampaignProviderSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = `Select a ${getCampaignProviderConfig(providerType).label} connection`;
+                emailCampaignProviderSelect.appendChild(placeholder);
+                providers.forEach((provider) => {
+                    const option = document.createElement('option');
+                    option.value = provider.provider_connection_id;
+                    const summary = formatProviderConnectionSummary(provider);
+                    option.textContent = `${provider.name} (${summary.detail || 'not configured'})`;
+                    emailCampaignProviderSelect.appendChild(option);
+                });
+                if (preferredProviderId && providers.some((item) => item.provider_connection_id === preferredProviderId)) {
+                    emailCampaignProviderSelect.value = preferredProviderId;
+                } else if (!preferredValue && providers.length === 1) {
+                    emailCampaignProviderSelect.value = providers[0].provider_connection_id;
+                } else {
+                    emailCampaignProviderSelect.value = '';
+                }
+            }
+
+            function populateEmailCampaignPredictionSelect(predictionJobs = cachedPredictionJobs) {
+                const items = Array.isArray(predictionJobs) ? predictionJobs : [];
+                const previousValue = emailCampaignPredictionJobSelect.value;
+                emailCampaignPredictionJobSelect.innerHTML = '<option value="">Select a prediction audience</option>';
+                items.forEach((job) => {
+                    const option = document.createElement('option');
+                    option.value = job.id;
+                    option.textContent = formatPredictionAudienceOption(job);
+                    emailCampaignPredictionJobSelect.appendChild(option);
+                });
+                if (previousValue && items.some((item) => item.id === previousValue)) {
+                    emailCampaignPredictionJobSelect.value = previousValue;
+                }
+            }
+
+            function resetEmailCampaignAudienceFieldSelects(message = 'Select an audience first.') {
+                populateAudienceFieldSelect(emailCampaignRecipientEmailFieldSelect, [], {
+                    placeholder: message,
+                });
+                populateAudienceFieldSelect(emailCampaignRecipientExternalIdFieldSelect, [], {
+                    placeholder: message,
+                });
+                setInlineStatus(emailCampaignAudienceFieldStatus, message);
+            }
+
+            function syncEmailCampaignAudienceSourceFields() {
+                const audienceType = getCurrentEmailCampaignAudienceType();
+                emailCampaignPredictionJobGroup.style.display = audienceType === 'prediction' ? 'block' : 'none';
+                emailCampaignCohortGroup.style.display = audienceType === 'cohort' ? 'block' : 'none';
+                emailCampaignRiskFiltersGroup.style.display = audienceType === 'prediction' ? 'block' : 'none';
+                emailCampaignIncludeChurnedGroup.style.display = audienceType === 'prediction' ? 'inline-flex' : 'none';
+                if (audienceType === 'cohort') {
+                    emailCampaignRiskFiltersInput.value = '';
+                    emailCampaignIncludeChurnedCheckbox.checked = false;
+                }
+            }
+
+            async function loadEmailCampaignAudienceFieldOptions({ forceRefresh = false, preserveSelection = true } = {}) {
+                const { audienceType, audienceId } = getSelectedEmailCampaignAudienceSelection();
+                const currentEmailField = preserveSelection ? String(emailCampaignRecipientEmailFieldSelect.value || '').trim() : '';
+                const currentExternalIdField = preserveSelection ? String(emailCampaignRecipientExternalIdFieldSelect.value || '').trim() : '';
+                if (!audienceId) {
+                    resetEmailCampaignAudienceFieldSelects(
+                        audienceType === 'cohort' ? 'Select a cohort audience first.' : 'Select a prediction audience first.',
+                    );
+                    return [];
+                }
+                const cacheKey = `${audienceType}:${audienceId}`;
+                let fieldOptions = forceRefresh ? null : emailCampaignAudienceFieldCache.get(cacheKey);
+                let sampleRows = [];
+                if (!Array.isArray(fieldOptions)) {
+                    const payload = audienceType === 'cohort'
+                        ? await apiRequest(`/cohorts/${encodeURIComponent(audienceId)}/members?page=1&page_size=100`)
+                        : await apiRequest(`/predictions/${encodeURIComponent(audienceId)}/results?page=1&page_size=100`);
+                    sampleRows = Array.isArray(payload.items) ? payload.items : [];
+                    const discoveredFields = new Set();
+                    sampleRows.forEach((row) => {
+                        collectObjectFieldPaths(row, '', discoveredFields);
+                    });
+                    fieldOptions = [...discoveredFields].sort((left, right) => left.localeCompare(right));
+                    emailCampaignAudienceFieldCache.set(cacheKey, fieldOptions);
+                    emailCampaignAudienceFieldCache.set(`${cacheKey}:sample-size`, sampleRows.length);
+                } else {
+                    sampleRows = new Array(Number(emailCampaignAudienceFieldCache.get(`${cacheKey}:sample-size`) || 0));
+                }
+                populateAudienceFieldSelect(emailCampaignRecipientEmailFieldSelect, fieldOptions, {
+                    placeholder: fieldOptions.length ? 'Select recipient email field' : 'No audience fields detected',
+                    preferredValue: currentEmailField,
+                    fallbackKeys: ['email', 'profile.email', 'attributes.email'],
+                });
+                populateAudienceFieldSelect(emailCampaignRecipientExternalIdFieldSelect, fieldOptions, {
+                    placeholder: fieldOptions.length ? 'Select recipient external id field' : 'No audience fields detected',
+                    preferredValue: currentExternalIdField,
+                    fallbackKeys: ['braze_external_id', 'external_user_id', 'user_id', 'canonical_user_id', 'email'],
+                });
+                if (!fieldOptions.length) {
+                    setInlineStatus(emailCampaignAudienceFieldStatus, 'No JSON keys were detected from the sampled audience rows.', true);
+                    return [];
+                }
+                const sampleCount = Number(emailCampaignAudienceFieldCache.get(`${cacheKey}:sample-size`) || sampleRows.length || 0);
+                setInlineStatus(
+                    emailCampaignAudienceFieldStatus,
+                    `Detected ${fieldOptions.length} JSON key${fieldOptions.length === 1 ? '' : 's'} from ${sampleCount} sampled row${sampleCount === 1 ? '' : 's'}.`,
+                );
+                return fieldOptions;
+            }
+
+            function syncEmailCampaignProviderFields({ preferredProviderConnectionId = '' } = {}) {
+                const providerType = getCurrentEmailCampaignProviderType();
+                const descriptor = getCampaignProviderConfig(providerType);
+                emailCampaignTemplateLabel.textContent = descriptor.assetLabel;
+                emailCampaignRecipientEmailFieldGroup.style.display = providerType === 'braze' ? 'none' : 'block';
+                emailCampaignRecipientExternalIdFieldGroup.style.display = providerType === 'braze' ? 'block' : 'none';
+                populateEmailCampaignProviderSelect({ preferredValue: preferredProviderConnectionId });
+            }
+
+            function resetEmailCampaignTemplateSelect(message = '') {
+                const descriptor = getCampaignProviderConfig(getCurrentEmailCampaignProviderType());
+                emailCampaignTemplateSelect.innerHTML = '';
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = descriptor.selectProviderMessage;
+                emailCampaignTemplateSelect.appendChild(option);
+                setInlineStatus(emailCampaignTemplateStatus, message || descriptor.selectProviderMessage);
+            }
+
+            function formatMessagingAssetOptionLabel(asset, providerType = getCurrentEmailCampaignProviderType()) {
+                if (providerType === 'braze') {
+                    const tags = Array.isArray(asset.tags) && asset.tags.length ? ` (${asset.tags.join(', ')})` : '';
+                    return `${asset.name || asset.id}${tags}`;
+                }
+                const activeVersion = asset.active_version || {};
+                return `${asset.name || asset.id}${activeVersion.subject ? ` (${activeVersion.subject})` : ''}`;
+            }
+
+            function populateEmailCampaignAssetSelect(items = [], { selectedValue = '' } = {}) {
+                const descriptor = getCampaignProviderConfig(getCurrentEmailCampaignProviderType());
+                emailCampaignTemplateSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = descriptor.assetOptionLabel;
+                emailCampaignTemplateSelect.appendChild(placeholder);
+                items.forEach((asset) => {
+                    const option = document.createElement('option');
+                    option.value = asset.id;
+                    option.textContent = formatMessagingAssetOptionLabel(asset);
+                    emailCampaignTemplateSelect.appendChild(option);
+                });
+                if (selectedValue && items.some((item) => item.id === selectedValue)) {
+                    emailCampaignTemplateSelect.value = selectedValue;
+                }
+            }
+
+            async function loadEmailCampaignAssets(providerConnectionId, { forceRefresh = false, preferredTemplateId = '' } = {}) {
+                const provider = findProviderConnection(String(providerConnectionId || emailCampaignProviderSelect.value || '').trim()) || getSelectedEmailCampaignProviderConnection();
+                const resolvedProviderId = String(provider?.provider_connection_id || providerConnectionId || emailCampaignProviderSelect.value || '').trim();
+                const providerType = String(provider?.provider || getCurrentEmailCampaignProviderType()).trim().toLowerCase() || 'sendgrid';
+                const descriptor = getCampaignProviderConfig(providerType);
+                if (!resolvedProviderId) {
+                    resetEmailCampaignTemplateSelect(descriptor.selectProviderMessage);
+                    return [];
+                }
+                const selectedTemplateId = preferredTemplateId || emailCampaignTemplateSelect.value || '';
+                if (!forceRefresh && emailCampaignAssetCache.has(resolvedProviderId)) {
+                    const cachedAssets = emailCampaignAssetCache.get(resolvedProviderId) || [];
+                    populateEmailCampaignAssetSelect(cachedAssets, { selectedValue: selectedTemplateId });
+                    setInlineStatus(
+                        emailCampaignTemplateStatus,
+                        `Loaded ${cachedAssets.length} ${descriptor.loadedAssetNoun}${cachedAssets.length === 1 ? '' : 's'} from cache.`,
+                    );
+                    return cachedAssets;
+                }
+                try {
+                    setInlineStatus(emailCampaignTemplateStatus, descriptor.loadingAssetsMessage);
+                    const payload = await apiRequest(`/provider-connections/${encodeURIComponent(resolvedProviderId)}/messaging-assets`);
+                    const assets = sortMessagingAssets(Array.isArray(payload.items) ? payload.items : []);
+                    emailCampaignAssetCache.set(resolvedProviderId, assets);
+                    populateEmailCampaignAssetSelect(assets, { selectedValue: selectedTemplateId });
+                    setInlineStatus(
+                        emailCampaignTemplateStatus,
+                        assets.length
+                            ? `Loaded ${assets.length} ${descriptor.loadedAssetNoun}${assets.length === 1 ? '' : 's'}.`
+                            : descriptor.emptyAssetMessage,
+                    );
+                    return assets;
+                } catch (error) {
+                    resetEmailCampaignTemplateSelect(error.message || descriptor.selectProviderMessage);
+                    setInlineStatus(emailCampaignTemplateStatus, error.message || `Failed to load ${descriptor.label} assets.`, true);
+                    throw error;
+                }
+            }
+
+            function syncEmailCampaignBuilderState(campaign = null) {
+                const status = String((campaign || {}).status || '').toLowerCase();
+                const locked = Boolean(campaign && !['draft', 'scheduled'].includes(status));
+                emailCampaignSaveDraftBtn.disabled = locked;
+                emailCampaignScheduleBtn.disabled = locked;
+                emailCampaignSendNowBtn.disabled = locked;
+                if (!campaign) {
+                    emailCampaignSelectedLabel.textContent = 'No campaign selected';
+                    return;
+                }
+                emailCampaignSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                if (locked) {
+                    setInlineStatus(
+                        emailCampaignStatus,
+                        `Campaign is ${formatEmailCampaignStatusLabel(status)}. Clear the form to create a new draft.`,
+                        true,
+                    );
+                }
+            }
+
+            async function loadEmailCampaignDetail(emailCampaignId) {
+                selectedEmailCampaignId = emailCampaignId || null;
+                if (!selectedEmailCampaignId) {
+                    syncEmailCampaignBuilderState(null);
+                    renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                    return;
+                }
+                const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
+                renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
+                syncEmailCampaignBuilderState(campaign);
+                const providerType = String(
+                    campaign.provider
+                    || (findProviderConnection(campaign.provider_connection_id) || {}).provider
+                    || 'sendgrid'
+                ).trim().toLowerCase() || 'sendgrid';
+                const audience = campaign.audience || {};
+                const audienceType = String(audience.cohort_id || '').trim() ? 'cohort' : 'prediction';
+                emailCampaignProviderTypeSelect.value = providerType;
+                emailCampaignAudienceTypeSelect.value = audienceType;
+                syncEmailCampaignAudienceSourceFields();
+                syncEmailCampaignProviderFields({ preferredProviderConnectionId: campaign.provider_connection_id });
+                emailCampaignNameInput.value = campaign.name || '';
+                emailCampaignRiskFiltersInput.value = Array.isArray(audience.include_risks) ? audience.include_risks.join(',') : '';
+                emailCampaignIncludeChurnedCheckbox.checked = Boolean(audience.include_churned);
+                emailCampaignDeeplinkTemplateFieldInput.value = campaign.deeplink_template_field || 'deeplink_url';
+                emailCampaignDeeplinkOverrideFieldInput.value = campaign.deeplink_override_field || '';
+                emailCampaignDeeplinkTemplateInput.value = campaign.deeplink_template || '';
+                emailCampaignMergeFieldsInput.value = JSON.stringify(campaign.merge_fields || {}, null, 2);
+                emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(campaign.schedule_at);
+                ensureSelectOption(emailCampaignProviderSelect, campaign.provider_connection_id, campaign.provider_connection_id);
+                emailCampaignProviderSelect.value = campaign.provider_connection_id || '';
+                const predictionJobId = String(audience.prediction_job_id || '').trim();
+                const cohortId = String(audience.cohort_id || '').trim();
+                if (predictionJobId) {
+                    ensureSelectOption(emailCampaignPredictionJobSelect, predictionJobId, formatEmailCampaignAudienceLabel({ prediction_job_id: predictionJobId }));
+                    emailCampaignPredictionJobSelect.value = predictionJobId;
+                } else {
+                    emailCampaignPredictionJobSelect.value = '';
+                }
+                if (cohortId) {
+                    ensureSelectOption(emailCampaignCohortSelect, cohortId, formatEmailCampaignAudienceLabel({ cohort_id: cohortId }));
+                    emailCampaignCohortSelect.value = cohortId;
+                } else {
+                    emailCampaignCohortSelect.value = '';
+                }
+                await loadEmailCampaignAudienceFieldOptions({ preserveSelection: false });
+                if (providerType === 'braze') {
+                    ensureSelectOption(
+                        emailCampaignRecipientExternalIdFieldSelect,
+                        campaign.recipient_external_id_field || 'user_id',
+                        campaign.recipient_external_id_field || 'user_id',
+                    );
+                    emailCampaignRecipientExternalIdFieldSelect.value = campaign.recipient_external_id_field || 'user_id';
+                } else {
+                    ensureSelectOption(
+                        emailCampaignRecipientEmailFieldSelect,
+                        campaign.recipient_email_field || 'email',
+                        campaign.recipient_email_field || 'email',
+                    );
+                    emailCampaignRecipientEmailFieldSelect.value = campaign.recipient_email_field || 'email';
+                }
+                try {
+                    await loadEmailCampaignAssets(campaign.provider_connection_id, {
+                        forceRefresh: false,
+                        preferredTemplateId: campaign.template_id,
+                    });
+                    ensureSelectOption(emailCampaignTemplateSelect, campaign.template_id, campaign.template_summary?.name || campaign.template_id);
+                    emailCampaignTemplateSelect.value = campaign.template_id || '';
+                } catch (error) {
+                    ensureSelectOption(emailCampaignTemplateSelect, campaign.template_id, campaign.template_summary?.name || campaign.template_id);
+                    emailCampaignTemplateSelect.value = campaign.template_id || '';
+                }
+            }
+
+            function resetEmailCampaignForm() {
+                selectedEmailCampaignId = null;
+                emailCampaignNameInput.value = '';
+                emailCampaignAudienceTypeSelect.value = 'prediction';
+                emailCampaignPredictionJobSelect.value = '';
+                emailCampaignCohortSelect.value = '';
+                emailCampaignRiskFiltersInput.value = '';
+                emailCampaignIncludeChurnedCheckbox.checked = false;
+                syncEmailCampaignAudienceSourceFields();
+                resetEmailCampaignAudienceFieldSelects('Select an audience first.');
+                emailCampaignDeeplinkTemplateFieldInput.value = 'deeplink_url';
+                emailCampaignDeeplinkOverrideFieldInput.value = '';
+                emailCampaignDeeplinkTemplateInput.value = '';
+                emailCampaignMergeFieldsInput.value = getDefaultEmailCampaignMergeFieldsText();
+                emailCampaignScheduleAtInput.value = '';
+                renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                setInlineStatus(emailCampaignStatus, 'Creating a new draft.');
+                syncEmailCampaignBuilderState(null);
+            }
+
+            function buildEmailCampaignPayload({ scheduleAtOverride = undefined } = {}) {
+                const mergeFields = parseJsonText(emailCampaignMergeFieldsInput.value, {});
+                if (!mergeFields || typeof mergeFields !== 'object' || Array.isArray(mergeFields)) {
+                    throw new Error('Merge fields must be a JSON object.');
+                }
+                const provider = getSelectedEmailCampaignProviderConnection()?.provider || getCurrentEmailCampaignProviderType();
+                const descriptor = getCampaignProviderConfig(provider);
+                const providerConnectionId = String(emailCampaignProviderSelect.value || '').trim();
+                const templateId = String(emailCampaignTemplateSelect.value || '').trim();
+                const audienceType = getCurrentEmailCampaignAudienceType();
+                const predictionJobId = String(emailCampaignPredictionJobSelect.value || '').trim();
+                const cohortId = String(emailCampaignCohortSelect.value || '').trim();
+                if (!providerConnectionId) {
+                    throw new Error(`Select a ${descriptor.label} provider connection.`);
+                }
+                if (!templateId) {
+                    throw new Error(`Select a ${descriptor.assetLabel.toLowerCase()}.`);
+                }
+                if (audienceType === 'cohort' && !cohortId) {
+                    throw new Error('Select a cohort audience.');
+                }
+                if (audienceType !== 'cohort' && !predictionJobId) {
+                    throw new Error('Select a prediction audience.');
+                }
+                const payload = {
+                    name: String(emailCampaignNameInput.value || '').trim(),
+                    provider,
+                    provider_connection_id: providerConnectionId,
+                    template_id: templateId,
+                    audience: audienceType === 'cohort'
+                        ? {
+                            cohort_id: cohortId,
+                        }
+                        : {
+                            prediction_job_id: predictionJobId,
+                            include_risks: splitCsv(emailCampaignRiskFiltersInput.value).map((item) => item.toLowerCase()),
+                            include_churned: Boolean(emailCampaignIncludeChurnedCheckbox.checked),
+                        },
+                    merge_fields: mergeFields,
+                    deeplink_template_field: String(emailCampaignDeeplinkTemplateFieldInput.value || '').trim() || 'deeplink_url',
+                    deeplink_override_field: String(emailCampaignDeeplinkOverrideFieldInput.value || '').trim() || null,
+                    deeplink_template: String(emailCampaignDeeplinkTemplateInput.value || '').trim() || null,
+                };
+                if (provider === 'braze') {
+                    payload.recipient_external_id_field = String(emailCampaignRecipientExternalIdFieldSelect.value || '').trim() || 'user_id';
+                } else {
+                    payload.recipient_email_field = String(emailCampaignRecipientEmailFieldSelect.value || '').trim() || 'email';
+                }
+                if (!payload.name) {
+                    throw new Error('Campaign name is required.');
+                }
+                if (scheduleAtOverride !== undefined) {
+                    payload.schedule_at = scheduleAtOverride;
+                } else {
+                    payload.schedule_at = toIsoFromLocalDateTimeInput(emailCampaignScheduleAtInput.value);
+                }
+                return payload;
+            }
+
+            async function persistEmailCampaign({ scheduled = false } = {}) {
+                const scheduleAt = scheduled ? toIsoFromLocalDateTimeInput(emailCampaignScheduleAtInput.value) : null;
+                if (scheduled && !scheduleAt) {
+                    throw new Error('Choose a schedule time before scheduling the campaign.');
+                }
+                const payload = buildEmailCampaignPayload({ scheduleAtOverride: scheduleAt });
+                if (selectedEmailCampaignId) {
+                    return apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`, {
+                        method: 'PATCH',
+                        body: payload,
+                    });
+                }
+                return apiRequest('/email-campaigns', {
+                    method: 'POST',
+                    body: payload,
+                });
+            }
+
+            async function sendEmailCampaignNow() {
+                let emailCampaignId = selectedEmailCampaignId;
+                if (!emailCampaignId) {
+                    setInlineStatus(emailCampaignStatus, 'Saving draft before sending...');
+                    const created = await persistEmailCampaign({ scheduled: false });
+                    emailCampaignId = created.email_campaign_id;
+                    selectedEmailCampaignId = emailCampaignId;
+                }
+                const response = await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/send-now`, {
+                    method: 'POST',
+                });
+                return response;
+            }
+
+            function bindEmailCampaignActionButtons(container) {
+                if (!container) return;
+                container.querySelectorAll('[data-email-campaign-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const emailCampaignId = button.dataset.emailCampaignId;
+                        const action = button.dataset.emailCampaignAction;
+                        if (!emailCampaignId || !action) return;
+                        try {
+                            if (action === 'view' || action === 'edit') {
+                                await loadEmailCampaignDetail(emailCampaignId);
+                                return;
+                            }
+                            if (action === 'send-now') {
+                                setInlineStatus(emailCampaignStatus, 'Sending campaign now...');
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/send-now`, { method: 'POST' });
+                            }
+                            if (action === 'cancel') {
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}/cancel`, { method: 'POST' });
+                            }
+                            if (action === 'delete') {
+                                await apiRequest(`/email-campaigns/${encodeURIComponent(emailCampaignId)}`, { method: 'DELETE' });
+                                if (selectedEmailCampaignId === emailCampaignId) {
+                                    resetEmailCampaignForm();
+                                }
+                            }
+                            await loadEmailCampaignWorkspace({ preserveSelection: action !== 'delete', forceTemplateRefresh: false });
+                            if (action !== 'delete') {
+                                await loadEmailCampaignDetail(emailCampaignId);
+                            }
+                        } catch (error) {
+                            setInlineStatus(emailCampaignStatus, error.message || `Failed to ${action} campaign.`, true);
+                        }
+                    });
+                });
+            }
+
+            function renderEmailCampaignLists(items = cachedEmailCampaigns) {
+                const campaigns = Array.isArray(items) ? items : [];
+                const upcomingItems = campaigns.filter((item) => ['draft', 'scheduled'].includes(String(item.status || '').toLowerCase()));
+                const pastItems = campaigns.filter((item) => ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(String(item.status || '').toLowerCase()));
+                renderSimpleTable(
+                    emailCampaignUpcomingList,
+                    [
+                        { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid'))}</span>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
+                        { label: 'Audience', render: (item) => escapeHtml(formatEmailCampaignAudienceLabel(item.audience || {})) },
+                        { label: 'Schedule', render: (item) => escapeHtml(formatDateTime(item.schedule_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => {
+                                const status = String(item.status || '').toLowerCase();
+                                return `
+                                    <div class="table-actions">
+                                        <button type="button" data-email-campaign-action="edit" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Edit</button>
+                                        <button type="button" data-email-campaign-action="send-now" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Send Now</button>
+                                        ${status === 'scheduled'
+                                            ? `<button type="button" data-email-campaign-action="cancel" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Cancel</button>`
+                                            : `<button type="button" data-email-campaign-action="delete" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Delete</button>`}
+                                    </div>
+                                `;
+                            },
+                        },
+                    ],
+                    upcomingItems,
+                    'No draft or scheduled campaigns yet.',
+                );
+                renderSimpleTable(
+                    emailCampaignPastList,
+                    [
+                        { label: 'Campaign', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.email_campaign_id || '-')}</div>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid'))}</span>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatEmailCampaignStatusLabel(item.status))}</span>` },
+                        { label: 'Completed', render: (item) => escapeHtml(formatDateTime(item.last_send_completed_at || item.cancelled_at)) },
+                        { label: 'Sent', render: (item) => escapeHtml(String(((item.result_summary || {}).sent_count) || 0)) },
+                        { label: 'Actions', render: (item) => `<button type="button" data-email-campaign-action="view" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">View</button>` },
+                    ],
+                    pastItems,
+                    'No completed campaigns yet.',
+                );
+                bindEmailCampaignActionButtons(emailCampaignUpcomingList);
+                bindEmailCampaignActionButtons(emailCampaignPastList);
+                updateEmailCampaignSummary();
+            }
+
+            async function loadEmailCampaignWorkspace({ preserveSelection = true, forceTemplateRefresh = false } = {}) {
+                try {
+                    const [providers, predictionJobs, cohorts, campaigns] = await Promise.all([
+                        refreshProviderConnectionsState(),
+                        refreshPredictionJobsState(),
+                        refreshCohortsState(),
+                        refreshEmailCampaignsState(),
+                    ]);
+                    renderProviderConnectionList(providers);
+                    populateEmailCampaignPredictionSelect(predictionJobs);
+                    populateEmailCampaignCohortSelect(cohorts);
+                    syncEmailCampaignAudienceSourceFields();
+                    syncEmailCampaignProviderFields();
+                    renderEmailCampaignLists(campaigns);
+                    const hasSelectedCampaign = preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId);
+                    if (hasSelectedCampaign) {
+                        await loadEmailCampaignDetail(selectedEmailCampaignId);
+                    } else {
+                        if (selectedEmailCampaignId && !campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId)) {
+                            resetEmailCampaignForm();
+                        }
+                        if (emailCampaignProviderSelect.value) {
+                            await loadEmailCampaignAssets(emailCampaignProviderSelect.value, {
+                                forceRefresh: forceTemplateRefresh,
+                                preferredTemplateId: emailCampaignTemplateSelect.value,
+                            });
+                        } else {
+                            resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
+                        }
+                        await loadEmailCampaignAudienceFieldOptions({ forceRefresh: forceTemplateRefresh, preserveSelection: true });
+                    }
+                    if (selectedProviderConnectionId && providers.some((item) => item.provider_connection_id === selectedProviderConnectionId)) {
+                        loadProviderConnectionIntoForm(selectedProviderConnectionId);
+                    } else if (isProviderConnectionFormVisible()) {
+                        syncProviderConnectionFormState();
+                    } else {
+                        syncProviderConnectionFormFields();
+                        syncProviderConnectionFormState();
+                    }
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedProviderConnections = [];
+                        cachedCohorts = [];
+                        setProviderConnectionFormVisible(false);
+                        renderProviderConnectionList([]);
+                        renderEmailCampaignLists([]);
+                        resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
+                        resetEmailCampaignAudienceFieldSelects('Finish workspace setup to inspect audience fields.');
+                        setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        setInlineStatus(emailCampaignStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        return;
+                    }
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to load provider connections.', true);
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load email campaigns.', true);
                 }
             }
 
@@ -8948,7 +10823,7 @@ export function initializeOperatorConsole() {
             async function loadAudienceEngine() {
                 try {
                     const [cohortPayload, savedQueryPayload] = await Promise.all([
-                        apiRequest('/cohorts'),
+                        refreshCohortsState().then((items) => ({ items })),
                         apiRequest('/sql-workspace/queries'),
                     ]);
                     const cohorts = Array.isArray(cohortPayload.items) ? cohortPayload.items : [];
@@ -9277,6 +11152,7 @@ export function initializeOperatorConsole() {
                     } else if (!workflows.length) {
                         await loadWorkflowDetail(null);
                     }
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
@@ -9284,6 +11160,7 @@ export function initializeOperatorConsole() {
                         populateWorkflowCohortSelect([]);
                         populateExportJobSelect([]);
                         await loadWorkflowDetail(null);
+                        await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
                         return;
                     }
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
@@ -9432,20 +11309,7 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function getCopilotAgentContextLabel() {
-                const moduleConfig = moduleConfigs[activeModuleId];
-                const activeItem = findModuleItem(activeModuleId, activeNavItemId);
-                if (moduleConfig && activeItem && activeItem.label) {
-                    return `${moduleConfig.title} / ${activeItem.label}`;
-                }
-                return moduleConfig?.title || 'Current page';
-            }
-
             function syncCopilotAgentContextChrome() {
-                const label = getCopilotAgentContextLabel();
-                if (copilotAgentLauncherContext) {
-                    copilotAgentLauncherContext.textContent = label;
-                }
             }
 
             function syncCopilotAgentLauncherBadge(count = null) {
@@ -10124,6 +11988,139 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 await createCohortFromSavedQuery(firstQuery.query_id);
+            });
+            providerConnectionRefreshBtn.addEventListener('click', async () => {
+                await loadProviderConnectionWorkspace({ preserveSelection: true });
+            });
+            addProviderConnectionBtn.addEventListener('click', () => {
+                setProviderConnectionFormVisible(true, { providerType: 'sendgrid' });
+                setInlineStatus(providerConnectionStatus, 'Creating a new SendGrid provider connection.');
+            });
+            providerConnectionSaveBtn.addEventListener('click', async () => {
+                try {
+                    await saveProviderConnection();
+                } catch (error) {
+                    setInlineStatus(providerConnectionStatus, error.message || 'Failed to save provider connection.', true);
+                }
+            });
+            providerConnectionCancelBtn.addEventListener('click', () => {
+                setProviderConnectionFormVisible(false);
+            });
+            providerConnectionTypeSelect.addEventListener('change', () => {
+                resetProviderConnectionForm({ keepType: true });
+                setInlineStatus(
+                    providerConnectionStatus,
+                    `Creating a new ${formatConnectorLabel(getCurrentProviderConnectionType())} provider connection.`,
+                );
+            });
+            emailCampaignRefreshBtn.addEventListener('click', async () => {
+                await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });
+            });
+            emailCampaignProviderTypeSelect.addEventListener('change', async () => {
+                syncEmailCampaignProviderFields();
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: true });
+                    if (!emailCampaignProviderSelect.value) {
+                        resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
+                        return;
+                    }
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load campaign messaging assets.', true);
+                }
+            });
+            emailCampaignProviderSelect.addEventListener('change', async () => {
+                try {
+                    if (!emailCampaignProviderSelect.value) {
+                        resetEmailCampaignTemplateSelect(getCampaignProviderConfig(getCurrentEmailCampaignProviderType()).selectProviderMessage);
+                        return;
+                    }
+                    const provider = getSelectedEmailCampaignProviderConnection();
+                    if (provider) {
+                        emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
+                    }
+                    syncEmailCampaignProviderFields({ preferredProviderConnectionId: emailCampaignProviderSelect.value });
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: true });
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to load campaign messaging assets.', true);
+                }
+            });
+            emailCampaignAudienceTypeSelect.addEventListener('change', async () => {
+                syncEmailCampaignAudienceSourceFields();
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
+                }
+            });
+            emailCampaignPredictionJobSelect.addEventListener('change', async () => {
+                emailCampaignAudienceFieldCache.delete(`prediction:${String(emailCampaignPredictionJobSelect.value || '').trim()}`);
+                emailCampaignAudienceFieldCache.delete(`prediction:${String(emailCampaignPredictionJobSelect.value || '').trim()}:sample-size`);
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ forceRefresh: true, preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
+                }
+            });
+            emailCampaignCohortSelect.addEventListener('change', async () => {
+                emailCampaignAudienceFieldCache.delete(`cohort:${String(emailCampaignCohortSelect.value || '').trim()}`);
+                emailCampaignAudienceFieldCache.delete(`cohort:${String(emailCampaignCohortSelect.value || '').trim()}:sample-size`);
+                try {
+                    await loadEmailCampaignAudienceFieldOptions({ forceRefresh: true, preserveSelection: false });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to inspect audience fields.', true);
+                }
+            });
+            emailCampaignTemplateRefreshBtn.addEventListener('click', async () => {
+                try {
+                    await loadEmailCampaignAssets(emailCampaignProviderSelect.value, { forceRefresh: true });
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to refresh campaign messaging assets.', true);
+                }
+            });
+            emailCampaignClearSelectionBtn.addEventListener('click', () => {
+                resetEmailCampaignForm();
+            });
+            emailCampaignSaveDraftBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Saving draft...');
+                    const response = await persistEmailCampaign({ scheduled: false });
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(emailCampaignStatus, `Saved draft ${response.name}.`);
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to save email campaign draft.', true);
+                }
+            });
+            emailCampaignScheduleBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Scheduling campaign...');
+                    const response = await persistEmailCampaign({ scheduled: true });
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(emailCampaignStatus, `Scheduled ${response.name} for ${formatDateTime(response.schedule_at)}.`);
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to schedule email campaign.', true);
+                }
+            });
+            emailCampaignSendNowBtn.addEventListener('click', async () => {
+                try {
+                    setInlineStatus(emailCampaignStatus, 'Sending campaign now...');
+                    const response = await sendEmailCampaignNow();
+                    selectedEmailCampaignId = response.email_campaign_id;
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    await loadEmailCampaignDetail(response.email_campaign_id);
+                    setInlineStatus(
+                        emailCampaignStatus,
+                        `Campaign ${response.name} finished with status ${formatEmailCampaignStatusLabel(response.status)}.`,
+                        response.status !== 'sent',
+                    );
+                } catch (error) {
+                    setInlineStatus(emailCampaignStatus, error.message || 'Failed to send email campaign.', true);
+                }
             });
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
             document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);

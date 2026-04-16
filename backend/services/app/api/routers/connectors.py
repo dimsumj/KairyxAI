@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from app.api.schemas.connectors import ConnectorCreateRequest, ConnectorHealthResponse, ConnectorResponse
+from app.api.schemas.connectors import (
+    ConnectorCreateRequest,
+    ConnectorHealthResponse,
+    ConnectorResponse,
+    ConnectorTableCountResponse,
+    ConnectorTableListResponse,
+)
 from app.application.connectors import ConnectorService
 from app.core.errors import ResourceLockedError
 from app.core.governance import ensure_permission, get_governance_context
@@ -32,6 +38,26 @@ def connector_health(connector_name: str, service: ConnectorService = Depends(ge
         return service.health_check(connector_name)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")
+
+
+@router.get("/{connector_name}/tables", response_model=ConnectorTableListResponse)
+def connector_tables(connector_name: str, service: ConnectorService = Depends(get_connector_service)):
+    try:
+        return service.list_tables(connector_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/{connector_name}/tables/{table_name}/count", response_model=ConnectorTableCountResponse)
+def connector_table_row_count(connector_name: str, table_name: str, service: ConnectorService = Depends(get_connector_service)):
+    try:
+        return service.get_table_row_count(connector_name, table_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.delete("/{connector_name}", status_code=status.HTTP_204_NO_CONTENT)

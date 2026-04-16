@@ -34,9 +34,7 @@ def test_ingestion_service_writes_local_jsonl_shards(monkeypatch, tmp_path):
     staged = service.fetch_and_stage_events("20260301", "20260302")
 
     assert staged["shards_created"] == 3
-    local_files = sorted(
-        pathlib.Path(".cache/raw/test-bucket").rglob("*.jsonl")
-    )
+    local_files = sorted(pathlib.Path(".cache/raw").rglob("*.jsonl"))
     assert len(local_files) == 3
     assert local_files[0].read_text().strip().startswith("{")
     assert "[" not in local_files[0].read_text()

@@ -262,10 +262,11 @@ def test_campaign_audience_export_sendgrid_skips_rows_without_email(client, monk
 def test_action_history_only_includes_human_triggered_actions(client, monkeypatch, tmp_path):
     audit_log = tmp_path / "audit.jsonl"
     monkeypatch.setattr(main_service, "AUDIT_LOG_FILE", str(audit_log))
+    base_timestamp = datetime.utcnow() - timedelta(hours=1)
 
     with audit_log.open("w") as f:
         f.write(json.dumps({
-            "ts": "2026-03-05T10:00:00",
+            "ts": base_timestamp.isoformat(),
             "action": "import_job_started",
             "detail": {
                 "job_name": "20260305-100000-Amplitude",
@@ -276,7 +277,7 @@ def test_action_history_only_includes_human_triggered_actions(client, monkeypatc
             },
         }) + "\n")
         f.write(json.dumps({
-            "ts": "2026-03-05T10:02:00",
+            "ts": (base_timestamp + timedelta(minutes=2)).isoformat(),
             "action": "field_mapping_updated",
             "detail": {
                 "connector": "Amplitude 1",
@@ -284,7 +285,7 @@ def test_action_history_only_includes_human_triggered_actions(client, monkeypatc
             },
         }) + "\n")
         f.write(json.dumps({
-            "ts": "2026-03-05T10:05:00",
+            "ts": (base_timestamp + timedelta(minutes=5)).isoformat(),
             "action": "campaign_audience_exported",
             "detail": {
                 "job_name": "20260305-100000-Amplitude",
@@ -296,7 +297,7 @@ def test_action_history_only_includes_human_triggered_actions(client, monkeypatc
             },
         }) + "\n")
         f.write(json.dumps({
-            "ts": "2026-03-05T10:06:00",
+            "ts": (base_timestamp + timedelta(minutes=6)).isoformat(),
             "action": "import_job_completed",
             "detail": {
                 "job_name": "20260305-100000-Amplitude",

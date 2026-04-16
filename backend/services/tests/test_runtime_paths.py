@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Column, Integer, MetaData, String, Table
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.selectable import Select
 from sqlalchemy.sql.elements import TextClause
 
+import app.main as main_module
 from app.core import db as db_module
 from app.core.errors import is_database_locked_error
 from app.core.settings import get_settings
@@ -78,6 +80,62 @@ def test_app_startup_continues_when_restart_reconciliation_fails(tmp_path, monke
     assert response.status_code == 200
 
 
+def test_health_snapshot_warmup_retries_transient_database_error(monkeypatch):
+    calls = {
+        "snapshot": 0,
+        "rollback": 0,
+        "commit": 0,
+        "close": 0,
+        "dispose": 0,
+    }
+
+    class _FakeSession:
+        def rollback(self):
+            calls["rollback"] += 1
+
+        def commit(self):
+            calls["commit"] += 1
+
+        def close(self):
+            calls["close"] += 1
+
+    class _FakeEngine:
+        def dispose(self):
+            calls["dispose"] += 1
+
+    class _FakeHealthMonitor:
+        def __init__(self, repository, bigquery_service):
+            self.repository = repository
+            self.bigquery_service = bigquery_service
+
+        def snapshot(self, *, persist=True):
+            calls["snapshot"] += 1
+            if calls["snapshot"] == 1:
+                raise SQLAlchemyError("idle in transaction")
+            return {"status": "ok"}
+
+    monkeypatch.setattr(main_module, "get_session_factory", lambda: (lambda: _FakeSession()))
+    monkeypatch.setattr(main_module, "get_engine", lambda: _FakeEngine())
+    monkeypatch.setattr(main_module, "SqlAlchemyControlPlaneRepository", lambda session: object())
+    monkeypatch.setattr(main_module, "HealthMonitorService", _FakeHealthMonitor)
+    monkeypatch.setattr(main_module, "get_shared_bigquery_service", lambda: object())
+
+    settings = SimpleNamespace(
+        bootstrap_tenant_id="default",
+        bootstrap_project_id="default",
+    )
+
+    main_module._warm_health_snapshot_with_retry(settings)
+
+    assert calls == {
+        "snapshot": 2,
+        "rollback": 1,
+        "commit": 1,
+        "close": 2,
+        "dispose": 1,
+    }
+
+
 def test_database_url_normalization_uses_psycopg_driver():
     assert db_module.normalize_database_url("postgres://user:pass@example.com:5432/demo") == (
         "postgresql+psycopg://user:pass@example.com:5432/demo"
@@ -95,6 +153,40 @@ def test_normalize_env_text_unwraps_nested_quotes_and_newlines():
         "postgresql://user:pass@example.com/demo"
     )
     assert runtime_paths.normalize_env_text('"mock\\n"') == "mock"
+
+
+def test_resolve_frontend_paths_prefers_source_assets_for_local_mock_mode(tmp_path):
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "assets").mkdir()
+    (frontend_dir / "dist").mkdir()
+    (frontend_dir / "index.html").write_text("source shell", encoding="utf-8")
+    (frontend_dir / "dist" / "index.html").write_text("dist shell", encoding="utf-8")
+
+    frontend_index, frontend_static_dir = main_module._resolve_frontend_paths(
+        SimpleNamespace(app_env="local", data_backend_mode="mock"),
+        frontend_dir,
+    )
+
+    assert frontend_index == frontend_dir / "index.html"
+    assert frontend_static_dir == frontend_dir / "assets"
+
+
+def test_resolve_frontend_paths_prefers_dist_assets_outside_local_mock_mode(tmp_path):
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "assets").mkdir()
+    (frontend_dir / "dist").mkdir()
+    (frontend_dir / "index.html").write_text("source shell", encoding="utf-8")
+    (frontend_dir / "dist" / "index.html").write_text("dist shell", encoding="utf-8")
+
+    frontend_index, frontend_static_dir = main_module._resolve_frontend_paths(
+        SimpleNamespace(app_env="prod", data_backend_mode="gcp"),
+        frontend_dir,
+    )
+
+    assert frontend_index == frontend_dir / "dist" / "index.html"
+    assert frontend_static_dir == frontend_dir / "dist"
 
 
 def test_init_db_does_not_disable_uvicorn_loggers(tmp_path, monkeypatch):

@@ -3,6 +3,7 @@ uvicorn
 gunicorn
 requests
 boto3
+cryptography
 PyJWT[crypto]>=2.10
 google-generativeai
 pandas

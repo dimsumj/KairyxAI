@@ -147,6 +147,7 @@ class IngestionService:
         page_size: Optional[int] = None,
         should_stop: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[int, int, Dict[str, Any]], None]] = None,
+        page_fetch_wrapper: Optional[Callable[[Callable[[], List[Dict[str, Any]]]], List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         """
         Fetches events from the connector, writes them to raw storage, and returns
@@ -170,7 +171,35 @@ class IngestionService:
                 "stop_reason": "Stopped by user.",
             }
 
-        for index, shard_events in enumerate(self._iter_event_pages(start_date, end_date, page_size=page_size), start=1):
+        page_iterator = iter(self._iter_event_pages(start_date, end_date, page_size=page_size))
+        index = 0
+
+        while True:
+            if callable(should_stop) and should_stop():
+                return {
+                    "job_id": resolved_job_id,
+                    "source": self.connector_type,
+                    "shards_created": len(shard_manifests),
+                    "events_staged": total_events,
+                    "last_checkpoint": {
+                        "gcs_uri": shard_manifests[-1]["gcs_uri"],
+                        "event_count": shard_manifests[-1]["event_count"],
+                        "start_date": start_date,
+                        "end_date": end_date,
+                    } if shard_manifests else None,
+                    "shard_manifests": shard_manifests,
+                    "stopped": True,
+                    "stop_reason": "Stopped by user.",
+                }
+            try:
+                if callable(page_fetch_wrapper):
+                    shard_events = page_fetch_wrapper(lambda: next(page_iterator))
+                else:
+                    shard_events = next(page_iterator)
+            except StopIteration:
+                break
+
+            index += 1
             total_events += len(shard_events)
             blob_name = (
                 f"raw/source={self.connector_type}/job={resolved_job_id}/"

@@ -8,7 +8,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
+from app.application.connectors import ConnectorService
 from app.application.mappings import MappingService
+from app.application.cohorts import CohortService
+from app.application.predictions import PredictionService
 from app.core.db import session_scope
 from app.application.secret_refs import materialize_secret_refs
 from app.core.errors import MissingDependencyError, ResourceLockedError
@@ -21,6 +24,7 @@ from gcs_service import GcsService
 from ingestion_service import IngestionService
 from pubsub_service import PubSubService
 from bigquery_service import BigQueryService, get_shared_bigquery_service
+from connectors import create_connector
 
 
 logger = logging.getLogger(__name__)
@@ -59,6 +63,12 @@ class ImportService:
         session = getattr(self.repository, "session", None)
         if session is not None:
             session.rollback()
+
+    def _materialize_connector_runtime_config(self, connector_record: Dict[str, Any]) -> Dict[str, Any]:
+        config = materialize_secret_refs(dict((connector_record or {}).get("config") or {}))
+        if str((connector_record or {}).get("type") or "").strip().lower() == "bigquery":
+            return ConnectorService._normalize_bigquery_runtime_config(connector_record, config)
+        return config
 
     def _get_import_run_thread(self, job_id: str) -> threading.Thread | None:
         with _IMPORT_RUN_THREADS_LOCK:
@@ -264,12 +274,16 @@ class ImportService:
         job = self.repository.get_import_job(job_id)
         if job is None:
             raise KeyError(job_id)
+        resolved_details_patch = dict(details_patch or {})
+        if str(status or "").lower() != JobStatus.FAILED.value:
+            resolved_details_patch.setdefault("failure_reason", None)
+            resolved_details_patch.setdefault("failure_stage", None)
         updated = self.repository.update_import_job(
             job_id,
             {
                 "status": status,
                 "error": error,
-                "progress": self._merge_progress(job, details_patch=details_patch),
+                "progress": self._merge_progress(job, details_patch=resolved_details_patch),
             },
         )
         self._record_status_transition(
@@ -277,7 +291,7 @@ class ImportService:
             from_status=str(job.get("status") or ""),
             to_status=status,
             reason=reason,
-            metadata=details_patch,
+            metadata=resolved_details_patch,
         )
         return updated
 
@@ -387,7 +401,15 @@ class ImportService:
             {
                 "status": JobStatus.STOPPED.value,
                 "error": None,
-                "progress": self._merge_progress(job, details_patch={"stop_reason": reason, "stop_requested": False}),
+                "progress": self._merge_progress(
+                    job,
+                    details_patch={
+                        "stop_reason": reason,
+                        "stop_requested": False,
+                        "failure_reason": None,
+                        "failure_stage": None,
+                    },
+                ),
             },
         )
         self._record_status_transition(
@@ -686,6 +708,8 @@ class ImportService:
                         "connector_type": connector_record["type"],
                         "events_staged": staged_events,
                         "phase": "completed",
+                        "failure_reason": None,
+                        "failure_stage": None,
                         "processing": processing_stats,
                         "quality_report": quality_report,
                         "identity_summary": identity_summary,
@@ -741,7 +765,20 @@ class ImportService:
 
         return removed_count
 
-    def create_job(self, source_name: str, start_date: str, end_date: str, page_size: int | None = None) -> Dict[str, Any]:
+    def create_job(
+        self,
+        source_name: str,
+        start_date: str | None,
+        end_date: str | None,
+        page_size: int | None = None,
+        *,
+        table_name: str | None = None,
+        resource_kind: str | None = None,
+        column_mapping: Dict[str, str] | None = None,
+        where_sql: str | None = None,
+        activate_cohort: bool = False,
+        cohort_name: str | None = None,
+    ) -> Dict[str, Any]:
         active_jobs = [
             job
             for job in self.repository.list_import_jobs()
@@ -754,35 +791,112 @@ class ImportService:
             raise KeyError(source_name)
         connector_name = str(connector.get("name") or source_name)
         connector_id = str(connector.get("connector_id") or source_name)
+        connector_type = str(connector.get("type") or "").lower()
+        spec: Dict[str, Any] = {
+            "source_name": connector_name,
+            "connector_id": connector_id,
+            "display_name": f"{connector_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+            "connector_type": connector["type"],
+            "page_size": int(page_size or self.settings.worker_page_size),
+        }
+        details_patch: Dict[str, Any] = {
+            "canonical_aliases": self._canonical_aliases(),
+            "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
+        }
+        if connector_type == "bigquery":
+            normalized_spec = self._normalize_bigquery_import_spec(
+                table_name=table_name,
+                resource_kind=resource_kind,
+                column_mapping=column_mapping,
+                where_sql=where_sql,
+                start_date=start_date,
+                end_date=end_date,
+                activate_cohort=activate_cohort,
+                cohort_name=cohort_name,
+            )
+            spec.update(normalized_spec)
+            spec["display_name"] = f"{connector_name}:{normalized_spec['table_name']}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+            details_patch["mapping_coverage"] = 100.0
+            details_patch["bigquery_table_import"] = {
+                "table_name": normalized_spec["table_name"],
+                "resource_kind": normalized_spec["resource_kind"],
+                "row_count": 0,
+                "rejected_rows": 0,
+            }
+        else:
+            if not str(start_date or "").strip() or not str(end_date or "").strip():
+                raise ValueError("start_date and end_date are required for this connector type.")
+            spec.update(
+                {
+                    "start_date": str(start_date),
+                    "end_date": str(end_date),
+                }
+            )
+            details_patch["mapping_coverage"] = self._mapping_coverage(connector_name)
         job = self.repository.create_import_job(
             {
                 "id": f"imp_{uuid.uuid4().hex[:20]}",
                 "source_name": connector_name,
                 "status": JobStatus.QUEUED.value,
-                "spec": {
-                    "source_name": connector_name,
-                    "connector_id": connector_id,
-                    "display_name": f"{connector_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
-                    "connector_type": connector["type"],
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "page_size": int(page_size or self.settings.worker_page_size),
-                },
+                "spec": spec,
                 "progress": {
                     "current": 0,
                     "total": 0,
                     "pct": 0.0,
-                    "details": {
-                        "canonical_aliases": self._canonical_aliases(),
-                        "mapping_coverage": self._mapping_coverage(connector_name),
-                        "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
-                    },
+                    "details": details_patch,
                 },
             }
         )
         self.repository.record_action("import_job_created", "import_job", job["id"], job)
         PubSubService(topic_name=self.settings.import_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "import"})
         return job
+
+    @staticmethod
+    def _normalize_bigquery_import_spec(
+        *,
+        table_name: str | None,
+        resource_kind: str | None,
+        column_mapping: Dict[str, str] | None,
+        where_sql: str | None,
+        start_date: str | None,
+        end_date: str | None,
+        activate_cohort: bool,
+        cohort_name: str | None,
+    ) -> Dict[str, Any]:
+        resolved_table_name = str(table_name or "").strip()
+        if not resolved_table_name:
+            raise ValueError("table_name is required for BigQuery table imports.")
+        resolved_resource_kind = str(resource_kind or "").strip().lower()
+        if resolved_resource_kind not in {"external_prediction_scores", "churn_list"}:
+            raise ValueError("resource_kind must be 'external_prediction_scores' or 'churn_list' for BigQuery table imports.")
+        mapping = {
+            str(target).strip(): str(source).strip()
+            for target, source in dict(column_mapping or {}).items()
+            if str(target).strip() and str(source).strip()
+        }
+        if not mapping:
+            raise ValueError("column_mapping is required for BigQuery table imports.")
+        if "canonical_user_id" not in mapping:
+            raise ValueError("column_mapping must include canonical_user_id.")
+        if resolved_resource_kind == "external_prediction_scores" and not (
+            "predicted_churn_risk" in mapping or "score" in mapping
+        ):
+            raise ValueError("external_prediction_scores imports require predicted_churn_risk or score in column_mapping.")
+        timestamp_column = mapping.get("score_timestamp") or mapping.get("as_of_timestamp")
+        if (str(start_date or "").strip() or str(end_date or "").strip()) and not timestamp_column:
+            raise ValueError("start_date/end_date filtering requires score_timestamp or as_of_timestamp in column_mapping.")
+        if (str(start_date or "").strip() and not str(end_date or "").strip()) or (str(end_date or "").strip() and not str(start_date or "").strip()):
+            raise ValueError("start_date and end_date must be provided together.")
+        return {
+            "table_name": resolved_table_name,
+            "resource_kind": resolved_resource_kind,
+            "column_mapping": mapping,
+            "where_sql": str(where_sql or "").strip() or None,
+            "start_date": str(start_date or "").strip() or None,
+            "end_date": str(end_date or "").strip() or None,
+            "activate_cohort": bool(activate_cohort),
+            "cohort_name": str(cohort_name or "").strip() or None,
+        }
 
     def _discard_job_after_restart(self, job: Dict[str, Any], reason: str) -> None:
         deleted = self.repository.delete_import_job(job["id"])
@@ -833,6 +947,20 @@ class ImportService:
         if job is None:
             raise KeyError(job_id)
         details = (job.get("progress") or {}).get("details") or {}
+        if str((job.get("spec") or {}).get("connector_type") or "").lower() == "bigquery" and str((job.get("spec") or {}).get("resource_kind") or "").strip():
+            return {
+                "job_id": job_id,
+                "status": job["status"],
+                "quality_report": details.get("quality_report") or {},
+                "identity_summary": details.get("identity_summary") or {},
+                "mapping_coverage": float(details.get("mapping_coverage") or 100.0),
+                "checkpoint_state": details.get("checkpoint_state") or {"total": 0, "processed": 0, "pending": 0, "counts": {}},
+                "canonical_aliases": self._canonical_aliases(),
+                "source_of_truth": [],
+                "conflict_summary": {"count": 0, "items": []},
+                "rejected_examples": list((details.get("rejected_examples") or []))[:25],
+                "schema_contracts": [],
+            }
         mapping_coverage = float(details.get("mapping_coverage") or self._mapping_coverage(job["spec"]["source_name"], job_id=job_id))
         identity_summary = details.get("identity_summary") or self._identity_summary(job_id)
         quality_report = details.get("quality_report") or self._build_quality_report(
@@ -1214,9 +1342,31 @@ class ImportService:
         if not self._wait_for_import_run_thread(job_id):
             raise ResourceLockedError(f"Import job '{job_id}' is still shutting down; retry deleting it in a moment.")
 
+        cleanup_warnings: list[dict[str, Any]] = []
+
+        def _run_cleanup(cleanup_target: str, callback) -> None:
+            try:
+                callback()
+            except Exception as exc:
+                if status != JobStatus.FAILED.value:
+                    raise
+                warning = {
+                    "cleanup_target": cleanup_target,
+                    "error": str(exc),
+                    "ignored_for_failed_job": True,
+                }
+                cleanup_warnings.append(warning)
+                logger.warning(
+                    "Continuing import delete for failed job %s after %s cleanup error: %s",
+                    job_id,
+                    cleanup_target,
+                    exc,
+                )
+
         gcs_service = GcsService()
-        gcs_service.delete_data_for_job(job_id)
-        self.bigquery_service.delete_data_for_job(job_id)
+        _run_cleanup("raw_storage", lambda: gcs_service.delete_data_for_job(job_id))
+        if self._should_delete_warehouse_rows(job):
+            _run_cleanup("warehouse", lambda: self.bigquery_service.delete_data_for_job(job_id))
         self.repository.delete_resource("identity_summary", job_id)
         for resource in self.repository.list_resources("import_manifest"):
             payload = dict(resource.get("payload") or {})
@@ -1229,8 +1379,41 @@ class ImportService:
                 self.repository.delete_resource("import_manifest", resource_id)
 
         if self.repository.delete_import_job(job_id):
-            self.repository.record_action("import_job_deleted", "import_job", job_id, job)
+            action_payload = dict(job)
+            if cleanup_warnings:
+                action_payload["delete_cleanup_warnings"] = cleanup_warnings
+            self.repository.record_action("import_job_deleted", "import_job", job_id, action_payload)
             self._commit_session()
+
+    def _should_delete_warehouse_rows(self, job: Dict[str, Any]) -> bool:
+        status = str(job.get("status") or "").lower()
+        if status != JobStatus.FAILED.value:
+            return True
+
+        details = dict(((job.get("progress") or {}).get("details") or {}))
+        checkpoint_state = dict(details.get("checkpoint_state") or {})
+        spec = dict(job.get("spec") or {})
+        connector_type = str(spec.get("connector_type") or "").strip().lower()
+        resource_kind = str(spec.get("resource_kind") or "").strip().lower()
+
+        if connector_type == "bigquery" and resource_kind:
+            return any(
+                [
+                    bool(str(details.get("snapshot_id") or "").strip()),
+                    bool(str(details.get("linked_prediction_job_id") or "").strip()),
+                    bool(str(details.get("linked_cohort_id") or "").strip()),
+                    int(details.get("rows_loaded") or 0) > 0,
+                ]
+            )
+
+        return any(
+            [
+                int(details.get("events_written") or 0) > 0,
+                int(details.get("normalized_events") or 0) > 0,
+                int(details.get("processed_manifests") or 0) > 0,
+                int(checkpoint_state.get("processed") or 0) > 0,
+            ]
+        )
 
     def resume_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
@@ -1377,6 +1560,9 @@ class ImportService:
                 detail=f"Connector '{job['spec'].get('connector_id') or job['spec']['source_name']}' required by import job '{job_id}' is missing.",
             )
 
+        if str(connector_record.get("type") or "").lower() == "bigquery" and str((job.get("spec") or {}).get("resource_kind") or "").strip():
+            return self._run_bigquery_table_import(job_id, job, connector_record)
+
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
         if mapping_coverage < 95.0:
             awaiting = self._set_job_status(
@@ -1414,10 +1600,9 @@ class ImportService:
         self._commit_session()
         try:
             page_size = int(job["spec"].get("page_size") or self.settings.worker_page_size)
-            stage_progress = {"last_activity_at": time.monotonic()}
             gcs_service = GcsService()
             raw_pubsub = PubSubService(topic_name=self.settings.raw_shard_topic)
-            connector_config = materialize_secret_refs(dict(connector_record["config"] or {}))
+            connector_config = self._materialize_connector_runtime_config(connector_record)
             connector_config["field_mapping"] = MappingService(self.repository).get_effective_mapping(
                 connector_record["name"],
                 job_id=job_id,
@@ -1432,7 +1617,6 @@ class ImportService:
             ingestion_service.local_shard_event_count = page_size
 
             def _stage_progress_callback(current_events: int, shards_created: int, manifest: Dict[str, Any]) -> Dict[str, Any]:
-                stage_progress["last_activity_at"] = time.monotonic()
                 return self._update_stage_progress(
                     job_id,
                     connector_record,
@@ -1444,6 +1628,11 @@ class ImportService:
             staged = self._interruptible_call(
                 job_id,
                 operation="fetch_and_stage_events",
+                # The inner page wrapper enforces the real connector/network budget.
+                # This outer wrapper stays long-lived so stop requests can still interrupt
+                # uploads or other non-fetch staging work without reintroducing false
+                # page-level timeout failures.
+                timeout_seconds=max(3600.0, float(self.settings.import_network_timeout_seconds)),
                 callback=lambda: ingestion_service.fetch_and_stage_events(
                     job["spec"]["start_date"],
                     job["spec"]["end_date"],
@@ -1451,8 +1640,12 @@ class ImportService:
                     page_size=page_size,
                     should_stop=lambda: self._should_stop(job_id),
                     progress_callback=_stage_progress_callback,
+                    page_fetch_wrapper=lambda fetch_page: self._interruptible_call(
+                        job_id,
+                        operation="fetch_and_stage_events",
+                        callback=fetch_page,
+                    ),
                 ),
-                activity_timestamp_getter=lambda: stage_progress["last_activity_at"],
             )
             if staged.get("stopped"):
                 return self._mark_stopped(job_id, staged.get("stop_reason") or self._stop_reason())
@@ -1596,3 +1789,369 @@ class ImportService:
                 and str(item.get("status") or "").lower() in blocking_statuses
             ]
         )
+
+    def _run_bigquery_table_import(self, job_id: str, job: Dict[str, Any], connector_record: Dict[str, Any]) -> Dict[str, Any]:
+        running = self._set_job_status(
+            job_id,
+            JobStatus.RUNNING.value,
+            reason="BigQuery table import started.",
+            details_patch={
+                "phase": "reading_bigquery_table",
+                "mapping_coverage": 100.0,
+                "canonical_aliases": self._canonical_aliases(),
+            },
+        )
+        self._commit_session()
+
+        spec = dict(running.get("spec") or job.get("spec") or {})
+        connector_config = self._materialize_connector_runtime_config(connector_record)
+        connector = create_connector("bigquery", connector_config)
+        selected_columns = sorted({str(value) for value in dict(spec.get("column_mapping") or {}).values()})
+        cursor = None
+        total_rows = 0
+        rows_seen = 0
+        rows_rejected = 0
+        duplicate_rows = 0
+        imported_rows_by_user: Dict[str, Dict[str, Any]] = {}
+        rejected_examples: List[Dict[str, Any]] = []
+        try:
+            while True:
+                if self._should_stop(job_id):
+                    return self._mark_stopped(job_id, self._stop_reason())
+                page = self._interruptible_call(
+                    job_id,
+                    operation="fetch_bigquery_table_page",
+                    callback=lambda: connector.fetch_table_rows_page(
+                        str(spec.get("table_name") or ""),
+                        cursor=cursor,
+                        page_size=int(spec.get("page_size") or self.settings.worker_page_size),
+                        selected_columns=selected_columns,
+                        where_sql=spec.get("where_sql"),
+                        timestamp_column=self._bigquery_timestamp_source_column(spec),
+                        start_date=spec.get("start_date"),
+                        end_date=spec.get("end_date"),
+                    ),
+                )
+                total_rows = max(total_rows, int(page.get("total") or 0))
+                for raw_row in list(page.get("rows") or []):
+                    rows_seen += 1
+                    projected = self._project_bigquery_import_row(raw_row, dict(spec.get("column_mapping") or {}))
+                    normalized = self._normalize_bigquery_import_row(projected, resource_kind=str(spec.get("resource_kind") or ""))
+                    if normalized is None:
+                        rows_rejected += 1
+                        if len(rejected_examples) < 10:
+                            rejected_examples.append(projected)
+                        continue
+                    canonical_user_id = str(normalized.get("canonical_user_id") or "").strip()
+                    if canonical_user_id in imported_rows_by_user:
+                        duplicate_rows += 1
+                    imported_rows_by_user[canonical_user_id] = normalized
+                current_job = self.repository.get_import_job(job_id)
+                if current_job is None:
+                    raise KeyError(job_id)
+                self.repository.update_import_job(
+                    job_id,
+                    {
+                        "progress": self._merge_progress(
+                            current_job,
+                            current=rows_seen,
+                            total=total_rows,
+                            pct=(rows_seen / total_rows * 100.0) if total_rows else 0.0,
+                            details_patch={
+                                "phase": "reading_bigquery_table",
+                                "rows_seen": rows_seen,
+                                "rows_loaded": len(imported_rows_by_user),
+                                "rows_rejected": rows_rejected,
+                                "duplicate_rows": duplicate_rows,
+                                "bigquery_table_import": {
+                                    "table_name": spec.get("table_name"),
+                                    "resource_kind": spec.get("resource_kind"),
+                                    "row_count": rows_seen,
+                                    "rejected_rows": rows_rejected,
+                                    "duplicate_rows": duplicate_rows,
+                                },
+                            },
+                        ),
+                    },
+                )
+                self._commit_session()
+                if not page.get("has_more"):
+                    break
+                cursor = page.get("next_cursor")
+
+            imported_rows = list(imported_rows_by_user.values())
+            snapshot = self._persist_bigquery_table_snapshot(
+                job_id=job_id,
+                connector_record=connector_record,
+                spec=spec,
+                rows=imported_rows,
+                rows_seen=rows_seen,
+                rows_rejected=rows_rejected,
+                duplicate_rows=duplicate_rows,
+            )
+            quality_report = self._build_bigquery_quality_report(
+                rows=imported_rows,
+                rows_seen=rows_seen,
+                rows_rejected=rows_rejected,
+                duplicate_rows=duplicate_rows,
+            )
+
+            linked_prediction_job_id = None
+            linked_cohort_id = None
+            if str(spec.get("resource_kind") or "") == "external_prediction_scores":
+                prediction_job = PredictionService(self.repository, self.settings, self.bigquery_service).create_external_job(
+                    import_job_id=job_id,
+                    source_name=str(job.get("source_name") or connector_record.get("name") or ""),
+                    rows=imported_rows,
+                    table_name=str(spec.get("table_name") or ""),
+                )
+                linked_prediction_job_id = str(prediction_job.get("id") or "")
+            else:
+                cohort = CohortService(self.repository, self.bigquery_service).create_cohort(
+                    name=str(spec.get("cohort_name") or f"{spec.get('display_name') or job.get('source_name')}_cohort"),
+                    cohort_type="list",
+                    definition={"members": imported_rows},
+                    refresh_mode="manual",
+                    owner="system",
+                    description=f"Imported from BigQuery table {spec.get('table_name')}.",
+                    activate=bool(spec.get("activate_cohort")),
+                )
+                linked_cohort_id = str(cohort.get("cohort_id") or "")
+
+            latest_job = self.repository.get_import_job(job_id)
+            if latest_job is None:
+                raise KeyError(job_id)
+            completed = self.repository.update_import_job(
+                job_id,
+                {
+                    "status": JobStatus.COMPLETED.value,
+                    "error": None,
+                    "progress": self._merge_progress(
+                        latest_job,
+                        current=rows_seen,
+                        total=rows_seen,
+                        pct=100.0,
+                        details_patch={
+                            "phase": "completed",
+                            "failure_reason": None,
+                            "failure_stage": None,
+                            "rows_seen": rows_seen,
+                            "rows_loaded": len(imported_rows),
+                            "rows_rejected": rows_rejected,
+                            "duplicate_rows": duplicate_rows,
+                            "snapshot_id": snapshot["snapshot_id"],
+                            "quality_report": quality_report,
+                            "identity_summary": {
+                                "canonical_user_id_coverage": quality_report.get("canonical_user_id_coverage", 0.0),
+                            },
+                            "rejected_examples": rejected_examples,
+                            "linked_prediction_job_id": linked_prediction_job_id,
+                            "linked_cohort_id": linked_cohort_id,
+                            "checkpoint_state": {"total": 0, "processed": 0, "pending": 0, "counts": {}},
+                            "bigquery_table_import": {
+                                "table_name": spec.get("table_name"),
+                                "resource_kind": spec.get("resource_kind"),
+                                "row_count": rows_seen,
+                                "rejected_rows": rows_rejected,
+                                "duplicate_rows": duplicate_rows,
+                                "snapshot_id": snapshot["snapshot_id"],
+                            },
+                        },
+                    ),
+                },
+            )
+            self._record_status_transition(
+                job_id,
+                from_status=str(latest_job.get("status") or ""),
+                to_status=JobStatus.COMPLETED.value,
+                reason="BigQuery table import completed.",
+                metadata={
+                    "row_count": rows_seen,
+                    "rows_loaded": len(imported_rows),
+                    "linked_prediction_job_id": linked_prediction_job_id,
+                    "linked_cohort_id": linked_cohort_id,
+                },
+            )
+            self.repository.record_action("import_job_completed", "import_job", job_id, completed)
+            self._commit_session()
+            return completed
+        except Exception as exc:
+            self.rollback_session()
+            failed_job = self._safe_get_import_job(job_id) or running
+            failed = self.repository.update_import_job(
+                job_id,
+                {
+                    "status": JobStatus.FAILED.value,
+                    "error": str(exc),
+                    "progress": self._merge_progress(
+                        failed_job,
+                        details_patch={
+                            "failure_reason": str(exc),
+                            "failure_stage": "bigquery_table_import",
+                            "rows_seen": rows_seen,
+                            "rows_loaded": len(imported_rows_by_user),
+                            "rows_rejected": rows_rejected,
+                            "duplicate_rows": duplicate_rows,
+                        },
+                    ),
+                },
+            )
+            self._record_status_transition(
+                job_id,
+                from_status=str(failed_job.get("status") or ""),
+                to_status=JobStatus.FAILED.value,
+                reason="BigQuery table import failed.",
+                metadata={"error": str(exc)},
+            )
+            self.repository.record_action("import_job_failed", "import_job", job_id, failed)
+            self._commit_session()
+            raise
+
+    @staticmethod
+    def _bigquery_timestamp_source_column(spec: Dict[str, Any]) -> str | None:
+        mapping = dict(spec.get("column_mapping") or {})
+        return str(mapping.get("score_timestamp") or mapping.get("as_of_timestamp") or "").strip() or None
+
+    @staticmethod
+    def _project_bigquery_import_row(raw_row: Dict[str, Any], column_mapping: Dict[str, str]) -> Dict[str, Any]:
+        projected = {}
+        for target_field, source_field in dict(column_mapping or {}).items():
+            projected[str(target_field)] = raw_row.get(source_field)
+        return projected
+
+    def _normalize_bigquery_import_row(self, row: Dict[str, Any], *, resource_kind: str) -> Dict[str, Any] | None:
+        canonical_user_id = str(row.get("canonical_user_id") or row.get("user_id") or "").strip()
+        if not canonical_user_id:
+            return None
+        if resource_kind == "external_prediction_scores":
+            score = self._coerce_float(row.get("score"))
+            predicted_risk = self._normalize_prediction_risk(row.get("predicted_churn_risk"), score)
+            if predicted_risk is None:
+                return None
+            model_name = str(row.get("model_name") or "").strip()
+            model_version = str(row.get("model_version") or "").strip()
+            resolved_model_version = model_version
+            if model_name and model_version:
+                resolved_model_version = f"{model_name}:{model_version}"
+            elif model_name and not model_version:
+                resolved_model_version = model_name
+            return {
+                "canonical_user_id": canonical_user_id,
+                "user_id": str(row.get("user_id") or canonical_user_id),
+                "email": row.get("email"),
+                "churn_state": str(row.get("churn_state") or "active"),
+                "predicted_churn_risk": predicted_risk,
+                "churn_reason": "external_prediction_import",
+                "prediction_source": "external_import",
+                "suggested_action": str(row.get("suggested_action") or "No action suggested."),
+                "baseline_churn_score": score,
+                "score_timestamp": row.get("score_timestamp"),
+                "model_version": resolved_model_version or None,
+                "recommended_template_id": row.get("recommended_template_id"),
+                "recommended_variant": row.get("recommended_variant"),
+            }
+        normalized = {
+            "canonical_user_id": canonical_user_id,
+            "user_id": str(row.get("user_id") or canonical_user_id),
+            "email": row.get("email"),
+            "reason": row.get("reason"),
+            "segment": row.get("segment"),
+            "as_of_timestamp": row.get("as_of_timestamp"),
+        }
+        return {key: value for key, value in normalized.items() if value not in (None, "")}
+
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_prediction_risk(self, raw_risk: Any, score: float | None) -> str | None:
+        risk = str(raw_risk or "").strip().lower()
+        if risk in {"low", "medium", "high", "already_churned"}:
+            return risk
+        if score is None:
+            return None
+        if score >= 0.7:
+            return "high"
+        if score >= 0.4:
+            return "medium"
+        return "low"
+
+    def _persist_bigquery_table_snapshot(
+        self,
+        *,
+        job_id: str,
+        connector_record: Dict[str, Any],
+        spec: Dict[str, Any],
+        rows: List[Dict[str, Any]],
+        rows_seen: int,
+        rows_rejected: int,
+        duplicate_rows: int,
+    ) -> Dict[str, Any]:
+        snapshot_id = f"bqimp_{uuid.uuid4().hex[:20]}"
+        payload = {
+            "snapshot_id": snapshot_id,
+            "job_id": job_id,
+            "connector_id": connector_record.get("connector_id"),
+            "connector_name": connector_record.get("name"),
+            "table_name": spec.get("table_name"),
+            "resource_kind": spec.get("resource_kind"),
+            "column_mapping": dict(spec.get("column_mapping") or {}),
+            "where_sql": spec.get("where_sql"),
+            "rows_seen": int(rows_seen),
+            "row_count": len(rows),
+            "rows_rejected": int(rows_rejected),
+            "duplicate_rows": int(duplicate_rows),
+            "sample_rows": list(rows[:10]),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(
+            "import_table_snapshot",
+            snapshot_id,
+            status="ready",
+            name=str(job_id),
+            payload=payload,
+        )
+        return payload
+
+    @staticmethod
+    def _build_bigquery_quality_report(
+        *,
+        rows: List[Dict[str, Any]],
+        rows_seen: int,
+        rows_rejected: int,
+        duplicate_rows: int,
+    ) -> Dict[str, Any]:
+        evaluated_rows = max(0, int(rows_seen))
+        canonical_coverage = round((len(rows) / evaluated_rows * 100.0), 2) if evaluated_rows else 0.0
+        field_counts: Dict[str, int] = {}
+        for row in rows:
+            for field_name, value in row.items():
+                if value not in (None, ""):
+                    field_counts[field_name] = field_counts.get(field_name, 0) + 1
+        field_coverage = {
+            field_name: {
+                "present": count,
+                "nonnull_pct": round((count / max(1, len(rows)) * 100.0), 2),
+            }
+            for field_name, count in sorted(field_counts.items())
+        }
+        return {
+            "required_mapping_coverage": 100.0,
+            "source_required_field_coverage": 100.0,
+            "canonical_user_id_coverage": canonical_coverage,
+            "reject_rate": round((rows_rejected / max(1, evaluated_rows) * 100.0), 2) if evaluated_rows else 0.0,
+            "dedupe_rate": round((duplicate_rows / max(1, evaluated_rows) * 100.0), 2) if evaluated_rows else 0.0,
+            "flag_counts": {
+                "rejected_rows": int(rows_rejected),
+                "duplicate_rows": int(duplicate_rows),
+            },
+            "top20_field_coverage": {
+                "rows_evaluated": int(len(rows)),
+                "fields": field_coverage,
+            },
+        }

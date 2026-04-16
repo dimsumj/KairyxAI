@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from app.application.churn_models import LocalChurnModelService
 from app.application.experiments import ExperimentConfigService
+from app.application.secret_refs import materialize_secret_refs
 from app.core.db import session_scope
 from app.core.errors import MissingDependencyError, ResourceLockedError
 from app.core.request_context import RequestContext, get_request_context, request_context
@@ -323,6 +324,125 @@ class PredictionService:
         self.repository.record_action("prediction_job_created", "prediction_job", job["id"], job)
         PubSubService(topic_name=self.settings.prediction_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "prediction"})
         return self._decorate_prediction_job(job)
+
+    def create_external_job(
+        self,
+        *,
+        import_job_id: str,
+        source_name: str,
+        rows: List[Dict[str, Any]],
+        table_name: str,
+    ) -> Dict[str, Any]:
+        if not str(import_job_id or "").strip():
+            raise ValueError("import_job_id is required for external prediction imports.")
+        if self.repository.get_import_job(import_job_id) is None:
+            raise MissingDependencyError(
+                "import job",
+                import_job_id,
+                detail=f"Import job '{import_job_id}' required for external prediction materialization is missing.",
+            )
+        prediction_job_id = f"pred_{uuid.uuid4().hex[:20]}"
+        created = self.repository.create_prediction_job(
+            {
+                "id": prediction_job_id,
+                "import_job_id": import_job_id,
+                "status": JobStatus.RUNNING.value,
+                "spec": {
+                    "import_job_id": import_job_id,
+                    "audience_scope": "import",
+                    "source_name": str(source_name or "").strip(),
+                    "prediction_mode": "external",
+                    "external_source": "bigquery_table_import",
+                    "table_name": str(table_name or "").strip(),
+                },
+                "progress": {
+                    "current": 0,
+                    "total": len(rows),
+                    "pct": 0.0,
+                    "details": {
+                        "rows_written": 0,
+                        "prediction_mode": "external",
+                        "execution_mode": "external_import",
+                        "execution_label": "External Import",
+                        "history_scope": "external_snapshot",
+                        "history_snapshot_at": datetime.utcnow().isoformat(),
+                        "stale": False,
+                        "stale_reason": "",
+                        "import_job_id": import_job_id,
+                        "audience_scope": "import",
+                        "source_name": str(source_name or "").strip(),
+                        "audience_label": str(source_name or "").strip() or import_job_id,
+                        "resolved_import_display_name": str(source_name or "").strip(),
+                    },
+                },
+            }
+        )
+        self.bigquery_service.replace_prediction_results(job_id=prediction_job_id, rows=[])
+        prepared_rows = []
+        completed_at = datetime.utcnow().isoformat()
+        for row in rows:
+            prepared_rows.append(
+                {
+                    "prediction_job_id": prediction_job_id,
+                    "import_job_id": import_job_id,
+                    "completed_at": completed_at,
+                    "user_id": str(row.get("user_id") or row.get("canonical_user_id") or ""),
+                    "canonical_user_id": str(row.get("canonical_user_id") or row.get("user_id") or ""),
+                    "email": row.get("email"),
+                    "ltv": row.get("ltv"),
+                    "session_count": row.get("session_count"),
+                    "event_count": row.get("event_count"),
+                    "days_since_last_seen": row.get("days_since_last_seen"),
+                    "churn_state": row.get("churn_state") or "active",
+                    "predicted_churn_risk": row.get("predicted_churn_risk") or "unknown",
+                    "churn_reason": row.get("churn_reason") or "external_prediction_import",
+                    "top_signals": list(row.get("top_signals") or []),
+                    "prediction_source": row.get("prediction_source") or "external_import",
+                    "suggested_action": row.get("suggested_action") or "No action suggested.",
+                    "baseline_churn_score": row.get("baseline_churn_score"),
+                    "model_version": row.get("model_version"),
+                    "score_timestamp": row.get("score_timestamp"),
+                    "effective_local_model_version": None,
+                    "effective_local_model_state": "external_import",
+                    "eligibility_reason": row.get("eligibility_reason"),
+                    "recommended_template_id": row.get("recommended_template_id"),
+                    "recommended_variant": row.get("recommended_variant"),
+                    "policy_snapshot_id": row.get("policy_snapshot_id"),
+                }
+            )
+        if prepared_rows:
+            self.bigquery_service.append_prediction_results(job_id=prediction_job_id, rows=prepared_rows)
+        completed = self.repository.update_prediction_job(
+            prediction_job_id,
+            {
+                "status": JobStatus.COMPLETED.value,
+                "progress": {
+                    "current": len(prepared_rows),
+                    "total": len(prepared_rows),
+                    "pct": 100.0,
+                    "details": {
+                        "rows_written": len(prepared_rows),
+                        "prediction_mode": "external",
+                        "execution_mode": "external_import",
+                        "execution_label": "External Import",
+                        "history_scope": "external_snapshot",
+                        "history_snapshot_at": completed_at,
+                        "stale": False,
+                        "stale_reason": "",
+                        "import_job_id": import_job_id,
+                        "audience_scope": "import",
+                        "source_name": str(source_name or "").strip(),
+                        "audience_label": str(source_name or "").strip() or import_job_id,
+                        "resolved_import_display_name": str(source_name or "").strip(),
+                        "table_name": str(table_name or "").strip(),
+                    },
+                },
+            },
+        )
+        self.repository.record_action("prediction_job_created", "prediction_job", prediction_job_id, created)
+        self.repository.record_action("prediction_job_completed", "prediction_job", prediction_job_id, completed)
+        self._commit_session()
+        return self._decorate_prediction_job(completed)
 
     def list_jobs(self) -> List[Dict[str, Any]]:
         return [self._decorate_prediction_job(job) for job in self.repository.list_prediction_jobs()]
@@ -875,10 +995,14 @@ class PredictionService:
 
     def _select_google_connector(self) -> Dict[str, Any] | None:
         google_connectors = [
-            connector
+            {**connector, "config": materialize_secret_refs(dict(connector.get("config") or {}))}
             for connector in self.repository.list_connectors()
             if str(connector.get("type") or "").lower() == "google"
-            and str((connector.get("config") or {}).get("api_key") or "").strip()
+        ]
+        google_connectors = [
+            connector
+            for connector in google_connectors
+            if str((connector.get("config") or {}).get("api_key") or "").strip()
         ]
         if not google_connectors:
             return None

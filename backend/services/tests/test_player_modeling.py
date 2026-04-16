@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 import pandas as pd
 
 from player_modeling_engine import PlayerModelingEngine
@@ -6,9 +7,10 @@ from player_modeling_engine import PlayerModelingEngine
 
 class DummyBQ:
     def get_events_for_player(self, player_id):
+        recent_timestamp = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S.%f")
         return pd.DataFrame([
             {
-                'event_time': '2026-03-01 10:37:56.894000',
+                'event_time': recent_timestamp,
                 'event_type': 'game_init_time',
                 'event_properties': {},
                 'user_properties': {'userId': player_id},

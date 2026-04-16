@@ -996,7 +996,7 @@
             width: 100%;
             max-width: 100%;
             overflow-x: auto;
-            overflow-y: hidden;
+            overflow-y: visible;
         }
 
         table {
@@ -1052,6 +1052,7 @@
             position: relative;
             display: inline-flex;
             align-items: center;
+            z-index: 1;
         }
         .status-help {
             display: inline-flex;
@@ -1075,7 +1076,7 @@
         }
         .status-tooltip {
             position: absolute;
-            top: calc(100% + 0.4rem);
+            bottom: calc(100% + 0.5rem);
             left: 50%;
             transform: translateX(-50%);
             display: none;
@@ -1089,11 +1090,15 @@
             font-size: 0.82rem;
             line-height: 1.45;
             white-space: normal;
-            z-index: 30;
+            z-index: 120;
         }
         .status-help-wrap:hover .status-tooltip,
         .status-help-wrap:focus-within .status-tooltip {
             display: block;
+        }
+        .status-help-wrap:hover,
+        .status-help-wrap:focus-within {
+            z-index: 120;
         }
         .service-name {
             font-weight: 600;
@@ -1159,9 +1164,29 @@
             background: transparent;
         }
 
+        .card-eyebrow {
+            margin: 0 0 0.45rem 0;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f766e;
+        }
+
+        #operator-hub-connectors-entry {
+            border: 1px solid rgba(15, 118, 110, 0.16);
+            background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(255, 255, 255, 0.92));
+        }
+
         #connector-list .card {
             display: flex;
             justify-content: space-between;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        #connector-list .connector-empty-state {
+            justify-content: flex-start;
         }
 
         @media (max-width: 960px) {
@@ -2618,11 +2643,6 @@
         .copilot-agent-launcher-title {
             font-weight: 700;
             font-size: 0.95rem;
-        }
-
-        .copilot-agent-launcher-context {
-            font-size: 0.78rem;
-            color: var(--text-secondary);
         }
 
         .copilot-agent-launcher-badge {

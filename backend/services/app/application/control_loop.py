@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 from app.application.copilot import CopilotService
+from app.application.email_campaigns import EmailCampaignService
 from app.application.experiments import ExperimentConfigService
 from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
@@ -20,6 +21,7 @@ class ControlLoopService:
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
         self.health = HealthMonitorService(repository, self.bigquery_service)
         self.workflows = WorkflowService(repository)
+        self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.copilot = CopilotService(repository, settings, self.bigquery_service)
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
         self.experiments = ExperimentConfigService(repository)
@@ -41,6 +43,12 @@ class ControlLoopService:
                 "job_id": "due_workflow_runner",
                 "name": "Due Workflow Runner",
                 "job_type": "workflow_run_due",
+                "schedule": {"type": "interval", "seconds": self.settings.scheduler_interval_seconds},
+            },
+            {
+                "job_id": "due_email_campaign_runner",
+                "name": "Due Email Campaign Runner",
+                "job_type": "email_campaign_run_due",
                 "schedule": {"type": "interval", "seconds": self.settings.scheduler_interval_seconds},
             },
             {
@@ -107,6 +115,7 @@ class ControlLoopService:
         results = [
             self._run_health_refresh(resolved_time),
             self._run_due_workflow_job(resolved_time),
+            self._run_due_email_campaign_job(resolved_time),
             self._run_churn_optimizer_job(resolved_time),
             self._run_report_job("daily_copilot_report", resolved_time),
             self._run_report_job("weekly_closed_loop_report", resolved_time),
@@ -138,6 +147,18 @@ class ControlLoopService:
             resolved_time,
             status="completed",
             result_summary={"workflow_runs": len(payload.get("items") or [])},
+        )
+
+    def _run_due_email_campaign_job(self, resolved_time: datetime) -> Dict[str, Any]:
+        job = self._get_job_payload("due_email_campaign_runner")
+        if not self._interval_due(job, resolved_time):
+            return self._skip_job(job, resolved_time, "not_due")
+        payload = self.email_campaigns.run_due_campaigns(reference_time=resolved_time.isoformat(), limit=100)
+        return self._mark_job_run(
+            "due_email_campaign_runner",
+            resolved_time,
+            status="completed",
+            result_summary={"campaign_runs": len(payload.get("items") or [])},
         )
 
     def _run_churn_optimizer_job(self, resolved_time: datetime) -> Dict[str, Any]:
