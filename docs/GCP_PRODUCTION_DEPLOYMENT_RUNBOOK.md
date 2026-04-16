@@ -132,6 +132,7 @@ The following runtime settings are required by the current code in production:
 | `OIDC_ISSUER` | Real production issuer |
 | `OIDC_AUDIENCE` | Real production audience |
 | `OIDC_JWKS_URL` | Real JWKS URL unless you intentionally use local signing secret mode |
+| `OIDC_JWKS_TIMEOUT_SECONDS` | Optional fail-fast timeout for JWKS retrieval; keep it low to avoid long auth hangs |
 | `OIDC_CLIENT_ID` | Real console client ID |
 | `GOOGLE_OIDC_CLIENT_ID` | Optional alias for `OIDC_CLIENT_ID` if you prefer Google-named env templates |
 | `OIDC_AUTHORIZE_URL` | Real IdP authorize URL |
@@ -607,6 +608,7 @@ Required deploy-script variables:
 | `OIDC_ISSUER` | Production OIDC issuer |
 | `OIDC_AUDIENCE` | Production OIDC audience |
 | `OIDC_JWKS_URL` | Production JWKS URL |
+| `OIDC_JWKS_TIMEOUT_SECONDS` | Optional JWKS fetch timeout in seconds |
 | `OIDC_CLIENT_ID` | Browser/client OIDC client ID |
 | `OIDC_AUTHORIZE_URL` | Authorize URL for the IdP |
 | `OIDC_TOKEN_URL` | Token URL for the IdP |
@@ -670,6 +672,7 @@ CORS_ALLOWED_ORIGINS=https://console.example.com
 OIDC_ISSUER=https://accounts.google.com
 OIDC_AUDIENCE=your-google-client-id.apps.googleusercontent.com
 OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs
+OIDC_JWKS_TIMEOUT_SECONDS=5
 OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth

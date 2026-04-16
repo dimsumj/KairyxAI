@@ -6,6 +6,7 @@ from typing import Any
 
 import jwt
 from jwt import PyJWKClient
+from jwt.exceptions import PyJWKClientConnectionError
 
 from app.core.settings import Settings, get_settings
 
@@ -22,7 +23,14 @@ class AuthenticatedPrincipal:
 class OIDCAuthenticator:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._jwks_client = PyJWKClient(settings.oidc_jwks_url) if settings.oidc_jwks_url else None
+        self._jwks_client = (
+            PyJWKClient(
+                settings.oidc_jwks_url,
+                timeout=settings.oidc_jwks_timeout_seconds,
+            )
+            if settings.oidc_jwks_url
+            else None
+        )
 
     def authenticate_token(self, token: str) -> AuthenticatedPrincipal:
         payload = self._decode_token(token)
@@ -82,6 +90,8 @@ class OIDCAuthenticator:
                         options=options,
                     )
                 )
+        except PyJWKClientConnectionError as exc:
+            raise ValueError("OIDC JWKS lookup failed. Verify outbound access to the identity provider and OIDC_JWKS_URL.") from exc
         except jwt.PyJWTError as exc:
             raise ValueError("Invalid bearer token.") from exc
 

@@ -9,9 +9,12 @@ from pathlib import Path
 
 import jwt
 from fastapi.testclient import TestClient
+from jwt.exceptions import PyJWKClientConnectionError
 
 from app.core import db as db_module
+from app.core.auth import OIDCAuthenticator
 from app.core.request_context import RequestContext, request_context
+from app.core.settings import Settings
 from app.infrastructure.db_models import OrganizationInviteModel
 from app.main import create_app
 from bigquery_service import BigQueryService, clear_shared_bigquery_service_cache
@@ -941,6 +944,30 @@ def test_google_hosted_domain_rejects_wrong_workspace(monkeypatch, tmp_path):
         me = client.get("/api/v1/auth/me", headers=_auth_headers(google_token))
         assert me.status_code == 401
         assert "hosted domain" in me.json()["detail"]
+
+
+def test_oidc_jwks_connection_error_returns_explicit_auth_message():
+    authenticator = OIDCAuthenticator(
+        Settings(
+            oidc_issuer="https://accounts.google.com",
+            oidc_audience="client-id.apps.googleusercontent.com",
+            oidc_jwks_url="https://www.googleapis.com/oauth2/v3/certs",
+            oidc_provider="google",
+            oidc_jwks_timeout_seconds=2.0,
+        )
+    )
+
+    class _FakeJwksClient:
+        def get_signing_key_from_jwt(self, token):
+            raise PyJWKClientConnectionError("timed out")
+
+    authenticator._jwks_client = _FakeJwksClient()
+
+    try:
+        authenticator.authenticate_token("header.payload.signature")
+        raise AssertionError("Expected OIDCAuthenticator.authenticate_token to fail.")
+    except ValueError as exc:
+        assert "OIDC JWKS lookup failed" in str(exc)
 
 
 def test_secret_bearing_responses_are_redacted(monkeypatch, tmp_path):
