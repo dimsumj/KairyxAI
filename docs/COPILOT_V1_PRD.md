@@ -46,6 +46,9 @@ This upgrade does not replace the existing analytical tools. It adds an operator
 3. Set up a draft cohort using SQL, rules, or a supplied member list
 4. Set up a draft A/B test linked to a cohort and guardrail metrics
 5. Prepare a risky follow-up such as cohort activation or experiment start, then stop at confirmation
+6. Run or reuse a churn prediction job from a source or import and continue after it completes
+7. Draft SQL from a prompt, preview it, save it, and turn it into a draft cohort
+8. Select an existing SendGrid template or Braze API campaign, create a draft email campaign, and optionally create a linked draft workflow
 
 ---
 
@@ -166,7 +169,41 @@ Behavior:
 - persist it in a non-running state
 - keep experiment start as a separate confirmed action
 
-### 3.8 Retained Manual Copilot Tools
+### 3.8 Prompt-Driven Prediction To Campaign Setup
+The agent supports a constrained prompt-driven operator flow for requests such as:
+- `Find high-risk players, create a cohort, use SendGrid template X, and set up a draft workflow`
+
+Behavior:
+- prediction target defaults to `source` mode when the request names a source and no explicit import is given
+- the agent reuses a recent completed prediction when the selected audience and mode already have a non-stale completed job
+- the agent starts a new background prediction when the user explicitly asks for a fresh run or no reusable job exists
+- after prediction completion, the agent can draft SQL, preview it, save it, create a draft cohort, create a draft provider-backed email campaign, and create a draft workflow
+- provider-side template editing remains out of scope in v1; the agent only selects existing SendGrid or Braze assets
+
+### 3.9 Agent Model Profiles
+The global assistant supports backend-managed model profiles for the agent only.
+
+Supported providers in v1:
+- `gemini`
+- `openai`
+- `anthropic`
+
+Behavior:
+- Gemini remains the default when a default Gemini profile or system Gemini configuration is present
+- the browser never stores or calls vendor AI credentials directly
+- the selected model profile applies to the current agent session only
+- deterministic parsing and message composition remain the fallback when the selected model is unavailable
+
+### 3.10 Async Prediction Continuation
+Prediction-backed agent flows are asynchronous.
+
+Behavior:
+- the session persists the pending operator flow while the prediction job is still queued or running
+- the transcript exposes the prediction job as an artifact with status detail and a `Continue` action
+- once the prediction job completes, the same session can resume and build the remaining draft artifacts
+- if the prediction fails or stops, the session returns to an active state and explains why the flow could not continue
+
+### 3.11 Retained Manual Copilot Tools
 The analytical Copilot endpoints remain in scope and visible in the UI:
 - natural-language metric query
 - anomaly explanation
@@ -201,6 +238,13 @@ The session state must expose:
 - `latest_artifacts`
 - `latest_clarifications`
 - `pending_confirmation_count`
+- `model_profile_id`
+- `effective_provider`
+- `effective_model_name`
+- `model_selection_source`
+- `async_status`
+- `waiting_for_action_type`
+- `waiting_for_resource_id`
 
 ### 4.3 Execution Preview
 The execution preview must show:
@@ -217,13 +261,20 @@ The backend still returns execution preview metadata for control-plane readiness
 
 ### 4.4 Artifacts
 Completed actions may return deep-linkable artifacts such as:
+- prediction job
 - cohort
 - experiment
 - connector
 - provider connection
+- email campaign
+- workflow
+- saved query
 
 The frontend renders artifacts as inline transcript cards instead of a dedicated side rail.
-- saved query
+- Artifacts may also expose:
+  - `resume_ready`
+  - `resume_message`
+  - `status_detail`
 
 ---
 
@@ -238,6 +289,12 @@ The operator agent reuses the existing control-plane services instead of introdu
 - `ProviderConnectionService`
 - `SqlWorkspaceService`
 - `HealthMonitorService`
+- `PredictionService`
+- `EmailCampaignService`
+- `WorkflowService`
+- `SendGridProviderService`
+- `BrazeProviderService`
+- `AgentModelProfileService`
 
 ### 5.2 Resource Persistence
 Agent state is persisted in the generic control-plane resource store with dedicated resource types:
@@ -251,9 +308,10 @@ This keeps the agent aligned with existing persistence, audit, tenant scoping, a
 ### 5.3 Model Adapter
 The model layer is intentionally narrow:
 - provider-agnostic model adapter interface
-- Gemini-backed implementation first
+- Gemini-backed implementation first, with OpenAI and Anthropic adapters under the same interface
 - structured JSON output for intent parsing and response composition
-- deterministic parser and deterministic response fallback when Gemini is unavailable or malformed
+- deterministic parser and deterministic response fallback when the selected provider is unavailable or malformed
+- backend-managed model profiles; no browser-side vendor SDK or browser-stored AI secret handling
 
 ### 5.4 UI Context Inputs
 The frontend may pass lightweight context with each turn, including:
@@ -284,6 +342,12 @@ This lets the agent narrow scope without forcing the user to restate context tha
 - `upsert_provider_connection`
 - `preview_sql`
 - `save_query`
+- `draft_sql_from_prompt`
+- `run_prediction`
+- `list_provider_messaging_assets`
+- `setup_email_campaign`
+- `setup_workflow`
+- `setup_operator_flow`
 - `create_cohort_sql`
 - `create_cohort_definition`
 - `update_cohort_definition`
@@ -308,9 +372,12 @@ This lets the agent narrow scope without forcing the user to restate context tha
 ## 7. Default Configuration (v1)
 - Dashboard summary defaults to the current workspace scope unless UI context narrows it further
 - New agent sessions default to an active status and store the latest preview, clarifications, and artifacts
+- Agent sessions default to the configured default model profile when one exists, with Gemini preferred when multiple defaults are not explicitly set
 - Connection setup auto-generates a name when the user does not provide one
 - Connector health check is attempted automatically after connector creation, but failure to run the health check does not roll back the connector
 - SQL cohort setup uses a SQL preview before cohort creation and saves the query as a reusable artifact
+- Prompt-driven prediction setup defaults to source-mode reuse before it starts a fresh prediction job
+- Email campaign and workflow creation always default to `draft`
 - New cohorts default to `draft`
 - Cohort refresh mode defaults to `manual`, unless the request explicitly implies daily refresh
 - New experiments default to `enabled = false`
@@ -329,6 +396,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 ### 8.1 Agent Endpoints
 - `POST /api/v1/copilot/agent/sessions`
   - create a new operator agent session
+  - accepts optional `model_profile_id`
 
 - `GET /api/v1/copilot/agent/sessions/{session_id}`
   - read the current session state, latest turn, and pending confirmations
@@ -341,6 +409,21 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 - `POST /api/v1/copilot/agent/actions/{action_id}/confirm`
   - confirm and execute a prepared high-risk action
+
+- `GET /api/v1/copilot/agent/model-profiles`
+  - list backend-managed model profiles for the operator agent
+
+- `POST /api/v1/copilot/agent/model-profiles`
+  - create a backend-managed model profile for Gemini, OpenAI, or Anthropic
+
+- `GET /api/v1/copilot/agent/model-profiles/{model_profile_id}`
+  - read one backend-managed model profile
+
+- `PATCH /api/v1/copilot/agent/model-profiles/{model_profile_id}`
+  - update one backend-managed model profile
+
+- `DELETE /api/v1/copilot/agent/model-profiles/{model_profile_id}`
+  - delete one non-system-managed model profile
 
 ### 8.2 Retained Manual Endpoints
 - `POST /api/v1/copilot/query`
@@ -362,7 +445,10 @@ This lets the agent narrow scope without forcing the user to restate context tha
 6. Experiment setup saves a non-running config linked to a cohort and returns a linked artifact.
 7. Risky actions such as cohort activation and experiment start stop at confirmation and only execute after an explicit confirm call.
 8. Permission failures do not bypass governance, and cross-project session access is denied.
-9. The global assistant is available from every app page after workspace resolution, and the Insight Copilot page keeps the manual analytical controls as the advanced/manual fallback.
+9. Operators can select a backend-managed Gemini, OpenAI, or Anthropic model profile for the agent, and deterministic fallback still keeps the session usable when the selected provider is unavailable.
+10. Prediction-backed operator flows can resume in the same session after the prediction job completes.
+11. The agent can create a saved query, draft cohort, draft email campaign, and draft workflow from one prompt without publishing, sending, or activating anything automatically.
+12. The global assistant is available from every app page after workspace resolution, and the Insight Copilot page keeps the manual analytical controls as the advanced/manual fallback.
 
 ---
 
@@ -393,6 +479,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 3. Explicit action registry with fixed permission requirements and risk levels
 4. Runtime help catalog for grounded product guidance, sample payloads, and troubleshooting notes
 5. Gemini-backed parsing and composition with deterministic fallback
+6. Backend-managed model profile selection for Gemini, OpenAI, and Anthropic
 
 **Acceptance Criteria (DoD)**
 - Unsupported intents are redirected into the supported scope
@@ -409,6 +496,9 @@ This lets the agent narrow scope without forcing the user to restate context tha
 2. SQL preview and saved query creation for SQL cohorts
 3. Draft cohort creation and safe draft updates
 4. Draft experiment config creation
+5. Prediction-job reuse or async prediction start for prompt-driven operator flows
+6. Draft email campaign creation from existing SendGrid or Braze assets
+7. Draft workflow creation linked to cohort and optional email campaign
 
 **Acceptance Criteria (DoD)**
 - Successful safe actions return completed action records and deep-linkable artifacts
@@ -440,12 +530,15 @@ This lets the agent narrow scope without forcing the user to restate context tha
 1. Global assistant launcher and drawer that remain available from every in-app page
 2. Shared session persistence across SPA navigation
 3. Starter prompts for the supported v1 tasks and help flows
-4. Structured clarification rendering
-5. Execution preview rendering
-6. Pending confirmation rendering
-7. Artifact deep links into the relevant module
-8. Retained manual `query / explain / recommend / report` controls on the Insight Copilot page
-9. Removal of the static Help module from visible navigation
+4. Model selector backed by backend-managed model profiles
+5. Session status showing effective provider / model and async continuation state
+6. Structured clarification rendering
+7. Execution preview rendering
+8. Pending confirmation rendering
+9. Artifact deep links into the relevant module
+10. `Continue` actions on async prediction artifacts
+11. Retained manual `query / explain / recommend / report` controls on the Insight Copilot page
+12. Removal of the static Help module from visible navigation
 
 **Acceptance Criteria (DoD)**
 - The user can ask for help, samples, or safe setup work without leaving the current module

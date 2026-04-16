@@ -131,6 +131,36 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 
 ---
 
+## 3.6 Copilot Draft Setup Integration
+
+### Functionality
+- `Insight Copilot` may create:
+  - draft email campaigns backed by an existing SendGrid template or Braze API campaign
+  - draft workflows linked to a cohort and optional email campaign
+- Copilot must discover provider messaging assets through the existing provider APIs and ask for disambiguation when more than one asset matches
+- Copilot-created delivery assets must remain reversible and controllable from the normal Action Orchestrator pages after creation
+
+### Safety Boundaries
+- Provider-side template editing remains out of scope in v1
+- Copilot can only select existing SendGrid templates or Braze API campaigns
+- Copilot-created email campaigns must always start in `draft`
+- Copilot-created workflows must always start in `draft`
+- Publish, send-now, workflow run, and live execution remain explicit follow-up actions outside the auto-executed Copilot flow
+
+### Data Contract Notes
+- Draft email campaigns may target either:
+  - a saved cohort
+  - a prediction job audience with risk filters
+- Draft workflows created by Copilot must use the existing workflow create contract and produce a valid `manual_test` trigger plus supported workflow steps
+
+### DoD
+1. Copilot can list provider messaging assets for SendGrid and Braze
+2. Copilot can create a draft email campaign from an existing provider asset
+3. Copilot can create a draft workflow linked to the created cohort and optional email campaign
+4. The created assets are fully visible and editable inside the standard Action Orchestrator UI
+
+---
+
 ## 4. Data Objects (v1)
 - `workflow`
 - `workflow_version`

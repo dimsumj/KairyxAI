@@ -325,6 +325,32 @@ class PredictionService:
         PubSubService(topic_name=self.settings.prediction_command_topic).publish({"job_id": job["id"]}, attributes={"job_type": "prediction"})
         return self._decorate_prediction_job(job)
 
+    def start_job_async(self, job_id: str) -> Dict[str, Any]:
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        request_scope = get_request_context()
+        self._commit_session()
+
+        def _worker(captured_context: RequestContext | None, captured_job_id: str) -> None:
+            try:
+                with request_context(captured_context):
+                    with session_scope() as session:
+                        repository = SqlAlchemyControlPlaneRepository(session)
+                        service = PredictionService(repository, self.settings, get_shared_bigquery_service())
+                        service.run_job(captured_job_id)
+            except Exception:
+                logger.exception("Background prediction run failed for job %s.", captured_job_id)
+
+        worker = threading.Thread(
+            target=_worker,
+            args=(request_scope, job_id),
+            name=f"prediction-job-{job_id}",
+            daemon=True,
+        )
+        worker.start()
+        return job
+
     def create_external_job(
         self,
         *,

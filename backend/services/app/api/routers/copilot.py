@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.schemas.copilot import (
+    AgentModelProfileCreateRequest,
+    AgentModelProfileResponse,
+    AgentModelProfileUpdateRequest,
     AgentTurn,
     CopilotAgentConfirmRequest,
     CopilotAgentMessageRequest,
@@ -18,9 +21,10 @@ from app.api.schemas.copilot import (
     CopilotResponse,
 )
 from app.application.copilot import CopilotService
+from app.application.agent_model_profiles import AgentModelProfileService
 from app.application.copilot_agent import CopilotAgentService
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
-from app.core.deps import get_copilot_agent_service, get_copilot_service
+from app.core.deps import get_agent_model_profile_service, get_copilot_agent_service, get_copilot_service
 
 
 router = APIRouter(prefix="/copilot", tags=["copilot"])
@@ -34,7 +38,14 @@ def create_copilot_agent_session(
 ):
     context = get_governance_context(http_request)
     ensure_permission(context, "copilot.agent.read")
-    payload = service.create_session(title=request.title, ui_context=request.ui_context)
+    try:
+        payload = service.create_session(
+            title=request.title,
+            model_profile_id=request.model_profile_id,
+            ui_context=request.ui_context,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Agent model profile '{request.model_profile_id}' not found.")
     return build_audited_response(
         service.repository,
         context,
@@ -140,6 +151,119 @@ def confirm_copilot_agent_action(
         resource_id=action_id,
         payload=payload,
     )
+
+
+@router.get("/agent/model-profiles", response_model=dict)
+def list_agent_model_profiles(
+    http_request: Request,
+    service: AgentModelProfileService = Depends(get_agent_model_profile_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.read")
+    return {"items": service.list_profiles()}
+
+
+@router.post("/agent/model-profiles", response_model=AgentModelProfileResponse, status_code=201)
+def create_agent_model_profile(
+    request: AgentModelProfileCreateRequest,
+    http_request: Request,
+    service: AgentModelProfileService = Depends(get_agent_model_profile_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.write")
+    try:
+        payload = service.create_profile(
+            name=request.name,
+            provider=request.provider,
+            model_name=request.model_name,
+            config=request.config,
+            is_default=request.is_default,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="agent_model_profile_create",
+        resource_type="agent_model_profile",
+        resource_id=payload["model_profile_id"],
+        payload=payload,
+    )
+
+
+@router.get("/agent/model-profiles/{model_profile_id}", response_model=AgentModelProfileResponse)
+def get_agent_model_profile(
+    model_profile_id: str,
+    http_request: Request,
+    service: AgentModelProfileService = Depends(get_agent_model_profile_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.read")
+    payload = service.get_profile(model_profile_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Agent model profile '{model_profile_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="agent_model_profile_read",
+        resource_type="agent_model_profile",
+        resource_id=model_profile_id,
+        payload=payload,
+    )
+
+
+@router.patch("/agent/model-profiles/{model_profile_id}", response_model=AgentModelProfileResponse)
+def update_agent_model_profile(
+    model_profile_id: str,
+    request: AgentModelProfileUpdateRequest,
+    http_request: Request,
+    service: AgentModelProfileService = Depends(get_agent_model_profile_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.write")
+    try:
+        payload = service.update_profile(model_profile_id, request.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Agent model profile '{model_profile_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="agent_model_profile_update",
+        resource_type="agent_model_profile",
+        resource_id=model_profile_id,
+        payload=payload,
+    )
+
+
+@router.delete("/agent/model-profiles/{model_profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_agent_model_profile(
+    model_profile_id: str,
+    http_request: Request,
+    service: AgentModelProfileService = Depends(get_agent_model_profile_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.write")
+    try:
+        deleted = service.delete_profile(model_profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Agent model profile '{model_profile_id}' not found.")
+    service.repository.record_action(
+        "agent_model_profile_delete",
+        "agent_model_profile",
+        model_profile_id,
+        {
+            "actor_role": context.actor_role,
+            "actor_id": context.actor_id,
+            "tenant_id": context.tenant_id,
+            "project_id": context.project_id,
+            "correlation_id": context.correlation_id,
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/query", response_model=CopilotResponse)

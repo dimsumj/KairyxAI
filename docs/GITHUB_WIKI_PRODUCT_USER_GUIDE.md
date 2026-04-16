@@ -1128,6 +1128,9 @@ The assistant can:
 - give sample SQL, JSON payloads, and example prompts
 - summarize the current dashboard
 - set up low-risk draft cohorts, experiment configs, connectors, and provider connections
+- reuse or start prediction jobs, draft SQL from prediction context, and turn the result into a saved query plus draft cohort
+- select an existing SendGrid template or Braze API campaign and create a draft email campaign
+- create a draft workflow linked to the cohort and optional email campaign
 - stop high-risk actions at explicit confirmation
 
 The drawer now behaves like a normal chat room:
@@ -1145,7 +1148,9 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
-| `Session status` | Status line | Read-only. Shows the current session id, intent, and status. | `Session cpa_... - active` | Confirms the active agent session. |
+| `Agent Model` | Select | Choose which backend-managed model profile the agent should use for the next session. Gemini is the default when a default Gemini profile or system Gemini configuration exists. | `Gemini Drafts` | The next session runs with the selected provider and model metadata. |
+| `Model status` | Status line | Read-only. Shows the effective provider, model name, and whether the choice came from a saved profile, system default, or deterministic fallback. | `Gemini - gemini-2.5-flash` | Confirms which model the agent is using. |
+| `Session status` | Status line | Read-only. Shows the current session id, intent, status, and async continuation state when a prediction-backed flow is waiting. | `Session cpa_... - waiting_for_prediction` | Confirms the active agent session and whether a follow-up `Continue` is possible. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
 | `Message` | Text area | Wait until the placeholder changes from `Getting Agents Ready...` to the normal prompt, then ask how to use the current page, request a sample payload, or tell the agent to perform a supported setup task. Press `Enter` to send or `Shift+Enter` for a new line. | `How do I create an Amplitude connector here? Give me a sample payload.` | The assistant blocks only the initial first message while the first session is created, then returns grounded guidance or executes the supported setup flow. |
 | `Send` | Button | Sends the current message to the assistant after the drawer is ready. The button stays disabled only during initial session bootstrap or when workspace access is blocked. | None | The transcript updates with the latest answer or task state. |
@@ -1153,7 +1158,8 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
-| Inline artifact card | Conditional resource card | Opens the created or updated cohort, experiment, connector, or saved query in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 
 #### Supported v1 agent tasks
@@ -1162,33 +1168,53 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 - `Set up a cohort`
 - `Set up an A/B test`
 - `Set up a connection`
+- `Run prediction for Source X`
+- `Draft SQL for the high-risk audience`
+- `Set up a draft email campaign with SendGrid or Braze`
+- `Set up a draft workflow`
+- `Set up the whole prediction -> cohort -> email campaign -> workflow flow`
 - grounded product help such as `How do I use this page?`, `Where do I do X?`, `Give me a sample payload`, or `Why is this failing?`
 
 The v1 agent executes only low-risk reads and draft/setup actions automatically. It does not auto-run destructive deletes. Cohort activation, experiment start/stop, experiment decision logging, and similar risky follow-up actions are held for explicit confirmation.
 
+Prediction-backed flows are asynchronous. If the agent starts a fresh prediction job, the drawer stays on the same session, exposes the prediction job as an artifact, and waits for you to click `Continue` after the prediction completes.
+
+#### Sample operator-flow prompt
+```text
+Run churn prediction for high-risk players from source Amplitude 1, create a cohort, use SendGrid template tmpl_winback, and set up a draft workflow.
+provider_connection_id: pc_sendgrid123
+campaign_name: april_winback_campaign
+workflow_name: april_winback_workflow
+cohort_name: april_high_risk_cohort
+saved_query_name: april_high_risk_query
+```
+
 #### Sample agent response output
 ```json
 {
-  "assistant_message": "Created connector `agent_amplitude_connector` for `amplitude`.",
+  "assistant_message": "Started the prediction job. Continue when the prediction completes to build the saved query, cohort, campaign, and workflow drafts.",
   "session_state": {
     "session_id": "cpa_20260401_1200",
-    "status": "active",
-    "current_intent": "setup_connection"
-  },
-  "execution_preview": {
-    "intent": "setup_connection",
-    "summary": "Create or update the connection and optionally verify connector health."
+    "status": "waiting_for_prediction",
+    "current_intent": "setup_operator_flow",
+    "model_profile_id": "amp_123",
+    "effective_provider": "gemini",
+    "effective_model_name": "gemini-2.5-flash",
+    "async_status": "waiting_for_prediction"
   },
   "completed_actions": [
     {
-      "action_type": "upsert_connector",
-      "status": "completed"
+      "action_type": "setup_operator_flow",
+      "status": "running",
+      "is_async": true
     }
   ],
   "artifacts": [
     {
-      "resource_type": "connector",
-      "resource_id": "conn_123"
+      "resource_type": "prediction_job",
+      "resource_id": "pred_123",
+      "resume_ready": false,
+      "resume_message": "Continue with the prediction results."
     }
   ]
 }

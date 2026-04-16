@@ -1792,6 +1792,11 @@ WHERE predicted_churn_risk = 'high'
                 <div>
                     <div class="copilot-agent-drawer-eyebrow">Global AI Assistant</div>
                     <h2>Ask AI</h2>
+                    <label class="subtle" for="copilot-agent-model-select">Agent Model</label>
+                    <select id="copilot-agent-model-select">
+                        <option value="">Deterministic fallback</option>
+                    </select>
+                    <div id="copilot-agent-model-status" class="subtle">Loading agent model profiles...</div>
                     <div id="copilot-agent-session-status" class="subtle">Preparing assistant session...</div>
                 </div>
                 <div class="inline-actions">

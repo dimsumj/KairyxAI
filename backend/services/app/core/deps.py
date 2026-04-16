@@ -4,6 +4,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.application.audit import AuditService
+from app.application.agent_model_profiles import AgentModelProfileService
 from app.application.braze_provider import BrazeProviderService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
@@ -125,6 +126,12 @@ def get_copilot_agent_service(
     settings: Settings = Depends(get_settings_dependency),
 ) -> CopilotAgentService:
     return CopilotAgentService(repository, settings)
+
+
+def get_agent_model_profile_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> AgentModelProfileService:
+    return AgentModelProfileService(repository)
 
 
 def get_health_monitor_service(

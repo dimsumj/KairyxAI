@@ -52,6 +52,7 @@ class CopilotResponse(BaseModel):
 
 class CopilotAgentSessionCreateRequest(BaseModel):
     title: str = ""
+    model_profile_id: str | None = None
     ui_context: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -73,6 +74,9 @@ class AgentArtifactLink(BaseModel):
     api_path: str = ""
     focus: Dict[str, Any] = Field(default_factory=dict)
     status: str = ""
+    resume_ready: bool = False
+    resume_message: str = ""
+    status_detail: str = ""
 
 
 class AgentClarification(BaseModel):
@@ -119,6 +123,8 @@ class AgentActionRun(BaseModel):
     artifacts: List[AgentArtifactLink] = Field(default_factory=list)
     confirmation_id: str | None = None
     confirmation_note: str = ""
+    is_async: bool = False
+    status_detail: str = ""
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -134,6 +140,13 @@ class AgentSessionState(BaseModel):
     latest_artifacts: List[AgentArtifactLink] = Field(default_factory=list)
     latest_clarifications: List[AgentClarification] = Field(default_factory=list)
     pending_confirmation_count: int = 0
+    model_profile_id: str | None = None
+    effective_provider: str = "deterministic"
+    effective_model_name: str = ""
+    model_selection_source: str = "deterministic_fallback"
+    async_status: str = ""
+    waiting_for_action_type: str | None = None
+    waiting_for_resource_id: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -178,3 +191,39 @@ class CopilotAgentMessageResponse(BaseModel):
     artifacts: List[AgentArtifactLink] = Field(default_factory=list)
     audit_id: int | None = None
     masked_fields: List[str] = Field(default_factory=list)
+
+
+class AgentModelProfileCreateRequest(BaseModel):
+    name: str
+    provider: str
+    model_name: str | None = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+    is_default: bool = False
+
+
+class AgentModelProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    provider: str | None = None
+    model_name: str | None = None
+    config: Dict[str, Any] | None = None
+    status: str | None = None
+    is_default: bool | None = None
+
+
+class AgentModelProfileResponse(BaseModel):
+    model_profile_id: str
+    name: str
+    provider: str
+    model_name: str | None = None
+    status: str
+    is_default: bool = False
+    system_managed: bool = False
+    config: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: str | None = None
+    project_id: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+    correlation_id: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
+    model_selection_source: str = "profile"

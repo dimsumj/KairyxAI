@@ -9287,6 +9287,8 @@ export function initializeOperatorConsole() {
             const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
             const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
             const copilotReportsList = document.getElementById('copilot-reports-list');
+            const copilotAgentModelSelect = document.getElementById('copilot-agent-model-select');
+            const copilotAgentModelStatus = document.getElementById('copilot-agent-model-status');
             const copilotAgentSessionStatus = document.getElementById('copilot-agent-session-status');
             const copilotAgentThread = document.getElementById('copilot-agent-thread');
             const copilotAgentMessageInput = document.getElementById('copilot-agent-message-input');
@@ -9314,6 +9316,8 @@ export function initializeOperatorConsole() {
             let copilotAgentPendingTurn = null;
             let copilotAgentComposerReady = false;
             let copilotAgentSessionBootstrapPromise = null;
+            let copilotAgentModelProfiles = [];
+            let copilotAgentSelectedModelProfileId = '';
             const COPILOT_AGENT_READY_PLACEHOLDER = 'Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up.';
             const COPILOT_AGENT_LOADING_PLACEHOLDER = 'Getting Agents Ready...';
 
@@ -11306,6 +11310,13 @@ export function initializeOperatorConsole() {
                     selected_cohort_id: selectedAudienceCohortId || null,
                     selected_workflow_id: selectedWorkflowId || null,
                     current_experiment_id: getCurrentExperimentId(),
+                    selected_import_job_id: selectedImportJobId || null,
+                    selected_prediction_audience_scope: getSelectedPredictionAudienceScope(),
+                    selected_prediction_audience_key: getSelectedPredictionAudienceKey() || null,
+                    selected_prediction_mode: getSelectedPredictionMode(),
+                    selected_email_provider_connection_id: String(emailCampaignProviderSelect?.value || '').trim() || null,
+                    selected_email_provider_type: getCurrentEmailCampaignProviderType(),
+                    selected_email_template_id: String(emailCampaignTemplateSelect?.value || '').trim() || null,
                 };
             }
 
@@ -11319,6 +11330,60 @@ export function initializeOperatorConsole() {
                 );
                 copilotAgentLauncherBadge.textContent = String(resolvedCount);
                 copilotAgentLauncherBadge.classList.toggle('hidden', resolvedCount <= 0);
+            }
+
+            function getSelectedCopilotAgentModelProfileId() {
+                return String((copilotAgentModelSelect && copilotAgentModelSelect.value) || '').trim();
+            }
+
+            function renderCopilotAgentModelProfiles(items = []) {
+                copilotAgentModelProfiles = Array.isArray(items) ? items : [];
+                if (!copilotAgentModelSelect) return;
+                const options = [];
+                if (!copilotAgentModelProfiles.length) {
+                    options.push('<option value="">Deterministic fallback</option>');
+                    copilotAgentModelSelect.innerHTML = options.join('');
+                    copilotAgentModelSelect.disabled = true;
+                    copilotAgentSelectedModelProfileId = '';
+                    setInlineStatus(copilotAgentModelStatus, 'No backend-managed agent model profiles are configured. The agent will use deterministic fallback.');
+                    return;
+                }
+                copilotAgentModelProfiles.forEach((profile) => {
+                    const provider = String(profile.provider || 'model').trim();
+                    const modelName = String(profile.model_name || '').trim();
+                    const isDefault = Boolean(profile.is_default);
+                    const label = `${profile.name || provider}${modelName ? ` · ${modelName}` : ''}${isDefault ? ' (default)' : ''}`;
+                    options.push(`<option value="${escapeHtml(String(profile.model_profile_id || ''))}">${escapeHtml(label)}</option>`);
+                });
+                copilotAgentModelSelect.innerHTML = options.join('');
+                const preferred = copilotAgentSelectedModelProfileId
+                    || String((copilotAgentModelProfiles.find((item) => item.is_default) || {}).model_profile_id || '');
+                copilotAgentModelSelect.value = preferred || String((copilotAgentModelProfiles[0] || {}).model_profile_id || '');
+                copilotAgentSelectedModelProfileId = String(copilotAgentModelSelect.value || '');
+                copilotAgentModelSelect.disabled = false;
+                const activeProfile = copilotAgentModelProfiles.find((item) => String(item.model_profile_id || '') === copilotAgentSelectedModelProfileId) || null;
+                setInlineStatus(
+                    copilotAgentModelStatus,
+                    activeProfile
+                        ? `${activeProfile.provider || 'model'}${activeProfile.model_name ? ` · ${activeProfile.model_name}` : ''}`
+                        : 'Select a backend-managed agent model.',
+                );
+            }
+
+            async function loadCopilotAgentModelProfiles() {
+                if (!copilotAgentModelSelect) return;
+                copilotAgentModelSelect.disabled = true;
+                setInlineStatus(copilotAgentModelStatus, 'Loading agent model profiles...');
+                try {
+                    const payload = await apiRequest('/copilot/agent/model-profiles');
+                    renderCopilotAgentModelProfiles(payload.items || []);
+                } catch (error) {
+                    copilotAgentModelProfiles = [];
+                    copilotAgentModelSelect.innerHTML = '<option value="">Deterministic fallback</option>';
+                    copilotAgentModelSelect.disabled = true;
+                    copilotAgentSelectedModelProfileId = '';
+                    setInlineStatus(copilotAgentModelStatus, error.message || 'Failed to load agent model profiles.', true);
+                }
             }
 
             function renderCopilotAgentMessageBody(message, { rich = false } = {}) {
@@ -11475,7 +11540,11 @@ export function initializeOperatorConsole() {
                                         <div class="subtle">${escapeHtml(item.resource_id || '')}</div>
                                         <div class="copilot-agent-artifact-actions">
                                             <button type="button" data-copilot-agent-artifact-index="${index}">Open Resource</button>
+                                            ${item.resume_message
+                                                ? `<button type="button" class="secondary-button" data-copilot-agent-resume-index="${index}" ${item.resume_ready ? '' : 'disabled'}>${item.resume_ready ? 'Continue' : 'Waiting'}</button>`
+                                                : ''}
                                         </div>
+                                        ${item.status_detail ? `<div class="subtle">${escapeHtml(item.status_detail)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>
@@ -11512,6 +11581,15 @@ export function initializeOperatorConsole() {
                     button.addEventListener('click', async () => {
                         const artifact = artifacts[Number(button.dataset.copilotAgentArtifactIndex)];
                         await openCopilotAgentArtifact(artifact);
+                    });
+                });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-resume-index]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const artifact = artifacts[Number(button.dataset.copilotAgentResumeIndex)];
+                        if (!artifact || !artifact.resume_message || !artifact.resume_ready) {
+                            return;
+                        }
+                        await sendCopilotAgentMessage(String(artifact.resume_message || 'Continue'));
                     });
                 });
                 copilotAgentThread?.querySelectorAll('[data-copilot-agent-submit-clarifications]').forEach((button) => {
@@ -11628,6 +11706,29 @@ export function initializeOperatorConsole() {
                     await loadAudienceEngine();
                     return;
                 }
+                if (resourceType === 'prediction_job') {
+                    activateModule('data-core', 'data-core-churn-rescue');
+                    await loadReadyImportsForOperatorHub();
+                    return;
+                }
+                if (resourceType === 'email_campaign') {
+                    activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                        targetId: 'email-campaigns-section',
+                    });
+                    await loadActionOrchestrator();
+                    return;
+                }
+                if (resourceType === 'workflow') {
+                    activateModule('action-orchestrator', 'action-orchestrator-workflows', {
+                        targetId: 'workflow-list-section',
+                    });
+                    await loadActionOrchestrator();
+                    const workflowId = artifact.focus?.workflow_id || artifact.resource_id;
+                    if (workflowId) {
+                        await loadWorkflowDetail(workflowId);
+                    }
+                    return;
+                }
                 activateModule('data-core', 'data-core-connectors');
             }
 
@@ -11681,6 +11782,7 @@ export function initializeOperatorConsole() {
                 copilotAgentDrawerBackdrop?.setAttribute('aria-hidden', 'false');
                 copilotAgentLauncherBtn?.setAttribute('aria-expanded', 'true');
                 syncCopilotAgentContextChrome();
+                await loadCopilotAgentModelProfiles();
                 if (copilotAgentComposerReady) {
                     copilotAgentMessageInput?.focus();
                 }
@@ -11696,10 +11798,26 @@ export function initializeOperatorConsole() {
                 copilotAgentLastTurns = Array.isArray(turns) ? turns : [];
                 const sessionState = payload.session_state || {};
                 copilotAgentSessionId = sessionState.session_id || copilotAgentSessionId;
+                if (sessionState.model_profile_id && copilotAgentModelSelect) {
+                    copilotAgentSelectedModelProfileId = String(sessionState.model_profile_id || '');
+                    copilotAgentModelSelect.value = copilotAgentSelectedModelProfileId;
+                }
+                const modelSummary = sessionState.effective_provider
+                    ? ` · ${sessionState.effective_provider}${sessionState.effective_model_name ? ` / ${sessionState.effective_model_name}` : ''}`
+                    : '';
+                const asyncSummary = sessionState.async_status ? ` · ${sessionState.async_status}` : '';
                 if (sessionState.session_id) {
                     setInlineStatus(
                         copilotAgentSessionStatus,
-                        `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}`,
+                        `Session ${sessionState.session_id} · ${sessionState.status || 'active'}${sessionState.current_intent ? ` · ${sessionState.current_intent}` : ''}${modelSummary}${asyncSummary}`,
+                    );
+                }
+                if (copilotAgentModelStatus) {
+                    setInlineStatus(
+                        copilotAgentModelStatus,
+                        sessionState.effective_provider
+                            ? `${sessionState.effective_provider}${sessionState.effective_model_name ? ` · ${sessionState.effective_model_name}` : ''}${sessionState.model_selection_source ? ` · ${sessionState.model_selection_source}` : ''}`
+                            : 'Deterministic fallback',
                     );
                 }
                 setInlineStatus(copilotAgentSendStatus, '');
@@ -11713,6 +11831,17 @@ export function initializeOperatorConsole() {
             }
 
             async function ensureCopilotAgentSession(forceNew = false) {
+                const desiredModelProfileId = getSelectedCopilotAgentModelProfileId();
+                const activeSessionModelProfileId = String((copilotAgentLastResponse?.session_state || {}).model_profile_id || '').trim();
+                const modelChanged = Boolean(
+                    copilotAgentSessionId
+                    && desiredModelProfileId
+                    && activeSessionModelProfileId
+                    && desiredModelProfileId !== activeSessionModelProfileId,
+                );
+                if (modelChanged) {
+                    forceNew = true;
+                }
                 if (copilotAgentSessionId && !forceNew) {
                     return {
                         sessionId: copilotAgentSessionId,
@@ -11730,6 +11859,7 @@ export function initializeOperatorConsole() {
                         method: 'POST',
                         body: {
                             title: 'Insight Copilot Agent',
+                            model_profile_id: desiredModelProfileId || null,
                             ui_context: getCopilotAgentUiContext(),
                         },
                     });

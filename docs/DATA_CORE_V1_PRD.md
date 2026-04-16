@@ -192,6 +192,32 @@ Keep the Imports page responsive after backend restart by deferring expensive di
 2. Completed-only import lists stop polling automatically
 3. Busy-after-restart import detail reads degrade to a retryable busy experience instead of an opaque 500
 
+### 4.1.10 Copilot Prediction Draft Integration
+
+#### Goal
+Let `Insight Copilot` use Data Core prediction jobs as the first step of a prompt-driven operator flow, while keeping prediction ownership, async job state, and result metadata inside Data Core.
+
+#### Data Core Ownership
+- Prediction jobs remain the system of record for prompt-driven prediction runs, whether the operator starts them from the churn workbench or from `Ask AI`
+- Copilot may create or reuse prediction jobs, but it must do so through the existing prediction control-plane contract
+- Prediction jobs must remain deep-linkable and resumable through artifact metadata rather than through browser-side AI state
+
+#### Runtime / API Contract
+- Copilot-created prediction jobs use the same `source` or `import` audience rules as manual prediction jobs
+- The prediction job artifact exposed back to Copilot must include enough metadata for resume and deep linking:
+  - `resource_type = prediction_job`
+  - `resource_id`
+  - `resume_ready`
+  - `resume_message`
+  - `status_detail`
+- Copilot sessions may hold a pending flow while a prediction job is queued or running, but Data Core still owns the underlying job lifecycle and result persistence
+- Draft SQL generation defaults to `prediction_results` semantics and requires `canonical_user_id` in the previewed result before downstream cohort creation can proceed
+
+#### Definition of Done
+1. Copilot can reuse or start prediction jobs without introducing a second prediction orchestration API
+2. Prediction job artifacts are sufficient for deep-linking and async continuation in the Ask AI drawer
+3. Prompt-driven SQL-to-cohort creation fails closed when the preview does not expose `canonical_user_id`
+
 ---
 
 ## 4.2 Multi-Source Ingestion and Stitching (P0)

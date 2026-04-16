@@ -45,6 +45,107 @@ def _create_session(client: TestClient, headers: dict[str, str], *, title: str =
     return response.json()["session_state"]["session_id"]
 
 
+def _create_sendgrid_provider_connection(client: TestClient, headers: dict[str, str], *, name: str = "Agent SendGrid") -> str:
+    response = client.post(
+        "/api/v1/provider-connections",
+        headers=headers,
+        json={
+            "name": name,
+            "provider": "sendgrid",
+            "config": {
+                "api_key": "SG.test-key",
+                "from_email": "rewards@example.com",
+                "from_name": "Rewards Team",
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["config"]["api_key"] is None
+    assert payload["config"]["api_key_configured"] is True
+    return payload["provider_connection_id"]
+
+
+def _seed_completed_import_job(job_id: str, *, source_name: str = "Amplitude 1") -> None:
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        if repository.get_import_job(job_id) is None:
+            repository.create_import_job(
+                {
+                    "id": job_id,
+                    "source_name": source_name,
+                    "status": "completed",
+                    "spec": {
+                        "job_id": job_id,
+                        "source_name": source_name,
+                        "display_name": source_name,
+                    },
+                    "progress": {"current": 1, "total": 1, "pct": 100.0, "details": {}},
+                }
+            )
+
+
+def _seed_completed_prediction_job(
+    prediction_job_id: str,
+    *,
+    import_job_id: str = "imp_agentsource1",
+    source_name: str = "Amplitude 1",
+    prediction_mode: str = "local",
+    rows: list[dict] | None = None,
+) -> None:
+    _seed_completed_import_job(import_job_id, source_name=source_name)
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        if repository.get_prediction_job(prediction_job_id) is None:
+            repository.create_prediction_job(
+                {
+                    "id": prediction_job_id,
+                    "import_job_id": import_job_id,
+                    "status": "completed",
+                    "spec": {
+                        "import_job_id": import_job_id,
+                        "audience_scope": "source",
+                        "source_name": source_name,
+                        "prediction_mode": prediction_mode,
+                    },
+                    "progress": {
+                        "current": len(rows or []),
+                        "total": len(rows or []),
+                        "pct": 100.0,
+                        "details": {
+                            "prediction_mode": prediction_mode,
+                            "audience_scope": "source",
+                            "source_name": source_name,
+                            "history_scope": "tenant_merged",
+                            "stale": False,
+                            "stale_reason": "",
+                        },
+                    },
+                }
+            )
+    if rows:
+        get_shared_bigquery_service().append_prediction_results(prediction_job_id, rows)
+
+
+def _template_detail_payload(template_id: str, *, subject: str = "Come back for a reward") -> dict:
+    return {
+        "id": template_id,
+        "name": "Winback Reward",
+        "generation": "dynamic",
+        "updated_at": "2026-03-09T10:00:00Z",
+        "versions": [
+            {
+                "id": "ver_active",
+                "name": "Active Version",
+                "subject": subject,
+                "updated_at": "2026-03-09T10:00:00Z",
+                "active": 1,
+                "editor": "code",
+            }
+        ],
+    }
+
+
 def test_copilot_agent_create_session_returns_empty_ready_state(client):
     headers = _headers("analyst", actor_id="agent_session_reader")
     response = client.post(
@@ -374,3 +475,269 @@ def test_copilot_agent_blocks_write_for_analyst_and_scopes_sessions_by_project(c
     beta_headers = _headers("operator", actor_id="project_operator", project_id="beta")
     missing = client.get(f"/api/v1/copilot/agent/sessions/{alpha_session_id}", headers=beta_headers)
     assert missing.status_code == 404
+
+
+def test_copilot_agent_model_profiles_support_default_selection_and_provider_fallback(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+
+    gemini_profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Gemini Drafts",
+            "provider": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "config": {"api_key": "gemini-test-key"},
+            "is_default": True,
+        },
+    )
+    assert gemini_profile.status_code == 201, gemini_profile.text
+    gemini_payload = gemini_profile.json()
+    assert gemini_payload["config"]["api_key"] is None
+    assert gemini_payload["config"]["api_key_configured"] is True
+
+    anthropic_profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Anthropic Drafts",
+            "provider": "anthropic",
+            "model_name": "claude-3-7-sonnet-latest",
+            "config": {
+                "api_key": "anthropic-test-key",
+                "base_url": "https://api.anthropic.com",
+            },
+        },
+    )
+    assert anthropic_profile.status_code == 201, anthropic_profile.text
+    anthropic_payload = anthropic_profile.json()
+
+    listed = client.get("/api/v1/copilot/agent/model-profiles", headers=headers)
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    assert items[0]["model_profile_id"] == gemini_payload["model_profile_id"]
+    assert items[0]["is_default"] is True
+
+    default_session = client.post(
+        "/api/v1/copilot/agent/sessions",
+        headers=headers,
+        json={"title": "Default Model Session", "ui_context": {}},
+    )
+    assert default_session.status_code == 201
+    assert default_session.json()["session_state"]["model_profile_id"] == gemini_payload["model_profile_id"]
+    assert default_session.json()["session_state"]["effective_provider"] == "gemini"
+
+    selected_session = client.post(
+        "/api/v1/copilot/agent/sessions",
+        headers=headers,
+        json={
+            "title": "Anthropic Session",
+            "ui_context": {"active_module_id": "audience-engine", "active_page_id": "audience-engine"},
+            "model_profile_id": anthropic_payload["model_profile_id"],
+        },
+    )
+    assert selected_session.status_code == 201
+    session_id = selected_session.json()["session_state"]["session_id"]
+    assert selected_session.json()["session_state"]["effective_provider"] == "anthropic"
+    assert selected_session.json()["session_state"]["effective_model_name"] == "claude-3-7-sonnet-latest"
+
+    def _raise_requests(*args, **kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.application.copilot_agent.requests.post", _raise_requests)
+
+    fallback = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "How do I create a cohort from churn predictions?",
+            "ui_context": {"active_module_id": "audience-engine", "active_page_id": "audience-engine"},
+        },
+    )
+    assert fallback.status_code == 200
+    payload = fallback.json()
+    assert payload["session_state"]["effective_provider"] == "anthropic"
+    assert payload["assistant_message"]
+    assert payload["session_state"]["status"] == "active"
+
+
+def test_copilot_agent_draft_sql_blocks_when_preview_lacks_canonical_user_id(client, monkeypatch):
+    prediction_job_id = "pred_sqlblock1"
+    _seed_completed_prediction_job(
+        prediction_job_id,
+        rows=[
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_1",
+                "canonical_user_id": "u_1",
+                "email": "u1@example.com",
+                "churn_state": "active",
+                "predicted_churn_risk": "high",
+                "prediction_source": "local",
+                "suggested_action": "email",
+                "completed_at": "2026-03-09T10:00:00",
+            }
+        ],
+    )
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title="SQL Draft Guard Session")
+
+    monkeypatch.setattr(
+        "app.application.copilot_agent.ConfiguredCopilotAgentModel.draft_sql",
+        lambda self, prompt, *, session_state, ui_context, hint: {
+            "sql": f"SELECT email FROM prediction_results WHERE prediction_job_id = '{prediction_job_id}'",
+            "query_name": "invalid_query",
+            "cohort_name": "invalid_cohort",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": f"Draft SQL for the high-risk audience using prediction_job_id: {prediction_job_id}",
+            "ui_context": {},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["completed_actions"][0]["action_type"] == "draft_sql_from_prompt"
+    assert payload["completed_actions"][0]["status"] == "blocked"
+    assert payload["completed_actions"][0]["result"]["status_code"] == 409
+    assert "canonical_user_id" in payload["completed_actions"][0]["summary"]
+
+
+def test_copilot_agent_operator_flow_resumes_after_prediction_completion(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+    provider_connection_id = _create_sendgrid_provider_connection(client, headers, name="Agent Flow SendGrid")
+    _seed_completed_import_job("impagentsource1", source_name="Amplitude 1")
+
+    monkeypatch.setattr(
+        "app.application.predictions.PredictionService.start_job_async",
+        lambda self, job_id: self.get_job(job_id),
+    )
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.SendGridProviderService.list_dynamic_templates",
+        lambda self, provider_connection_id: [{"id": "tmpl_winback", "name": "Winback Template"}],
+    )
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.SendGridProviderService.get_template_summary",
+        lambda self, provider_connection_id, template_id: _template_detail_payload(template_id),
+    )
+
+    session_id = _create_session(client, headers, title="Operator Flow Session")
+    first_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "\n".join(
+                [
+                    "Run churn prediction for high-risk players, create a cohort, use SendGrid template tmpl_winback, and set up a draft workflow.",
+                    "source_name: Amplitude 1",
+                    f"provider_connection_id: {provider_connection_id}",
+                    "template_id: tmpl_winback",
+                    "campaign_name: agent_winback_campaign",
+                    "workflow_name: agent_winback_workflow",
+                    "cohort_name: agent_high_risk_cohort",
+                    "saved_query_name: agent_high_risk_query",
+                    "local model",
+                ]
+            ),
+            "ui_context": {},
+        },
+    )
+    assert first_turn.status_code == 200
+    first_payload = first_turn.json()
+    assert first_payload["session_state"]["status"] == "waiting_for_prediction"
+    assert first_payload["session_state"]["async_status"] == "waiting_for_prediction"
+    assert first_payload["completed_actions"][0]["action_type"] == "setup_operator_flow"
+    assert first_payload["completed_actions"][0]["status"] == "running"
+    prediction_job_id = first_payload["completed_actions"][0]["result"]["prediction_job"]["id"]
+    assert prediction_job_id
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.update_prediction_job(
+            prediction_job_id,
+            {
+                "status": "completed",
+                "progress": {
+                    "current": 1,
+                    "total": 1,
+                    "pct": 100.0,
+                    "details": {
+                        "prediction_mode": "local",
+                        "audience_scope": "source",
+                        "source_name": "Amplitude 1",
+                        "history_scope": "tenant_merged",
+                        "stale": False,
+                        "stale_reason": "",
+                    },
+                },
+            },
+        )
+    get_shared_bigquery_service().append_prediction_results(
+        prediction_job_id,
+        [
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_1",
+                "canonical_user_id": "u_1",
+                "email": "u1@example.com",
+                "churn_state": "active",
+                "predicted_churn_risk": "high",
+                "prediction_source": "local",
+                "suggested_action": "email",
+                "completed_at": "2026-03-09T10:00:00",
+            },
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_2",
+                "canonical_user_id": "u_2",
+                "email": "u2@example.com",
+                "churn_state": "active",
+                "predicted_churn_risk": "medium",
+                "prediction_source": "local",
+                "suggested_action": "wait",
+                "completed_at": "2026-03-09T10:00:00",
+            },
+        ],
+    )
+
+    session_status = client.get(f"/api/v1/copilot/agent/sessions/{session_id}", headers=headers)
+    assert session_status.status_code == 200
+    assert session_status.json()["session_state"]["status"] == "ready_to_resume"
+    assert session_status.json()["session_state"]["async_status"] == "ready_to_resume"
+    assert any(item.get("resume_ready") for item in session_status.json()["session_state"]["latest_artifacts"])
+
+    resumed = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={"message": "Continue", "ui_context": {}},
+    )
+    assert resumed.status_code == 200
+    resumed_payload = resumed.json()
+    assert resumed_payload["session_state"]["status"] == "active"
+    assert resumed_payload["completed_actions"][0]["action_type"] == "setup_operator_flow"
+    assert resumed_payload["completed_actions"][0]["status"] == "completed"
+
+    artifact_types = {item["resource_type"] for item in resumed_payload["artifacts"]}
+    assert {"prediction_job", "saved_query", "cohort", "email_campaign", "workflow"} <= artifact_types
+
+    cohort_artifact = next(item for item in resumed_payload["artifacts"] if item["resource_type"] == "cohort")
+    campaign_artifact = next(item for item in resumed_payload["artifacts"] if item["resource_type"] == "email_campaign")
+    workflow_artifact = next(item for item in resumed_payload["artifacts"] if item["resource_type"] == "workflow")
+
+    cohort_detail = client.get(f"/api/v1/cohorts/{cohort_artifact['resource_id']}", headers=headers)
+    assert cohort_detail.status_code == 200
+    assert cohort_detail.json()["status"] == "draft"
+
+    campaign_detail = client.get(f"/api/v1/email-campaigns/{campaign_artifact['resource_id']}", headers=headers)
+    assert campaign_detail.status_code == 200
+    assert campaign_detail.json()["status"] == "draft"
+    assert campaign_detail.json()["template_id"] == "tmpl_winback"
+
+    workflow_detail = client.get(f"/api/v1/workflows/{workflow_artifact['resource_id']}", headers=headers)
+    assert workflow_detail.status_code == 200
+    assert workflow_detail.json()["status"] == "draft"
+    assert workflow_detail.json()["definition"]["cohort_id"] == cohort_artifact["resource_id"]

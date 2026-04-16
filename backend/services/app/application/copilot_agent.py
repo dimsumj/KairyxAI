@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -9,9 +8,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Protocol
 from urllib.parse import quote
 
+import requests
 from fastapi import HTTPException
 
-from app.application.secret_refs import materialize_secret_refs
+from app.application.agent_model_profiles import AgentModelProfileService
+from app.application.email_campaigns import EmailCampaignService
+from app.application.sendgrid_provider import SendGridProviderService
+from app.application.braze_provider import BrazeProviderService
+from app.application.workflows import WorkflowService
+from app.application.predictions import PredictionService
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from gemini_client import GeminiClient
 
@@ -116,6 +121,52 @@ ACTION_REGISTRY: Dict[str, AgentActionSpec] = {
         permissions=("copilot.agent.run", "sql_workspace.queries.create"),
         risk_level="low",
     ),
+    "draft_sql_from_prompt": AgentActionSpec(
+        action_type="draft_sql_from_prompt",
+        title="Draft SQL from prompt",
+        permissions=("copilot.agent.run", "sql_workspace.preview"),
+        risk_level="low",
+    ),
+    "run_prediction": AgentActionSpec(
+        action_type="run_prediction",
+        title="Prepare prediction job",
+        permissions=("copilot.agent.run", "predictions.create", "predictions.run"),
+        risk_level="low",
+    ),
+    "list_provider_messaging_assets": AgentActionSpec(
+        action_type="list_provider_messaging_assets",
+        title="List provider messaging assets",
+        permissions=("copilot.agent.run", "provider_connections.read"),
+        risk_level="low",
+    ),
+    "setup_email_campaign": AgentActionSpec(
+        action_type="setup_email_campaign",
+        title="Create draft email campaign",
+        permissions=("copilot.agent.run", "provider_connections.read", "email_campaigns.write"),
+        risk_level="low",
+    ),
+    "setup_workflow": AgentActionSpec(
+        action_type="setup_workflow",
+        title="Create draft workflow",
+        permissions=("copilot.agent.run", "workflows.create"),
+        risk_level="low",
+    ),
+    "setup_operator_flow": AgentActionSpec(
+        action_type="setup_operator_flow",
+        title="Set up prediction-to-campaign draft flow",
+        permissions=(
+            "copilot.agent.run",
+            "predictions.create",
+            "predictions.run",
+            "sql_workspace.preview",
+            "sql_workspace.queries.create",
+            "cohorts.create",
+            "provider_connections.read",
+            "email_campaigns.write",
+            "workflows.create",
+        ),
+        risk_level="low",
+    ),
     "create_cohort_sql": AgentActionSpec(
         action_type="create_cohort_sql",
         title="Create SQL cohort draft",
@@ -205,11 +256,17 @@ class CopilotAgentModelAdapter(Protocol):
     def compose_message(self, payload: Dict[str, Any]) -> str:
         ...
 
+    def draft_sql(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
+        ...
 
-class GeminiCopilotAgentModel:
-    def __init__(self, repository):
-        self.repository = repository
-        self.client = self._build_gemini_client()
+
+class ConfiguredCopilotAgentModel:
+    def __init__(self, profile: Dict[str, Any] | None):
+        self.profile = dict(profile or {})
+        self.provider = str(self.profile.get("provider") or "deterministic").strip().lower() or "deterministic"
+        self.model_name = str(self.profile.get("model_name") or "").strip()
+        self.config = dict(self.profile.get("config") or {})
+        self.gemini_client = self._build_gemini_client()
 
     def parse_message(
         self,
@@ -219,13 +276,13 @@ class GeminiCopilotAgentModel:
         ui_context: Dict[str, Any],
     ) -> Dict[str, Any]:
         heuristic = deterministic_agent_parse(message, ui_context=ui_context)
-        if self.client is None:
+        if not self._is_ai_enabled():
             return heuristic
         prompt = {
             "task": "Classify the operator request and extract structured slots for the Kytrics/Kairyx control plane.",
             "instructions": [
                 "Return JSON only.",
-                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
+                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, setup_operator_flow, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
                 "Fill slots only when explicitly present or strongly implied.",
                 "Do not invent SQL, identifiers, or credentials.",
             ],
@@ -239,7 +296,7 @@ class GeminiCopilotAgentModel:
             "fallback": heuristic,
         }
         try:
-            raw = self.client.get_ai_response(json.dumps(prompt))
+            raw = self._request_text(prompt)
             parsed = extract_json_object(raw)
             if not isinstance(parsed, dict):
                 return heuristic
@@ -256,7 +313,7 @@ class GeminiCopilotAgentModel:
 
     def compose_message(self, payload: Dict[str, Any]) -> str:
         fallback = deterministic_agent_message(payload)
-        if self.client is None:
+        if not self._is_ai_enabled():
             return fallback
         prompt = {
             "task": "Write a concise operator-facing response for a constrained control-plane agent.",
@@ -271,40 +328,141 @@ class GeminiCopilotAgentModel:
             "fallback": {"assistant_message": fallback},
         }
         try:
-            raw = self.client.get_ai_response(json.dumps(prompt))
+            raw = self._request_text(prompt)
             parsed = extract_json_object(raw)
             message = str(parsed.get("assistant_message") or "").strip()
             return message or fallback
         except Exception:
             return fallback
 
+    def draft_sql(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        fallback = heuristic_sql_from_prompt(prompt, hint=hint)
+        if not self._is_ai_enabled():
+            return fallback
+        payload = {
+            "task": "Draft a safe SQL audience query for the Kairyx control plane.",
+            "instructions": [
+                "Return JSON only.",
+                "Use only the `prediction_results` table unless hint.override_table says otherwise.",
+                "Always include `canonical_user_id` in the SELECT projection.",
+                "Include `email` when it is available and relevant.",
+                "When prediction_job_id is provided, filter on it.",
+                "Do not use destructive SQL.",
+            ],
+            "response_contract": {
+                "sql": "string",
+                "query_name": "string",
+                "cohort_name": "string",
+            },
+            "session_state": {
+                "status": session_state.get("status"),
+                "current_intent": session_state.get("current_intent"),
+            },
+            "ui_context": ui_context,
+            "hint": hint,
+            "message": prompt,
+            "fallback": fallback,
+        }
+        try:
+            raw = self._request_text(payload)
+            parsed = extract_json_object(raw)
+            if not isinstance(parsed, dict):
+                return fallback
+            merged = dict(fallback)
+            for key in ("sql", "query_name", "cohort_name"):
+                value = str(parsed.get(key) or "").strip()
+                if value:
+                    merged[key] = value
+            return merged
+        except Exception:
+            return fallback
+
+    def _is_ai_enabled(self) -> bool:
+        if self.provider == "gemini":
+            return self.gemini_client is not None
+        if self.provider in {"openai", "anthropic"}:
+            return bool(str(self.config.get("api_key") or "").strip()) and bool(self.model_name)
+        return False
+
     def _build_gemini_client(self) -> GeminiClient | None:
-        google_connectors = [
-            {**connector, "config": materialize_secret_refs(dict(connector.get("config") or {}))}
-            for connector in self.repository.list_connectors()
-            if str(connector.get("type") or "").lower() == "google"
-        ]
-        google_connectors = [
-            connector
-            for connector in google_connectors
-            if str((connector.get("config") or {}).get("api_key") or "").strip()
-        ]
-        if google_connectors:
-            connector = max(google_connectors, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
-            config = connector.get("config") or {}
-            api_key = str(config.get("api_key") or "").strip()
-            model_name = str(config.get("model_name") or "").strip() or None
-            if api_key:
-                try:
-                    return GeminiClient(api_key=api_key, model_name=model_name, circuit_namespace="copilot_agent")
-                except Exception:
-                    return None
-        if str(os.getenv("GOOGLE_API_KEY") or "").strip():
-            try:
-                return GeminiClient(circuit_namespace="copilot_agent")
-            except Exception:
-                return None
-        return None
+        if self.provider != "gemini":
+            return None
+        api_key = str(self.config.get("api_key") or "").strip()
+        if not api_key:
+            return None
+        try:
+            return GeminiClient(
+                api_key=api_key,
+                model_name=self.model_name or None,
+                circuit_namespace="copilot_agent",
+            )
+        except Exception:
+            return None
+
+    def _request_text(self, payload: Dict[str, Any]) -> str:
+        if self.provider == "gemini" and self.gemini_client is not None:
+            return self.gemini_client.get_ai_response(json.dumps(payload))
+        prompt = json.dumps(payload)
+        if self.provider == "openai":
+            return self._call_openai(prompt)
+        if self.provider == "anthropic":
+            return self._call_anthropic(prompt)
+        return ""
+
+    def _call_openai(self, prompt: str) -> str:
+        api_key = str(self.config.get("api_key") or "").strip()
+        base_url = str(self.config.get("base_url") or "https://api.openai.com").strip().rstrip("/")
+        response = requests.post(
+            f"{base_url}/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": "Return JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return str((((payload.get("choices") or [{}])[0].get("message") or {}).get("content")) or "")
+
+    def _call_anthropic(self, prompt: str) -> str:
+        api_key = str(self.config.get("api_key") or "").strip()
+        base_url = str(self.config.get("base_url") or "https://api.anthropic.com").strip().rstrip("/")
+        response = requests.post(
+            f"{base_url}/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "max_tokens": 1200,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        content = payload.get("content") or []
+        if not content:
+            return ""
+        first_block = content[0] or {}
+        return str(first_block.get("text") or "")
 
 
 def extract_json_object(raw_response: Any) -> Any:
@@ -362,6 +520,30 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         return {"intent": "unsupported", "slots": slots, "notes": ["Destructive delete flows are out of scope for the v1 agent."]}
     if is_help_support_request:
         return {"intent": "help_support", "slots": slots}
+    if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign", "workflow")) and any(
+        token in lowered for token in ("high risk", "churn", "prediction", "cohort", "audience")
+    ):
+        slots.setdefault("wants_prediction", True)
+        slots.setdefault("wants_cohort", True)
+        if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign")):
+            slots["wants_email_campaign"] = True
+        if "workflow" in lowered:
+            slots["wants_workflow"] = True
+        return {"intent": "setup_operator_flow", "slots": slots}
+    if any(token in lowered for token in ("run prediction", "predict churn", "prediction", "score users")) and any(
+        token in lowered for token in ("run", "start", "create", "reuse", "refresh", "fresh", "rerun")
+    ):
+        return {"intent": "run_prediction", "slots": slots}
+    if any(token in lowered for token in ("write sql", "draft sql", "generate sql", "query for", "build sql")):
+        return {"intent": "draft_sql_from_prompt", "slots": slots}
+    if any(token in lowered for token in ("email campaign", "sendgrid", "braze", "template")) and any(
+        token in lowered for token in ("set up", "setup", "create", "configure", "draft")
+    ):
+        return {"intent": "setup_email_campaign", "slots": slots}
+    if "workflow" in lowered and any(token in lowered for token in ("set up", "setup", "create", "configure", "draft")):
+        return {"intent": "setup_workflow", "slots": slots}
+    if any(token in lowered for token in ("list templates", "list campaigns", "messaging assets", "provider assets", "templates available")):
+        return {"intent": "list_provider_messaging_assets", "slots": slots}
     if re.search(r"\bactivate\b", lowered) and "cohort" in lowered:
         slots.setdefault("cohort_id", extract_resource_id(normalized, prefix="cohort_") or selected_cohort_id or None)
         return {"intent": "activate_cohort", "slots": slots}
@@ -428,6 +610,11 @@ def deterministic_agent_message(payload: Dict[str, Any]) -> str:
     support_answer = str(payload.get("support_answer") or "").strip()
     if support_answer:
         return support_answer
+    async_status = str(payload.get("async_status") or "").strip().lower()
+    if async_status == "waiting_for_prediction":
+        return "I started the prediction job. Continue once it finishes and I will build the remaining draft artifacts."
+    if async_status == "ready_to_resume":
+        return "The prediction has completed. Continue and I will build the saved query, cohort, and draft delivery assets."
     clarifications = payload.get("clarifications") or []
     completed_actions = payload.get("completed_actions") or []
     pending_confirmations = payload.get("pending_confirmations") or []
@@ -461,9 +648,21 @@ class CopilotAgentService:
         self.provider_connections = ProviderConnectionService(repository)
         self.sql_workspace = SqlWorkspaceService(repository, settings, self.bigquery_service)
         self.health_monitor = HealthMonitorService(repository, self.bigquery_service)
-        self.model_adapter: CopilotAgentModelAdapter = GeminiCopilotAgentModel(repository)
+        self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
+        self.workflows = WorkflowService(repository)
+        self.predictions = PredictionService(repository, settings, self.bigquery_service)
+        self.sendgrid_provider = SendGridProviderService(repository)
+        self.braze_provider = BrazeProviderService(repository)
+        self.model_profiles = AgentModelProfileService(repository)
 
-    def create_session(self, *, title: str = "", ui_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def create_session(
+        self,
+        *,
+        title: str = "",
+        model_profile_id: str | None = None,
+        ui_context: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        resolved_model = self._resolve_session_model(model_profile_id)
         session_id = f"cpa_{uuid.uuid4().hex[:20]}"
         payload = {
             "session_id": session_id,
@@ -477,6 +676,14 @@ class CopilotAgentService:
             "latest_clarifications": [],
             "draft_slots": {},
             "pending_confirmation_count": 0,
+            "model_profile_id": resolved_model.get("model_profile_id"),
+            "effective_provider": resolved_model.get("effective_provider", "deterministic"),
+            "effective_model_name": resolved_model.get("effective_model_name", ""),
+            "model_selection_source": resolved_model.get("model_selection_source", "deterministic_fallback"),
+            "async_status": "",
+            "waiting_for_action_type": None,
+            "waiting_for_resource_id": None,
+            "pending_flow": None,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         }
@@ -489,7 +696,7 @@ class CopilotAgentService:
         }
 
     def get_session(self, session_id: str) -> Dict[str, Any]:
-        payload = self._get_session_payload(session_id)
+        payload = self._decorate_session_async_state(self._get_session_payload(session_id))
         turns = self.list_turns(session_id)["items"]
         return {
             "session_state": self._session_state(payload),
@@ -515,12 +722,24 @@ class CopilotAgentService:
         ui_context: Dict[str, Any] | None,
         context: GovernanceContext,
     ) -> Dict[str, Any]:
-        session = self._get_session_payload(session_id)
+        session = self._decorate_session_async_state(self._get_session_payload(session_id))
         merged_ui_context = dict(session.get("ui_context") or {})
         merged_ui_context.update(dict(ui_context or {}))
+        model_adapter = self._model_adapter_for_session(session)
+
+        resumed = self._maybe_resume_pending_flow(
+            session,
+            message=message,
+            ui_context=merged_ui_context,
+            context=context,
+            model_adapter=model_adapter,
+        )
+        if resumed is not None:
+            return resumed
+
         parsed = self._normalize_parsed_request(
             session,
-            self.model_adapter.parse_message(message, session_state=session, ui_context=merged_ui_context),
+            model_adapter.parse_message(message, session_state=session, ui_context=merged_ui_context),
             message=message,
         )
         plan = self._build_plan(message=message, parsed=parsed, ui_context=merged_ui_context, context=context)
@@ -529,6 +748,7 @@ class CopilotAgentService:
         pending_confirmations: List[Dict[str, Any]] = []
         artifacts: List[Dict[str, Any]] = []
         session_status = "active"
+        execution_result: Dict[str, Any] = {}
 
         if plan["clarifications"]:
             session_status = "awaiting_input"
@@ -537,6 +757,9 @@ class CopilotAgentService:
                 session_id=session_id,
                 plan=plan,
                 context=context,
+                session=session,
+                ui_context=merged_ui_context,
+                model_adapter=model_adapter,
             )
             completed_actions = execution_result["completed_actions"]
             pending_confirmations = execution_result["pending_confirmations"]
@@ -556,7 +779,12 @@ class CopilotAgentService:
         if assistant_message:
             response_payload["assistant_message"] = assistant_message
         else:
-            response_payload["assistant_message"] = self.model_adapter.compose_message(response_payload)
+            response_payload["assistant_message"] = model_adapter.compose_message(
+                {
+                    **response_payload,
+                    "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
+                }
+            )
 
         turn_payload = {
             "turn_id": f"cpat_{uuid.uuid4().hex[:20]}",
@@ -587,6 +815,10 @@ class CopilotAgentService:
                 "latest_clarifications": plan["clarifications"],
                 "draft_slots": dict(plan["slots"] or {}) if plan["clarifications"] else {},
                 "pending_confirmation_count": len(pending_confirmations),
+                "async_status": execution_result.get("async_status", session.get("async_status") or ""),
+                "waiting_for_action_type": execution_result.get("waiting_for_action_type", session.get("waiting_for_action_type")),
+                "waiting_for_resource_id": execution_result.get("waiting_for_resource_id", session.get("waiting_for_resource_id")),
+                "pending_flow": execution_result.get("pending_flow", session.get("pending_flow")),
                 "updated_at": datetime.utcnow().isoformat(),
             }
         )
@@ -627,7 +859,14 @@ class CopilotAgentService:
         confirmation_payload = dict(confirmation_record.get("payload") or {})
         ensure_permissions_for_action(action_payload["action_type"], context)
 
-        result = self._execute_action(action_payload["action_type"], action_payload.get("parameters") or {}, context=context)
+        result = self._execute_action(
+            action_payload["action_type"],
+            action_payload.get("parameters") or {},
+            context=context,
+            session=session,
+            ui_context=dict(session.get("ui_context") or {}),
+            model_adapter=self._model_adapter_for_session(session),
+        )
         artifacts = result.get("artifacts") or []
         action_payload.update(
             {
@@ -662,7 +901,8 @@ class CopilotAgentService:
         )
         self.repository.upsert_resource(CONFIRMATION_RESOURCE_TYPE, confirmation_id, status="confirmed", name=confirmation_payload.get("title"), payload=confirmation_payload)
 
-        assistant_message = self.model_adapter.compose_message(
+        model_adapter = self._model_adapter_for_session(session)
+        assistant_message = model_adapter.compose_message(
             {
                 "completed_actions": [action_payload],
                 "pending_confirmations": [],
@@ -696,6 +936,10 @@ class CopilotAgentService:
                 "latest_clarifications": [],
                 "draft_slots": {},
                 "pending_confirmation_count": len(self._pending_confirmation_actions(session_id)),
+                "async_status": "",
+                "waiting_for_action_type": None,
+                "waiting_for_resource_id": None,
+                "pending_flow": None,
                 "updated_at": datetime.utcnow().isoformat(),
             }
         )
@@ -760,6 +1004,30 @@ class CopilotAgentService:
             clarifications.extend(self._experiment_clarifications(slots, ui_context=ui_context))
             if not clarifications:
                 actions.append(self._experiment_action(slots, ui_context=ui_context))
+        elif intent == "run_prediction":
+            clarifications.extend(self._prediction_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._prediction_action(slots, ui_context=ui_context))
+        elif intent == "draft_sql_from_prompt":
+            clarifications.extend(self._sql_draft_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._sql_draft_action(slots, ui_context=ui_context))
+        elif intent == "list_provider_messaging_assets":
+            clarifications.extend(self._provider_asset_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._provider_asset_action(slots, ui_context=ui_context))
+        elif intent == "setup_email_campaign":
+            clarifications.extend(self._email_campaign_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._email_campaign_action(slots, ui_context=ui_context))
+        elif intent == "setup_workflow":
+            clarifications.extend(self._workflow_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._workflow_action(slots, ui_context=ui_context))
+        elif intent == "setup_operator_flow":
+            clarifications.extend(self._operator_flow_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._operator_flow_action(slots, ui_context=ui_context))
         elif intent in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
             cohort_id = str(slots.get("cohort_id") or "").strip()
             if not cohort_id:
@@ -1060,6 +1328,284 @@ class CopilotAgentService:
             },
         }
 
+    def _prediction_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications: List[Dict[str, Any]] = []
+        target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        if target.get("prediction_job_id"):
+            return clarifications
+        if target.get("import_job_id") or target.get("source_name"):
+            return clarifications
+        source_options = self._prediction_source_options()
+        clarifications.append(
+            {
+                "key": "source_name",
+                "label": "Prediction Source",
+                "question": "Which source should I use for the churn prediction audience?",
+                "required": True,
+                "input_type": "choice" if source_options else "text",
+                "options": source_options,
+            }
+        )
+        return clarifications
+
+    def _prediction_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        prediction_mode = str(
+            slots.get("prediction_mode")
+            or ui_context.get("selected_prediction_mode")
+            or "local"
+        ).strip().lower() or "local"
+        return {
+            "action_type": "run_prediction",
+            "title": ACTION_REGISTRY["run_prediction"].title,
+            "parameters": {
+                **target,
+                "prediction_mode": prediction_mode,
+                "force_prediction_refresh": bool(slots.get("force_prediction_refresh")),
+                "source_message": str(slots.get("source_message") or ""),
+            },
+        }
+
+    def _sql_draft_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        if target.get("prediction_job_id"):
+            return []
+        return self._prediction_clarifications(slots, ui_context=ui_context)
+
+    def _sql_draft_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        return {
+            "action_type": "draft_sql_from_prompt",
+            "title": ACTION_REGISTRY["draft_sql_from_prompt"].title,
+            "parameters": {
+                **target,
+                "source_message": str(slots.get("source_message") or ""),
+                "include_risks": list(slots.get("include_risks") or ["high"]),
+                "query_name": str(slots.get("saved_query_name") or ""),
+                "cohort_name": str(slots.get("cohort_name") or slots.get("name") or ""),
+            },
+        }
+
+    def _provider_asset_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications: List[Dict[str, Any]] = []
+        provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+        if provider_connection is None:
+            options = [str(item.get("provider_connection_id") or "") for item in self.provider_connections.list_connections()]
+            clarifications.append(
+                {
+                    "key": "provider_connection_id",
+                    "label": "Provider Connection",
+                    "question": "Which SendGrid or Braze provider connection should I use?",
+                    "required": True,
+                    "input_type": "choice" if options else "text",
+                    "options": options,
+                }
+            )
+        return clarifications
+
+    def _provider_asset_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+        return {
+            "action_type": "list_provider_messaging_assets",
+            "title": ACTION_REGISTRY["list_provider_messaging_assets"].title,
+            "parameters": {
+                "provider_connection_id": str((provider_connection or {}).get("provider_connection_id") or slots.get("provider_connection_id") or ""),
+                "template_hint": str(slots.get("template_hint") or slots.get("template_id") or ""),
+            },
+        }
+
+    def _email_campaign_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications = self._provider_asset_clarifications(slots, ui_context=ui_context)
+        provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+        if provider_connection is not None and not str(slots.get("template_id") or "").strip():
+            options = [str(item.get("asset_id") or item.get("id") or "") for item in self._list_provider_assets(str(provider_connection.get("provider_connection_id") or ""))]
+            clarifications.append(
+                {
+                    "key": "template_id",
+                    "label": "Template / Campaign Asset",
+                    "question": "Which existing provider messaging asset should I use for the draft email campaign?",
+                    "required": True,
+                    "input_type": "choice" if options else "text",
+                    "options": options,
+                }
+            )
+        audience_cohort_id = str(slots.get("cohort_id") or ui_context.get("selected_cohort_id") or "").strip()
+        prediction_target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        if not audience_cohort_id and not prediction_target.get("prediction_job_id"):
+            clarifications.append(
+                {
+                    "key": "cohort_id",
+                    "label": "Audience Cohort",
+                    "question": "Which cohort should the draft email campaign target?",
+                    "required": True,
+                    "input_type": "text",
+                }
+            )
+        return clarifications
+
+    def _email_campaign_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+        return {
+            "action_type": "setup_email_campaign",
+            "title": ACTION_REGISTRY["setup_email_campaign"].title,
+            "parameters": {
+                "provider_connection_id": str((provider_connection or {}).get("provider_connection_id") or slots.get("provider_connection_id") or ""),
+                "template_id": str(slots.get("template_id") or ""),
+                "cohort_id": str(slots.get("cohort_id") or ui_context.get("selected_cohort_id") or ""),
+                "prediction_job_id": str(slots.get("prediction_job_id") or ""),
+                "campaign_name": str(slots.get("campaign_name") or slots.get("name") or ""),
+                "schedule_at": slots.get("schedule_at"),
+                "include_risks": list(slots.get("include_risks") or ["high"]),
+            },
+        }
+
+    def _workflow_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        cohort_id = str(slots.get("cohort_id") or ui_context.get("selected_cohort_id") or "").strip()
+        if cohort_id:
+            return []
+        return [
+            {
+                "key": "cohort_id",
+                "label": "Audience Cohort",
+                "question": "Which cohort should the workflow draft target?",
+                "required": True,
+                "input_type": "text",
+            }
+        ]
+
+    def _workflow_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "action_type": "setup_workflow",
+            "title": ACTION_REGISTRY["setup_workflow"].title,
+            "parameters": {
+                "cohort_id": str(slots.get("cohort_id") or ui_context.get("selected_cohort_id") or ""),
+                "workflow_name": str(slots.get("workflow_name") or slots.get("name") or ""),
+                "email_campaign_id": str(slots.get("email_campaign_id") or ""),
+                "experiment_id": str(slots.get("experiment_id") or ui_context.get("current_experiment_id") or ""),
+            },
+        }
+
+    def _operator_flow_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications = self._prediction_clarifications(slots, ui_context=ui_context)
+        wants_email_campaign = bool(slots.get("wants_email_campaign")) or bool(slots.get("wants_workflow"))
+        if wants_email_campaign:
+            clarifications.extend(self._provider_asset_clarifications(slots, ui_context=ui_context))
+            provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+            if provider_connection is not None and not str(slots.get("template_id") or "").strip():
+                options = [str(item.get("asset_id") or item.get("id") or "") for item in self._list_provider_assets(str(provider_connection.get("provider_connection_id") or ""))]
+                clarifications.append(
+                    {
+                        "key": "template_id",
+                        "label": "Template / Campaign Asset",
+                        "question": "Which existing provider messaging asset should I use for the campaign draft?",
+                        "required": True,
+                        "input_type": "choice" if options else "text",
+                        "options": options,
+                    }
+                )
+        return dedupe_clarifications(clarifications)
+
+    def _operator_flow_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection = self._resolve_provider_connection_candidate(slots, ui_context=ui_context)
+        target = self._prediction_target_from_slots(slots, ui_context=ui_context)
+        return {
+            "action_type": "setup_operator_flow",
+            "title": ACTION_REGISTRY["setup_operator_flow"].title,
+            "parameters": {
+                **target,
+                "prediction_mode": str(slots.get("prediction_mode") or ui_context.get("selected_prediction_mode") or "local").strip().lower() or "local",
+                "force_prediction_refresh": bool(slots.get("force_prediction_refresh")),
+                "include_risks": list(slots.get("include_risks") or ["high"]),
+                "campaign_name": str(slots.get("campaign_name") or ""),
+                "workflow_name": str(slots.get("workflow_name") or ""),
+                "cohort_name": str(slots.get("cohort_name") or slots.get("name") or ""),
+                "saved_query_name": str(slots.get("saved_query_name") or ""),
+                "provider_connection_id": str((provider_connection or {}).get("provider_connection_id") or slots.get("provider_connection_id") or ""),
+                "template_id": str(slots.get("template_id") or ""),
+                "source_message": str(slots.get("source_message") or ""),
+                "wants_prediction": True,
+                "wants_cohort": True,
+                "wants_email_campaign": bool(slots.get("wants_email_campaign")),
+                "wants_workflow": bool(slots.get("wants_workflow")),
+            },
+        }
+
+    def _prediction_target_from_slots(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        prediction_job_id = str(slots.get("prediction_job_id") or "").strip()
+        if prediction_job_id:
+            return {"prediction_job_id": prediction_job_id}
+        audience_scope = str(
+            slots.get("audience_scope")
+            or ui_context.get("selected_prediction_audience_scope")
+            or ("source" if ui_context.get("selected_prediction_audience_key") else "")
+            or ("source" if slots.get("source_name") else "import")
+        ).strip().lower()
+        import_job_id = str(slots.get("import_job_id") or ui_context.get("selected_import_job_id") or "").strip()
+        source_name = str(slots.get("source_name") or "").strip()
+        selected_prediction_key = str(ui_context.get("selected_prediction_audience_key") or "").strip()
+        if not source_name and audience_scope == "source":
+            source_name = selected_prediction_key
+        if audience_scope == "source":
+            return {"audience_scope": "source", "source_name": source_name}
+        if import_job_id:
+            return {"audience_scope": "import", "import_job_id": import_job_id}
+        if source_name:
+            return {"audience_scope": "source", "source_name": source_name}
+        return {}
+
+    def _prediction_source_options(self) -> List[str]:
+        options = sorted(
+            {
+                str(((job.get("spec") or {}).get("source_name") or "")).strip()
+                for job in self.repository.list_import_jobs()
+                if str(job.get("status") or "").lower() == "completed"
+                and str(((job.get("spec") or {}).get("source_name") or "")).strip()
+            }
+        )
+        return options
+
+    def _resolve_provider_connection_candidate(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any] | None:
+        requested_id = str(slots.get("provider_connection_id") or ui_context.get("selected_email_provider_connection_id") or "").strip()
+        if requested_id:
+            return self.provider_connections.get_connection(requested_id)
+        requested_provider = str(
+            slots.get("messaging_provider")
+            or ui_context.get("selected_email_provider_type")
+            or ""
+        ).strip().lower()
+        connections = [
+            item
+            for item in self.provider_connections.list_connections()
+            if str(item.get("status") or "").lower() == "active"
+            and (not requested_provider or str(item.get("provider") or "").lower() == requested_provider)
+        ]
+        if len(connections) == 1:
+            return connections[0]
+        return None
+
+    def _list_provider_assets(self, provider_connection_id: str) -> List[Dict[str, Any]]:
+        connection = self.provider_connections.get_connection(provider_connection_id)
+        if connection is None:
+            return []
+        provider = str(connection.get("provider") or "").strip().lower()
+        if provider == "sendgrid":
+            items = self.sendgrid_provider.list_dynamic_templates(provider_connection_id)
+        elif provider == "braze":
+            items = self.braze_provider.list_api_campaigns(provider_connection_id)
+        else:
+            return []
+        normalized: List[Dict[str, Any]] = []
+        for item in items:
+            normalized.append(
+                {
+                    "asset_id": str(item.get("id") or item.get("template_id") or item.get("campaign_id") or ""),
+                    "label": str(item.get("name") or item.get("title") or item.get("subject") or item.get("id") or ""),
+                    "provider": provider,
+                    "raw": item,
+                }
+            )
+        return normalized
+
     def _build_execution_preview(
         self,
         intent: str,
@@ -1104,11 +1650,24 @@ class CopilotAgentService:
             "steps": steps,
         }
 
-    def _execute_plan(self, *, session_id: str, plan: Dict[str, Any], context: GovernanceContext) -> Dict[str, Any]:
+    def _execute_plan(
+        self,
+        *,
+        session_id: str,
+        plan: Dict[str, Any],
+        context: GovernanceContext,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
         completed_actions: List[Dict[str, Any]] = []
         pending_confirmations: List[Dict[str, Any]] = []
         artifacts: List[Dict[str, Any]] = []
         session_status = "active"
+        async_status = ""
+        waiting_for_action_type = None
+        waiting_for_resource_id = None
+        pending_flow = None
         for planned_action in plan["actions"]:
             action_type = str(planned_action["action_type"])
             parameters = dict(planned_action.get("parameters") or {})
@@ -1121,17 +1680,29 @@ class CopilotAgentService:
                 continue
             try:
                 ensure_permissions_for_action(action_type, context)
-                result = self._execute_action(action_type, parameters, context=context)
+                result = self._execute_action(
+                    action_type,
+                    parameters,
+                    context=context,
+                    session=session,
+                    ui_context=ui_context,
+                    model_adapter=model_adapter,
+                )
+                next_status = "completed"
+                if bool(result.get("is_async")):
+                    next_status = str(result.get("status") or "running")
                 action_payload.update(
                     {
-                        "status": "completed",
+                        "status": next_status,
                         "result": result.get("result") or {},
                         "summary": result.get("summary") or deterministic_action_summary(action_type, result.get("result") or {}),
                         "artifacts": result.get("artifacts") or [],
+                        "is_async": bool(result.get("is_async")),
+                        "status_detail": str(result.get("status_detail") or ""),
                         "updated_at": datetime.utcnow().isoformat(),
                     }
                 )
-                self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_payload["action_id"], status="completed", name=action_payload["title"], payload=action_payload)
+                self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_payload["action_id"], status=next_status, name=action_payload["title"], payload=action_payload)
                 self.repository.record_action(
                     "copilot_agent_action_completed",
                     ACTION_RESOURCE_TYPE,
@@ -1145,6 +1716,15 @@ class CopilotAgentService:
                 )
                 completed_actions.append(action_payload)
                 artifacts.extend(action_payload["artifacts"])
+                if bool(result.get("is_async")):
+                    session_status = str(result.get("session_status") or "waiting_for_prediction")
+                    async_status = str(result.get("async_status") or session_status)
+                    waiting_for_action_type = action_type
+                    waiting_for_resource_id = str(result.get("waiting_for_resource_id") or "")
+                    pending_flow = result.get("pending_flow")
+                    if isinstance(pending_flow, dict) and not str(pending_flow.get("action_id") or "").strip():
+                        pending_flow["action_id"] = action_payload["action_id"]
+                    break
             except HTTPException as exc:
                 action_payload.update(
                     {
@@ -1176,6 +1756,10 @@ class CopilotAgentService:
             "pending_confirmations": pending_confirmations,
             "artifacts": dedupe_artifacts(artifacts),
             "session_status": session_status,
+            "async_status": async_status,
+            "waiting_for_action_type": waiting_for_action_type,
+            "waiting_for_resource_id": waiting_for_resource_id,
+            "pending_flow": pending_flow,
         }
 
     def _create_action_run(self, session_id: str, action_type: str, title: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -1194,6 +1778,8 @@ class CopilotAgentService:
             "summary": "",
             "artifacts": [],
             "confirmation_id": None,
+            "is_async": False,
+            "status_detail": "",
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         }
@@ -1218,9 +1804,36 @@ class CopilotAgentService:
         self.repository.record_action("copilot_agent_action_prepared", ACTION_RESOURCE_TYPE, action_id, {"action_type": action_type, "parameters": parameters, "requires_confirmation": spec.requires_confirmation})
         return payload
 
-    def _execute_action(self, action_type: str, parameters: Dict[str, Any], *, context: GovernanceContext) -> Dict[str, Any]:
+    def _execute_action(
+        self,
+        action_type: str,
+        parameters: Dict[str, Any],
+        *,
+        context: GovernanceContext,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
         if action_type == "summarize_dashboard":
             return self._execute_dashboard_summary(parameters)
+        if action_type == "run_prediction":
+            return self._execute_prediction_action(parameters)
+        if action_type == "draft_sql_from_prompt":
+            return self._execute_sql_draft_action(parameters, session=session, ui_context=ui_context, model_adapter=model_adapter)
+        if action_type == "list_provider_messaging_assets":
+            return self._execute_list_provider_assets_action(parameters)
+        if action_type == "setup_email_campaign":
+            return self._execute_email_campaign_action(parameters)
+        if action_type == "setup_workflow":
+            return self._execute_workflow_action(parameters)
+        if action_type == "setup_operator_flow":
+            return self._execute_operator_flow(
+                parameters,
+                session=session,
+                ui_context=ui_context,
+                context=context,
+                model_adapter=model_adapter,
+            )
         if action_type == "upsert_connector":
             connector = self.connectors.create_connector(parameters["name"], parameters["connector_type"], parameters["config"])
             return {
@@ -1391,6 +2004,573 @@ class CopilotAgentService:
             }
         raise ValueError(f"Unsupported agent action '{action_type}'.")
 
+    def _execute_prediction_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        prediction_job_id = str(parameters.get("prediction_job_id") or "").strip()
+        if prediction_job_id:
+            prediction_job = self.predictions.get_job(prediction_job_id)
+            if prediction_job is None:
+                raise HTTPException(status_code=404, detail=f"Prediction job '{prediction_job_id}' not found.")
+            return {
+                "summary": f"Using prediction job `{prediction_job_id}`.",
+                "result": {"prediction_job": prediction_job, "reused": True},
+                "artifacts": [artifact_for_prediction_job(prediction_job)],
+            }
+
+        reusable_job = None
+        if not bool(parameters.get("force_prediction_refresh")):
+            reusable_job = self._find_reusable_prediction_job(parameters)
+        if reusable_job is not None:
+            return {
+                "summary": f"Reused completed prediction job `{reusable_job['id']}`.",
+                "result": {"prediction_job": reusable_job, "reused": True},
+                "artifacts": [artifact_for_prediction_job(reusable_job)],
+            }
+
+        prediction_job = self.predictions.create_job(
+            import_job_id=parameters.get("import_job_id"),
+            source_name=parameters.get("source_name"),
+            audience_scope=parameters.get("audience_scope"),
+            prediction_mode=str(parameters.get("prediction_mode") or "local"),
+        )
+        self.predictions.start_job_async(prediction_job["id"])
+        running_job = self.predictions.get_job(prediction_job["id"]) or prediction_job
+        return {
+            "summary": f"Started prediction job `{running_job['id']}` in the background.",
+            "result": {"prediction_job": running_job, "reused": False},
+            "artifacts": [
+                artifact_for_prediction_job(
+                    running_job,
+                    resume_message="Continue with the prediction results.",
+                )
+            ],
+            "is_async": True,
+            "status": "running",
+            "status_detail": "Prediction is running in the background.",
+            "session_status": "waiting_for_prediction",
+            "async_status": "waiting_for_prediction",
+            "waiting_for_resource_id": running_job["id"],
+        }
+
+    def _execute_sql_draft_action(
+        self,
+        parameters: Dict[str, Any],
+        *,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        prediction_job = self._resolve_prediction_job_for_parameters(parameters)
+        if prediction_job is None:
+            raise HTTPException(status_code=409, detail="A completed prediction job is required before drafting SQL from prompt.")
+        drafted = self._draft_prediction_sql(
+            source_message=str(parameters.get("source_message") or ""),
+            prediction_job=prediction_job,
+            include_risks=list(parameters.get("include_risks") or ["high"]),
+            session=session,
+            ui_context=ui_context,
+            model_adapter=model_adapter,
+            query_name=str(parameters.get("query_name") or ""),
+            cohort_name=str(parameters.get("cohort_name") or ""),
+        )
+        preview = self.sql_workspace.preview(drafted["sql"], limit=20, timeout_seconds=30)
+        validate_prediction_preview(preview)
+        return {
+            "summary": f"Drafted and previewed SQL for prediction job `{prediction_job['id']}` with {int(preview.get('row_count') or 0)} matching row(s).",
+            "result": {"draft": drafted, "preview": preview, "prediction_job": prediction_job},
+            "artifacts": [artifact_for_prediction_job(prediction_job)],
+        }
+
+    def _execute_list_provider_assets_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection_id = str(parameters.get("provider_connection_id") or "").strip()
+        assets = self._list_provider_assets(provider_connection_id)
+        return {
+            "summary": f"Found {len(assets)} messaging asset(s) on provider connection `{provider_connection_id}`.",
+            "result": {"provider_connection_id": provider_connection_id, "items": assets},
+            "artifacts": [],
+        }
+
+    def _execute_email_campaign_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection_id = str(parameters.get("provider_connection_id") or "").strip()
+        resolved_asset = self._resolve_provider_asset(provider_connection_id, str(parameters.get("template_id") or "").strip())
+        audience: Dict[str, Any]
+        cohort_id = str(parameters.get("cohort_id") or "").strip()
+        if cohort_id:
+            audience = {"cohort_id": cohort_id}
+        else:
+            prediction_job_id = str(parameters.get("prediction_job_id") or "").strip()
+            if not prediction_job_id:
+                raise HTTPException(status_code=409, detail="Draft email campaigns require cohort_id or prediction_job_id.")
+            audience = {
+                "prediction_job_id": prediction_job_id,
+                "include_risks": list(parameters.get("include_risks") or ["high"]),
+                "include_churned": False,
+            }
+        campaign = self.email_campaigns.create_campaign(
+            {
+                "name": str(parameters.get("campaign_name") or default_named_resource(prefix="agent", suffix="email_campaign")),
+                "provider_connection_id": provider_connection_id,
+                "template_id": str(resolved_asset.get("asset_id") or ""),
+                "audience": audience,
+                "schedule_at": parameters.get("schedule_at"),
+            }
+        )
+        return {
+            "summary": f"Created draft email campaign `{campaign['name']}`.",
+            "result": {"email_campaign": campaign},
+            "artifacts": [artifact_for_email_campaign(campaign)],
+        }
+
+    def _execute_workflow_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        cohort_id = str(parameters.get("cohort_id") or "").strip()
+        if not cohort_id:
+            raise HTTPException(status_code=409, detail="Workflow drafts require cohort_id.")
+        email_campaign_id = str(parameters.get("email_campaign_id") or "").strip()
+        action_payload = {
+            "type": "email_campaign" if email_campaign_id else "draft_follow_up",
+            "email_campaign_id": email_campaign_id or None,
+        }
+        workflow = self.workflows.create_workflow(
+            name=str(parameters.get("workflow_name") or default_named_resource(prefix="agent", suffix="workflow")),
+            cohort_id=cohort_id,
+            schedule={"type": "manual_test"},
+            action=action_payload,
+            policy={"goal": "churn_rescue", "mode": "draft"},
+            experiment_id=str(parameters.get("experiment_id") or "").strip() or None,
+            channel_config=action_payload,
+            steps=[{"type": "action", "action": action_payload}],
+            requires_confirmation=False,
+        )
+        return {
+            "summary": f"Created draft workflow `{workflow['name']}`.",
+            "result": {"workflow": workflow},
+            "artifacts": [artifact_for_workflow(workflow)],
+        }
+
+    def _execute_operator_flow(
+        self,
+        parameters: Dict[str, Any],
+        *,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        context: GovernanceContext,
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        reusable_prediction = None
+        if str(parameters.get("prediction_job_id") or "").strip():
+            reusable_prediction = self.predictions.get_job(str(parameters["prediction_job_id"]))
+        elif not bool(parameters.get("force_prediction_refresh")):
+            reusable_prediction = self._find_reusable_prediction_job(parameters)
+        if reusable_prediction is None:
+            prediction_result = self._execute_prediction_action(parameters)
+            prediction_job = (prediction_result.get("result") or {}).get("prediction_job") or {}
+            pending_flow = {
+                "type": "prediction_to_campaign",
+                "parameters": parameters,
+                "prediction_job_id": str(prediction_job.get("id") or ""),
+                "source_message": str(parameters.get("source_message") or ""),
+            }
+            return {
+                **prediction_result,
+                "summary": "Started the prediction job. Continue when the prediction completes to build the saved query, cohort, campaign, and workflow drafts.",
+                "pending_flow": pending_flow,
+            }
+        return self._complete_operator_flow_from_prediction(
+            prediction_job=reusable_prediction,
+            parameters=parameters,
+            session=session,
+            ui_context=ui_context,
+            context=context,
+            model_adapter=model_adapter,
+        )
+
+    def _complete_operator_flow_from_prediction(
+        self,
+        *,
+        prediction_job: Dict[str, Any],
+        parameters: Dict[str, Any],
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        context: GovernanceContext,
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        drafted = self._draft_prediction_sql(
+            source_message=str(parameters.get("source_message") or ""),
+            prediction_job=prediction_job,
+            include_risks=list(parameters.get("include_risks") or ["high"]),
+            session=session,
+            ui_context=ui_context,
+            model_adapter=model_adapter,
+            query_name=str(parameters.get("saved_query_name") or ""),
+            cohort_name=str(parameters.get("cohort_name") or ""),
+        )
+        preview = self.sql_workspace.preview(drafted["sql"], limit=20, timeout_seconds=30)
+        validate_prediction_preview(preview)
+        saved_query = self.sql_workspace.create_saved_query(
+            drafted["query_name"],
+            drafted["sql"],
+            f"Saved by the operator agent from prediction job {prediction_job['id']}.",
+        )
+        cohort = self.cohorts.create_cohort(
+            name=drafted["cohort_name"],
+            cohort_type="sql",
+            definition={"sql": drafted["sql"]},
+            refresh_mode="manual",
+            owner=context.actor_id,
+            description=f"Created by the operator agent from prediction job {prediction_job['id']}.",
+            tags=["agent", "prediction"],
+            activate=False,
+        )
+        artifacts = [
+            artifact_for_prediction_job(prediction_job),
+            artifact_for_saved_query(saved_query),
+            artifact_for_cohort(cohort),
+        ]
+        result_payload: Dict[str, Any] = {
+            "prediction_job": prediction_job,
+            "draft": drafted,
+            "preview": preview,
+            "saved_query": saved_query,
+            "cohort": cohort,
+        }
+        summary_parts = [f"Saved query `{saved_query['name']}` and draft cohort `{cohort['name']}` from prediction job `{prediction_job['id']}`."]
+
+        email_campaign = None
+        if bool(parameters.get("wants_email_campaign")):
+            email_campaign_result = self._execute_email_campaign_action(
+                {
+                    **parameters,
+                    "cohort_id": cohort["cohort_id"],
+                    "prediction_job_id": prediction_job["id"],
+                }
+            )
+            email_campaign = (email_campaign_result.get("result") or {}).get("email_campaign")
+            if email_campaign is not None:
+                result_payload["email_campaign"] = email_campaign
+                artifacts.extend(email_campaign_result.get("artifacts") or [])
+                summary_parts.append(f"Created draft email campaign `{email_campaign['name']}`.")
+
+        if bool(parameters.get("wants_workflow")):
+            workflow_result = self._execute_workflow_action(
+                {
+                    **parameters,
+                    "cohort_id": cohort["cohort_id"],
+                    "email_campaign_id": str((email_campaign or {}).get("email_campaign_id") or ""),
+                }
+            )
+            workflow = (workflow_result.get("result") or {}).get("workflow")
+            if workflow is not None:
+                result_payload["workflow"] = workflow
+                artifacts.extend(workflow_result.get("artifacts") or [])
+                summary_parts.append(f"Created draft workflow `{workflow['name']}`.")
+
+        return {
+            "summary": " ".join(summary_parts),
+            "result": result_payload,
+            "artifacts": dedupe_artifacts(artifacts),
+        }
+
+    def _draft_prediction_sql(
+        self,
+        *,
+        source_message: str,
+        prediction_job: Dict[str, Any],
+        include_risks: List[str],
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+        query_name: str,
+        cohort_name: str,
+    ) -> Dict[str, Any]:
+        draft = model_adapter.draft_sql(
+            source_message,
+            session_state=session,
+            ui_context=ui_context,
+            hint={
+                "prediction_job_id": str(prediction_job.get("id") or ""),
+                "include_risks": include_risks,
+                "query_name": query_name,
+                "cohort_name": cohort_name,
+                "override_table": "prediction_results",
+            },
+        )
+        sql = str(draft.get("sql") or "").strip()
+        if not sql:
+            raise HTTPException(status_code=409, detail="The agent could not draft a valid SQL query from the request.")
+        return {
+            "sql": sql,
+            "query_name": str(draft.get("query_name") or query_name or default_named_resource(prefix="agent", suffix="high_risk_query")),
+            "cohort_name": str(draft.get("cohort_name") or cohort_name or default_named_resource(prefix="agent", suffix="high_risk_cohort")),
+        }
+
+    def _resolve_prediction_job_for_parameters(self, parameters: Dict[str, Any]) -> Dict[str, Any] | None:
+        prediction_job_id = str(parameters.get("prediction_job_id") or "").strip()
+        if prediction_job_id:
+            job = self.predictions.get_job(prediction_job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail=f"Prediction job '{prediction_job_id}' not found.")
+            return job if str(job.get("status") or "").lower() == "completed" else None
+        return self._find_reusable_prediction_job(parameters)
+
+    def _find_reusable_prediction_job(self, parameters: Dict[str, Any]) -> Dict[str, Any] | None:
+        audience_scope = str(parameters.get("audience_scope") or "").strip().lower()
+        prediction_mode = str(parameters.get("prediction_mode") or "local").strip().lower() or "local"
+        import_job_id = str(parameters.get("import_job_id") or "").strip()
+        source_name = str(parameters.get("source_name") or "").strip()
+        jobs = self.predictions.list_jobs()
+        for job in jobs:
+            if str(job.get("status") or "").lower() != "completed":
+                continue
+            spec = job.get("spec") or {}
+            details = ((job.get("progress") or {}).get("details") or {})
+            if bool(details.get("stale")):
+                continue
+            if str(spec.get("prediction_mode") or "").strip().lower() != prediction_mode:
+                continue
+            if audience_scope == "source" and str(spec.get("source_name") or "").strip() == source_name:
+                return job
+            if audience_scope == "import" and str(spec.get("import_job_id") or "").strip() == import_job_id:
+                return job
+        return None
+
+    def _resolve_provider_asset(self, provider_connection_id: str, template_hint: str) -> Dict[str, Any]:
+        normalized_hint = str(template_hint or "").strip()
+        assets = self._list_provider_assets(provider_connection_id)
+        if not assets:
+            raise HTTPException(status_code=409, detail=f"No provider messaging assets are available on provider connection '{provider_connection_id}'.")
+        if not normalized_hint:
+            raise HTTPException(status_code=409, detail="template_id is required.")
+        exact = next(
+            (
+                item for item in assets
+                if str(item.get("asset_id") or "").strip() == normalized_hint
+                or str(item.get("label") or "").strip().lower() == normalized_hint.lower()
+            ),
+            None,
+        )
+        if exact is not None:
+            return exact
+        partial = [
+            item for item in assets
+            if normalized_hint.lower() in str(item.get("label") or "").lower()
+            or normalized_hint.lower() in str(item.get("asset_id") or "").lower()
+        ]
+        if len(partial) == 1:
+            return partial[0]
+        raise HTTPException(status_code=409, detail=f"Could not uniquely resolve template '{normalized_hint}' on provider connection '{provider_connection_id}'.")
+
+    def _resolve_session_model(self, requested_model_profile_id: str | None) -> Dict[str, Any]:
+        profile = self.model_profiles.resolve_profile(requested_model_profile_id)
+        if profile is None:
+            return {
+                "model_profile_id": None,
+                "effective_provider": "deterministic",
+                "effective_model_name": "",
+                "model_selection_source": "deterministic_fallback",
+            }
+        return {
+            "model_profile_id": str(profile.get("model_profile_id") or ""),
+            "effective_provider": str(profile.get("provider") or "deterministic"),
+            "effective_model_name": str(profile.get("model_name") or ""),
+            "model_selection_source": str(profile.get("model_selection_source") or "profile"),
+        }
+
+    def _model_adapter_for_session(self, session: Dict[str, Any]) -> CopilotAgentModelAdapter:
+        profile_id = str(session.get("model_profile_id") or "").strip() or None
+        try:
+            profile = self.model_profiles.resolve_profile(profile_id)
+        except KeyError:
+            profile = None
+        return ConfiguredCopilotAgentModel(profile)
+
+    def _decorate_session_async_state(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        decorated = dict(session or {})
+        pending_flow = dict(decorated.get("pending_flow") or {})
+        prediction_job_id = str(
+            pending_flow.get("prediction_job_id")
+            or decorated.get("waiting_for_resource_id")
+            or ""
+        ).strip()
+        if not prediction_job_id:
+            return decorated
+        prediction_job = self.predictions.get_job(prediction_job_id)
+        if prediction_job is None:
+            decorated["async_status"] = "missing_prediction"
+            decorated["status"] = "active"
+            return decorated
+        status = str(prediction_job.get("status") or "").lower()
+        latest_artifacts = [item for item in list(decorated.get("latest_artifacts") or []) if str(item.get("resource_type") or "") != "prediction_job"]
+        latest_artifacts.insert(
+            0,
+            artifact_for_prediction_job(
+                prediction_job,
+                resume_ready=status == "completed",
+                resume_message="Continue with the prediction results." if status == "completed" else "Continue after the prediction completes.",
+            ),
+        )
+        decorated["latest_artifacts"] = dedupe_artifacts(latest_artifacts)
+        if status == "completed":
+            decorated["async_status"] = "ready_to_resume"
+            decorated["status"] = "ready_to_resume"
+        elif status in {"failed", "stopped"}:
+            decorated["async_status"] = f"prediction_{status}"
+            decorated["status"] = "active"
+        else:
+            decorated["async_status"] = "waiting_for_prediction"
+            decorated["status"] = "waiting_for_prediction"
+        decorated["waiting_for_action_type"] = "run_prediction"
+        decorated["waiting_for_resource_id"] = prediction_job_id
+        return decorated
+
+    def _maybe_resume_pending_flow(
+        self,
+        session: Dict[str, Any],
+        *,
+        message: str,
+        ui_context: Dict[str, Any],
+        context: GovernanceContext,
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any] | None:
+        pending_flow = dict(session.get("pending_flow") or {})
+        if not pending_flow:
+            return None
+        normalized_message = str(message or "").strip().lower()
+        if normalized_message not in {"continue", "resume", "continue with the prediction results.", "continue with prediction results"}:
+            return None
+        prediction_job_id = str(pending_flow.get("prediction_job_id") or "").strip()
+        prediction_job = self.predictions.get_job(prediction_job_id)
+        if prediction_job is None:
+            assistant_message = f"Prediction job `{prediction_job_id}` is no longer available, so I cannot continue the draft flow."
+            return self._persist_async_follow_up_turn(
+                session=session,
+                user_message=message,
+                assistant_message=assistant_message,
+                status="active",
+                completed_actions=[],
+                artifacts=session.get("latest_artifacts") or [],
+            )
+        prediction_status = str(prediction_job.get("status") or "").lower()
+        if prediction_status != "completed":
+            assistant_message = (
+                f"Prediction job `{prediction_job_id}` is still `{prediction_status}`. "
+                "Continue again after it completes."
+            )
+            return self._persist_async_follow_up_turn(
+                session=session,
+                user_message=message,
+                assistant_message=assistant_message,
+                status="waiting_for_prediction",
+                completed_actions=[],
+                artifacts=[artifact_for_prediction_job(prediction_job, resume_message="Continue with the prediction results.")],
+            )
+        parameters = dict(pending_flow.get("parameters") or {})
+        result = self._complete_operator_flow_from_prediction(
+            prediction_job=prediction_job,
+            parameters=parameters,
+            session=session,
+            ui_context=ui_context,
+            context=context,
+            model_adapter=model_adapter,
+        )
+        action_payload = {
+            "action_id": str(pending_flow.get("action_id") or f"cpaa_{uuid.uuid4().hex[:20]}"),
+            "session_id": str(session.get("session_id") or ""),
+            "action_type": "setup_operator_flow",
+            "title": ACTION_REGISTRY["setup_operator_flow"].title,
+            "status": "completed",
+            "requires_confirmation": False,
+            "risk_level": "low",
+            "parameters": sanitize_action_parameters(parameters),
+            "result": result.get("result") or {},
+            "summary": result.get("summary") or "",
+            "artifacts": result.get("artifacts") or [],
+            "confirmation_id": None,
+            "confirmation_note": "",
+            "is_async": False,
+            "status_detail": "",
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(
+            ACTION_RESOURCE_TYPE,
+            action_payload["action_id"],
+            status="completed",
+            name=action_payload["title"],
+            payload=action_payload,
+        )
+        assistant_message = model_adapter.compose_message(
+            {
+                "completed_actions": [action_payload],
+                "pending_confirmations": [],
+                "clarifications": [],
+                "execution_preview": self._preview_from_actions([action_payload]),
+            }
+        )
+        response = self._persist_async_follow_up_turn(
+            session=session,
+            user_message=message,
+            assistant_message=assistant_message,
+            status="active",
+            completed_actions=[action_payload],
+            artifacts=action_payload["artifacts"],
+        )
+        return response
+
+    def _persist_async_follow_up_turn(
+        self,
+        *,
+        session: Dict[str, Any],
+        user_message: str,
+        assistant_message: str,
+        status: str,
+        completed_actions: List[Dict[str, Any]],
+        artifacts: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        session_id = str(session.get("session_id") or "")
+        execution_preview = self._preview_from_actions(completed_actions) if completed_actions else (session.get("latest_execution_preview") or None)
+        turn_payload = {
+            "turn_id": f"cpat_{uuid.uuid4().hex[:20]}",
+            "session_id": session_id,
+            "user_message": str(user_message or "").strip(),
+            "assistant_message": assistant_message,
+            "intent": "setup_operator_flow",
+            "status": status,
+            "clarifications": [],
+            "execution_preview": execution_preview,
+            "completed_actions": completed_actions,
+            "pending_confirmations": [],
+            "artifacts": artifacts,
+            "ui_context": dict(session.get("ui_context") or {}),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(TURN_RESOURCE_TYPE, turn_payload["turn_id"], status=status, name=turn_payload["intent"], payload=turn_payload)
+        session.update(
+            {
+                "status": status,
+                "current_intent": "setup_operator_flow",
+                "last_user_message": turn_payload["user_message"],
+                "latest_execution_preview": execution_preview,
+                "latest_artifacts": artifacts,
+                "latest_clarifications": [],
+                "draft_slots": {},
+                "pending_confirmation_count": 0,
+                "async_status": "" if status == "active" else "waiting_for_prediction",
+                "waiting_for_action_type": None if status == "active" else "run_prediction",
+                "waiting_for_resource_id": None if status == "active" else session.get("waiting_for_resource_id"),
+                "pending_flow": None if status == "active" else session.get("pending_flow"),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status=status, name=session.get("title"), payload=session)
+        return {
+            "assistant_message": assistant_message,
+            "session_state": self._session_state(session),
+            "clarifications": [],
+            "execution_preview": execution_preview,
+            "completed_actions": completed_actions,
+            "pending_confirmations": [],
+            "artifacts": artifacts,
+        }
+
     def _execute_dashboard_summary(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         overview = self.copilot.get_overview()
         health = self.health_monitor.snapshot(persist=True)
@@ -1472,6 +2652,13 @@ class CopilotAgentService:
             "latest_artifacts": payload.get("latest_artifacts") or [],
             "latest_clarifications": payload.get("latest_clarifications") or [],
             "pending_confirmation_count": int(payload.get("pending_confirmation_count") or 0),
+            "model_profile_id": payload.get("model_profile_id"),
+            "effective_provider": payload.get("effective_provider") or "deterministic",
+            "effective_model_name": payload.get("effective_model_name") or "",
+            "model_selection_source": payload.get("model_selection_source") or "deterministic_fallback",
+            "async_status": payload.get("async_status") or "",
+            "waiting_for_action_type": payload.get("waiting_for_action_type"),
+            "waiting_for_resource_id": payload.get("waiting_for_resource_id"),
             "created_at": payload.get("created_at"),
             "updated_at": payload.get("updated_at"),
         }
@@ -1512,6 +2699,18 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
         return "Aggregate copilot, cohort, workflow, experiment, import, and health state for the current workspace."
     if action_type in {"upsert_connector", "upsert_provider_connection"}:
         return f"Use `{parameters.get('name')}` with `{parameters.get('connector_type') or parameters.get('provider')}`."
+    if action_type == "run_prediction":
+        return "Reuse a recent completed prediction when possible, otherwise start a fresh background prediction job."
+    if action_type == "draft_sql_from_prompt":
+        return "Draft and preview a SQL audience query from the prompt using prediction results."
+    if action_type == "list_provider_messaging_assets":
+        return "List existing SendGrid templates or Braze API campaigns on the selected provider connection."
+    if action_type == "setup_email_campaign":
+        return "Create a draft provider-backed email campaign without sending it."
+    if action_type == "setup_workflow":
+        return "Create a draft workflow linked to the selected cohort or email campaign."
+    if action_type == "setup_operator_flow":
+        return "Set up the prediction, saved query, cohort, email campaign, and workflow draft chain."
     if action_type == "preview_sql":
         return "Run a read-only SQL preview before creating the cohort."
     if action_type == "save_query":
@@ -1538,6 +2737,16 @@ def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: Li
         return "Create or update the connection and optionally verify connector health."
     if intent == "setup_cohort":
         return "Preview inputs, persist any supporting query, and create a draft cohort."
+    if intent == "run_prediction":
+        return "Prepare a prediction job, reusing a recent completed run when possible."
+    if intent == "draft_sql_from_prompt":
+        return "Draft and preview SQL from the prompt without executing any destructive changes."
+    if intent == "setup_email_campaign":
+        return "Create a provider-backed email campaign in draft only."
+    if intent == "setup_workflow":
+        return "Create a workflow in draft only and leave publish/run as separate actions."
+    if intent == "setup_operator_flow":
+        return "Build the prediction-to-campaign draft flow with prediction, SQL, cohort, email campaign, and optional workflow steps."
     if intent == "setup_experiment":
         return "Save the experiment config in a non-running state and leave start as a separate confirmed action."
     if notes:
@@ -1590,6 +2799,15 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
             continue
         slots["cohort_id"] = candidate
         break
+    prediction_job_match = re.search(r"\b(pred_[A-Za-z0-9]+)\b", message)
+    if prediction_job_match:
+        slots["prediction_job_id"] = prediction_job_match.group(1).strip()
+    provider_connection_match = re.search(r"\b(pc_[A-Za-z0-9]+)\b", message)
+    if provider_connection_match:
+        slots["provider_connection_id"] = provider_connection_match.group(1).strip()
+    import_job_match = re.search(r"\b(imp_[A-Za-z0-9]+)\b", message)
+    if import_job_match:
+        slots["import_job_id"] = import_job_match.group(1).strip()
     primary_metric_match = re.search(r"\bprimary metric(?: is|=|:)?\s*([A-Za-z0-9_.\-]+)", message, flags=re.IGNORECASE)
     if primary_metric_match:
         slots["primary_metric"] = primary_metric_match.group(1).strip()
@@ -1608,6 +2826,46 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     b_variant_match = re.search(r"\b(?:b variant|variant b)(?: pct| %| percentage)?(?: is|=|:)?\s*(\d+(?:\.\d+)?)%?", message, flags=re.IGNORECASE)
     if b_variant_match:
         slots["b_variant_pct"] = normalize_percent_value(b_variant_match.group(1))
+    source_name_match = re.search(r"\bsource(?:[_ ]name)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    if source_name_match:
+        slots["source_name"] = source_name_match.group(1).strip()
+    template_match = re.search(r"\btemplate(?: id)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    if template_match:
+        template_value = template_match.group(1).strip()
+        slots["template_id"] = template_value
+        slots.setdefault("template_hint", template_value)
+    campaign_match = re.search(r"\bcampaign(?: id)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    if campaign_match and "template_id" not in slots:
+        template_value = campaign_match.group(1).strip()
+        slots["template_id"] = template_value
+        slots.setdefault("template_hint", template_value)
+    campaign_name_match = re.search(r"\bcampaign[_ ]name(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    if campaign_name_match:
+        slots["campaign_name"] = campaign_name_match.group(1).strip()
+    workflow_name_match = re.search(r"\bworkflow[_ ]name(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    if workflow_name_match:
+        slots["workflow_name"] = workflow_name_match.group(1).strip()
+    if any(token in message.lower() for token in ("rerun", "re-run", "fresh prediction", "new prediction")):
+        slots["force_prediction_refresh"] = True
+    lowered = message.lower()
+    if "high risk" in lowered:
+        slots["include_risks"] = ["high"]
+    elif "medium risk" in lowered:
+        slots["include_risks"] = ["medium"]
+    elif "low risk" in lowered:
+        slots["include_risks"] = ["low"]
+    if "local model" in lowered or re.search(r"\blocal\b", lowered):
+        slots["prediction_mode"] = "local"
+    elif "ai + cloud" in lowered or "parallel" in lowered:
+        slots["prediction_mode"] = "parallel"
+    elif "cloud" in lowered:
+        slots["prediction_mode"] = "cloud"
+    elif " ai " in f" {lowered} " or "gemini" in lowered or "chatgpt" in lowered or "opus" in lowered:
+        slots["prediction_mode"] = "ai"
+    if "sendgrid" in lowered:
+        slots["messaging_provider"] = "sendgrid"
+    elif "braze" in lowered:
+        slots["messaging_provider"] = "braze"
     typed_fields = {
         "connection_scope": r"\bconnection[_ ]scope(?: is|=|:)?\s*([A-Za-z_ -]+)",
         "connection_type": r"\bconnection[_ ]type(?: is|=|:)?\s*([A-Za-z0-9_.\- ]+)",
@@ -1824,6 +3082,103 @@ def artifact_for_saved_query(saved_query: Dict[str, Any]) -> Dict[str, Any]:
         "focus": {"query_id": query_id},
         "status": "saved",
     }
+
+
+def artifact_for_prediction_job(
+    prediction_job: Dict[str, Any],
+    *,
+    resume_ready: bool | None = None,
+    resume_message: str = "",
+) -> Dict[str, Any]:
+    job_id = str(prediction_job.get("id") or prediction_job.get("prediction_job_id") or "")
+    status = str(prediction_job.get("status") or "").strip().lower()
+    if resume_ready is None:
+        resume_ready = status == "completed"
+    progress_details = ((prediction_job.get("progress") or {}).get("details") or {})
+    return {
+        "resource_type": "prediction_job",
+        "resource_id": job_id,
+        "label": job_id or "Prediction Job",
+        "module_id": "data-core",
+        "page_id": "operator-hub",
+        "api_path": f"/api/v1/predictions/{quote(job_id)}" if job_id else "",
+        "focus": {"prediction_job_id": job_id},
+        "status": status or "queued",
+        "resume_ready": bool(resume_ready),
+        "resume_message": str(resume_message or ""),
+        "status_detail": str(progress_details.get("stale_reason") or ""),
+    }
+
+
+def artifact_for_email_campaign(campaign: Dict[str, Any]) -> Dict[str, Any]:
+    campaign_id = str(campaign.get("email_campaign_id") or "")
+    return {
+        "resource_type": "email_campaign",
+        "resource_id": campaign_id,
+        "label": str(campaign.get("name") or campaign_id or "Email Campaign"),
+        "module_id": "action-orchestrator",
+        "page_id": "action-orchestrator",
+        "api_path": f"/api/v1/email-campaigns/{quote(campaign_id)}" if campaign_id else "",
+        "focus": {"email_campaign_id": campaign_id},
+        "status": str(campaign.get("status") or ""),
+    }
+
+
+def artifact_for_workflow(workflow: Dict[str, Any]) -> Dict[str, Any]:
+    workflow_id = str(workflow.get("workflow_id") or "")
+    return {
+        "resource_type": "workflow",
+        "resource_id": workflow_id,
+        "label": str(workflow.get("name") or workflow_id or "Workflow"),
+        "module_id": "action-orchestrator",
+        "page_id": "action-orchestrator",
+        "api_path": f"/api/v1/workflows/{quote(workflow_id)}" if workflow_id else "",
+        "focus": {"workflow_id": workflow_id},
+        "status": str(workflow.get("status") or ""),
+    }
+
+
+def validate_prediction_preview(preview: Dict[str, Any]) -> None:
+    rows = list(preview.get("rows") or [])
+    if int(preview.get("row_count") or 0) <= 0:
+        raise HTTPException(status_code=409, detail="The generated SQL preview returned no rows, so the cohort draft was not created.")
+    sample_row = rows[0] if rows else {}
+    if "canonical_user_id" not in sample_row:
+        raise HTTPException(status_code=409, detail="The generated SQL preview must include canonical_user_id in the result.")
+
+
+def heuristic_sql_from_prompt(prompt: str, *, hint: Dict[str, Any]) -> Dict[str, Any]:
+    prediction_job_id = str(hint.get("prediction_job_id") or "").strip()
+    include_risks = [str(item or "").strip().lower() for item in list(hint.get("include_risks") or ["high"]) if str(item or "").strip()]
+    if not include_risks:
+        include_risks = ["high"]
+    quoted_risks = ", ".join(f"'{risk}'" for risk in include_risks)
+    conditions = [f"prediction_job_id = '{prediction_job_id}'"] if prediction_job_id else []
+    conditions.append(f"predicted_churn_risk IN ({quoted_risks})")
+    lowered = str(prompt or "").lower()
+    if "exclude churned" in lowered or "active high risk" in lowered or "win back" in lowered:
+        conditions.append("COALESCE(churn_state, 'active') <> 'churned'")
+    where_clause = " AND ".join(conditions)
+    return {
+        "sql": (
+            "SELECT canonical_user_id, email\n"
+            "FROM prediction_results\n"
+            f"WHERE {where_clause}\n"
+            "ORDER BY completed_at DESC"
+        ),
+        "query_name": str(hint.get("query_name") or default_named_resource(prefix="agent", suffix="high_risk_query")),
+        "cohort_name": str(hint.get("cohort_name") or default_named_resource(prefix="agent", suffix="high_risk_cohort")),
+    }
+
+
+def dedupe_clarifications(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        deduped[key] = item
+    return list(deduped.values())
 
 
 def collect_artifacts_from_actions(*action_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
