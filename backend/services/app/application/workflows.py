@@ -763,17 +763,31 @@ class WorkflowService:
                 if branch_payload.get("end") is True:
                     return {"status": "ended", "channel_config": resolved, "trace": trace}
                 if isinstance(branch_payload.get("action"), dict):
-                    resolved.update(branch_payload["action"])
+                    resolved = self._merge_channel_config_override(resolved, branch_payload["action"])
                 continue
             if step_type == "action":
                 action_payload = dict(step.get("action") or {})
-                resolved.update(action_payload)
+                resolved = self._merge_channel_config_override(resolved, action_payload)
                 trace.append({"step": index, "type": step_type, "action": action_payload})
                 continue
             if step_type == "end":
                 trace.append({"step": index, "type": step_type, "ended": True})
                 return {"status": "ended", "channel_config": resolved, "trace": trace}
         return {"status": "ok", "channel_config": resolved, "trace": trace}
+
+    def _merge_channel_config_override(self, base_config: Dict[str, Any], override_config: Dict[str, Any]) -> Dict[str, Any]:
+        resolved = dict(base_config or {})
+        override = dict(override_config or {})
+        channel = str(override.get("channel") or resolved.get("channel") or "").strip().lower()
+        if channel == "push_notification":
+            override_content = str(override.get("content") or "").strip()
+            override_body = str(override.get("body") or "").strip()
+            if override_content and "body" not in override:
+                override["body"] = override_content
+            elif override_body and "content" not in override:
+                override["content"] = override_body
+        resolved.update(override)
+        return resolved
 
     @staticmethod
     def _action_message_content(action: Dict[str, Any]) -> str:
