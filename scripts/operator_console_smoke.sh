@@ -152,8 +152,17 @@ assert_audience_builder_ui() {
 assert_bigquery_connector_ui() {
   log_step "Checking BigQuery connector UI"
   run_pw run-code "async (page) => {
+    const dataCoreModuleLink = page.locator('[data-module=\"data-core\"]');
     const connectorsLink = page.locator('[data-item=\"data-core-connectors\"]');
-    if (await connectorsLink.count() === 0) throw new Error('Missing Data Core -> Connectors navigation');
+    if (await dataCoreModuleLink.count() === 0 || await connectorsLink.count() === 0) {
+      throw new Error('Missing Data Core -> Connectors navigation');
+    }
+    const dataCoreActive = await dataCoreModuleLink.first().evaluate((element) => element.classList.contains('active'));
+    const dataCoreExpanded = (await dataCoreModuleLink.first().getAttribute('aria-expanded')) === 'true';
+    if (!dataCoreActive || !dataCoreExpanded) {
+      await dataCoreModuleLink.first().click();
+      await page.waitForTimeout(300);
+    }
     await connectorsLink.first().click();
     await page.waitForTimeout(700);
 
@@ -196,8 +205,17 @@ assert_bigquery_connector_ui() {
 assert_email_campaign_ui() {
   log_step "Checking provider-aware email campaign UI"
   run_pw run-code "async (page) => {
+    const dataCoreModuleLink = page.locator('[data-module=\"data-core\"]');
     const connectorsLink = page.locator('[data-item=\"data-core-connectors\"]');
-    if (await connectorsLink.count() === 0) throw new Error('Missing Data Core -> Connectors navigation');
+    if (await dataCoreModuleLink.count() === 0 || await connectorsLink.count() === 0) {
+      throw new Error('Missing Data Core -> Connectors navigation');
+    }
+    const dataCoreActive = await dataCoreModuleLink.first().evaluate((element) => element.classList.contains('active'));
+    const dataCoreExpanded = (await dataCoreModuleLink.first().getAttribute('aria-expanded')) === 'true';
+    if (!dataCoreActive || !dataCoreExpanded) {
+      await dataCoreModuleLink.first().click();
+      await page.waitForTimeout(300);
+    }
     await connectorsLink.first().click();
     await page.waitForTimeout(700);
 
@@ -305,8 +323,17 @@ assert_email_campaign_ui() {
 exercise_copilot_agent() {
   log_step "Exercising global AI assistant"
   run_pw run-code "async (page) => {
+    const dataCoreModuleLink = page.locator('[data-module=\"data-core\"]');
     const connectorsLink = page.locator('[data-item=\"data-core-connectors\"]');
-    if (await connectorsLink.count() === 0) throw new Error('Missing Data Core -> Connectors navigation');
+    if (await dataCoreModuleLink.count() === 0 || await connectorsLink.count() === 0) {
+      throw new Error('Missing Data Core -> Connectors navigation');
+    }
+    const dataCoreActive = await dataCoreModuleLink.first().evaluate((element) => element.classList.contains('active'));
+    const dataCoreExpanded = (await dataCoreModuleLink.first().getAttribute('aria-expanded')) === 'true';
+    if (!dataCoreActive || !dataCoreExpanded) {
+      await dataCoreModuleLink.first().click();
+      await page.waitForTimeout(300);
+    }
     await connectorsLink.first().click();
     await page.waitForTimeout(700);
 
