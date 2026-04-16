@@ -234,7 +234,7 @@ export function initializeOperatorConsole() {
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
-                    subtitle: 'Build lifecycle email campaigns across SendGrid and Braze, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    subtitle: 'Build lifecycle email and push campaigns, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -3040,6 +3040,7 @@ export function initializeOperatorConsole() {
                 bigquery: 'BigQuery',
                 sendgrid: 'SendGrid',
                 braze: 'Braze',
+                wynn_push_notifier: 'Wynn PushNotifier',
             };
             let backendMode = 'unknown';
             let cachedConnectors = [];
@@ -3064,7 +3065,7 @@ export function initializeOperatorConsole() {
 
             function renderConnectorEntrySummary(message = '') {
                 const configuredCount = cachedConnectors.length;
-                const providerConnectionCount = getCampaignCapableProviderConnections().length;
+                const providerConnectionCount = getProviderConnections().length;
                 const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
                 const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
                 const summaryText = message || (
@@ -9218,6 +9219,19 @@ export function initializeOperatorConsole() {
             const sqlPreviewOutput = document.getElementById('sql-preview-output');
             const sqlSavedQueryList = document.getElementById('sql-saved-query-list');
             const workflowCreateStatus = document.getElementById('workflow-create-status');
+            const workflowChannelSelect = document.getElementById('workflow-channel-select');
+            const workflowEmailFields = document.getElementById('workflow-email-fields');
+            const workflowPushFields = document.getElementById('workflow-push-fields');
+            const workflowContentInput = document.getElementById('workflow-content-input');
+            const workflowPushProviderConnectionSelect = document.getElementById('workflow-push-provider-connection-select');
+            const workflowPushCampaignNameInput = document.getElementById('workflow-push-campaign-name-input');
+            const workflowPushTitleInput = document.getElementById('workflow-push-title-input');
+            const workflowPushBodyInput = document.getElementById('workflow-push-body-input');
+            const workflowPushDeepLinkInput = document.getElementById('workflow-push-deep-link-input');
+            const workflowPushDeepLinkTokenInput = document.getElementById('workflow-push-deep-link-token-input');
+            const workflowPushScheduledAtInput = document.getElementById('workflow-push-scheduled-at-input');
+            const workflowPushDataInput = document.getElementById('workflow-push-data-input');
+            const workflowPushProviderOptionsInput = document.getElementById('workflow-push-provider-options-input');
             const workflowList = document.getElementById('workflow-list');
             const workflowSelectedLabel = document.getElementById('workflow-selected-label');
             const workflowExecutionsList = document.getElementById('workflow-executions-list');
@@ -9435,6 +9449,40 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function populateWorkflowPushProviderSelect({ preferredValue = '' } = {}) {
+                if (!workflowPushProviderConnectionSelect) {
+                    return;
+                }
+                const previousValue = String(preferredValue || workflowPushProviderConnectionSelect.value || '').trim();
+                const providers = getPushWorkflowProviderConnections();
+                workflowPushProviderConnectionSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Simulator only (no provider connection)';
+                workflowPushProviderConnectionSelect.appendChild(placeholder);
+                providers.forEach((provider) => {
+                    const option = document.createElement('option');
+                    option.value = provider.provider_connection_id;
+                    option.textContent = `${provider.name} (${(provider.config || {}).base_url || 'configured'})`;
+                    workflowPushProviderConnectionSelect.appendChild(option);
+                });
+                if (previousValue && providers.some((item) => item.provider_connection_id === previousValue)) {
+                    workflowPushProviderConnectionSelect.value = previousValue;
+                } else {
+                    workflowPushProviderConnectionSelect.value = '';
+                }
+            }
+
+            function syncWorkflowChannelFields() {
+                const channel = String(workflowChannelSelect?.value || 'push_notification').trim().toLowerCase() || 'push_notification';
+                if (workflowPushFields) {
+                    workflowPushFields.style.display = channel === 'push_notification' ? 'block' : 'none';
+                }
+                if (workflowEmailFields) {
+                    workflowEmailFields.style.display = channel === 'email' ? 'block' : 'none';
+                }
+            }
+
             function findCohort(cohortId) {
                 return (cachedCohorts || []).find((item) => item.cohort_id === cohortId) || null;
             }
@@ -9556,10 +9604,25 @@ export function initializeOperatorConsole() {
 
             function getCampaignProviderConfig(providerType = 'sendgrid') {
                 const normalizedProvider = String(providerType || 'sendgrid').trim().toLowerCase();
+                if (normalizedProvider === 'wynn_push_notifier') {
+                    return {
+                        provider: 'wynn_push_notifier',
+                        label: 'Wynn PushNotifier',
+                        credentialLabel: 'API token',
+                        assetLabel: 'Wynn Campaign API',
+                        assetOptionLabel: 'Select a Wynn PushNotifier connection',
+                        selectProviderMessage: 'Select a Wynn PushNotifier provider connection first.',
+                        emptyAssetMessage: 'Wynn PushNotifier connections do not browse messaging assets.',
+                        loadingAssetsMessage: 'Loading Wynn PushNotifier connection...',
+                        loadedAssetNoun: 'connection',
+                        namePlaceholder: 'e.g. Wynn PushNotifier Production',
+                    };
+                }
                 if (normalizedProvider === 'braze') {
                     return {
                         provider: 'braze',
                         label: 'Braze',
+                        credentialLabel: 'API key',
                         assetLabel: 'Braze API Campaign',
                         assetOptionLabel: 'Select a Braze API campaign',
                         selectProviderMessage: 'Select a Braze provider connection first.',
@@ -9572,6 +9635,7 @@ export function initializeOperatorConsole() {
                 return {
                     provider: 'sendgrid',
                     label: 'SendGrid',
+                    credentialLabel: 'API key',
                     assetLabel: 'Dynamic Template',
                     assetOptionLabel: 'Select a dynamic template',
                     selectProviderMessage: 'Select a SendGrid provider connection first.',
@@ -9582,16 +9646,28 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function getCampaignCapableProviderConnections(providerType = '') {
+            function getProviderConnections(providerType = '') {
                 const normalizedProvider = String(providerType || '').trim().toLowerCase();
                 const items = Array.isArray(cachedProviderConnections) ? cachedProviderConnections : [];
                 return items.filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
+            }
+
+            function getCampaignCapableProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                return getProviderConnections().filter((item) => {
                     const provider = String(item.provider || '').trim().toLowerCase();
                     if (!['sendgrid', 'braze'].includes(provider)) {
                         return false;
                     }
                     return !normalizedProvider || provider === normalizedProvider;
                 });
+            }
+
+            function getPushWorkflowProviderConnections(providerType = 'wynn_push_notifier') {
+                return getProviderConnections(providerType);
             }
 
             function findProviderConnection(providerConnectionId) {
@@ -9604,13 +9680,13 @@ export function initializeOperatorConsole() {
 
             async function refreshProviderConnectionsState() {
                 if (shouldBlockProtectedAppData()) {
-                    return getCampaignCapableProviderConnections();
+                    return getProviderConnections();
                 }
                 const payload = await apiRequest('/provider-connections');
                 const items = Array.isArray(payload.items) ? payload.items : [];
                 cachedProviderConnections = latestByCreatedAt(items);
                 renderConnectorEntrySummary();
-                return getCampaignCapableProviderConnections();
+                return getProviderConnections();
             }
 
             async function refreshEmailCampaignsState() {
@@ -9682,6 +9758,9 @@ export function initializeOperatorConsole() {
                 if (normalizedProvider === 'braze') {
                     return document.getElementById('provider-connection-braze-api-key-input');
                 }
+                if (normalizedProvider === 'wynn_push_notifier') {
+                    return document.getElementById('provider-connection-wynn-api-token-input');
+                }
                 return document.getElementById('provider-connection-sendgrid-api-key-input');
             }
 
@@ -9734,6 +9813,30 @@ export function initializeOperatorConsole() {
                         </div>
                         <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
                     `;
+                } else if (providerType === 'wynn_push_notifier') {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-api-token-input">PushNotifier API Token</label>
+                                <input type="password" id="provider-connection-wynn-api-token-input" placeholder="Enter the Wynn PushNotifier bearer token">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-base-url-input">PushNotifier Base URL</label>
+                                <input type="text" id="provider-connection-wynn-base-url-input" placeholder="https://push.example.com">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-default-deep-link-token-input">Default Deep Link Token (optional)</label>
+                                <input type="text" id="provider-connection-wynn-default-deep-link-token-input" placeholder="campaign-default-token">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-callback-signing-secret-input">Callback Signing Secret (optional)</label>
+                                <input type="password" id="provider-connection-wynn-callback-signing-secret-input" placeholder="Optional future callback secret">
+                            </div>
+                        </div>
+                        <p class="subtle">Use this connection when Kairyx should create visible push campaigns inside Wynn PushNotifier instead of using the simulator.</p>
+                    `;
                 } else {
                     providerConnectionConfigFields.innerHTML = `
                         <div class="grid-2">
@@ -9779,7 +9882,15 @@ export function initializeOperatorConsole() {
                     apiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
                     return;
                 }
-                apiKeyInput.placeholder = providerType === 'braze' ? 'Enter your Braze REST API key' : 'SG....';
+                if (providerType === 'braze') {
+                    apiKeyInput.placeholder = 'Enter your Braze REST API key';
+                    return;
+                }
+                if (providerType === 'wynn_push_notifier') {
+                    apiKeyInput.placeholder = 'Enter the Wynn PushNotifier bearer token';
+                    return;
+                }
+                apiKeyInput.placeholder = 'SG....';
             }
 
             function loadProviderConnectionIntoForm(providerConnectionId) {
@@ -9800,6 +9911,19 @@ export function initializeOperatorConsole() {
                     const restEndpointInput = document.getElementById('provider-connection-braze-rest-endpoint-input');
                     if (restEndpointInput) {
                         restEndpointInput.value = (provider.config || {}).rest_endpoint || '';
+                    }
+                } else if (provider.provider === 'wynn_push_notifier') {
+                    const baseUrlInput = document.getElementById('provider-connection-wynn-base-url-input');
+                    const defaultDeepLinkTokenInput = document.getElementById('provider-connection-wynn-default-deep-link-token-input');
+                    const callbackSigningSecretInput = document.getElementById('provider-connection-wynn-callback-signing-secret-input');
+                    if (baseUrlInput) {
+                        baseUrlInput.value = (provider.config || {}).base_url || '';
+                    }
+                    if (defaultDeepLinkTokenInput) {
+                        defaultDeepLinkTokenInput.value = (provider.config || {}).default_deep_link_token || '';
+                    }
+                    if (callbackSigningSecretInput) {
+                        callbackSigningSecretInput.value = '';
                     }
                 } else {
                     const fromEmailInput = document.getElementById('provider-connection-sendgrid-from-email-input');
@@ -9822,8 +9946,8 @@ export function initializeOperatorConsole() {
                 syncProviderConnectionFormState();
                 setInlineStatus(
                     providerConnectionStatus,
-                    (provider.config || {}).api_key_configured
-                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
+                    ((provider.config || {}).api_key_configured || (provider.config || {}).api_token_configured)
+                        ? `Editing ${provider.name}. Leave the ${String(getCampaignProviderConfig(provider.provider).credentialLabel || 'secret').toLowerCase()} blank to keep the stored secret.`
                         : `Editing ${provider.name}.`,
                 );
             }
@@ -9878,6 +10002,19 @@ export function initializeOperatorConsole() {
                         rest_endpoint: restEndpoint,
                         ...(apiKey ? { api_key: apiKey } : {}),
                     };
+                } else if (providerType === 'wynn_push_notifier') {
+                    const baseUrl = String(document.getElementById('provider-connection-wynn-base-url-input')?.value || '').trim();
+                    const defaultDeepLinkToken = String(document.getElementById('provider-connection-wynn-default-deep-link-token-input')?.value || '').trim();
+                    const callbackSigningSecret = String(document.getElementById('provider-connection-wynn-callback-signing-secret-input')?.value || '').trim();
+                    if (!baseUrl) {
+                        throw new Error('PushNotifier Base URL is required.');
+                    }
+                    config = {
+                        base_url: baseUrl,
+                        ...(defaultDeepLinkToken ? { default_deep_link_token: defaultDeepLinkToken } : {}),
+                        ...(callbackSigningSecret ? { callback_signing_secret: callbackSigningSecret } : {}),
+                        ...(apiKey ? { api_token: apiKey } : {}),
+                    };
                 } else {
                     const fromEmail = String(document.getElementById('provider-connection-sendgrid-from-email-input')?.value || '').trim();
                     const fromName = String(document.getElementById('provider-connection-sendgrid-from-name-input')?.value || '').trim();
@@ -9893,7 +10030,7 @@ export function initializeOperatorConsole() {
                     };
                 }
                 if (!selectedProviderConnectionId && !apiKey) {
-                    throw new Error(`${descriptor.label} API key is required for a new provider connection.`);
+                    throw new Error(`${descriptor.label} ${descriptor.credentialLabel || 'secret'} is required for a new provider connection.`);
                 }
                 setInlineStatus(
                     providerConnectionStatus,
@@ -9933,13 +10070,19 @@ export function initializeOperatorConsole() {
                         hint: 'API-triggered campaigns',
                     };
                 }
+                if (normalizedProvider === 'wynn_push_notifier') {
+                    return {
+                        detail: (provider?.config || {}).base_url || '-',
+                        hint: 'Workflow push delivery',
+                    };
+                }
                 return {
                     detail: (provider?.config || {}).from_email || '-',
                     hint: (provider?.config || {}).from_name || '',
                 };
             }
 
-            function renderProviderConnectionList(items = getCampaignCapableProviderConnections()) {
+            function renderProviderConnectionList(items = getProviderConnections()) {
                 renderSimpleTable(
                     providerConnectionList,
                     [
@@ -9952,21 +10095,21 @@ export function initializeOperatorConsole() {
                                 return `<span>${escapeHtml(summary.detail)}</span><div class="subtle">${escapeHtml(summary.hint || '')}</div>`;
                             },
                         },
-                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
+                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured || (item.config || {}).api_token_configured) ? 'Stored' : 'Missing'}</span>` },
                         { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
                         {
                             label: 'Actions',
                             render: (item) => `
                                 <div class="table-actions">
                                     <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
-                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">${String(item.provider || '').toLowerCase() === 'wynn_push_notifier' ? 'Use in Workflow' : 'Use in Campaign'}</button>
                                     <button type="button" data-provider-connection-action="delete" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
                                 </div>
                             `,
                         },
                     ],
                     items,
-                    'No SendGrid or Braze provider connections yet. Use Connect Campaign Provider to add one.',
+                    'No provider connections yet. Use Connect Campaign Provider to add one.',
                 );
                 providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -9986,6 +10129,23 @@ export function initializeOperatorConsole() {
                             } catch (error) {
                                 setInlineStatus(providerConnectionStatus, error.message || 'Failed to delete provider connection.', true);
                             }
+                            return;
+                        }
+                        if (String(provider.provider || '').toLowerCase() === 'wynn_push_notifier') {
+                            activateModule('action-orchestrator', 'action-orchestrator-create', {
+                                closeSidebar: true,
+                                scrollBehavior: 'smooth',
+                                reloadPage: true,
+                            });
+                            if (workflowChannelSelect) {
+                                workflowChannelSelect.value = 'push_notification';
+                            }
+                            populateWorkflowPushProviderSelect({ preferredValue: providerConnectionId });
+                            if (workflowPushProviderConnectionSelect) {
+                                workflowPushProviderConnectionSelect.value = providerConnectionId;
+                            }
+                            syncWorkflowChannelFields();
+                            setInlineStatus(workflowCreateStatus, `${provider.name} selected for live push workflow delivery.`);
                             return;
                         }
                         emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
@@ -10020,6 +10180,7 @@ export function initializeOperatorConsole() {
                         syncProviderConnectionFormState();
                     }
                     renderProviderConnectionList(providers);
+                    populateWorkflowPushProviderSelect();
                     populateEmailCampaignProviderSelect();
                     updateEmailCampaignSummary();
                 } catch (error) {
@@ -10027,6 +10188,7 @@ export function initializeOperatorConsole() {
                         cachedProviderConnections = [];
                         setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
+                        populateWorkflowPushProviderSelect();
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         updateEmailCampaignSummary();
                         return;
@@ -11012,7 +11174,29 @@ export function initializeOperatorConsole() {
             async function createWorkflow() {
                 try {
                     setInlineStatus(workflowCreateStatus, 'Creating workflow...');
-                    const channel = document.getElementById('workflow-channel-select').value || 'push_notification';
+                    const channel = String(workflowChannelSelect?.value || 'push_notification').trim().toLowerCase() || 'push_notification';
+                    const pushChannelConfig = channel === 'push_notification'
+                        ? {
+                            channel,
+                            campaign_name: String(workflowPushCampaignNameInput?.value || '').trim() || `push_campaign_${Date.now()}`,
+                            title: String(workflowPushTitleInput?.value || '').trim(),
+                            body: String(workflowPushBodyInput?.value || '').trim(),
+                            content: String(workflowPushBodyInput?.value || '').trim(),
+                            deep_link: String(workflowPushDeepLinkInput?.value || '').trim(),
+                            deep_link_token: String(workflowPushDeepLinkTokenInput?.value || '').trim(),
+                            scheduled_at: toIsoFromLocalDateTimeInput(workflowPushScheduledAtInput?.value || ''),
+                            data: parseJsonText(workflowPushDataInput?.value, {}),
+                            provider_connection_id: String(workflowPushProviderConnectionSelect?.value || '').trim() || null,
+                            provider_options: parseJsonText(workflowPushProviderOptionsInput?.value, {}),
+                        }
+                        : null;
+                    const emailChannelConfig = channel === 'email'
+                        ? {
+                            channel,
+                            content: String(workflowContentInput?.value || '').trim(),
+                        }
+                        : null;
+                    const actionConfig = pushChannelConfig || emailChannelConfig || {channel, content: ''};
                     const payload = await apiRequest('/workflows', {
                         method: 'POST',
                         body: {
@@ -11026,14 +11210,8 @@ export function initializeOperatorConsole() {
                                 hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
                                 minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
                             },
-                            action: {
-                                channel,
-                                content: document.getElementById('workflow-content-input').value || '',
-                            },
-                            channel_config: {
-                                channel,
-                                content: document.getElementById('workflow-content-input').value || '',
-                            },
+                            action: actionConfig,
+                            channel_config: actionConfig,
                             policy: {
                                 global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
                                 channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
@@ -11143,11 +11321,14 @@ export function initializeOperatorConsole() {
                     const [workflowPayload, cohortPayload] = await Promise.all([
                         apiRequest('/workflows'),
                         apiRequest('/cohorts'),
+                        refreshProviderConnectionsState(),
                         refreshExportJobsState(),
                     ]);
                     const workflows = Array.isArray(workflowPayload.items) ? workflowPayload.items : [];
                     renderWorkflowList(workflows);
                     populateWorkflowCohortSelect(cohortPayload.items || []);
+                    populateWorkflowPushProviderSelect();
+                    syncWorkflowChannelFields();
                     populateExportJobSelect(cachedExportJobs);
                     if (selectedWorkflowId && workflows.some((item) => item.workflow_id === selectedWorkflowId)) {
                         await loadWorkflowDetail(selectedWorkflowId);
@@ -11162,6 +11343,8 @@ export function initializeOperatorConsole() {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
                         renderWorkflowList([]);
                         populateWorkflowCohortSelect([]);
+                        populateWorkflowPushProviderSelect();
+                        syncWorkflowChannelFields();
                         populateExportJobSelect([]);
                         await loadWorkflowDetail(null);
                         await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
@@ -12252,6 +12435,7 @@ export function initializeOperatorConsole() {
                     setInlineStatus(emailCampaignStatus, error.message || 'Failed to send email campaign.', true);
                 }
             });
+            workflowChannelSelect?.addEventListener('change', syncWorkflowChannelFields);
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
             document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);
             document.getElementById('orchestrator-run-due-btn').addEventListener('click', runDueWorkflows);
@@ -12356,6 +12540,9 @@ export function initializeOperatorConsole() {
             copilotAgentDrawerBackdrop?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(false);
             });
+
+            populateWorkflowPushProviderSelect();
+            syncWorkflowChannelFields();
             copilotOpenGlobalAgentBtn?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(true);
             });

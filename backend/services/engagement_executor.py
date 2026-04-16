@@ -5,7 +5,7 @@ import logging
 import uuid
 
 from engagement_channels import (
-    PushSimulatorAdapter,
+    PushNotificationAdapter,
     SendGridEmailAdapter,
     BrazeAdapter,
     WebhookAdapter,
@@ -26,7 +26,7 @@ class EngagementExecutor:
 
     def __init__(self):
         self.adapters = {
-            "push_notification": PushSimulatorAdapter(),
+            "push_notification": PushNotificationAdapter(),
             "email": SendGridEmailAdapter(),
             "braze": BrazeAdapter(),
             "webhook": WebhookAdapter(),
@@ -95,6 +95,11 @@ class EngagementExecutor:
                 "channel": result.get("channel", channel),
                 "content": result.get("content", action.get("content", "")),
                 "status_code": result.get("status_code"),
+                "accepted": result.get("accepted"),
+                "duplicate": result.get("duplicate"),
+                "provider_campaign_id": result.get("provider_campaign_id"),
+                "scheduled_at": result.get("scheduled_at"),
+                "provider_response_body": result.get("provider_response_body"),
                 "ok": False,
                 "error": result.get("error", "unknown_error"),
             }
@@ -109,6 +114,11 @@ class EngagementExecutor:
             "channel": result.get("channel", channel),
             "content": result.get("content", action.get("content", "")),
             "status_code": result.get("status_code"),
+            "accepted": result.get("accepted"),
+            "duplicate": result.get("duplicate"),
+            "provider_campaign_id": result.get("provider_campaign_id"),
+            "scheduled_at": result.get("scheduled_at"),
+            "provider_response_body": result.get("provider_response_body"),
             "ok": True,
             "error": None,
         }

@@ -631,7 +631,7 @@
                         <span id="provider-connection-status" class="subtle"></span>
                     </div>
                 </div>
-                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid and Braze credentials here, then switch between them in the email campaign builder. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
+                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid, Braze, and Wynn PushNotifier credentials here. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
                 <div id="provider-connection-form-container" style="display: none;">
                     <div class="grid-2">
                         <div class="form-group">
@@ -639,6 +639,7 @@
                             <select id="provider-connection-type-select">
                                 <option value="sendgrid" selected>SendGrid</option>
                                 <option value="braze">Braze</option>
+                                <option value="wynn_push_notifier">Wynn PushNotifier</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1144,9 +1145,61 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="workflow-blacklist-input" placeholder="user_1,user_2">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="workflow-content-input">Content</label>
-                        <textarea id="workflow-content-input" style="min-height: 8rem;">Come back for a reward.</textarea>
+                    <div id="workflow-email-fields" style="display: none;">
+                        <div class="form-group">
+                            <label for="workflow-content-input">Email Content</label>
+                            <textarea id="workflow-content-input" style="min-height: 8rem;">Come back for a reward.</textarea>
+                        </div>
+                    </div>
+                    <div id="workflow-push-fields">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="workflow-push-provider-connection-select">Provider Connection</label>
+                                <select id="workflow-push-provider-connection-select">
+                                    <option value="">Simulator only (no provider connection)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="workflow-push-campaign-name-input">Campaign Name</label>
+                                <input type="text" id="workflow-push-campaign-name-input" value="winback_push">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="workflow-push-title-input">Title</label>
+                                <input type="text" id="workflow-push-title-input" value="Come back">
+                            </div>
+                            <div class="form-group">
+                                <label for="workflow-push-scheduled-at-input">Schedule Override (optional)</label>
+                                <input type="datetime-local" id="workflow-push-scheduled-at-input">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-push-body-input">Body</label>
+                            <textarea id="workflow-push-body-input" style="min-height: 8rem;">Rewards are waiting for you.</textarea>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="workflow-push-deep-link-input">Deep Link (optional)</label>
+                                <input type="text" id="workflow-push-deep-link-input" placeholder="wynn://promotions/welcome-back">
+                            </div>
+                            <div class="form-group">
+                                <label for="workflow-push-deep-link-token-input">Deep Link Token (optional)</label>
+                                <input type="text" id="workflow-push-deep-link-token-input" placeholder="campaign-default-token">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-push-data-input">Push Data JSON</label>
+                            <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                        </div>
+                        <details>
+                            <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
+                            <div class="form-group" style="margin-top: 0.75rem;">
+                                <label for="workflow-push-provider-options-input">Provider Options JSON</label>
+                                <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                            </div>
+                        </details>
+                        <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a Wynn PushNotifier connection when this workflow should create visible Wynn push campaigns for explicit player IDs.</p>
                     </div>
                     <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
                         <input type="checkbox" id="workflow-requires-confirmation-checkbox">
