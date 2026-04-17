@@ -9382,6 +9382,7 @@ export function initializeOperatorConsole() {
             const dataSandboxMappingStatusDiv = document.getElementById('data-sandbox-mapping-status');
             const dataSandboxMappingConnectorSelect = document.getElementById('data-sandbox-mapping-connector');
             const dataSandboxAwaitingJobSelect = document.getElementById('data-sandbox-awaiting-job');
+            const dataSandboxActionHint = document.getElementById('data-sandbox-action-hint');
             const dataSandboxGuidedHint = document.getElementById('data-sandbox-guided-hint');
             const dataSandboxGuidedMapping = document.getElementById('data-sandbox-guided-mapping');
             const dataSandboxMemorySummary = document.getElementById('data-sandbox-memory-summary');
@@ -9444,6 +9445,43 @@ export function initializeOperatorConsole() {
                     scopeKey: null,
                     scopeLabel: connectorName ? `source mapping for ${connectorName}` : 'source mapping',
                 };
+            }
+
+            function getDataSandboxSourceScope() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                return {
+                    scopeType: 'source',
+                    scopeKey: null,
+                    scopeLabel: connectorName ? `source mapping for ${connectorName}` : 'source mapping',
+                };
+            }
+
+            function syncDataSandboxMappingActions() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                if (dataSandboxSaveMappingBtn) {
+                    dataSandboxSaveMappingBtn.textContent = selectedJob ? 'Save Mapping Memory' : 'Save Mapping';
+                    dataSandboxSaveMappingBtn.title = selectedJob
+                        ? 'Save the connector mapping for future imports without rerunning the paused import.'
+                        : 'Save the current connector mapping for future imports.';
+                }
+                if (dataSandboxProcessMappingBtn) {
+                    dataSandboxProcessMappingBtn.textContent = 'Save and Reprocess Import';
+                    dataSandboxProcessMappingBtn.title = selectedJob
+                        ? 'Persist the corrected mapping, apply it to this paused import, and rerun normalization and dedupe.'
+                        : 'Select a paused import job for this connector first.';
+                    dataSandboxProcessMappingBtn.disabled = !selectedJob;
+                }
+                if (!dataSandboxActionHint) return;
+                if (!connectorName) {
+                    dataSandboxActionHint.textContent = 'Select a connector to edit saved mapping memory or resume a paused import.';
+                    return;
+                }
+                if (selectedJob) {
+                    dataSandboxActionHint.textContent = `Save Mapping Memory updates future imports for ${connectorName}. Save and Reprocess Import applies the current editor to ${selectedJob.name}, reruns normalization and dedupe, and keeps the successful mapping as future memory.`;
+                    return;
+                }
+                dataSandboxActionHint.textContent = `Save Mapping updates connector memory for future ${connectorName} imports. Reprocessing is only available after you select a paused Awaiting Mapping import for the same connector.`;
             }
 
             function setDataSandboxMappingJsonValue(mapping = {}) {
@@ -9691,7 +9729,7 @@ export function initializeOperatorConsole() {
                                     ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
                                     : ''}
                                 <div><strong>Correction rule:</strong> ${selectedJob
-                                    ? 'The current paused import is using a job override. Save the corrected mapping, then process the paused import. That successful run will reinforce future suggestions.'
+                                    ? 'Use Save Mapping Memory if future imports should inherit the correction without touching the paused job. Use Save and Reprocess Import when the current paused import should rerun with this editor.'
                                     : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
                             </div>
                             ${alternativesMarkup}
@@ -9745,7 +9783,7 @@ export function initializeOperatorConsole() {
                 );
                 if (dataSandboxGuidedHint) {
                     if (selectedJob) {
-                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Saving a correction lets you resume this paused import, and a successful run reinforces future auto-mapping memory.`;
+                        dataSandboxGuidedHint.textContent = 'The editor reflects the paused import’s effective mapping. Save Mapping Memory updates future imports only; Save and Reprocess Import applies this editor to the paused import and resumes processing.';
                     } else if (connectorName) {
                         dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Confirmed saves and successful imports become the memory reused on future loads.`;
                     } else {
@@ -9934,6 +9972,7 @@ export function initializeOperatorConsole() {
                     dataSandboxPreviewMappingBtn.disabled = true;
                     dataSandboxCoverageBtn.disabled = true;
                     dataSandboxProcessMappingBtn.disabled = true;
+                    syncDataSandboxMappingActions();
                     setDataSandboxMappingStatus(accessToken ? 'Finish workspace setup to load field mapping controls.' : '');
                     return;
                 }
@@ -9992,8 +10031,6 @@ export function initializeOperatorConsole() {
                     } else {
                         dataSandboxAwaitingJobSelect.innerHTML = '<option value="">No paused import job</option>';
                     }
-                    dataSandboxProcessMappingBtn.disabled = dataSandboxAwaitingJobs.length === 0;
-
                     const selectedJob = getSelectedAwaitingJob();
                     const selectedJobSource = selectedJob?.source_stats?.[0]?.source;
                     if (
@@ -10013,10 +10050,12 @@ export function initializeOperatorConsole() {
                     }
 
                     if (dataSandboxAwaitingJobs.length > 0) {
-                        setDataSandboxMappingStatus(`Paused import job detected: ${dataSandboxAwaitingJobs[0].name}. Review the mapping, then click "Process After Mapping".`);
+                        const activeJob = getSelectedAwaitingJobForConnector(dataSandboxMappingConnectorSelect.value) || dataSandboxAwaitingJobs[0];
+                        setDataSandboxMappingStatus(`Paused import job detected: ${activeJob.name}. Save Mapping Memory updates future imports only. Click "Save and Reprocess Import" to continue the paused import.`);
                     } else {
-                        setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings locally.');
+                        setDataSandboxMappingStatus('No paused import jobs. You can still edit, preview, and save connector mapping memory locally for future imports.');
                     }
+                    syncDataSandboxMappingActions();
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
@@ -10032,6 +10071,7 @@ export function initializeOperatorConsole() {
                         dataSandboxPreviewMappingBtn.disabled = true;
                         dataSandboxCoverageBtn.disabled = true;
                         dataSandboxProcessMappingBtn.disabled = true;
+                        syncDataSandboxMappingActions();
                         setDataSandboxMappingStatus(getWorkspaceResolutionMessage(error.payload || authSessionState));
                         return;
                     }
@@ -10041,6 +10081,7 @@ export function initializeOperatorConsole() {
                     setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
                     renderDataSandboxMemory();
+                    syncDataSandboxMappingActions();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
                 }
             }
@@ -10072,6 +10113,7 @@ export function initializeOperatorConsole() {
                         loadDataSandboxMappingCandidates(),
                     ]);
                     renderDataSandboxMemory();
+                    syncDataSandboxMappingActions();
                     if (!silent) {
                         setDataSandboxMappingStatus(`Loaded ${scope.scopeLabel}.`);
                     }
@@ -10082,6 +10124,7 @@ export function initializeOperatorConsole() {
                     setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
                     renderDataSandboxMemory();
+                    syncDataSandboxMappingActions();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping.', true);
                 }
             }
@@ -10096,7 +10139,9 @@ export function initializeOperatorConsole() {
 
                 try {
                     const mapping = getDataSandboxCurrentMapping();
-                    const scope = getDataSandboxMappingScope();
+                    const scope = getSelectedAwaitingJobForConnector(connectorName)
+                        ? getDataSandboxSourceScope()
+                        : getDataSandboxMappingScope();
                     await apiRequest(`/mappings/${encodeURIComponent(connectorName)}`, {
                         method: 'PUT',
                         body: {
@@ -10109,7 +10154,11 @@ export function initializeOperatorConsole() {
                         await loadDataSandboxFieldMapping(true);
                     }
                     if (!silent) {
-                        setDataSandboxMappingStatus(`Saved ${scope.scopeLabel}.`);
+                        if (getSelectedAwaitingJobForConnector(connectorName)) {
+                            setDataSandboxMappingStatus(`Saved ${scope.scopeLabel}. Click "Save and Reprocess Import" to rerun the paused import with this corrected mapping.`);
+                        } else {
+                            setDataSandboxMappingStatus(`Saved ${scope.scopeLabel}.`);
+                        }
                     }
                 } catch (error) {
                     setDataSandboxMappingStatus(error.message || 'Failed to save field mapping.', true);
@@ -10158,15 +10207,19 @@ export function initializeOperatorConsole() {
             }
 
             async function processDataSandboxAwaitingJob() {
-                const selectedJob = getSelectedAwaitingJob();
+                const selectedJob = getSelectedAwaitingJobForConnector(dataSandboxMappingConnectorSelect.value);
                 if (!selectedJob) {
-                    setDataSandboxMappingStatus('Import pause/resume is not available on /api/v1.', true);
+                    setDataSandboxMappingStatus('Select a paused Awaiting Mapping import before trying to reprocess it.', true);
                     return;
                 }
                 try {
-                    await saveDataSandboxFieldMapping({ silent: true, reload: false, rethrow: true });
-                    const resumed = await apiRequest(`/imports/${encodeURIComponent(selectedJob.id)}/resume`, {
+                    const mapping = getDataSandboxCurrentMapping();
+                    const resumed = await apiRequest(`/imports/${encodeURIComponent(selectedJob.id)}/remap-and-resume`, {
                         method: 'POST',
+                        body: {
+                            mapping,
+                            persist_source_mapping: true,
+                        },
                     });
                     await refreshImportsState();
                     await loadImportedDataList();
@@ -10263,6 +10316,7 @@ export function initializeOperatorConsole() {
             dataSandboxMappingConnectorSelect.addEventListener('change', async () => {
                 renderDataSandboxCoverage(null);
                 dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
+                syncDataSandboxMappingActions();
                 await loadDataSandboxFieldMapping(true);
             });
 
@@ -10274,8 +10328,10 @@ export function initializeOperatorConsole() {
                     Array.from(dataSandboxMappingConnectorSelect.options).some((option) => option.value === selectedJobSource)
                 ) {
                     dataSandboxMappingConnectorSelect.value = selectedJobSource;
+                    syncDataSandboxMappingActions();
                     await loadDataSandboxFieldMapping(true);
                 } else {
+                    syncDataSandboxMappingActions();
                     await loadDataSandboxMappingCandidates();
                 }
                 renderDataSandboxCoverage(null);
