@@ -68,3 +68,29 @@ class CohortMemberPage(BaseModel):
 
 class CohortVersionListResponse(BaseModel):
     items: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CohortBuilderCondition(BaseModel):
+    field: str
+    op: str = "="
+    value: Any = None
+    values: List[Any] = Field(default_factory=list)
+    value_type: str | None = None
+
+
+class CohortBuilderRequest(BaseModel):
+    name: str = ""
+    audience_basis: str = "prediction"
+    prediction_scope: str = "source"
+    source_names: List[str] = Field(default_factory=list)
+    prediction_job_ids: List[str] = Field(default_factory=list)
+    output_mode: str = "combined"
+    refresh_mode: str = "manual"
+    owner: str = "system"
+    description: str = ""
+    tags: List[str] = Field(default_factory=list)
+    logic: str = "AND"
+    conditions: List[CohortBuilderCondition] = Field(default_factory=list)
+    members: List[Any] = Field(default_factory=list)
+    sql: str = ""
+    activate: bool = False

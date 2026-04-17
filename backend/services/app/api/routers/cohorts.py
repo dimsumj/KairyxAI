@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.schemas.cohorts import CohortCreateRequest, CohortMemberPage, CohortResponse, CohortUpdateRequest, CohortVersionListResponse
+from app.api.schemas.cohorts import CohortBuilderRequest
 from app.application.cohorts import CohortService
 from app.core.errors import ResourceLockedError
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
@@ -31,6 +32,41 @@ def create_cohort(request: CohortCreateRequest, http_request: Request, service: 
             tags=request.tags,
             activate=request.activate,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/builder/options", response_model=dict)
+def get_cohort_builder_options(
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.create")
+    return service.get_builder_options()
+
+
+@router.post("/builder/preview", response_model=dict)
+def preview_cohort_builder(
+    request: CohortBuilderRequest,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.create")
+    try:
+        return service.preview_builder(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/builder/create", response_model=dict, status_code=status.HTTP_201_CREATED)
+def create_cohort_from_builder(
+    request: CohortBuilderRequest,
+    http_request: Request,
+    service: CohortService = Depends(get_cohort_service),
+):
+    ensure_permission(get_governance_context(http_request), "cohorts.create")
+    try:
+        return service.create_from_builder(request.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

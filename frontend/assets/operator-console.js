@@ -10531,6 +10531,29 @@ export function initializeOperatorConsole() {
             const sqlWorkspaceStatus = document.getElementById('sql-workspace-status');
             const sqlPreviewOutput = document.getElementById('sql-preview-output');
             const sqlSavedQueryList = document.getElementById('sql-saved-query-list');
+            const audienceBuilderBasisSelect = document.getElementById('audience-builder-basis-select');
+            const audienceBuilderPredictionControls = document.getElementById('audience-builder-prediction-controls');
+            const audienceBuilderPredictionScopeSelect = document.getElementById('audience-builder-prediction-scope-select');
+            const audienceBuilderOutputModeSelect = document.getElementById('audience-builder-output-mode-select');
+            const audienceBuilderLogicSelect = document.getElementById('audience-builder-logic-select');
+            const audienceBuilderSourceGroup = document.getElementById('audience-builder-source-group');
+            const audienceBuilderSourceSelect = document.getElementById('audience-builder-source-select');
+            const audienceBuilderJobGroup = document.getElementById('audience-builder-job-group');
+            const audienceBuilderJobSelect = document.getElementById('audience-builder-job-select');
+            const audienceBuilderSourceSummary = document.getElementById('audience-builder-source-summary');
+            const audienceBuilderAddConditionBtn = document.getElementById('audience-builder-add-condition-btn');
+            const audienceBuilderFilters = document.getElementById('audience-builder-filters');
+            const audienceBuilderManualListGroup = document.getElementById('audience-builder-manual-list-group');
+            const audienceBuilderMembersInput = document.getElementById('audience-builder-members-input');
+            const audienceBuilderPreviewBtn = document.getElementById('audience-builder-preview-btn');
+            const audienceBuilderPreviewSummary = document.getElementById('audience-builder-preview-summary');
+            const audienceBuilderPreviewMembers = document.getElementById('audience-builder-preview-members');
+            const audienceBuilderPreviewBreakdown = document.getElementById('audience-builder-preview-breakdown');
+            const audienceBuilderAiPrompt = document.getElementById('audience-builder-ai-prompt');
+            const audienceBuilderAiDraftBtn = document.getElementById('audience-builder-ai-draft-btn');
+            const audienceBuilderAiCreateBtn = document.getElementById('audience-builder-ai-create-btn');
+            const audienceBuilderAiStatus = document.getElementById('audience-builder-ai-status');
+            const audienceBuilderAiOutput = document.getElementById('audience-builder-ai-output');
             const workflowCreateStatus = document.getElementById('workflow-create-status');
             const workflowBuilderSelectedLabel = document.getElementById('workflow-builder-selected-label');
             const workflowChannelSelect = document.getElementById('workflow-channel-select');
@@ -10641,6 +10664,9 @@ export function initializeOperatorConsole() {
             const templateInstantiateStatus = document.getElementById('template-instantiate-status');
             const templatesSelectedLabel = document.getElementById('templates-selected-label');
             let selectedAudienceCohortId = null;
+            let audienceBuilderOptions = null;
+            let audienceBuilderPreview = null;
+            let audienceBuilderConditions = [];
             let selectedWorkflowId = null;
             let selectedWorkflowBuilderId = null;
             let selectedWorkflowStudioType = 'all';
@@ -12252,6 +12278,737 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function getSelectedMultiSelectValues(select) {
+                if (!select) return [];
+                return Array.from(select.selectedOptions || [])
+                    .map((option) => String(option.value || '').trim())
+                    .filter(Boolean);
+            }
+
+            function setSelectedMultiSelectValues(select, values = []) {
+                if (!select) return;
+                const selectedValues = new Set((Array.isArray(values) ? values : []).map((item) => String(item || '').trim()).filter(Boolean));
+                Array.from(select.options || []).forEach((option) => {
+                    option.selected = selectedValues.has(String(option.value || '').trim());
+                });
+            }
+
+            function setSelectOptions(select, items = [], { placeholder = '', valueKey = 'id', labelKey = 'label', selectedValues = [] } = {}) {
+                if (!select) return;
+                const multiple = Boolean(select.multiple);
+                const normalizedItems = Array.isArray(items) ? items : [];
+                const preservedValues = multiple
+                    ? new Set((Array.isArray(selectedValues) && selectedValues.length ? selectedValues : getSelectedMultiSelectValues(select)).map((item) => String(item || '').trim()))
+                    : null;
+                const preservedValue = multiple
+                    ? ''
+                    : String(
+                        (Array.isArray(selectedValues) && selectedValues.length ? selectedValues[0] : select.value)
+                        || '',
+                    ).trim();
+                select.innerHTML = '';
+                if (!multiple && placeholder) {
+                    const placeholderOption = document.createElement('option');
+                    placeholderOption.value = '';
+                    placeholderOption.textContent = placeholder;
+                    select.appendChild(placeholderOption);
+                }
+                normalizedItems.forEach((item) => {
+                    const option = document.createElement('option');
+                    option.value = String(item?.[valueKey] ?? '');
+                    option.textContent = String(item?.[labelKey] ?? item?.label ?? item?.name ?? option.value);
+                    select.appendChild(option);
+                });
+                if (multiple) {
+                    setSelectedMultiSelectValues(select, Array.from(preservedValues || []));
+                } else if (preservedValue && Array.from(select.options).some((option) => option.value === preservedValue)) {
+                    select.value = preservedValue;
+                } else if (!multiple && !placeholder && select.options.length) {
+                    select.value = select.options[0].value;
+                } else {
+                    select.value = '';
+                }
+            }
+
+            function getAudienceBuilderBasis() {
+                return String(audienceBuilderBasisSelect?.value || audienceBuilderOptions?.defaults?.audience_basis || 'prediction').trim().toLowerCase() || 'prediction';
+            }
+
+            function getAudienceBuilderPredictionScope() {
+                return String(audienceBuilderPredictionScopeSelect?.value || audienceBuilderOptions?.defaults?.prediction_scope || 'source').trim().toLowerCase() || 'source';
+            }
+
+            function getAudienceBuilderAvailableFields(basis = getAudienceBuilderBasis()) {
+                return (audienceBuilderOptions?.filter_fields || []).filter((item) => Array.isArray(item.available_in) && item.available_in.includes(basis));
+            }
+
+            function getAudienceBuilderFieldMeta(fieldName, basis = getAudienceBuilderBasis()) {
+                return getAudienceBuilderAvailableFields(basis).find((item) => item.field === fieldName) || null;
+            }
+
+            function createAudienceBuilderCondition(fieldMeta = null) {
+                const availableFields = getAudienceBuilderAvailableFields();
+                const resolvedField = fieldMeta || availableFields[0] || { field: 'email', value_type: 'string', operators: ['contains'] };
+                const firstOption = Array.isArray(resolvedField.options) && resolvedField.options.length ? resolvedField.options[0] : '';
+                return {
+                    id: `builder_condition_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+                    field: resolvedField.field,
+                    op: Array.isArray(resolvedField.operators) && resolvedField.operators.length ? resolvedField.operators[0] : '=',
+                    value: resolvedField.value_type === 'enum' ? firstOption : '',
+                    value_type: resolvedField.value_type || 'string',
+                };
+            }
+
+            function resetAudienceBuilderPreview(message = 'Preview the cohort to inspect member count, sample members, and source contribution.') {
+                audienceBuilderPreview = null;
+                if (audienceBuilderPreviewSummary) {
+                    audienceBuilderPreviewSummary.innerHTML = `<div class="list-empty">${escapeHtml(message)}</div>`;
+                }
+                if (audienceBuilderPreviewMembers) {
+                    audienceBuilderPreviewMembers.innerHTML = '<div class="list-empty">Preview members will appear here.</div>';
+                }
+                if (audienceBuilderPreviewBreakdown) {
+                    audienceBuilderPreviewBreakdown.innerHTML = '<div class="list-empty">Source contribution will appear here.</div>';
+                }
+            }
+
+            function formatAudienceBuilderCondition(condition = {}) {
+                const fieldMeta = getAudienceBuilderFieldMeta(condition.field, condition.available_in?.[0] || getAudienceBuilderBasis())
+                    || (audienceBuilderOptions?.filter_fields || []).find((item) => item.field === condition.field)
+                    || {};
+                const fieldLabel = fieldMeta.label || condition.field || 'Field';
+                const operator = String(condition.op || '=').trim();
+                const rawValue = condition.value;
+                const value = Array.isArray(rawValue) ? rawValue.join(', ') : rawValue;
+                return `${fieldLabel} ${operator} ${String(value ?? '').trim() || 'value'}`;
+            }
+
+            function renderAudienceBuilderPreview(preview = audienceBuilderPreview) {
+                if (!preview) {
+                    resetAudienceBuilderPreview();
+                    return;
+                }
+                const request = preview.request || {};
+                const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
+                const proposedNames = Array.isArray(preview.proposed_names) ? preview.proposed_names : [];
+                const conditions = Array.isArray(request.conditions) ? request.conditions : [];
+                const summaryCards = [
+                    { label: 'Members', value: String(preview.member_count || 0) },
+                    { label: 'Mode', value: String(preview.mode || 'combined').replace(/_/g, ' ') },
+                    { label: 'Refresh', value: String(request.refresh_mode || 'manual') },
+                    { label: 'Output', value: proposedNames.length > 1 ? `${proposedNames.length} draft cohorts` : '1 draft cohort' },
+                ];
+                const warningsMarkup = warnings.length
+                    ? `<div class="subtle" style="color: var(--danger-600);">${warnings.map((item) => escapeHtml(item)).join('<br>')}</div>`
+                    : '';
+                const conditionsMarkup = conditions.length
+                    ? conditions.map((item) => `<span class="pill">${escapeHtml(formatAudienceBuilderCondition(item))}</span>`).join('')
+                    : '<span class="subtle">No selector filters applied.</span>';
+                const namesMarkup = proposedNames.length
+                    ? proposedNames.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('')
+                    : '<span class="subtle">Preview names will appear here.</span>';
+                audienceBuilderPreviewSummary.innerHTML = `
+                    ${summaryCards.map((item) => `
+                        <div class="builder-preview-stat">
+                            <span>${escapeHtml(item.label)}</span>
+                            <strong>${escapeHtml(item.value)}</strong>
+                        </div>
+                    `).join('')}
+                    <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                        <span>Draft Names</span>
+                        <div>${namesMarkup}</div>
+                    </div>
+                    <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                        <span>Tags</span>
+                        <div>${(request.tags || []).length ? request.tags.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') : '<span class="subtle">No tags yet.</span>'}</div>
+                    </div>
+                    <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                        <span>Filters</span>
+                        <div>${conditionsMarkup}</div>
+                    </div>
+                    ${warningsMarkup}
+                `;
+                renderSimpleTable(
+                    audienceBuilderPreviewMembers,
+                    [
+                        { label: 'Canonical User ID', render: (item) => escapeHtml(String(item.canonical_user_id || '-')) },
+                        { label: 'Email', render: (item) => escapeHtml(String(item.email || '-')) },
+                        { label: 'Risk', render: (item) => escapeHtml(String(item.predicted_churn_risk || item.churn_state || '-')) },
+                        { label: 'Sources', render: (item) => escapeHtml((item.matched_sources || [item.source_name]).filter(Boolean).join(', ') || '-') },
+                    ],
+                    preview.preview_members || [],
+                    'No preview members matched the current builder state.',
+                );
+                renderSimpleTable(
+                    audienceBuilderPreviewBreakdown,
+                    [
+                        { label: 'Source', render: (item) => escapeHtml(String(item.source_name || item.prediction_job_id || '-')) },
+                        { label: 'Prediction Run', render: (item) => escapeHtml(String(item.prediction_job_id || '-')) },
+                        { label: 'Members', render: (item) => escapeHtml(String(item.member_count || 0)) },
+                        { label: 'Rows', render: (item) => escapeHtml(String(item.row_count || 0)) },
+                        { label: 'Completed', render: (item) => escapeHtml(formatDateTime(item.completed_at)) },
+                    ],
+                    preview.source_breakdown || [],
+                    'No per-source breakdown for this builder state.',
+                );
+            }
+
+            function renderAudienceBuilderSourceSummary() {
+                if (!audienceBuilderSourceSummary) return;
+                if (!audienceBuilderOptions) {
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Load the workspace to inspect prediction sources.</div>';
+                    return;
+                }
+                if (getAudienceBuilderBasis() !== 'prediction') {
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Prediction source selection is only used for prediction-led cohorts.</div>';
+                    return;
+                }
+                const predictionScope = getAudienceBuilderPredictionScope();
+                const selectedSourceNames = getSelectedMultiSelectValues(audienceBuilderSourceSelect);
+                const selectedJobIds = getSelectedMultiSelectValues(audienceBuilderJobSelect);
+                const selectedItems = predictionScope === 'prediction_job'
+                    ? (audienceBuilderOptions.prediction_jobs || []).filter((item) => selectedJobIds.includes(String(item.prediction_job_id || '')))
+                    : (audienceBuilderOptions.prediction_sources || []).filter((item) => selectedSourceNames.includes(String(item.source_name || '')));
+                const items = selectedItems.length
+                    ? selectedItems
+                    : (predictionScope === 'prediction_job'
+                        ? (audienceBuilderOptions.prediction_jobs || []).slice(0, 4)
+                        : (audienceBuilderOptions.prediction_sources || []).slice(0, 4));
+                if (!items.length) {
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">No completed prediction runs are available yet.</div>';
+                    return;
+                }
+                const helperCopy = selectedItems.length
+                    ? `Selected ${selectedItems.length} ${predictionScope === 'prediction_job' ? 'prediction run(s)' : 'source(s)'} for the cohort.`
+                    : `Select one or more ${predictionScope === 'prediction_job' ? 'prediction runs' : 'sources'} to build the cohort.`;
+                audienceBuilderSourceSummary.innerHTML = `
+                    <div class="subtle">${escapeHtml(helperCopy)}</div>
+                    ${items.map((item) => `
+                        <div class="builder-source-card">
+                            <div class="builder-source-head">
+                                <strong>${escapeHtml(item.source_name || item.audience_label || item.prediction_job_id || 'Prediction')}</strong>
+                                <span class="pill">${escapeHtml(item.status || (item.is_latest_for_source ? 'latest' : 'completed'))}</span>
+                            </div>
+                            <div class="subtle">${escapeHtml(item.prediction_job_id || '-')}${item.prediction_mode ? ` · ${escapeHtml(item.prediction_mode)}` : ''}</div>
+                            <div class="subtle">Completed ${escapeHtml(formatDateTime(item.completed_at))}</div>
+                        </div>
+                    `).join('')}
+                `;
+            }
+
+            function renderAudienceBuilderValueControl(condition, fieldMeta) {
+                const operator = String(condition.op || '=').trim().toLowerCase();
+                const isMultiValue = operator === 'between' || operator === 'in' || operator === 'not in';
+                const normalizedValue = Array.isArray(condition.value) ? condition.value.join(', ') : String(condition.value ?? '');
+                if (fieldMeta?.value_type === 'enum' && Array.isArray(fieldMeta.options) && fieldMeta.options.length && !isMultiValue) {
+                    return `
+                        <select data-builder-value>
+                            ${fieldMeta.options.map((item) => `
+                                <option value="${escapeHtml(item)}" ${String(item) === normalizedValue ? 'selected' : ''}>${escapeHtml(item)}</option>
+                            `).join('')}
+                        </select>
+                    `;
+                }
+                const inputType = fieldMeta?.value_type === 'number' && operator !== 'between' ? 'number' : 'text';
+                const placeholder = operator === 'between'
+                    ? 'min,max'
+                    : (operator === 'in' || operator === 'not in')
+                        ? 'value_a,value_b'
+                        : `Enter ${String(fieldMeta?.label || 'value').toLowerCase()}`;
+                return `<input data-builder-value type="${inputType}" value="${escapeHtml(normalizedValue)}" placeholder="${escapeHtml(placeholder)}">`;
+            }
+
+            function renderAudienceBuilderFilters() {
+                if (!audienceBuilderFilters) return;
+                const basis = getAudienceBuilderBasis();
+                const supportsFilters = basis === 'prediction' || basis === 'behavior';
+                if (!supportsFilters) {
+                    audienceBuilderFilters.innerHTML = `<div class="list-empty">${escapeHtml(
+                        basis === 'manual_list'
+                            ? 'Manual list cohorts use the member list directly and do not need selector filters.'
+                            : 'Advanced SQL cohorts are defined in the SQL editor below. Selector filters are not applied here.',
+                    )}</div>`;
+                    return;
+                }
+                const availableFields = getAudienceBuilderAvailableFields(basis);
+                if (!audienceBuilderConditions.length) {
+                    audienceBuilderFilters.innerHTML = '<div class="list-empty">No selector filters yet. Add a filter to narrow the cohort, or preview the entire selected audience.</div>';
+                    return;
+                }
+                audienceBuilderConditions = audienceBuilderConditions
+                    .map((condition) => {
+                        const fallbackField = availableFields[0] || { field: 'email', operators: ['contains'], value_type: 'string' };
+                        const fieldMeta = getAudienceBuilderFieldMeta(condition.field, basis) || fallbackField;
+                        const operators = Array.isArray(fieldMeta.operators) && fieldMeta.operators.length ? fieldMeta.operators : ['='];
+                        const op = operators.includes(condition.op) ? condition.op : operators[0];
+                        return {
+                            ...condition,
+                            field: fieldMeta.field,
+                            op,
+                            value_type: fieldMeta.value_type || condition.value_type || 'string',
+                        };
+                    });
+                audienceBuilderFilters.innerHTML = audienceBuilderConditions.map((condition) => {
+                    const fieldMeta = getAudienceBuilderFieldMeta(condition.field, basis) || availableFields[0] || {};
+                    const operators = Array.isArray(fieldMeta.operators) && fieldMeta.operators.length ? fieldMeta.operators : ['='];
+                    return `
+                        <div class="card builder-filter-row" data-condition-id="${escapeHtml(condition.id)}">
+                            <div class="builder-filter-row-grid">
+                                <div class="form-group">
+                                    <label>Field</label>
+                                    <select data-builder-field>
+                                        ${availableFields.map((item) => `
+                                            <option value="${escapeHtml(item.field)}" ${item.field === condition.field ? 'selected' : ''}>${escapeHtml(item.label)}</option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Operator</label>
+                                    <select data-builder-op>
+                                        ${operators.map((item) => `
+                                            <option value="${escapeHtml(item)}" ${item === condition.op ? 'selected' : ''}>${escapeHtml(item)}</option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Value</label>
+                                    ${renderAudienceBuilderValueControl(condition, fieldMeta)}
+                                </div>
+                                <div class="inline-actions" style="align-items: end;">
+                                    <button type="button" data-builder-remove>Remove</button>
+                                </div>
+                            </div>
+                            <div class="subtle">${escapeHtml(
+                                Array.isArray(fieldMeta.options) && fieldMeta.options.length
+                                    ? `Suggested values: ${fieldMeta.options.join(', ')}`
+                                    : fieldMeta.value_type === 'number'
+                                        ? 'Numeric operators support thresholds and ranges.'
+                                        : 'Use contains for substring matches or comma-separated values for IN filters.',
+                            )}</div>
+                        </div>
+                    `;
+                }).join('');
+                audienceBuilderFilters.querySelectorAll('[data-condition-id]').forEach((row) => {
+                    const conditionId = row.dataset.conditionId;
+                    if (!conditionId) return;
+                    const fieldSelect = row.querySelector('[data-builder-field]');
+                    const operatorSelect = row.querySelector('[data-builder-op]');
+                    const valueInput = row.querySelector('[data-builder-value]');
+                    const removeButton = row.querySelector('[data-builder-remove]');
+                    fieldSelect?.addEventListener('change', () => {
+                        const fieldMeta = getAudienceBuilderFieldMeta(fieldSelect.value, basis) || availableFields[0] || null;
+                        audienceBuilderConditions = audienceBuilderConditions.map((condition) => (
+                            condition.id === conditionId ? createAudienceBuilderCondition(fieldMeta) : condition
+                        ));
+                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        renderAudienceBuilderFilters();
+                    });
+                    operatorSelect?.addEventListener('change', () => {
+                        audienceBuilderConditions = audienceBuilderConditions.map((condition) => (
+                            condition.id === conditionId ? { ...condition, op: operatorSelect.value } : condition
+                        ));
+                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        renderAudienceBuilderFilters();
+                    });
+                    valueInput?.addEventListener('input', () => {
+                        audienceBuilderConditions = audienceBuilderConditions.map((condition) => (
+                            condition.id === conditionId ? { ...condition, value: valueInput.value } : condition
+                        ));
+                    });
+                    valueInput?.addEventListener('change', () => {
+                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                    });
+                    removeButton?.addEventListener('click', () => {
+                        audienceBuilderConditions = audienceBuilderConditions.filter((condition) => condition.id !== conditionId);
+                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        renderAudienceBuilderFilters();
+                    });
+                });
+            }
+
+            function syncAudienceBuilderVisibility() {
+                const basis = getAudienceBuilderBasis();
+                const predictionScope = getAudienceBuilderPredictionScope();
+                const supportsPrediction = basis === 'prediction';
+                const supportsFilters = basis === 'prediction' || basis === 'behavior';
+                audienceBuilderPredictionControls?.classList.toggle('hidden', !supportsPrediction);
+                audienceBuilderSourceGroup?.classList.toggle('hidden', !supportsPrediction || predictionScope !== 'source');
+                audienceBuilderJobGroup?.classList.toggle('hidden', !supportsPrediction || predictionScope === 'source');
+                audienceBuilderManualListGroup?.classList.toggle('hidden', basis !== 'manual_list');
+                if (audienceBuilderOutputModeSelect) {
+                    audienceBuilderOutputModeSelect.disabled = !supportsPrediction;
+                    if (!supportsPrediction) {
+                        audienceBuilderOutputModeSelect.value = 'combined';
+                    }
+                }
+                if (audienceBuilderAddConditionBtn) {
+                    audienceBuilderAddConditionBtn.style.display = supportsFilters ? 'inline-flex' : 'none';
+                }
+                if (basis === 'advanced_sql') {
+                    document.getElementById('audience-sql-section')?.setAttribute('open', 'open');
+                }
+                renderAudienceBuilderSourceSummary();
+                renderAudienceBuilderFilters();
+            }
+
+            function populateAudienceBuilderOptionSelects({ preserveSelection = true } = {}) {
+                if (!audienceBuilderOptions) {
+                    return;
+                }
+                const defaults = audienceBuilderOptions.defaults || {};
+                setSelectOptions(
+                    audienceBuilderBasisSelect,
+                    audienceBuilderOptions.audience_bases || [],
+                    {
+                        placeholder: '',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderBasisSelect?.value
+                            ? [audienceBuilderBasisSelect.value]
+                            : [defaults.audience_basis || 'prediction'],
+                    },
+                );
+                setSelectOptions(
+                    audienceBuilderPredictionScopeSelect,
+                    audienceBuilderOptions.prediction_scopes || [],
+                    {
+                        placeholder: '',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderPredictionScopeSelect?.value
+                            ? [audienceBuilderPredictionScopeSelect.value]
+                            : [defaults.prediction_scope || 'source'],
+                    },
+                );
+                setSelectOptions(
+                    audienceBuilderOutputModeSelect,
+                    audienceBuilderOptions.output_modes || [],
+                    {
+                        placeholder: '',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderOutputModeSelect?.value
+                            ? [audienceBuilderOutputModeSelect.value]
+                            : [defaults.output_mode || 'combined'],
+                    },
+                );
+                if (audienceBuilderLogicSelect && !audienceBuilderLogicSelect.value) {
+                    audienceBuilderLogicSelect.value = defaults.logic || 'AND';
+                }
+                setSelectOptions(
+                    audienceBuilderSourceSelect,
+                    (audienceBuilderOptions.prediction_sources || []).map((item) => ({
+                        id: item.source_name,
+                        label: `${item.source_name || item.audience_label || item.prediction_job_id} · latest ${formatDateTime(item.completed_at)}`,
+                    })),
+                    {
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection ? getSelectedMultiSelectValues(audienceBuilderSourceSelect) : [],
+                    },
+                );
+                setSelectOptions(
+                    audienceBuilderJobSelect,
+                    (audienceBuilderOptions.prediction_jobs || []).map((item) => ({
+                        id: item.prediction_job_id,
+                        label: `${item.source_name || item.audience_label || item.prediction_job_id} · ${item.prediction_job_id} · ${formatDateTime(item.completed_at)}`,
+                    })),
+                    {
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection ? getSelectedMultiSelectValues(audienceBuilderJobSelect) : [],
+                    },
+                );
+                syncAudienceBuilderVisibility();
+            }
+
+            async function loadAudienceBuilderOptions({ preserveSelection = true } = {}) {
+                const payload = await apiRequest('/cohorts/builder/options');
+                audienceBuilderOptions = payload || {};
+                populateAudienceBuilderOptionSelects({ preserveSelection });
+                if (audienceBuilderLogicSelect && !audienceBuilderLogicSelect.value) {
+                    audienceBuilderLogicSelect.value = audienceBuilderOptions?.defaults?.logic || 'AND';
+                }
+                renderAudienceBuilderSourceSummary();
+                renderAudienceBuilderFilters();
+            }
+
+            function parseAudienceBuilderMembersInput() {
+                const raw = String(audienceBuilderMembersInput?.value || '').trim();
+                if (!raw) {
+                    return [];
+                }
+                try {
+                    const parsed = parseJsonText(raw, []);
+                    if (Array.isArray(parsed)) {
+                        return parsed;
+                    }
+                    if (parsed && typeof parsed === 'object') {
+                        return [parsed];
+                    }
+                } catch (error) {
+                    // Fall back to CSV/plain text parsing below.
+                }
+                return raw
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(Boolean)
+                    .map((line) => {
+                        if (line.includes(',')) {
+                            const [canonicalUserId, email] = line.split(',').map((item) => item.trim()).filter(Boolean);
+                            if (canonicalUserId && email) {
+                                return { canonical_user_id: canonicalUserId, email };
+                            }
+                        }
+                        return { canonical_user_id: line };
+                    });
+            }
+
+            function buildAudienceBuilderRequest() {
+                const basis = getAudienceBuilderBasis();
+                const request = {
+                    name: String(document.getElementById('audience-name-input')?.value || '').trim(),
+                    audience_basis: basis,
+                    prediction_scope: getAudienceBuilderPredictionScope(),
+                    source_names: getSelectedMultiSelectValues(audienceBuilderSourceSelect),
+                    prediction_job_ids: getSelectedMultiSelectValues(audienceBuilderJobSelect),
+                    output_mode: String(audienceBuilderOutputModeSelect?.value || 'combined').trim().toLowerCase() || 'combined',
+                    refresh_mode: String(document.getElementById('audience-refresh-mode-select')?.value || 'manual').trim().toLowerCase() || 'manual',
+                    owner: String(document.getElementById('audience-owner-input')?.value || 'frontend_operator').trim() || 'frontend_operator',
+                    description: String(document.getElementById('audience-description-input')?.value || '').trim(),
+                    tags: splitCsv(document.getElementById('audience-tags-input')?.value || ''),
+                    logic: String(audienceBuilderLogicSelect?.value || 'AND').trim().toUpperCase() || 'AND',
+                    conditions: audienceBuilderConditions
+                        .filter((condition) => String(condition.field || '').trim())
+                        .map((condition) => ({
+                            field: condition.field,
+                            op: condition.op,
+                            value: condition.value,
+                            value_type: condition.value_type || getAudienceBuilderFieldMeta(condition.field)?.value_type || 'string',
+                        })),
+                    members: basis === 'manual_list' ? parseAudienceBuilderMembersInput() : [],
+                    sql: basis === 'advanced_sql' ? String(document.getElementById('sql-workspace-textarea')?.value || '').trim() : '',
+                };
+                if (basis !== 'prediction') {
+                    request.output_mode = 'combined';
+                }
+                return request;
+            }
+
+            async function previewAudienceBuilder(requestOverride = null, { statusElement = audienceCreateStatus } = {}) {
+                try {
+                    setInlineStatus(statusElement, 'Previewing cohort...');
+                    const payload = await apiRequest('/cohorts/builder/preview', {
+                        method: 'POST',
+                        body: requestOverride || buildAudienceBuilderRequest(),
+                    });
+                    audienceBuilderPreview = payload;
+                    renderAudienceBuilderPreview(payload);
+                    setInlineStatus(
+                        statusElement,
+                        payload.warnings?.length
+                            ? payload.warnings.join(' ')
+                            : `Preview ready with ${payload.member_count || 0} matching member(s).`,
+                    );
+                    return payload;
+                } catch (error) {
+                    resetAudienceBuilderPreview('Preview failed.');
+                    setInlineStatus(statusElement, error.message || 'Failed to preview cohort.', true);
+                    throw error;
+                }
+            }
+
+            async function createAudienceBuilderCohort(requestOverride = null, { statusElement = audienceCreateStatus } = {}) {
+                try {
+                    setInlineStatus(statusElement, 'Validating and creating draft cohort...');
+                    const preview = await previewAudienceBuilder(requestOverride, { statusElement });
+                    const payload = await apiRequest('/cohorts/builder/create', {
+                        method: 'POST',
+                        body: preview.request || requestOverride || buildAudienceBuilderRequest(),
+                    });
+                    const createdItems = Array.isArray(payload.items) ? payload.items : [];
+                    selectedAudienceCohortId = createdItems[0]?.cohort_id || selectedAudienceCohortId;
+                    setInlineStatus(
+                        statusElement,
+                        createdItems.length > 1
+                            ? `Created ${createdItems.length} draft cohorts from the guided builder.`
+                            : `Created draft cohort ${createdItems[0]?.name || preview.request?.name || 'cohort'}.`,
+                    );
+                    await loadAudienceEngine();
+                    if (selectedAudienceCohortId) {
+                        await loadAudienceCohortDetails(selectedAudienceCohortId);
+                    }
+                    return payload;
+                } catch (error) {
+                    setInlineStatus(statusElement, error.message || 'Failed to create cohort.', true);
+                    throw error;
+                }
+            }
+
+            function applyAudienceBuilderState(builderState = {}, { preservePreview = true } = {}) {
+                const preview = builderState.preview || null;
+                const request = preview?.request || builderState.request || builderState || {};
+                document.getElementById('audience-name-input').value = String(request.name || builderState.name || '').trim();
+                document.getElementById('audience-owner-input').value = String(request.owner || 'frontend_operator').trim() || 'frontend_operator';
+                document.getElementById('audience-description-input').value = String(request.description || '').trim();
+                document.getElementById('audience-tags-input').value = Array.isArray(request.tags) ? request.tags.join(', ') : '';
+                document.getElementById('audience-refresh-mode-select').value = String(request.refresh_mode || 'manual').trim().toLowerCase() || 'manual';
+                if (audienceBuilderBasisSelect) {
+                    audienceBuilderBasisSelect.value = String(request.audience_basis || 'prediction').trim().toLowerCase() || 'prediction';
+                }
+                if (audienceBuilderPredictionScopeSelect) {
+                    audienceBuilderPredictionScopeSelect.value = String(request.prediction_scope || 'source').trim().toLowerCase() || 'source';
+                }
+                if (audienceBuilderOutputModeSelect) {
+                    audienceBuilderOutputModeSelect.value = String(request.output_mode || 'combined').trim().toLowerCase() || 'combined';
+                }
+                if (audienceBuilderLogicSelect) {
+                    audienceBuilderLogicSelect.value = String(request.logic || 'AND').trim().toUpperCase() || 'AND';
+                }
+                (request.source_names || []).forEach((value) => ensureSelectOption(audienceBuilderSourceSelect, value, value));
+                (request.prediction_job_ids || []).forEach((value) => ensureSelectOption(audienceBuilderJobSelect, value, value));
+                setSelectedMultiSelectValues(audienceBuilderSourceSelect, request.source_names || []);
+                setSelectedMultiSelectValues(audienceBuilderJobSelect, request.prediction_job_ids || []);
+                if (audienceBuilderMembersInput) {
+                    const members = Array.isArray(request.members) ? request.members : [];
+                    audienceBuilderMembersInput.value = members.length ? JSON.stringify(members, null, 2) : '';
+                }
+                document.getElementById('sql-workspace-textarea').value = String(request.sql || builderState.sql || '').trim()
+                    || document.getElementById('sql-workspace-textarea').value;
+                audienceBuilderConditions = Array.isArray(request.conditions)
+                    ? request.conditions.map((condition) => ({
+                        id: `builder_condition_${Math.random().toString(16).slice(2, 8)}`,
+                        field: condition.field,
+                        op: condition.op,
+                        value: Array.isArray(condition.value) ? condition.value.join(', ') : condition.value,
+                        value_type: condition.value_type,
+                    }))
+                    : [];
+                syncAudienceBuilderVisibility();
+                renderAudienceBuilderFilters();
+                renderAudienceBuilderSourceSummary();
+                if (preservePreview && preview) {
+                    audienceBuilderPreview = preview;
+                    renderAudienceBuilderPreview(preview);
+                } else {
+                    resetAudienceBuilderPreview('Builder preview cleared because the draft changed.');
+                }
+            }
+
+            async function requestAudienceBuilderDraft({ create = false } = {}) {
+                const prompt = String(audienceBuilderAiPrompt?.value || '').trim();
+                if (!prompt) {
+                    setInlineStatus(audienceBuilderAiStatus, 'Enter a prompt for the audience builder assistant.', true);
+                    return;
+                }
+                try {
+                    setInlineStatus(audienceBuilderAiStatus, create ? 'Drafting builder and creating cohorts...' : 'Drafting guided audience builder...');
+                    renderJsonOutput(audienceBuilderAiOutput, null, 'Waiting for AI-assisted builder output...');
+                    await ensureCopilotAgentSession(false);
+                    const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
+                        method: 'POST',
+                        body: {
+                            message: `Draft a guided audience builder for this request: ${prompt}`,
+                            ui_context: getCopilotAgentUiContext(),
+                        },
+                    });
+                    const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`);
+                    renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
+                    const artifacts = Array.isArray(payload.artifacts)
+                        ? payload.artifacts
+                        : (payload.session_state?.latest_artifacts || []);
+                    const builderArtifact = artifacts.find((item) => String(item.resource_type || '').trim() === 'audience_builder_state');
+                    if (!builderArtifact) {
+                        throw new Error('The AI assistant did not return a guided audience builder draft.');
+                    }
+                    const builderState = builderArtifact.focus?.builder_state || {};
+                    applyAudienceBuilderState(builderState, { preservePreview: true });
+                    renderJsonOutput(audienceBuilderAiOutput, builderState, 'AI-assisted builder output will appear here.');
+                    setInlineStatus(
+                        audienceBuilderAiStatus,
+                        `Drafted builder with ${builderState.preview?.member_count || 0} matching member(s).`,
+                    );
+                    if (create) {
+                        await createAudienceBuilderCohort(builderState.preview?.request || builderState, { statusElement: audienceBuilderAiStatus });
+                    }
+                } catch (error) {
+                    setInlineStatus(audienceBuilderAiStatus, error.message || 'Failed to draft the audience builder.', true);
+                    renderJsonOutput(audienceBuilderAiOutput, { error: error.message || 'Failed to draft audience builder.' }, 'AI-assisted builder output will appear here.');
+                }
+            }
+
+            function renderAudienceCohortDetail(cohort) {
+                if (!cohort) {
+                    return '<div class="list-empty">Select a cohort from the table.</div>';
+                }
+                const definition = cohort.definition || {};
+                const isGuided = String(definition.entrypoint || '').trim().toLowerCase() === 'guided_builder';
+                const resolvedPredictions = (definition.provenance || {}).resolved_predictions || [];
+                const sourceBreakdown = (definition.provenance || {}).source_breakdown || [];
+                const conditions = Array.isArray(definition.conditions) ? definition.conditions : [];
+                const description = String(cohort.description || '').trim();
+                return `
+                    <div class="stats-grid">
+                        <div class="stat-card"><div class="label">Status</div><div class="value">${escapeHtml(cohort.status || '-')}</div></div>
+                        <div class="stat-card"><div class="label">Members</div><div class="value">${escapeHtml(String(cohort.member_count || 0))}</div></div>
+                        <div class="stat-card"><div class="label">Refresh Mode</div><div class="value">${escapeHtml(cohort.refresh_mode || '-')}</div></div>
+                        <div class="stat-card"><div class="label">Version</div><div class="value">${escapeHtml(String(cohort.version || cohort.version_id || 1))}</div></div>
+                    </div>
+                    <div class="subtle">Last refreshed: ${escapeHtml(formatDateTime(cohort.last_refreshed_at))}</div>
+                    ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+                    ${isGuided ? `
+                        <div class="builder-preview-summary" style="margin-top: 1rem;">
+                            <div class="builder-preview-stat">
+                                <span>Audience Basis</span>
+                                <strong>${escapeHtml(String(definition.audience_basis || cohort.type || '-').replace(/_/g, ' '))}</strong>
+                            </div>
+                            <div class="builder-preview-stat">
+                                <span>Source Kind</span>
+                                <strong>${escapeHtml(String(definition.source_kind || cohort.type || '-').replace(/_/g, ' '))}</strong>
+                            </div>
+                            <div class="builder-preview-stat">
+                                <span>Split Strategy</span>
+                                <strong>${escapeHtml(String(definition.split_strategy || 'combined').replace(/_/g, ' '))}</strong>
+                            </div>
+                            <div class="builder-preview-stat">
+                                <span>Dedupe Key</span>
+                                <strong>${escapeHtml(String(definition.dedupe_key || 'canonical_user_id'))}</strong>
+                            </div>
+                            <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                                <span>Filters</span>
+                                <div>${conditions.length ? conditions.map((item) => `<span class="pill">${escapeHtml(formatAudienceBuilderCondition(item))}</span>`).join('') : '<span class="subtle">No selector filters were saved.</span>'}</div>
+                            </div>
+                            <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                                <span>Tags</span>
+                                <div>${(cohort.tags || []).length ? cohort.tags.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') : '<span class="subtle">No tags.</span>'}</div>
+                            </div>
+                        </div>
+                        <div class="builder-source-summary" style="margin-top: 1rem;">
+                            ${resolvedPredictions.length ? resolvedPredictions.map((item) => `
+                                <div class="builder-source-card">
+                                    <div class="builder-source-head">
+                                        <strong>${escapeHtml(item.source_name || item.prediction_job_id || 'Prediction')}</strong>
+                                        <span class="pill">${escapeHtml(item.prediction_mode || 'completed')}</span>
+                                    </div>
+                                    <div class="subtle">${escapeHtml(item.prediction_job_id || '-')}</div>
+                                    <div class="subtle">Completed ${escapeHtml(formatDateTime(item.completed_at))}</div>
+                                </div>
+                            `).join('') : '<div class="list-empty">No prediction provenance was recorded for this cohort.</div>'}
+                        </div>
+                        ${sourceBreakdown.length ? `
+                            <div style="margin-top: 1rem;">
+                                <strong>Per-source contribution</strong>
+                                <div class="subtle">${sourceBreakdown.map((item) => `${item.source_name || item.prediction_job_id}: ${item.member_count || 0}`).join(' · ')}</div>
+                            </div>
+                        ` : ''}
+                    ` : ''}
+                    <details class="builder-advanced-panel" style="margin-top: 1rem;">
+                        <summary>Advanced Definition</summary>
+                        <pre class="json-output">${escapeHtml(JSON.stringify({ definition: cohort.definition, delta: cohort.delta, activation_preflight: cohort.activation_preflight, metrics_summary: cohort.metrics_summary }, null, 2))}</pre>
+                    </details>
+                `;
+            }
+
             async function loadAudienceMembers(cohortId = selectedAudienceCohortId) {
                 if (!cohortId) {
                     audienceMembersList.innerHTML = '<div class="list-empty">Select a cohort first.</div>';
@@ -12301,7 +13058,7 @@ export function initializeOperatorConsole() {
                 selectedAudienceCohortId = cohortId;
                 audienceSelectedCohortLabel.textContent = cohortId || 'No cohort selected';
                 if (!cohortId) {
-                    audienceCohortDetail.innerHTML = '<div class="list-empty">Select a cohort from the table.</div>';
+                    audienceCohortDetail.innerHTML = renderAudienceCohortDetail(null);
                     audienceMembersList.innerHTML = '';
                     audienceVersionsList.innerHTML = '';
                     renderJsonOutput(audienceMetricsOutput, null, 'Cohort metrics will appear here.');
@@ -12311,16 +13068,7 @@ export function initializeOperatorConsole() {
                 const cohort = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}`);
                 document.getElementById('audience-base-version-input').value = cohort.version || 1;
                 document.getElementById('audience-target-version-input').value = cohort.version || 1;
-                audienceCohortDetail.innerHTML = `
-                    <div class="stats-grid">
-                        <div class="stat-card"><div class="label">Status</div><div class="value">${escapeHtml(cohort.status || '-')}</div></div>
-                        <div class="stat-card"><div class="label">Members</div><div class="value">${escapeHtml(String(cohort.member_count || 0))}</div></div>
-                        <div class="stat-card"><div class="label">Refresh Mode</div><div class="value">${escapeHtml(cohort.refresh_mode || '-')}</div></div>
-                        <div class="stat-card"><div class="label">Version</div><div class="value">${escapeHtml(String(cohort.version || cohort.version_id || 1))}</div></div>
-                    </div>
-                    <div class="subtle">Last refreshed: ${escapeHtml(formatDateTime(cohort.last_refreshed_at))}</div>
-                    <pre class="json-output">${escapeHtml(JSON.stringify({ definition: cohort.definition, delta: cohort.delta, activation_preflight: cohort.activation_preflight, metrics_summary: cohort.metrics_summary }, null, 2))}</pre>
-                `;
+                audienceCohortDetail.innerHTML = renderAudienceCohortDetail(cohort);
                 await Promise.all([loadAudienceMetrics(cohortId), loadAudienceMembers(cohortId), loadAudienceVersions(cohortId)]);
             }
 
@@ -12400,7 +13148,7 @@ export function initializeOperatorConsole() {
 
             async function createCohortFromSavedQuery(queryId) {
                 try {
-                    setInlineStatus(sqlWorkspaceStatus, 'Creating cohort from saved query...');
+                    setInlineStatus(sqlWorkspaceStatus, 'Creating draft cohort from saved query...');
                     const name = document.getElementById('audience-name-input').value.trim()
                         || document.getElementById('sql-saved-query-name').value.trim()
                         || `cohort_${Date.now()}`;
@@ -12410,10 +13158,10 @@ export function initializeOperatorConsole() {
                             name,
                             refresh_mode: document.getElementById('audience-refresh-mode-select').value || 'manual',
                             owner: document.getElementById('audience-owner-input').value || 'frontend_operator',
-                            activate: document.getElementById('audience-activate-checkbox').checked,
+                            activate: false,
                         },
                     });
-                    setInlineStatus(sqlWorkspaceStatus, 'Saved query converted to cohort.');
+                    setInlineStatus(sqlWorkspaceStatus, 'Saved query converted to a draft cohort.');
                     await loadAudienceEngine();
                 } catch (error) {
                     setInlineStatus(sqlWorkspaceStatus, error.message || 'Failed to create cohort from query.', true);
@@ -12486,6 +13234,7 @@ export function initializeOperatorConsole() {
                         refreshCohortsState().then((items) => ({ items })),
                         apiRequest('/sql-workspace/queries'),
                     ]);
+                    await loadAudienceBuilderOptions({ preserveSelection: true });
                     const cohorts = Array.isArray(cohortPayload.items) ? cohortPayload.items : [];
                     renderAudienceCohorts(cohorts);
                     renderSavedQueries(savedQueryPayload.items || []);
@@ -12510,27 +13259,7 @@ export function initializeOperatorConsole() {
             }
 
             async function createAudienceCohort() {
-                try {
-                    setInlineStatus(audienceCreateStatus, 'Creating cohort...');
-                    const payload = await apiRequest('/cohorts', {
-                        method: 'POST',
-                        body: {
-                            name: document.getElementById('audience-name-input').value || `cohort_${Date.now()}`,
-                            type: document.getElementById('audience-type-select').value || 'sql',
-                            refresh_mode: document.getElementById('audience-refresh-mode-select').value || 'manual',
-                            owner: document.getElementById('audience-owner-input').value || 'frontend_operator',
-                            description: document.getElementById('audience-description-input').value || '',
-                            tags: splitCsv(document.getElementById('audience-tags-input').value),
-                            definition: parseJsonText(document.getElementById('audience-definition-json').value, {}),
-                            activate: document.getElementById('audience-activate-checkbox').checked,
-                        },
-                    });
-                    selectedAudienceCohortId = payload.cohort_id;
-                    setInlineStatus(audienceCreateStatus, `Created cohort ${payload.name}.`);
-                    await loadAudienceEngine();
-                } catch (error) {
-                    setInlineStatus(audienceCreateStatus, error.message || 'Failed to create cohort.', true);
-                }
+                await createAudienceBuilderCohort();
             }
 
             async function compareAudienceVersions() {
@@ -13271,6 +14000,10 @@ export function initializeOperatorConsole() {
                     active_module_id: activeModuleId,
                     active_page_id: activePageId,
                     selected_cohort_id: selectedAudienceCohortId || null,
+                    selected_audience_builder_basis: getAudienceBuilderBasis(),
+                    selected_audience_builder_prediction_scope: getAudienceBuilderPredictionScope(),
+                    selected_audience_builder_source_names: getSelectedMultiSelectValues(audienceBuilderSourceSelect),
+                    selected_audience_builder_prediction_job_ids: getSelectedMultiSelectValues(audienceBuilderJobSelect),
                     selected_workflow_id: selectedWorkflowId || null,
                     current_experiment_id: getCurrentExperimentId(),
                     selected_import_job_id: selectedImportJobId || null,
@@ -13648,6 +14381,17 @@ export function initializeOperatorConsole() {
             async function openCopilotAgentArtifact(artifact) {
                 if (!artifact) return;
                 const resourceType = String(artifact.resource_type || '');
+                if (resourceType === 'audience_builder_state') {
+                    activateModule('audience-engine', 'audience-engine-build');
+                    await loadAudienceEngine();
+                    applyAudienceBuilderState(artifact.focus?.builder_state || {}, { preservePreview: true });
+                    renderJsonOutput(audienceBuilderAiOutput, artifact.focus?.builder_state || {}, 'AI-assisted builder output will appear here.');
+                    setInlineStatus(
+                        audienceBuilderAiStatus,
+                        artifact.status_detail || `Drafted builder with ${artifact.focus?.member_count || 0} matching member(s).`,
+                    );
+                    return;
+                }
                 if (resourceType === 'cohort') {
                     activateModule('audience-engine', 'audience-engine-cohorts');
                     await loadAudienceEngine();
@@ -14067,6 +14811,75 @@ export function initializeOperatorConsole() {
             }
 
             audienceCreateCohortBtn.addEventListener('click', createAudienceCohort);
+            audienceBuilderPreviewBtn?.addEventListener('click', async () => {
+                try {
+                    await previewAudienceBuilder();
+                } catch (error) {
+                    // Status is already rendered inline.
+                }
+            });
+            audienceBuilderAiDraftBtn?.addEventListener('click', async () => {
+                await requestAudienceBuilderDraft({ create: false });
+            });
+            audienceBuilderAiCreateBtn?.addEventListener('click', async () => {
+                await requestAudienceBuilderDraft({ create: true });
+            });
+            audienceBuilderAddConditionBtn?.addEventListener('click', () => {
+                audienceBuilderConditions = [...audienceBuilderConditions, createAudienceBuilderCondition()];
+                resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                renderAudienceBuilderFilters();
+            });
+            audienceBuilderBasisSelect?.addEventListener('change', () => {
+                if (!getAudienceBuilderAvailableFields().length) {
+                    audienceBuilderConditions = [];
+                } else if (audienceBuilderConditions.some((condition) => !getAudienceBuilderFieldMeta(condition.field))) {
+                    audienceBuilderConditions = [];
+                }
+                syncAudienceBuilderVisibility();
+                resetAudienceBuilderPreview('Builder preview cleared because the audience basis changed.');
+            });
+            audienceBuilderPredictionScopeSelect?.addEventListener('change', () => {
+                syncAudienceBuilderVisibility();
+                resetAudienceBuilderPreview('Builder preview cleared because the prediction selection mode changed.');
+            });
+            audienceBuilderOutputModeSelect?.addEventListener('change', () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Builder preview cleared because the output mode changed.');
+            });
+            audienceBuilderLogicSelect?.addEventListener('change', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the filter logic changed.');
+            });
+            audienceBuilderSourceSelect?.addEventListener('change', () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Builder preview cleared because the selected sources changed.');
+            });
+            audienceBuilderJobSelect?.addEventListener('change', () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Builder preview cleared because the selected prediction runs changed.');
+            });
+            audienceBuilderMembersInput?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the manual member list changed.');
+            });
+            document.getElementById('audience-name-input')?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the cohort name changed.');
+            });
+            document.getElementById('audience-refresh-mode-select')?.addEventListener('change', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the refresh mode changed.');
+            });
+            document.getElementById('audience-owner-input')?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the owner changed.');
+            });
+            document.getElementById('audience-tags-input')?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the tags changed.');
+            });
+            document.getElementById('audience-description-input')?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Builder preview cleared because the description changed.');
+            });
+            document.getElementById('sql-workspace-textarea')?.addEventListener('input', () => {
+                if (getAudienceBuilderBasis() === 'advanced_sql') {
+                    resetAudienceBuilderPreview('Builder preview cleared because the SQL changed.');
+                }
+            });
             actionHistoryRefreshBtn.addEventListener('click', loadActionHistory);
             document.getElementById('audience-refresh-list-btn').addEventListener('click', loadAudienceEngine);
             document.getElementById('audience-load-members-btn').addEventListener('click', () => loadAudienceMembers());

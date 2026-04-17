@@ -93,6 +93,62 @@ assert_module() {
   }"
 }
 
+assert_audience_builder_ui() {
+  log_step "Checking guided audience builder UI"
+  run_pw run-code "async (page) => {
+    const audienceLink = page.locator('[data-module=\"audience-engine\"]');
+    if (await audienceLink.count() === 0) throw new Error('Missing Audience Engine navigation');
+    await audienceLink.first().click();
+    await page.waitForTimeout(700);
+
+    const basisSelect = page.locator('#audience-builder-basis-select');
+    const sourceSelect = page.locator('#audience-builder-source-select');
+    const previewButton = page.locator('#audience-builder-preview-btn');
+    const aiDraftButton = page.locator('#audience-builder-ai-draft-btn');
+    const advancedSql = page.locator('#audience-sql-section');
+    if (
+      await basisSelect.count() === 0
+      || await sourceSelect.count() === 0
+      || await previewButton.count() === 0
+      || await aiDraftButton.count() === 0
+      || await advancedSql.count() === 0
+    ) {
+      throw new Error('Missing guided audience builder controls');
+    }
+
+    await basisSelect.first().selectOption('advanced_sql');
+    await page.waitForTimeout(250);
+
+    const sqlOpen = await advancedSql.evaluate((element) => element.hasAttribute('open'));
+    if (!sqlOpen) {
+      throw new Error('Advanced SQL section did not open when selecting advanced_sql basis');
+    }
+
+    await basisSelect.first().selectOption('manual_list');
+    await page.waitForTimeout(250);
+    const manualListGroup = page.locator('#audience-builder-manual-list-group');
+    const manualListDisplay = await manualListGroup.evaluate((element) => window.getComputedStyle(element).display);
+    if (manualListDisplay === 'none') {
+      throw new Error('Manual list input did not appear for manual_list basis');
+    }
+
+    await basisSelect.first().selectOption('prediction');
+    await page.waitForTimeout(250);
+    const predictionControlsDisplay = await page.locator('#audience-builder-prediction-controls').evaluate((element) => window.getComputedStyle(element).display);
+    if (predictionControlsDisplay === 'none') {
+      throw new Error('Prediction controls should be visible for prediction basis');
+    }
+
+    return {
+      basisValue: await basisSelect.inputValue(),
+      previewLabel: await previewButton.textContent() || '',
+      aiDraftLabel: await aiDraftButton.textContent() || '',
+      sqlOpen,
+      manualListDisplay,
+    };
+  }"
+}
+
 assert_bigquery_connector_ui() {
   log_step "Checking BigQuery connector UI"
   run_pw run-code "async (page) => {
@@ -361,6 +417,7 @@ assert_auth_shell
 assert_module "data-core" "#import-detail-output"
 assert_bigquery_connector_ui
 assert_module "audience-engine" "#audience-cohort-list"
+assert_audience_builder_ui
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"
 assert_email_campaign_ui
 assert_module "experiment-hub" "#experiment-integrity-output"

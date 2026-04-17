@@ -3417,3 +3417,107 @@
 .mapping-guided-meta strong {
     color: var(--text-primary);
 }
+
+.builder-source-summary {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.builder-source-card,
+.builder-filter-row,
+.builder-preview-card,
+.builder-ai-card {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--white) 85%, var(--bg-color) 15%);
+}
+
+.builder-source-card {
+    padding: 0.85rem 1rem;
+}
+
+.builder-source-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}
+
+.builder-filter-list {
+    display: grid;
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.builder-filter-row {
+    padding: 0.9rem;
+}
+
+.builder-filter-row-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    gap: 0.75rem;
+    align-items: end;
+}
+
+.builder-filter-row .form-group {
+    margin-bottom: 0;
+}
+
+.builder-preview-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.builder-preview-stat {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    background: color-mix(in srgb, var(--white) 88%, var(--bg-color) 12%);
+}
+
+.builder-preview-stat .label {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    margin-bottom: 0.25rem;
+}
+
+.builder-preview-stat .value {
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.builder-advanced-panel {
+    margin-top: 1rem;
+    padding: 0.9rem 1rem 1rem;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--white) 80%, var(--bg-color) 20%);
+}
+
+.builder-advanced-panel > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--main-text);
+}
+
+#audience-builder-source-select,
+#audience-builder-job-select {
+    min-height: 9rem;
+}
+
+@media (max-width: 1024px) {
+    .builder-filter-row-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .builder-filter-row-grid {
+        grid-template-columns: 1fr;
+    }
+}

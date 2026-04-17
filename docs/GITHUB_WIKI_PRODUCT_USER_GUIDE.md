@@ -737,43 +737,68 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Name` | Text box | Unique cohort name. | `churn_rescue_high_risk` | Used as the cohort display name. |
-| `Type` | Select | Choose `SQL`, `Rule`, or `List`. | `SQL` | Backend interprets the definition accordingly. |
+| `Audience Basis` | Select | Choose the cohort entry point: `Prediction results`, `Behavior / attributes`, `Manual list`, or `Advanced SQL`. | `Prediction results` | The builder switches to the matching controls and preview behavior. |
 | `Refresh Mode` | Select | Choose `Daily` or `Manual`. | `Manual` | Controls automatic refresh behavior. |
 | `Owner` | Text box | Sets the cohort owner. | `frontend_operator` | Saved in cohort metadata. |
 | `Tags (comma separated)` | Text box | Free-form tags for organization. | `churn,rescue,high-risk` | Stored as tag array. |
 | `Description` | Text box | Describe the cohort purpose. | `High-risk users for rescue workflow` | Stored as cohort description. |
-| `Definition JSON` | Text area | Enter SQL, rule, or list definition JSON. | See sample below | Used to build the cohort. |
-| `Activate after create` | Checkbox | Activate the cohort immediately after creation. | Checked | Cohort status becomes active after create. |
-| `Create Cohort` | Button | Submits the cohort create request. | None | Cohort is created and status text updates. |
+| `Prediction Selection` | Select | For `Prediction results`, choose `By source` to auto-resolve the latest completed run per source or `By prediction run` to pick exact runs. | `By source` | The builder swaps between source and run selectors. |
+| `Output Mode` | Select | For prediction-led cohorts, choose whether to combine all selected runs into one cohort or create one draft cohort per source/run. | `Combine into one cohort` | Preview and create respect the selected output strategy. |
+| `Logic` | Select | Sets whether selector rows use `AND` or `OR`. | `All filters must match` | Preview filters use the chosen logic. |
+| `Prediction Sources` | Multi-select | Picks one or more prediction sources. The latest completed run per source is used automatically. | `Amplitude 1`, `Adjust Source` | Preview resolves the latest completed run for each selected source. |
+| `Prediction Runs` | Multi-select | Picks exact completed prediction runs when you do not want latest-by-source resolution. | `pred_20260417_1015` | Preview uses only those explicit runs. |
+| `Add Filter` | Button | Adds a marketer-safe selector row. | None | A new field/operator/value row appears. |
+| Filter `Field` | Select | Chooses a curated prediction or behavior field such as churn risk, churn state, sessions, revenue, or source name. | `Predicted churn risk` | Operators available for the row adjust to the field type. |
+| Filter `Operator` | Select | Chooses the comparison operator for that field. | `in` | Value input is interpreted using the selected operator. |
+| Filter `Value` | Text box or select | Supplies the comparison value. Enum fields use suggested values; `in` and `between` accept comma-separated input. | `high,medium` | Preview applies the filter row. |
+| `Members JSON or CSV` | Text area | Used only for `Manual list`. Accepts either JSON objects/arrays or simple CSV lines. | `[{"canonical_user_id":"u_1001"}]` | The builder creates a list cohort from the entered members. |
+| `Prompt` | Text area | Tells the inline AI assistant what cohort to draft. | `Find high-risk winback users from Amplitude 1 and Adjust Source, combine them, and exclude churned users.` | The assistant drafts builder state and preview output. |
+| `Draft Builder` | Button | Sends the prompt to the AI assistant and applies the returned builder state without creating cohorts yet. | None | Builder controls populate and preview data appears. |
+| `Create From Prompt` | Button | Drafts builder state through the AI assistant, previews it, then creates draft cohort assets. | None | One or more draft cohorts are created from the prompt. |
+| `Preview Cohort` | Button | Runs the guided preview using the current selector state. | None | Member count, sample members, source contribution, and proposed names appear. |
+| `Create Cohort` | Button | Validates through the same preview path, then creates draft cohort assets from the builder state. | None | One or more draft cohorts are created and appear in the cohort list. |
 
-#### Sample cohort definitions
+#### Guided prediction cohort flow
+1. Enter a `Name`, `Owner`, optional `Tags`, and `Description`.
+2. Keep `Audience Basis` on `Prediction results`.
+3. Leave `Prediction Selection` on `By source` for the default marketer flow, then choose one or more sources.
+4. Add selector rows such as `Predicted churn risk in high,medium` or `Churn state != churned`.
+5. Click `Preview Cohort` to inspect member count, preview members, and source contribution.
+6. Click `Create Cohort` to save draft cohort assets. Combined mode creates one draft cohort; split mode creates one draft cohort per source or run.
 
-SQL definition:
+#### Sample builder preview output
+```json
+{
+  "mode": "combined",
+  "member_count": 128,
+  "proposed_names": ["churn_rescue_high_risk"],
+  "source_breakdown": [
+    {
+      "source_name": "Amplitude 1",
+      "prediction_job_id": "pred_20260417_1015",
+      "member_count": 72
+    },
+    {
+      "source_name": "Adjust Source",
+      "prediction_job_id": "pred_20260417_0950",
+      "member_count": 56
+    }
+  ]
+}
+```
+
+#### Sample manual list input
+```json
+[
+  { "canonical_user_id": "u_1001", "email": "u1001@example.com" },
+  { "canonical_user_id": "u_1002", "email": "u1002@example.com" }
+]
+```
+
+#### Sample advanced SQL input
 ```json
 {
   "sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"
-}
-```
-
-Rule definition:
-```json
-{
-  "source_alias": "mart_user_daily",
-  "logic": "AND",
-  "conditions": [
-    { "field": "days_since_last_seen", "op": ">=", "value": 3 },
-    { "field": "sessions_7d", "op": "<=", "value": 2 }
-  ]
-}
-```
-
-List definition:
-```json
-{
-  "members": [
-    { "canonical_user_id": "u_1001", "email": "u1001@example.com" },
-    { "canonical_user_id": "u_1002", "email": "u1002@example.com" }
-  ]
 }
 ```
 
@@ -782,10 +807,16 @@ List definition:
 {
   "cohort_id": "cohort_20260322_1200",
   "name": "churn_rescue_high_risk",
-  "type": "sql",
-  "status": "active",
+  "type": "rule",
+  "status": "draft",
   "version": 1,
-  "member_count": 128
+  "member_count": 128,
+  "definition": {
+    "entrypoint": "guided_builder",
+    "audience_basis": "prediction",
+    "split_strategy": "combined",
+    "dedupe_key": "canonical_user_id"
+  }
 }
 ```
 
@@ -800,9 +831,9 @@ List definition:
 | `SQL` | Text area | Enter the read-only warehouse query. | See sample below | Used for preview/save/cohort creation. |
 | `Preview` | Button | Runs a preview against the current SQL. | None | Preview JSON appears. |
 | `Save Query` | Button | Saves the query and metadata. | None | Query appears in the saved query list. |
-| `Query to Cohort` | Button | Converts the current SQL into a cohort. | None | A new cohort is created from the SQL. |
+| `Query to Cohort` | Button | Converts the current SQL into a draft cohort. Use this as the advanced escape hatch when the guided builder is not expressive enough. | None | A new draft cohort is created from the SQL. |
 | Saved query `Preview` | Row button | Loads the saved SQL and previews it. | None | SQL text and preview output refresh. |
-| Saved query `To Cohort` | Row button | Creates a cohort from the saved query. | None | Cohort is created from that saved query id. |
+| Saved query `To Cohort` | Row button | Creates a draft cohort from the saved query. | None | A draft cohort is created from that saved query id. |
 
 #### Sample SQL input
 ```sql
@@ -838,6 +869,8 @@ WHERE predicted_churn_risk = 'high'
 | `Load Members` | Button | Loads cohort member preview rows. | None | Member table appears. |
 | `Load Versions` | Button | Loads cohort version history. | None | Version table appears. |
 | `Load Metrics` | Button | Loads cohort metrics JSON. | None | Metrics JSON appears. |
+| Guided cohort detail cards | Read-only summary | Guided-builder cohorts now show audience basis, source kind, split strategy, selector pills, tags, and prediction provenance before the raw JSON. | None | Operators can understand how the cohort was built without opening raw definition JSON. |
+| `Advanced Definition` | Disclosure | Expands the raw definition, metric summary, and activation-preflight JSON. | None | Full JSON remains available without being the primary detail surface. |
 | `Base Version` | Number box | Choose the base version for compare or rollback. | `1` | Used in compare and rollback actions. |
 | `Target Version` | Number box | Choose the compare target version. | `2` | Used in version comparison. |
 | `Compare Versions` | Button | Compares the two selected versions. | None | Comparison JSON appears. |
@@ -1313,7 +1346,7 @@ The assistant can:
 - give sample SQL, JSON payloads, and example prompts
 - summarize the current dashboard
 - set up low-risk draft cohorts, experiment configs, connectors, and provider connections
-- reuse or start prediction jobs, draft SQL from prediction context, and turn the result into a saved query plus draft cohort
+- reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
 - select an existing SendGrid template or Braze API campaign and create a draft email campaign
 - create a draft workflow linked to the cohort and optional email campaign
 - stop high-risk actions at explicit confirmation
@@ -1343,7 +1376,7 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
-| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view. |
+| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 

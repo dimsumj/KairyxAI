@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -7,6 +8,145 @@ from typing import Any, Dict, List
 from app.application.experiments import ExperimentConfigService
 from app.core.errors import ResourceLockedError
 from bigquery_service import BigQueryService, get_shared_bigquery_service
+
+
+GUIDED_BUILDER_ENTRYPOINT = "guided_builder"
+BUILDER_AUDIENCE_BASES = {
+    "prediction": "Prediction results",
+    "behavior": "Behavior / attributes",
+    "manual_list": "Manual list",
+    "advanced_sql": "Advanced SQL",
+}
+BUILDER_PREDICTION_SCOPES = {
+    "source": "By source",
+    "prediction_job": "By prediction run",
+}
+BUILDER_OUTPUT_MODES = {
+    "combined": "Combine into one cohort",
+    "separate": "Create one cohort per source/run",
+}
+BUILDER_OPERATOR_OPTIONS = {
+    "string": ["=", "!=", "contains", "in", "not in"],
+    "enum": ["=", "!=", "in", "not in"],
+    "number": ["=", "!=", ">", ">=", "<", "<=", "between"],
+}
+BUILDER_FILTER_FIELDS: List[Dict[str, Any]] = [
+    {
+        "field": "predicted_churn_risk",
+        "label": "Predicted churn risk",
+        "value_type": "enum",
+        "operators": ["=", "!=", "in", "not in"],
+        "options": ["high", "medium", "low", "already_churned", "unknown"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "churn_state",
+        "label": "Churn state",
+        "value_type": "enum",
+        "operators": ["=", "!=", "in", "not in"],
+        "options": ["active", "churned", "unknown"],
+        "available_in": ["prediction", "behavior"],
+    },
+    {
+        "field": "suggested_action",
+        "label": "Suggested action",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "prediction_source",
+        "label": "Prediction source",
+        "value_type": "enum",
+        "operators": ["=", "!=", "in", "not in"],
+        "options": ["local", "local_model", "cloud", "ai", "external_import"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "source_name",
+        "label": "Prediction audience source",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "model_version",
+        "label": "Model version",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "days_since_last_seen",
+        "label": "Days since last seen",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction", "behavior"],
+    },
+    {
+        "field": "session_count",
+        "label": "Lifetime sessions",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "event_count",
+        "label": "Lifetime events",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "baseline_churn_score",
+        "label": "Baseline churn score",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction"],
+    },
+    {
+        "field": "sessions_7d",
+        "label": "Sessions (7d)",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction", "behavior"],
+    },
+    {
+        "field": "sessions_30d",
+        "label": "Sessions (30d)",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction", "behavior"],
+    },
+    {
+        "field": "lifetime_revenue_usd",
+        "label": "Lifetime revenue USD",
+        "value_type": "number",
+        "operators": ["=", "!=", ">", ">=", "<", "<=", "between"],
+        "available_in": ["prediction", "behavior"],
+    },
+    {
+        "field": "last_campaign",
+        "label": "Last campaign",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["behavior"],
+    },
+    {
+        "field": "last_media_source",
+        "label": "Last media source",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["behavior"],
+    },
+    {
+        "field": "email",
+        "label": "Email",
+        "value_type": "string",
+        "operators": ["=", "!=", "contains", "in", "not in"],
+        "available_in": ["prediction", "behavior", "manual_list", "advanced_sql"],
+    },
+]
 
 
 class CohortService:
@@ -19,6 +159,86 @@ class CohortService:
         session = getattr(self.repository, "session", None)
         if session is not None:
             session.commit()
+
+    def get_builder_options(self) -> Dict[str, Any]:
+        prediction_jobs = self._builder_prediction_job_options()
+        latest_by_source: Dict[str, Dict[str, Any]] = {}
+        for job in prediction_jobs:
+            source_name = str(job.get("source_name") or "").strip()
+            if not source_name or source_name in latest_by_source:
+                continue
+            latest_by_source[source_name] = job
+        return {
+            "defaults": {
+                "audience_basis": "prediction",
+                "prediction_scope": "source",
+                "output_mode": "combined",
+                "refresh_mode": "manual",
+                "logic": "AND",
+            },
+            "audience_bases": [{"id": key, "label": value} for key, value in BUILDER_AUDIENCE_BASES.items()],
+            "prediction_scopes": [{"id": key, "label": value} for key, value in BUILDER_PREDICTION_SCOPES.items()],
+            "output_modes": [{"id": key, "label": value} for key, value in BUILDER_OUTPUT_MODES.items()],
+            "operators": BUILDER_OPERATOR_OPTIONS,
+            "filter_fields": list(BUILDER_FILTER_FIELDS),
+            "prediction_sources": list(latest_by_source.values()),
+            "prediction_jobs": prediction_jobs,
+        }
+
+    def preview_builder(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = self._normalize_builder_request(payload)
+        plans = self._build_builder_plans(normalized)
+        plan_preview = [
+            {
+                "name": item["name"],
+                "cohort_type": item["cohort_type"],
+                "member_count": len(item["members"]),
+                "preview_members": item["members"][:20],
+                "source_breakdown": item["source_breakdown"],
+                "resolved_predictions": item["resolved_predictions"],
+            }
+            for item in plans
+        ]
+        warnings = list(normalized.get("warnings") or [])
+        if not any(item["member_count"] for item in plan_preview):
+            warnings.append("The current builder selection returned no matching members.")
+        return {
+            "request": normalized,
+            "mode": normalized["output_mode"],
+            "dedupe_key": "canonical_user_id",
+            "member_count": sum(item["member_count"] for item in plan_preview),
+            "preview_members": plan_preview[0]["preview_members"] if plan_preview else [],
+            "source_breakdown": plan_preview[0]["source_breakdown"] if plan_preview else [],
+            "resolved_predictions": plan_preview[0]["resolved_predictions"] if plan_preview else [],
+            "proposed_names": [item["name"] for item in plan_preview],
+            "cohort_plans": plan_preview,
+            "warnings": warnings,
+        }
+
+    def create_from_builder(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = self._normalize_builder_request(payload)
+        plans = self._build_builder_plans(normalized)
+        created = []
+        for item in plans:
+            created.append(
+                self.create_cohort(
+                    name=item["name"],
+                    cohort_type=item["cohort_type"],
+                    definition=item["definition"],
+                    refresh_mode=normalized["refresh_mode"],
+                    owner=normalized["owner"],
+                    description=item["description"],
+                    tags=item["tags"],
+                    activate=False,
+                )
+            )
+        return {
+            "mode": normalized["output_mode"],
+            "items": created,
+            "member_count": sum(int(item.get("member_count") or 0) for item in created),
+            "created_count": len(created),
+            "warnings": list(normalized.get("warnings") or []),
+        }
 
     def create_cohort(
         self,
@@ -540,6 +760,419 @@ class CohortService:
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
         return payload
 
+    def _normalize_builder_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        audience_basis = str(payload.get("audience_basis") or "prediction").strip().lower()
+        if audience_basis not in BUILDER_AUDIENCE_BASES:
+            audience_basis = "prediction"
+        prediction_scope = str(payload.get("prediction_scope") or "source").strip().lower()
+        if prediction_scope not in BUILDER_PREDICTION_SCOPES:
+            prediction_scope = "source"
+        output_mode = str(payload.get("output_mode") or "combined").strip().lower()
+        if output_mode not in BUILDER_OUTPUT_MODES:
+            output_mode = "combined"
+        warnings: List[str] = []
+        if audience_basis != "prediction" and output_mode == "separate":
+            output_mode = "combined"
+            warnings.append("Separate cohort output is only available for prediction results, so the builder preview was normalized to combined mode.")
+        logic = str(payload.get("logic") or "AND").strip().upper()
+        if logic not in {"AND", "OR"}:
+            logic = "AND"
+        return {
+            "name": str(payload.get("name") or "").strip() or default_builder_name(audience_basis),
+            "audience_basis": audience_basis,
+            "prediction_scope": prediction_scope,
+            "source_names": [str(item).strip() for item in list(payload.get("source_names") or []) if str(item).strip()],
+            "prediction_job_ids": [str(item).strip() for item in list(payload.get("prediction_job_ids") or []) if str(item).strip()],
+            "output_mode": output_mode,
+            "refresh_mode": str(payload.get("refresh_mode") or "manual").strip().lower() or "manual",
+            "owner": str(payload.get("owner") or "system").strip() or "system",
+            "description": str(payload.get("description") or "").strip(),
+            "tags": [str(item).strip() for item in list(payload.get("tags") or []) if str(item).strip()],
+            "logic": logic,
+            "conditions": [self._normalize_builder_condition(item) for item in list(payload.get("conditions") or [])],
+            "members": list(payload.get("members") or []),
+            "sql": str(payload.get("sql") or "").strip(),
+            "activate": bool(payload.get("activate")),
+            "warnings": warnings,
+        }
+
+    def _normalize_builder_condition(self, raw_condition: Dict[str, Any]) -> Dict[str, Any]:
+        values = list(raw_condition.get("values") or [])
+        value = raw_condition.get("value")
+        field_name = str(raw_condition.get("field") or "").strip()
+        op = str(raw_condition.get("op") or "=").strip().lower()
+        if not field_name:
+            return {"field": "", "op": "=", "value": None, "value_type": "string"}
+        field_meta = next((item for item in BUILDER_FILTER_FIELDS if item["field"] == field_name), None)
+        value_type = str(raw_condition.get("value_type") or (field_meta or {}).get("value_type") or "string")
+        normalized_value: Any = value
+        if op in {"in", "not in"}:
+            if not values and value not in (None, ""):
+                values = [item.strip() for item in str(value).split(",") if item.strip()]
+            normalized_value = values
+        elif op == "between":
+            if not values and value not in (None, ""):
+                values = [item.strip() for item in str(value).split(",") if item.strip()]
+            normalized_value = values[:2]
+        return {
+            "field": field_name,
+            "op": op,
+            "value": normalized_value,
+            "value_type": value_type,
+        }
+
+    def _build_builder_plans(self, normalized: Dict[str, Any]) -> List[Dict[str, Any]]:
+        audience_basis = normalized["audience_basis"]
+        if audience_basis == "prediction":
+            resolved_predictions = self._resolve_builder_prediction_jobs(normalized)
+            if not resolved_predictions:
+                raise ValueError("Select at least one completed prediction source or prediction run before previewing the cohort.")
+            if normalized["output_mode"] == "separate":
+                return [
+                    self._build_prediction_builder_plan(normalized, [item], name=self._split_builder_name(normalized["name"], item))
+                    for item in resolved_predictions
+                ]
+            return [self._build_prediction_builder_plan(normalized, resolved_predictions, name=normalized["name"])]
+        if audience_basis == "behavior":
+            return [self._build_behavior_builder_plan(normalized)]
+        if audience_basis == "manual_list":
+            return [self._build_manual_builder_plan(normalized)]
+        return [self._build_sql_builder_plan(normalized)]
+
+    def _builder_prediction_job_options(self) -> List[Dict[str, Any]]:
+        options: List[Dict[str, Any]] = []
+        jobs = [
+            item
+            for item in self.repository.list_prediction_jobs()
+            if str(item.get("status") or "").strip().lower() == "completed"
+        ]
+        jobs = sorted(jobs, key=self._builder_prediction_sort_key, reverse=True)
+        latest_by_source: Dict[str, str] = {}
+        for job in jobs:
+            source_name = self._builder_prediction_source_name(job)
+            if source_name and source_name not in latest_by_source:
+                latest_by_source[source_name] = str(job.get("id") or "")
+        for job in jobs:
+            spec = dict(job.get("spec") or {})
+            progress = dict(job.get("progress") or {})
+            details = dict(progress.get("details") or {})
+            source_name = self._builder_prediction_source_name(job)
+            prediction_job_id = str(job.get("id") or "")
+            completed_at = details.get("history_snapshot_at") or job.get("updated_at") or job.get("created_at")
+            options.append(
+                {
+                    "prediction_job_id": prediction_job_id,
+                    "source_name": source_name,
+                    "audience_scope": str(spec.get("audience_scope") or details.get("audience_scope") or "import"),
+                    "prediction_mode": str(spec.get("prediction_mode") or details.get("prediction_mode") or "local"),
+                    "audience_label": str(details.get("audience_label") or source_name or prediction_job_id),
+                    "completed_at": completed_at,
+                    "status": "completed",
+                    "is_latest_for_source": bool(source_name and latest_by_source.get(source_name) == prediction_job_id),
+                    "import_job_id": str(spec.get("import_job_id") or details.get("import_job_id") or ""),
+                }
+            )
+        return options
+
+    def _resolve_builder_prediction_jobs(self, normalized: Dict[str, Any]) -> List[Dict[str, Any]]:
+        options = self._builder_prediction_job_options()
+        by_job_id = {str(item["prediction_job_id"]): item for item in options}
+        if normalized["prediction_scope"] == "prediction_job":
+            resolved = [by_job_id[item] for item in normalized["prediction_job_ids"] if item in by_job_id]
+            return sorted(resolved, key=lambda item: (str(item.get("source_name") or ""), str(item.get("prediction_job_id") or "")))
+        if not normalized["source_names"]:
+            return []
+        latest_by_source = {
+            str(item["source_name"]): item
+            for item in options
+            if item.get("source_name") and item.get("is_latest_for_source")
+        }
+        resolved = [latest_by_source[item] for item in normalized["source_names"] if item in latest_by_source]
+        return sorted(resolved, key=lambda item: (str(item.get("source_name") or ""), str(item.get("prediction_job_id") or "")))
+
+    def _build_prediction_builder_plan(self, normalized: Dict[str, Any], resolved_predictions: List[Dict[str, Any]], *, name: str) -> Dict[str, Any]:
+        rows = self._prediction_builder_rows_for_jobs(resolved_predictions)
+        filtered_rows = self._filter_builder_rows(rows, normalized["conditions"], normalized["logic"])
+        members = self._dedupe_builder_rows(filtered_rows)
+        source_breakdown = self._builder_source_breakdown(filtered_rows, resolved_predictions)
+        definition = {
+            "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
+            "audience_basis": "prediction",
+            "prediction_scope": normalized["prediction_scope"],
+            "source_kind": "prediction_results",
+            "source_names": [str(item.get("source_name") or "") for item in resolved_predictions if str(item.get("source_name") or "").strip()],
+            "prediction_job_ids": [str(item.get("prediction_job_id") or "") for item in resolved_predictions],
+            "split_strategy": normalized["output_mode"],
+            "dedupe_key": "canonical_user_id",
+            "logic": normalized["logic"],
+            "conditions": list(normalized["conditions"]),
+            "provenance": {
+                "resolved_predictions": resolved_predictions,
+                "source_breakdown": source_breakdown,
+            },
+        }
+        return {
+            "name": name,
+            "cohort_type": "rule",
+            "definition": definition,
+            "members": members,
+            "source_breakdown": source_breakdown,
+            "resolved_predictions": resolved_predictions,
+            "description": normalized["description"] or f"Guided prediction cohort built from {', '.join(item.get('source_name') or item.get('prediction_job_id') or '' for item in resolved_predictions)}.",
+            "tags": normalized["tags"] or ["guided-builder", "prediction"],
+        }
+
+    def _build_behavior_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        rows = [self._normalize_member(row) for row in self.bigquery_service.get_rows_for_alias("mart_user_daily")]
+        filtered_rows = self._filter_builder_rows(rows, normalized["conditions"], normalized["logic"])
+        members = self._dedupe_builder_rows(filtered_rows)
+        definition = {
+            "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
+            "audience_basis": "behavior",
+            "source_kind": "mart_user_daily",
+            "source_alias": "mart_user_daily",
+            "split_strategy": "combined",
+            "dedupe_key": "canonical_user_id",
+            "logic": normalized["logic"],
+            "conditions": list(normalized["conditions"]),
+        }
+        return {
+            "name": normalized["name"],
+            "cohort_type": "rule",
+            "definition": definition,
+            "members": members,
+            "source_breakdown": [],
+            "resolved_predictions": [],
+            "description": normalized["description"] or "Guided behavior cohort built from the latest curated user state.",
+            "tags": normalized["tags"] or ["guided-builder", "behavior"],
+        }
+
+    def _build_manual_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        members = self._normalize_manual_members(normalized["members"])
+        definition = {
+            "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
+            "audience_basis": "manual_list",
+            "split_strategy": "combined",
+            "dedupe_key": "canonical_user_id",
+            "members": members,
+        }
+        return {
+            "name": normalized["name"],
+            "cohort_type": "list",
+            "definition": definition,
+            "members": members,
+            "source_breakdown": [],
+            "resolved_predictions": [],
+            "description": normalized["description"] or "Guided manual list cohort.",
+            "tags": normalized["tags"] or ["guided-builder", "manual-list"],
+        }
+
+    def _build_sql_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        sql = normalized["sql"]
+        if not sql:
+            raise ValueError("Enter SQL in the Advanced section before previewing or creating the cohort.")
+        result = self.bigquery_service.run_readonly_query(sql, limit=1000)
+        members = [self._normalize_member(row) for row in result.get("rows") or [] if self._normalize_member(row).get("canonical_user_id")]
+        definition = {
+            "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
+            "audience_basis": "advanced_sql",
+            "source_kind": "sql_workspace",
+            "split_strategy": "combined",
+            "dedupe_key": "canonical_user_id",
+            "sql": sql,
+            "preview_row_count": int(result.get("row_count") or len(result.get("rows") or [])),
+        }
+        return {
+            "name": normalized["name"],
+            "cohort_type": "sql",
+            "definition": definition,
+            "members": members,
+            "source_breakdown": [],
+            "resolved_predictions": [],
+            "description": normalized["description"] or "Guided advanced SQL cohort.",
+            "tags": normalized["tags"] or ["guided-builder", "advanced-sql"],
+        }
+
+    def _prediction_builder_rows_for_jobs(self, resolved_predictions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        selected_ids = {str(item.get("prediction_job_id") or "") for item in resolved_predictions}
+        selected_meta = {str(item.get("prediction_job_id") or ""): item for item in resolved_predictions}
+        latest_state = self._builder_latest_state_by_canonical_user_id()
+        rows = []
+        for row in self.bigquery_service.get_rows_for_alias("prediction_results"):
+            prediction_job_id = str(row.get("prediction_job_id") or "")
+            if prediction_job_id not in selected_ids:
+                continue
+            normalized = self._normalize_member(row)
+            canonical_user_id = str(normalized.get("canonical_user_id") or "")
+            latest_state_row = latest_state.get(canonical_user_id, {})
+            prediction_meta = selected_meta[prediction_job_id]
+            combined = {**latest_state_row, **normalized}
+            combined["prediction_job_id"] = prediction_job_id
+            combined["source_name"] = str(prediction_meta.get("source_name") or "")
+            combined["audience_scope"] = str(prediction_meta.get("audience_scope") or "")
+            combined["prediction_mode"] = str(prediction_meta.get("prediction_mode") or "")
+            if combined.get("lifetime_revenue_usd") is None and combined.get("ltv") is not None:
+                combined["lifetime_revenue_usd"] = combined.get("ltv")
+            rows.append(combined)
+        return rows
+
+    def _builder_latest_state_by_canonical_user_id(self) -> Dict[str, Dict[str, Any]]:
+        latest_state = {}
+        for row in self.bigquery_service.get_rows_for_alias("mart_user_daily"):
+            normalized = self._normalize_member(row)
+            canonical_user_id = str(normalized.get("canonical_user_id") or "")
+            if canonical_user_id:
+                latest_state[canonical_user_id] = normalized
+        return latest_state
+
+    def _filter_builder_rows(self, rows: List[Dict[str, Any]], conditions: List[Dict[str, Any]], logic: str) -> List[Dict[str, Any]]:
+        usable_conditions = [item for item in conditions if str(item.get("field") or "").strip()]
+        if not usable_conditions:
+            return [self._normalize_member(item) for item in rows if self._normalize_member(item).get("canonical_user_id")]
+        filtered = []
+        for row in rows:
+            normalized = self._normalize_member(row)
+            if not normalized.get("canonical_user_id"):
+                continue
+            outcomes = [self._matches_builder_condition(normalized, condition) for condition in usable_conditions]
+            passed = all(outcomes) if logic != "OR" else any(outcomes)
+            if passed:
+                filtered.append(normalized)
+        return filtered
+
+    def _matches_builder_condition(self, row: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+        actual = self._lookup_value(row, str(condition.get("field") or ""))
+        op = str(condition.get("op") or "=").lower()
+        expected = condition.get("value")
+        if op in {"=", "=="}:
+            return actual == expected
+        if op == "!=":
+            return actual != expected
+        if op == "contains":
+            return str(expected or "").lower() in str(actual or "").lower()
+        if op in {"in", "not in"}:
+            values = [str(item).strip().lower() for item in list(expected or []) if str(item).strip()]
+            actual_value = str(actual or "").strip().lower()
+            return actual_value in values if op == "in" else actual_value not in values
+        if op in {">", ">=", "<", "<="}:
+            try:
+                actual_value = float(actual)
+                expected_value = float(expected)
+            except (TypeError, ValueError):
+                return False
+            if op == ">":
+                return actual_value > expected_value
+            if op == ">=":
+                return actual_value >= expected_value
+            if op == "<":
+                return actual_value < expected_value
+            return actual_value <= expected_value
+        if op == "between":
+            values = list(expected or [])
+            if len(values) < 2:
+                return False
+            try:
+                actual_value = float(actual)
+                start = float(values[0])
+                end = float(values[1])
+            except (TypeError, ValueError):
+                return False
+            return start <= actual_value <= end
+        return False
+
+    def _dedupe_builder_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        deduped: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            canonical_user_id = str(row.get("canonical_user_id") or "")
+            if not canonical_user_id:
+                continue
+            existing = deduped.get(canonical_user_id)
+            candidate = dict(row)
+            candidate.setdefault("matched_sources", [])
+            candidate.setdefault("matched_prediction_job_ids", [])
+            if existing is None:
+                candidate["matched_sources"] = [str(candidate.get("source_name") or "")] if str(candidate.get("source_name") or "").strip() else []
+                candidate["matched_prediction_job_ids"] = [str(candidate.get("prediction_job_id") or "")] if str(candidate.get("prediction_job_id") or "").strip() else []
+                deduped[canonical_user_id] = candidate
+                continue
+            if self._builder_row_is_newer(candidate, existing):
+                candidate["matched_sources"] = list(existing.get("matched_sources") or [])
+                candidate["matched_prediction_job_ids"] = list(existing.get("matched_prediction_job_ids") or [])
+                deduped[canonical_user_id] = candidate
+                existing = deduped[canonical_user_id]
+            source_name = str(row.get("source_name") or "")
+            prediction_job_id = str(row.get("prediction_job_id") or "")
+            if source_name and source_name not in existing["matched_sources"]:
+                existing["matched_sources"].append(source_name)
+            if prediction_job_id and prediction_job_id not in existing["matched_prediction_job_ids"]:
+                existing["matched_prediction_job_ids"].append(prediction_job_id)
+        return sorted(
+            deduped.values(),
+            key=lambda item: (
+                risk_sort_key(item.get("predicted_churn_risk")),
+                -self._builder_numeric_value(item.get("days_since_last_seen")),
+                str(item.get("canonical_user_id") or ""),
+            ),
+        )
+
+    def _builder_source_breakdown(self, rows: List[Dict[str, Any]], resolved_predictions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        breakdown = []
+        for prediction in resolved_predictions:
+            prediction_job_id = str(prediction.get("prediction_job_id") or "")
+            source_name = str(prediction.get("source_name") or "")
+            matched = [item for item in rows if str(item.get("prediction_job_id") or "") == prediction_job_id]
+            breakdown.append(
+                {
+                    "source_name": source_name,
+                    "prediction_job_id": prediction_job_id,
+                    "member_count": len({str(item.get("canonical_user_id") or "") for item in matched if str(item.get("canonical_user_id") or "").strip()}),
+                    "row_count": len(matched),
+                    "completed_at": prediction.get("completed_at"),
+                    "prediction_mode": prediction.get("prediction_mode"),
+                }
+            )
+        return breakdown
+
+    def _normalize_manual_members(self, members: List[Any]) -> List[Dict[str, Any]]:
+        normalized = []
+        for item in members:
+            if isinstance(item, dict):
+                member = self._normalize_member(item)
+            else:
+                member = {"canonical_user_id": str(item)}
+            if member.get("canonical_user_id"):
+                normalized.append(member)
+        return normalized
+
+    @staticmethod
+    def _builder_prediction_source_name(job: Dict[str, Any]) -> str:
+        spec = dict(job.get("spec") or {})
+        progress = dict(job.get("progress") or {})
+        details = dict(progress.get("details") or {})
+        return str(spec.get("source_name") or details.get("source_name") or details.get("audience_label") or "").strip()
+
+    @staticmethod
+    def _builder_prediction_sort_key(job: Dict[str, Any]) -> tuple[str, str]:
+        progress = dict(job.get("progress") or {})
+        details = dict(progress.get("details") or {})
+        completed_at = str(details.get("history_snapshot_at") or job.get("updated_at") or job.get("created_at") or "")
+        return (completed_at, str(job.get("id") or ""))
+
+    @staticmethod
+    def _builder_row_is_newer(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+        return str(left.get("completed_at") or "") >= str(right.get("completed_at") or "")
+
+    @staticmethod
+    def _builder_numeric_value(value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _split_builder_name(self, base_name: str, prediction: Dict[str, Any]) -> str:
+        suffix = str(prediction.get("source_name") or prediction.get("prediction_job_id") or "segment").strip()
+        return f"{base_name}__{slugify_builder_token(suffix)}"
+
     @staticmethod
     def _build_refresh_policy(refresh_mode: str) -> Dict[str, Any]:
         resolved = str(refresh_mode or "manual").lower()
@@ -835,7 +1468,30 @@ class CohortService:
             sql = str(definition.get("sql") or "").strip()
             result = self.bigquery_service.run_readonly_query(sql, limit=max(1000, int(definition.get("limit") or 1000)))
             return [self._normalize_member(row) for row in result.get("rows") or [] if self._normalize_member(row).get("canonical_user_id")]
+        if str(definition.get("entrypoint") or "").strip().lower() == GUIDED_BUILDER_ENTRYPOINT:
+            return self._materialize_guided_builder(definition)
         return self._materialize_rule(definition)
+
+    def _materialize_guided_builder(self, definition: Dict[str, Any]) -> List[Dict[str, Any]]:
+        audience_basis = str(definition.get("audience_basis") or "").strip().lower()
+        if audience_basis == "behavior":
+            rows = [self._normalize_member(row) for row in self.bigquery_service.get_rows_for_alias("mart_user_daily")]
+            filtered_rows = self._filter_builder_rows(rows, list(definition.get("conditions") or []), str(definition.get("logic") or "AND").upper())
+            return self._dedupe_builder_rows(filtered_rows)
+        resolved_predictions = [
+            {
+                "prediction_job_id": str(item.get("prediction_job_id") or ""),
+                "source_name": str(item.get("source_name") or ""),
+                "audience_scope": str(item.get("audience_scope") or ""),
+                "prediction_mode": str(item.get("prediction_mode") or ""),
+                "completed_at": item.get("completed_at"),
+            }
+            for item in list((definition.get("provenance") or {}).get("resolved_predictions") or [])
+            if str(item.get("prediction_job_id") or "").strip()
+        ]
+        rows = self._prediction_builder_rows_for_jobs(resolved_predictions)
+        filtered_rows = self._filter_builder_rows(rows, list(definition.get("conditions") or []), str(definition.get("logic") or "AND").upper())
+        return self._dedupe_builder_rows(filtered_rows)
 
     def _materialize_rule(self, definition: Dict[str, Any]) -> List[Dict[str, Any]]:
         source_alias = str(definition.get("source_alias") or "prediction_results")
@@ -944,3 +1600,30 @@ class CohortService:
             except Exception:
                 return False
         return False
+
+
+def slugify_builder_token(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", str(value or "").strip()).strip("_").lower()
+    return normalized or "segment"
+
+
+def default_builder_name(audience_basis: str) -> str:
+    suffix = {
+        "prediction": "prediction_cohort",
+        "behavior": "behavior_cohort",
+        "manual_list": "manual_list_cohort",
+        "advanced_sql": "advanced_sql_cohort",
+    }.get(str(audience_basis or "").strip().lower(), "cohort")
+    return f"guided_{suffix}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+
+def risk_sort_key(value: Any) -> int:
+    normalized = str(value or "").strip().lower()
+    order = {
+        "high": 0,
+        "medium": 1,
+        "low": 2,
+        "already_churned": 3,
+        "unknown": 4,
+    }
+    return order.get(normalized, 99)

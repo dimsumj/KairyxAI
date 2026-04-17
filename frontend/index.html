@@ -437,7 +437,7 @@
                 </div>
             </div>
             <div class="grid-2">
-                <div id="audience-create-section" class="card split-card">
+                <div id="import-operations-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Import Operations</h2>
                         <span class="pill">Manifest & Remediation</span>
@@ -459,7 +459,7 @@
                     <pre id="import-detail-output" class="json-output">Import operations and quality detail will appear here.</pre>
                     <div id="import-manifests-list"></div>
                 </div>
-                <div id="audience-sql-section" class="card split-card">
+                <div id="import-schema-contracts-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Schema Contracts</h2>
                         <span class="pill">Warehouse Contract</span>
@@ -842,66 +842,137 @@
 
         <section id="audience-engine" class="page">
             <h1>Audience Engine</h1>
-            <div class="grid-2">
-                <div class="card split-card">
-                    <div class="module-section-header">
-                        <h2>Create Cohort</h2>
-                        <span class="pill">Rule / SQL / List</span>
-                    </div>
-                    <div class="grid-3">
-                        <div class="form-group">
-                            <label for="audience-name-input">Name</label>
-                            <input type="text" id="audience-name-input" placeholder="e.g. churn_rescue_high_risk">
-                        </div>
-                        <div class="form-group">
-                            <label for="audience-type-select">Type</label>
-                            <select id="audience-type-select">
-                                <option value="sql" selected>SQL</option>
-                                <option value="rule">Rule</option>
-                                <option value="list">List</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="audience-refresh-mode-select">Refresh Mode</label>
-                            <select id="audience-refresh-mode-select">
-                                <option value="daily">Daily</option>
-                                <option value="manual" selected>Manual</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label for="audience-owner-input">Owner</label>
-                            <input type="text" id="audience-owner-input" value="frontend_operator">
-                        </div>
-                        <div class="form-group">
-                            <label for="audience-tags-input">Tags (comma separated)</label>
-                            <input type="text" id="audience-tags-input" placeholder="churn,rescue,high-risk">
-                        </div>
+            <div id="audience-create-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2>Guided Cohort Builder</h2>
+                    <span class="pill">Marketer First</span>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="audience-name-input">Name</label>
+                        <input type="text" id="audience-name-input" placeholder="e.g. churn_rescue_high_risk">
                     </div>
                     <div class="form-group">
-                        <label for="audience-description-input">Description</label>
-                        <input type="text" id="audience-description-input" placeholder="Describe the cohort purpose">
+                        <label for="audience-builder-basis-select">Audience Basis</label>
+                        <select id="audience-builder-basis-select"></select>
                     </div>
                     <div class="form-group">
-                        <label for="audience-definition-json">Definition JSON</label>
-                        <textarea id="audience-definition-json" style="min-height: 12rem; font-family: monospace;">{
-  "sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"
-}</textarea>
+                        <label for="audience-refresh-mode-select">Refresh Mode</label>
+                        <select id="audience-refresh-mode-select">
+                            <option value="daily">Daily</option>
+                            <option value="manual" selected>Manual</option>
+                        </select>
                     </div>
-                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
-                        <input type="checkbox" id="audience-activate-checkbox">
-                        Activate after create
-                    </label>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="audience-owner-input">Owner</label>
+                        <input type="text" id="audience-owner-input" value="frontend_operator">
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-tags-input">Tags (comma separated)</label>
+                        <input type="text" id="audience-tags-input" placeholder="churn,rescue,high-risk">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="audience-description-input">Description</label>
+                    <input type="text" id="audience-description-input" placeholder="Describe the cohort purpose">
+                </div>
+
+                <div id="audience-builder-prediction-controls" class="grid-3">
+                    <div class="form-group">
+                        <label for="audience-builder-prediction-scope-select">Prediction Selection</label>
+                        <select id="audience-builder-prediction-scope-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-builder-output-mode-select">Output Mode</label>
+                        <select id="audience-builder-output-mode-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-builder-logic-select">Logic</label>
+                        <select id="audience-builder-logic-select">
+                            <option value="AND" selected>All filters must match</option>
+                            <option value="OR">Any filter may match</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div id="audience-builder-source-group" class="form-group">
+                        <label for="audience-builder-source-select">Prediction Sources</label>
+                        <select id="audience-builder-source-select" multiple size="4"></select>
+                        <div class="subtle">Latest completed prediction run per selected source is used automatically.</div>
+                    </div>
+                    <div id="audience-builder-job-group" class="form-group hidden">
+                        <label for="audience-builder-job-select">Prediction Runs</label>
+                        <select id="audience-builder-job-select" multiple size="4"></select>
+                        <div class="subtle">Use explicit prediction runs when you do not want latest-by-source resolution.</div>
+                    </div>
+                </div>
+
+                <div id="audience-builder-source-summary" class="builder-source-summary"></div>
+
+                <div class="module-section-header">
+                    <h3>Filters</h3>
                     <div class="inline-actions">
-                        <button id="audience-create-cohort-btn">Create Cohort</button>
+                        <button id="audience-builder-add-condition-btn" type="button">Add Filter</button>
+                    </div>
+                </div>
+                <div id="audience-builder-filters" class="builder-filter-list"></div>
+
+                <div id="audience-builder-manual-list-group" class="form-group hidden">
+                    <label for="audience-builder-members-input">Members JSON or CSV</label>
+                    <textarea id="audience-builder-members-input" style="min-height: 10rem; font-family: monospace;" placeholder='[{"canonical_user_id":"u_1001","email":"u1001@example.com"}]'></textarea>
+                </div>
+
+                <div class="card builder-ai-card">
+                    <div class="module-section-header">
+                        <h3>Ask AI To Draft The Cohort</h3>
+                        <span class="pill">Uses Insight Copilot</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="audience-builder-ai-prompt">Prompt</label>
+                        <textarea id="audience-builder-ai-prompt" style="min-height: 8rem;" placeholder="Find high-risk winback users from Amplitude 1 and Adjust Source, combine them, and exclude churned users."></textarea>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="audience-builder-ai-draft-btn" type="button">Draft Builder</button>
+                        <button id="audience-builder-ai-create-btn" type="button">Create From Prompt</button>
+                        <span id="audience-builder-ai-status" class="subtle"></span>
+                    </div>
+                    <pre id="audience-builder-ai-output" class="json-output">AI-assisted builder output will appear here.</pre>
+                </div>
+
+                <div class="module-section-header">
+                    <h3>Preview</h3>
+                    <div class="inline-actions">
+                        <button id="audience-builder-preview-btn" type="button">Preview Cohort</button>
+                        <button id="audience-create-cohort-btn" type="button">Create Cohort</button>
                         <span id="audience-create-status" class="subtle"></span>
                     </div>
                 </div>
-                <div class="card split-card">
-                    <div class="module-section-header">
-                        <h2>SQL Workspace</h2>
-                        <span class="pill">BigQuery Read Only</span>
+                <div id="audience-builder-preview-summary" class="builder-preview-summary">
+                    <div class="list-empty">Preview the cohort to inspect member count, sample members, and source contribution.</div>
+                </div>
+                <div class="grid-2">
+                    <div class="card builder-preview-card">
+                        <div class="module-section-header">
+                            <h3>Preview Members</h3>
+                        </div>
+                        <div id="audience-builder-preview-members"></div>
+                    </div>
+                    <div class="card builder-preview-card">
+                        <div class="module-section-header">
+                            <h3>Source Breakdown</h3>
+                        </div>
+                        <div id="audience-builder-preview-breakdown"></div>
+                    </div>
+                </div>
+
+                <details id="audience-sql-section" class="builder-advanced-panel">
+                    <summary>Advanced SQL</summary>
+                    <div class="module-section-header" style="margin-top: 1rem;">
+                        <h3>SQL Workspace</h3>
+                        <span class="pill">Read Only</span>
                     </div>
                     <div class="grid-3">
                         <div class="form-group">
@@ -929,17 +1000,17 @@ WHERE predicted_churn_risk = 'high'
   AND COALESCE(churn_state, 'active') != 'churned'</textarea>
                     </div>
                     <div class="inline-actions">
-                        <button id="sql-preview-btn">Preview</button>
-                        <button id="sql-save-query-btn">Save Query</button>
-                        <button id="sql-create-cohort-btn">Query to Cohort</button>
+                        <button id="sql-preview-btn" type="button">Preview</button>
+                        <button id="sql-save-query-btn" type="button">Save Query</button>
+                        <button id="sql-create-cohort-btn" type="button">Query To Cohort</button>
                     </div>
                     <span id="sql-workspace-status" class="subtle"></span>
                     <pre id="sql-preview-output" class="json-output">SQL preview results will appear here.</pre>
                     <div id="sql-saved-query-list"></div>
-                </div>
+                </details>
             </div>
 
-            <div id="workflow-list-section" class="card">
+            <div id="audience-list-section" class="card">
                 <div class="module-section-header">
                     <h2>Cohorts</h2>
                     <button id="audience-refresh-list-btn">Refresh</button>
@@ -961,7 +1032,7 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <div id="audience-members-list"></div>
                 </div>
-                <div id="workflow-deliveries-section" class="card split-card">
+                <div id="audience-versions-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Versions & Comparison</h2>
                         <span class="pill">Rollback Safe</span>

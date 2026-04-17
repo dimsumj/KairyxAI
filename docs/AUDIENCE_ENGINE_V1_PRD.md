@@ -9,11 +9,13 @@ Convert data insights into reusable, executable, and traceable audience assets t
 
 ### 2.1 In Scope
 - Cohort creation through three entry points: Rule / SQL / List
+- Guided cohort building for marketers with selector-based filters, multi-source prediction selection, and preview-before-create
 - Cohort lifecycle management: naming, tags, versions, delete and restore
 - Membership computation and refresh: snapshot + delta
 - Activation and downstream distribution for Engage / Experiment / Copilot
 - Performance feedback: foundational metrics and version comparison
 - Auditability: create / update / refresh / activate / delete must be traceable
+- AI-assisted cohort drafting that produces builder-state artifacts before draft cohort creation
 
 ### 2.2 Out of Scope
 - Cross-tenant cohort sharing
@@ -28,11 +30,12 @@ Convert data insights into reusable, executable, and traceable audience assets t
 ## 3.1 A) Cohort Lifecycle
 
 ### Functionality
-- Create cohorts from Rule / SQL / List
+- Create cohorts from guided builder, Rule / SQL / List
 - Manage metadata (`name`, `description`, `owner`, `tags`, `status`)
 - Version definitions (`version + diff + rollback`)
 - Soft delete (`deleted_at`) and restore
 - Privileged permanent delete with mandatory audit trail
+- Keep SQL available as an advanced escape hatch instead of the default marketer entry point
 
 ### Data Objects
 - `cohort`
@@ -81,6 +84,9 @@ Convert data insights into reusable, executable, and traceable audience assets t
 
 ### Suggested Interfaces
 - `POST /cohorts`
+- `GET /cohorts/builder/options`
+- `POST /cohorts/builder/preview`
+- `POST /cohorts/builder/create`
 - `GET /cohorts/{id}`
 - `GET /cohorts/{id}/members`
 - `POST /cohorts/{id}/refresh`
@@ -146,6 +152,7 @@ This document is the detailed design for Audience Engine. The master PRD (`DATA_
 - Rule / SQL / List cohort creation all exist
 - Lifecycle, versioning, rollback, archive / restore, refresh jobs, metrics, and compare all exist
 - Activation preflight, paginated members, and foundational feedback metrics all exist
+- Guided cohort builder endpoints, builder provenance, multi-source prediction preview/create, and AI builder-state drafting now exist in the operator stack
 
 ### 7.2 Remaining Gaps
 
@@ -158,10 +165,10 @@ This document is the detailed design for Audience Engine. The master PRD (`DATA_
 
 #### Gap-A2 Audience operator console is not yet hardened
 - Current state:
-  - The frontend already includes cohort management entry points
+  - The frontend now includes a marketer-first guided cohort builder, Advanced SQL fallback, and builder-first cohort detail rendering
 - Remaining work:
-  - No dedicated Playwright / E2E coverage yet
-  - Operator UX for cohort metrics, compare, and refresh history is still a single-page static-console pattern
+  - Deeper end-to-end coverage is still needed for real workspace data and AI-assisted create flows
+  - Operator UX for metrics, compare, and refresh history is still a single-page static-console pattern
 
 #### Gap-A3 Some operator views still lack dedicated backend view models
 - Current state:

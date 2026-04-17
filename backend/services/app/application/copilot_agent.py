@@ -125,6 +125,12 @@ ACTION_REGISTRY: Dict[str, AgentActionSpec] = {
         permissions=("copilot.agent.run", "sql_workspace.preview"),
         risk_level="low",
     ),
+    "draft_audience_builder": AgentActionSpec(
+        action_type="draft_audience_builder",
+        title="Draft audience builder state",
+        permissions=("copilot.agent.run",),
+        risk_level="low",
+    ),
     "run_prediction": AgentActionSpec(
         action_type="run_prediction",
         title="Prepare prediction job",
@@ -257,6 +263,9 @@ class CopilotAgentModelAdapter(Protocol):
     def draft_sql(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
         ...
 
+    def draft_builder(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
 
 class ConfiguredCopilotAgentModel:
     def __init__(self, profile: Dict[str, Any] | None):
@@ -280,7 +289,7 @@ class ConfiguredCopilotAgentModel:
             "task": "Classify the operator request and extract structured slots for the Kytrics/Kairyx control plane.",
             "instructions": [
                 "Return JSON only.",
-                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, setup_operator_flow, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
+                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, draft_audience_builder, setup_operator_flow, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
                 "Fill slots only when explicitly present or strongly implied.",
                 "Do not invent SQL, identifiers, or credentials.",
             ],
@@ -382,6 +391,68 @@ class ConfiguredCopilotAgentModel:
         except Exception:
             return fallback
 
+    def draft_builder(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        fallback = heuristic_builder_from_prompt(prompt, hint=hint)
+        if not self._is_ai_enabled():
+            return fallback
+        payload = {
+            "task": "Draft a marketer-friendly guided audience cohort builder state for the Kairyx control plane.",
+            "instructions": [
+                "Return JSON only.",
+                "Default to a prediction-based audience unless the prompt clearly asks for manual list or advanced SQL.",
+                "Use only supported audience_basis values: prediction, behavior, manual_list, advanced_sql.",
+                "Use only supported output_mode values: combined or separate.",
+                "Use only supported prediction_scope values: source or prediction_job.",
+                "Conditions must be arrays of objects with field, op, and either value or values.",
+                "Do not invent source names beyond the provided hint.source_options or hint.prediction_jobs.",
+            ],
+            "response_contract": {
+                "name": "string",
+                "audience_basis": "string",
+                "prediction_scope": "string",
+                "source_names": ["string"],
+                "prediction_job_ids": ["string"],
+                "output_mode": "string",
+                "logic": "string",
+                "conditions": [{"field": "string", "op": "string", "value": "any", "values": ["any"]}],
+                "description": "string",
+                "tags": ["string"],
+                "sql": "string",
+            },
+            "session_state": {
+                "status": session_state.get("status"),
+                "current_intent": session_state.get("current_intent"),
+            },
+            "ui_context": ui_context,
+            "hint": hint,
+            "message": prompt,
+            "fallback": fallback,
+        }
+        try:
+            raw = self._request_text(payload)
+            parsed = extract_json_object(raw)
+            if not isinstance(parsed, dict):
+                return fallback
+            merged = dict(fallback)
+            for key in ("name", "audience_basis", "prediction_scope", "output_mode", "logic", "description", "sql"):
+                value = parsed.get(key)
+                if isinstance(value, str) and value.strip():
+                    merged[key] = value.strip()
+            for key in ("source_names", "prediction_job_ids", "tags", "conditions"):
+                value = parsed.get(key)
+                if isinstance(value, list) and value:
+                    merged[key] = value
+            return merged
+        except Exception:
+            return fallback
+
     def _is_ai_enabled(self) -> bool:
         return self.runtime.is_enabled()
 
@@ -458,6 +529,10 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         token in lowered for token in ("run", "start", "create", "reuse", "refresh", "fresh", "rerun")
     ):
         return {"intent": "run_prediction", "slots": slots}
+    if any(token in lowered for token in ("audience builder", "guided cohort", "guided audience")) and any(
+        token in lowered for token in ("draft", "builder", "populate", "prefill")
+    ):
+        return {"intent": "draft_audience_builder", "slots": slots}
     if any(token in lowered for token in ("write sql", "draft sql", "generate sql", "query for", "build sql")):
         return {"intent": "draft_sql_from_prompt", "slots": slots}
     if any(token in lowered for token in ("email campaign", "sendgrid", "braze", "template")) and any(
@@ -936,6 +1011,8 @@ class CopilotAgentService:
             clarifications.extend(self._sql_draft_clarifications(slots, ui_context=ui_context))
             if not clarifications:
                 actions.append(self._sql_draft_action(slots, ui_context=ui_context))
+        elif intent == "draft_audience_builder":
+            actions.append(self._audience_builder_draft_action(slots, ui_context=ui_context))
         elif intent == "list_provider_messaging_assets":
             clarifications.extend(self._provider_asset_clarifications(slots, ui_context=ui_context))
             if not clarifications:
@@ -1307,6 +1384,19 @@ class CopilotAgentService:
                 "include_risks": list(slots.get("include_risks") or ["high"]),
                 "query_name": str(slots.get("saved_query_name") or ""),
                 "cohort_name": str(slots.get("cohort_name") or slots.get("name") or ""),
+            },
+        }
+
+    def _audience_builder_draft_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        options = self.cohorts.get_builder_options()
+        return {
+            "action_type": "draft_audience_builder",
+            "title": ACTION_REGISTRY["draft_audience_builder"].title,
+            "parameters": {
+                "source_message": str(slots.get("source_message") or ""),
+                "name": str(slots.get("name") or slots.get("cohort_name") or ""),
+                "source_options": [str(item.get("source_name") or "") for item in options.get("prediction_sources", [])],
+                "prediction_jobs": list(options.get("prediction_jobs") or []),
             },
         }
 
@@ -1744,6 +1834,8 @@ class CopilotAgentService:
             return self._execute_prediction_action(parameters)
         if action_type == "draft_sql_from_prompt":
             return self._execute_sql_draft_action(parameters, session=session, ui_context=ui_context, model_adapter=model_adapter)
+        if action_type == "draft_audience_builder":
+            return self._execute_audience_builder_draft_action(parameters, session=session, ui_context=ui_context, model_adapter=model_adapter)
         if action_type == "list_provider_messaging_assets":
             return self._execute_list_provider_assets_action(parameters)
         if action_type == "setup_email_campaign":
@@ -2002,6 +2094,40 @@ class CopilotAgentService:
             "summary": f"Drafted and previewed SQL for prediction job `{prediction_job['id']}` with {int(preview.get('row_count') or 0)} matching row(s).",
             "result": {"draft": drafted, "preview": preview, "prediction_job": prediction_job},
             "artifacts": [artifact_for_prediction_job(prediction_job)],
+        }
+
+    def _execute_audience_builder_draft_action(
+        self,
+        parameters: Dict[str, Any],
+        *,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        drafted = model_adapter.draft_builder(
+            str(parameters.get("source_message") or ""),
+            session_state=session,
+            ui_context=ui_context,
+            hint={
+                "name": str(parameters.get("name") or ""),
+                "source_options": list(parameters.get("source_options") or []),
+                "prediction_jobs": list(parameters.get("prediction_jobs") or []),
+            },
+        )
+        preview = self.cohorts.preview_builder(drafted)
+        builder_state = {
+            **drafted,
+            "preview": preview,
+        }
+        summary = (
+            f"Drafted a guided audience builder for `{drafted.get('name')}` with {int(preview.get('member_count') or 0)} matching member(s)."
+            if str(drafted.get("name") or "").strip()
+            else f"Drafted a guided audience builder with {int(preview.get('member_count') or 0)} matching member(s)."
+        )
+        return {
+            "summary": summary,
+            "result": {"builder_state": builder_state},
+            "artifacts": [artifact_for_builder_state(builder_state)],
         }
 
     def _execute_list_provider_assets_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -2614,6 +2740,8 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
         return "Reuse a recent completed prediction when possible, otherwise start a fresh background prediction job."
     if action_type == "draft_sql_from_prompt":
         return "Draft and preview a SQL audience query from the prompt using prediction results."
+    if action_type == "draft_audience_builder":
+        return "Draft a guided audience builder state that Audience Engine can preview or create safely."
     if action_type == "list_provider_messaging_assets":
         return "List existing SendGrid templates or Braze API campaigns on the selected provider connection."
     if action_type == "setup_email_campaign":
@@ -2652,6 +2780,8 @@ def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: Li
         return "Prepare a prediction job, reusing a recent completed run when possible."
     if intent == "draft_sql_from_prompt":
         return "Draft and preview SQL from the prompt without executing any destructive changes."
+    if intent == "draft_audience_builder":
+        return "Draft a guided audience builder state for the marketer-facing cohort flow without creating a live audience yet."
     if intent == "setup_email_campaign":
         return "Create a provider-backed email campaign in draft only."
     if intent == "setup_workflow":
@@ -2995,6 +3125,25 @@ def artifact_for_saved_query(saved_query: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def artifact_for_builder_state(builder_state: Dict[str, Any]) -> Dict[str, Any]:
+    state_id = f"builder_{uuid.uuid4().hex[:12]}"
+    preview = dict(builder_state.get("preview") or {})
+    return {
+        "resource_type": "audience_builder_state",
+        "resource_id": state_id,
+        "label": str(builder_state.get("name") or "Audience Builder Draft"),
+        "module_id": "audience-engine",
+        "page_id": "audience-engine",
+        "api_path": "",
+        "focus": {
+            "builder_state": builder_state,
+            "member_count": int(preview.get("member_count") or 0),
+        },
+        "status": "drafted",
+        "status_detail": f"{int(preview.get('member_count') or 0)} matching member(s)",
+    }
+
+
 def artifact_for_prediction_job(
     prediction_job: Dict[str, Any],
     *,
@@ -3079,6 +3228,45 @@ def heuristic_sql_from_prompt(prompt: str, *, hint: Dict[str, Any]) -> Dict[str,
         ),
         "query_name": str(hint.get("query_name") or default_named_resource(prefix="agent", suffix="high_risk_query")),
         "cohort_name": str(hint.get("cohort_name") or default_named_resource(prefix="agent", suffix="high_risk_cohort")),
+    }
+
+
+def heuristic_builder_from_prompt(prompt: str, *, hint: Dict[str, Any]) -> Dict[str, Any]:
+    lowered = str(prompt or "").lower()
+    source_options = [str(item).strip() for item in list(hint.get("source_options") or []) if str(item).strip()]
+    selected_sources = [item for item in source_options if item.lower() in lowered]
+    if not selected_sources and source_options:
+        selected_sources = list(source_options)
+    audience_basis = "prediction"
+    if "manual list" in lowered or "member list" in lowered:
+        audience_basis = "manual_list"
+    elif "advanced sql" in lowered or "sql" in lowered:
+        audience_basis = "advanced_sql"
+    elif "behavior" in lowered or "attribute" in lowered:
+        audience_basis = "behavior"
+    output_mode = "separate" if any(token in lowered for token in ("separate", "split by source", "one per source")) else "combined"
+    conditions = []
+    if "high risk" in lowered:
+        conditions.append({"field": "predicted_churn_risk", "op": "=", "value": "high"})
+    elif "medium risk" in lowered:
+        conditions.append({"field": "predicted_churn_risk", "op": "=", "value": "medium"})
+    elif "low risk" in lowered:
+        conditions.append({"field": "predicted_churn_risk", "op": "=", "value": "low"})
+    if "exclude churned" in lowered or "active only" in lowered or "winback" in lowered:
+        conditions.append({"field": "churn_state", "op": "!=", "value": "churned"})
+    name = str(hint.get("name") or default_named_resource(prefix="agent", suffix="builder_cohort")).strip()
+    return {
+        "name": name,
+        "audience_basis": audience_basis,
+        "prediction_scope": "source",
+        "source_names": selected_sources,
+        "prediction_job_ids": [],
+        "output_mode": output_mode,
+        "logic": "AND",
+        "conditions": conditions,
+        "description": "Drafted from the Ask AI audience builder prompt.",
+        "tags": ["ai-draft", "guided-builder"],
+        "sql": extract_sql_block(prompt) or "",
     }
 
 

@@ -389,6 +389,65 @@ def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
     assert experiment["b_variant_pct"] == 0.4
 
 
+def test_copilot_agent_drafts_audience_builder_state_artifact(client):
+    headers = _headers("operator", actor_id="agent_builder_operator")
+    _seed_completed_prediction_job(
+        "pred_builder_a",
+        source_name="Amplitude 1",
+        rows=[
+            {
+                "prediction_job_id": "pred_builder_a",
+                "user_id": "u_1",
+                "canonical_user_id": "u_1",
+                "email": "u1@example.com",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+                "prediction_source": "local",
+                "suggested_action": "email",
+                "completed_at": "2026-03-09T10:00:00+00:00",
+            }
+        ],
+    )
+    _seed_completed_prediction_job(
+        "pred_builder_b",
+        import_job_id="imp_agentsource2",
+        source_name="Adjust Source",
+        rows=[
+            {
+                "prediction_job_id": "pred_builder_b",
+                "user_id": "u_2",
+                "canonical_user_id": "u_2",
+                "email": "u2@example.com",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+                "prediction_source": "cloud",
+                "suggested_action": "push_notification",
+                "completed_at": "2026-03-10T10:00:00+00:00",
+            }
+        ],
+    )
+    session_id = _create_session(client, headers, title="Agent Builder Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Draft a guided audience builder for high risk winback users from Amplitude 1 and Adjust Source.",
+            "ui_context": {"active_module_id": "audience-engine", "active_page_id": "audience-engine"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["completed_actions"][0]["action_type"] == "draft_audience_builder"
+    builder_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "audience_builder_state")
+    builder_state = builder_artifact["focus"]["builder_state"]
+    assert builder_state["audience_basis"] == "prediction"
+    assert sorted(builder_state["source_names"]) == ["Adjust Source", "Amplitude 1"]
+    assert builder_state["conditions"][0]["field"] == "predicted_churn_risk"
+    assert builder_state["preview"]["member_count"] == 2
+
+
 def test_copilot_agent_confirmation_gate_for_risky_action(client):
     headers = _headers("operator", actor_id="agent_operator")
     session_id = _create_session(client, headers, title="Agent Confirmation Session")
