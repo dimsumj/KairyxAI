@@ -2359,7 +2359,6 @@ export function initializeOperatorConsole() {
                     loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
-                    loadDataSandboxGlance();
                     loadDataSandboxMappingControls();
                 }
                 if (pageId === 'audience-engine') {
@@ -3224,7 +3223,6 @@ export function initializeOperatorConsole() {
                     } else if (activePageId === 'player-cohorts') {
                         loadConfiguredSources();
                     } else if (activePageId === 'data-sandbox') {
-                        loadDataSandboxGlance();
                         loadDataSandboxMappingControls();
                     } else if (activePageId === 'operator-hub') {
                         loadReadyImportsForOperatorHub();
@@ -3237,8 +3235,6 @@ export function initializeOperatorConsole() {
                     cachedImports = [];
                     if (activePageId === 'player-cohorts') {
                         loadImportedDataList();
-                    } else if (activePageId === 'data-sandbox') {
-                        loadDataSandboxGlance();
                     } else if (activePageId === 'operator-hub') {
                         loadReadyImportsForOperatorHub();
                     } else if (activePageId === 'action-history') {
@@ -8638,8 +8634,12 @@ export function initializeOperatorConsole() {
             }
 
             let countdownInterval = null;
+            function isImportJobInFlight(job = {}) {
+                return ['queued', 'running', 'stopping'].includes(String(job.raw_status || job.status || '').toLowerCase());
+            }
+
             function shouldPollImportJobs(imports = []) {
-                return imports.some((job) => ['queued', 'running', 'stopping'].includes(String(job.raw_status || '').toLowerCase()));
+                return imports.some((job) => isImportJobInFlight(job));
             }
 
             function syncImportListPolling(imports = []) {
@@ -8687,14 +8687,14 @@ export function initializeOperatorConsole() {
                 const processing = job.processing_stats || details.processing || {};
                 const warehouseStats = processing.warehouse_stats || {};
                 const curation = warehouseStats.curation || {};
-                return Number(curation.curated_rows || processing.deduped_events || 0);
+                return Number(curation.curated_rows || processing.deduped_events || details.events_written || details.normalized_events || 0);
             }
 
             function getImportRejectCount(job = {}) {
                 const progress = job.progress || {};
                 const details = progress.details || {};
                 const processing = job.processing_stats || details.processing || {};
-                return Number(processing.pipeline_dead_letters_written || details.rows_rejected || 0);
+                return Number(processing.pipeline_dead_letters_written || details.dead_letters_written || details.rows_rejected || 0);
             }
 
             function getImportDuplicateCount(job = {}) {
@@ -8728,6 +8728,9 @@ export function initializeOperatorConsole() {
                 const rangeEnd = String(job.end_date || '').trim();
                 const failureReason = getImportFailureReason(job);
                 const failureStage = getImportFailureStage(job);
+                const progressText = getImportProgressText(job);
+                const phase = String(details.phase || '').trim();
+                const isActive = isImportJobInFlight(job);
                 return {
                     sourceName,
                     sourceType,
@@ -8744,12 +8747,25 @@ export function initializeOperatorConsole() {
                     rejectRate,
                     failureReason,
                     failureStage,
+                    progressText,
+                    phase,
+                    isActive,
+                    statusLabel: String(job.status || '').trim() || 'Processing',
                     updatedAt: job.updated_at || job.created_at || job.timestamp || '',
                 };
             }
 
             function renderImportExpandedRow(job = {}) {
                 const details = getImportExpandedDetails(job);
+                const progressMarkup = details.progressText
+                    ? `
+                        <div class="import-detail-callout">
+                            <strong>Status:</strong> ${escapeHtml(details.statusLabel)}
+                            <span class="subtle">(${escapeHtml(details.progressText)})</span>
+                            ${details.phase ? `<div class="subtle">Phase: ${escapeHtml(details.phase.replace(/_/g, ' '))}</div>` : ''}
+                        </div>
+                    `
+                    : '';
                 const failureMarkup = details.failureReason
                     ? `
                         <div class="import-detail-callout">
@@ -8760,6 +8776,7 @@ export function initializeOperatorConsole() {
                     : '';
                 const sourceTypeLabel = details.sourceType ? `${details.sourceName} (${formatConnectorLabel(details.sourceType)})` : details.sourceName;
                 const metrics = [
+                    { label: 'Current Progress', value: details.progressText || (details.isActive ? details.statusLabel : '-') },
                     { label: 'Events', value: formatCount(details.eventCount) },
                     { label: 'Profiles', value: details.profileCount > 0 ? formatCount(details.profileCount) : '-' },
                     { label: 'Curated Events', value: details.curatedCount > 0 ? formatCount(details.curatedCount) : '-' },
@@ -8782,6 +8799,7 @@ export function initializeOperatorConsole() {
                                     </div>
                                     <div class="subtle">Updated ${escapeHtml(details.updatedAt ? new Date(details.updatedAt).toLocaleString() : '-')}</div>
                                 </div>
+                                ${progressMarkup}
                                 ${failureMarkup}
                                 <div class="import-detail-grid">
                                     ${metrics.map((item) => `
@@ -9011,6 +9029,7 @@ export function initializeOperatorConsole() {
 
                     renderImportListTable(imports);
                     populateImportDetailSelect(imports);
+                    syncDataSandboxReprocessState(imports);
                     if (!priorSelectedImport && selectedImportJobId) {
                         renderJsonOutput(importDetailOutput, null, 'Select a view to load import diagnostics on demand.');
                         renderSimpleTable(importManifestsList, [], [], 'Manifest detail loads on demand.');
@@ -9530,7 +9549,6 @@ export function initializeOperatorConsole() {
             }
 
             // Data Sandbox Page Logic
-            const dataSandboxContentDiv = document.getElementById('data-sandbox-content');
             const dataSandboxMappingStatusDiv = document.getElementById('data-sandbox-mapping-status');
             const dataSandboxMappingConnectorSelect = document.getElementById('data-sandbox-mapping-connector');
             const dataSandboxAwaitingJobSelect = document.getElementById('data-sandbox-awaiting-job');
@@ -9559,13 +9577,14 @@ export function initializeOperatorConsole() {
                 { key: 'adset', label: 'Adset' },
                 { key: 'media_source', label: 'Media Source' },
             ];
-            let eventChart = null;
             let dataSandboxAwaitingJobs = [];
             let dataSandboxFieldCandidates = [];
             let dataSandboxFieldSuggestions = [];
             let dataSandboxMappingVersions = [];
             let dataSandboxSampleEvents = [];
             let dataSandboxSampleContextKey = '';
+            let dataSandboxReprocessJobId = '';
+            let dataSandboxReprocessJobName = '';
 
             function setDataSandboxMappingStatus(message = '', isError = false) {
                 if (!dataSandboxMappingStatusDiv) return;
@@ -9608,9 +9627,46 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function clearDataSandboxReprocessTracking() {
+                dataSandboxReprocessJobId = '';
+                dataSandboxReprocessJobName = '';
+            }
+
+            function syncDataSandboxReprocessState(imports = cachedImports) {
+                if (!dataSandboxReprocessJobId) {
+                    return;
+                }
+                const trackedJob = (imports || []).find((job) => String(job.id || '') === String(dataSandboxReprocessJobId)) || null;
+                if (!trackedJob) {
+                    clearDataSandboxReprocessTracking();
+                    syncDataSandboxMappingActions();
+                    return;
+                }
+                const displayName = dataSandboxReprocessJobName || trackedJob.name || trackedJob.id;
+                if (isImportJobInFlight(trackedJob)) {
+                    importExpandedJobIds.add(trackedJob.id);
+                    setDataSandboxMappingStatus(`Reprocessing ${displayName}. ${trackedJob.status}${getImportProgressText(trackedJob) ? ` - ${getImportProgressText(trackedJob)}` : ''}`);
+                    syncDataSandboxMappingActions();
+                    return;
+                }
+
+                const failureReason = getImportFailureReason(trackedJob);
+                if (failureReason) {
+                    setDataSandboxMappingStatus(`${displayName} finished with an issue: ${failureReason}`, true);
+                } else {
+                    setDataSandboxMappingStatus(`${displayName} finished reprocessing. Status: ${trackedJob.status || 'Ready to Use'}.`);
+                }
+                clearDataSandboxReprocessTracking();
+                syncDataSandboxMappingActions();
+            }
+
             function syncDataSandboxMappingActions() {
                 const connectorName = dataSandboxMappingConnectorSelect.value;
                 const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                const trackedJob = dataSandboxReprocessJobId
+                    ? (cachedImports || []).find((job) => String(job.id || '') === String(dataSandboxReprocessJobId)) || null
+                    : null;
+                const reprocessActive = Boolean(trackedJob && isImportJobInFlight(trackedJob));
                 if (dataSandboxSaveMappingBtn) {
                     dataSandboxSaveMappingBtn.textContent = selectedJob ? 'Save Mapping Memory' : 'Save Mapping';
                     dataSandboxSaveMappingBtn.title = selectedJob
@@ -9618,15 +9674,22 @@ export function initializeOperatorConsole() {
                         : 'Save the current connector mapping for future imports.';
                 }
                 if (dataSandboxProcessMappingBtn) {
-                    dataSandboxProcessMappingBtn.textContent = 'Save and Reprocess Import';
-                    dataSandboxProcessMappingBtn.title = selectedJob
+                    dataSandboxProcessMappingBtn.textContent = reprocessActive ? 'Reprocessing Import...' : 'Save and Reprocess Import';
+                    dataSandboxProcessMappingBtn.title = reprocessActive
+                        ? 'The selected import is currently rerunning with the updated mapping.'
+                        : selectedJob
                         ? 'Persist the corrected mapping, apply it to this paused import, and rerun normalization and dedupe.'
                         : 'Select a paused import job for this connector first.';
-                    dataSandboxProcessMappingBtn.disabled = !selectedJob;
+                    dataSandboxProcessMappingBtn.disabled = reprocessActive || !selectedJob;
                 }
                 if (!dataSandboxActionHint) return;
                 if (!connectorName) {
                     dataSandboxActionHint.textContent = 'Select a connector to edit saved mapping memory or resume a paused import.';
+                    return;
+                }
+                if (reprocessActive && trackedJob) {
+                    const progressText = getImportProgressText(trackedJob);
+                    dataSandboxActionHint.textContent = `Reprocessing ${trackedJob.name || trackedJob.id}. ${trackedJob.status}${progressText ? ` - ${progressText}` : ''}. The import list below will keep refreshing until it finishes.`;
                     return;
                 }
                 if (selectedJob) {
@@ -10208,6 +10271,7 @@ export function initializeOperatorConsole() {
                         setDataSandboxMappingStatus('No paused import jobs. You can still edit, preview, and save connector mapping memory locally for future imports.');
                     }
                     syncDataSandboxMappingActions();
+                    syncDataSandboxReprocessState(imports);
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
@@ -10364,104 +10428,32 @@ export function initializeOperatorConsole() {
                     setDataSandboxMappingStatus('Select a paused Awaiting Mapping import before trying to reprocess it.', true);
                     return;
                 }
+                if (dataSandboxProcessMappingBtn) {
+                    dataSandboxProcessMappingBtn.disabled = true;
+                }
                 try {
                     const mapping = getDataSandboxCurrentMapping();
-                    const resumed = await apiRequest(`/imports/${encodeURIComponent(selectedJob.id)}/remap-and-resume`, {
+                    const resumed = await apiRequest(`/imports/${encodeURIComponent(selectedJob.id)}/remap-and-resume?background=true`, {
                         method: 'POST',
                         body: {
                             mapping,
                             persist_source_mapping: true,
                         },
                     });
+                    dataSandboxReprocessJobId = selectedJob.id;
+                    dataSandboxReprocessJobName = selectedJob.name || resumed.name || selectedJob.id;
+                    importExpandedJobIds.add(selectedJob.id);
                     await refreshImportsState();
                     await loadImportedDataList();
                     await loadDataSandboxMappingControls();
-                    setDataSandboxMappingStatus(`Resumed ${selectedJob.name}. New status: ${resumed.status || 'running'}.`);
+                    syncDataSandboxReprocessState(cachedImports);
+                    if (resumed.started === false) {
+                        setDataSandboxMappingStatus(`Reprocessing ${dataSandboxReprocessJobName} is already in progress. Status will update below.`);
+                    }
                 } catch (error) {
                     setDataSandboxMappingStatus(error.message || 'Failed to process the paused import after saving mapping.', true);
-                }
-            }
-
-            async function loadDataSandboxGlance() {
-                dataSandboxContentDiv.innerHTML = '<p>Loading data glance...</p>';
-                try {
-                    const imports = await refreshImportsState();
-                    const latestImport = imports[0];
-                    if (!latestImport) {
-                        dataSandboxContentDiv.innerHTML = '<p>No imported datasets available yet.</p>';
-                        return;
-                    }
-                    const processing = latestImport.processing_stats || {};
-                    const eventCounts = {
-                        'Raw Normalized': Number(processing.raw_normalized_events || 0),
-                        'Deduped': Number(processing.deduped_events || 0),
-                        'Duplicates Removed': Number(processing.duplicates_removed || 0),
-                    };
-                    const data = {
-                        filename: latestImport.name,
-                        sample: [{
-                            import_job: latestImport.name,
-                            source: latestImport.source_stats?.[0]?.source || '-',
-                            start_date: latestImport.start_date,
-                            end_date: latestImport.end_date,
-                            status: latestImport.status,
-                            source_stats: latestImport.source_stats || [],
-                            processing_stats: latestImport.processing_stats || {},
-                        }],
-                        event_counts: eventCounts,
-                    };
-
-                    // Build the HTML for the glance
-                    const sampleHtml = JSON.stringify(data.sample, null, 2);
-                    const contentHtml = `
-                        <details>
-                            <summary style="cursor: pointer; font-weight: 600;">
-                                Latest Import Glance: ${data.filename}
-                            </summary>
-                            <pre><code style="font-size: 0.8rem; white-space: pre-wrap;">${sampleHtml}</code></pre>
-                        </details>
-                        <div style="margin-top: 2rem; height: 500px;">
-                            <h2>Import Metrics</h2>
-                            <canvas id="event-chart"></canvas>
-                        </div>
-                    `;
-                    dataSandboxContentDiv.innerHTML = contentHtml;
-
-                    // Render the chart
-                    const ctx = document.getElementById('event-chart').getContext('2d');
-                    if (eventChart) {
-                        eventChart.destroy();
-                    }
-                    eventChart = new Chart(ctx, {
-                        type: 'bar',
-                        data: {
-                            labels: Object.keys(data.event_counts),
-                            datasets: [{
-                                label: 'Event Count',
-                                data: Object.values(data.event_counts),
-                                backgroundColor: 'rgba(74, 85, 104, 0.6)',
-                                borderColor: 'rgba(74, 85, 104, 1)',
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            plugins: {
-                                title: {
-                                    display: true,
-                                    text: 'Top 10 Events by Count'
-                                }
-                            },
-                            scales: { y: { beginAtZero: true, suggestedMax: 10, ticks: { stepSize: 1 } } },
-                            responsive: true,
-                            maintainAspectRatio: false
-                        }
-                    });
-                } catch (error) {
-                    if (isWorkspaceContextError(error)) {
-                        dataSandboxContentDiv.innerHTML = '<p>Finish workspace setup to load the data glance.</p>';
-                        return;
-                    }
-                    dataSandboxContentDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                } finally {
+                    syncDataSandboxMappingActions();
                 }
             }
 

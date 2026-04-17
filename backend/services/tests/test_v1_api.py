@@ -3059,6 +3059,83 @@ def test_run_import_background_returns_accepted_without_waiting_for_completion(c
     assert completed.json()["status"] == "completed"
 
 
+def test_remap_and_resume_background_returns_accepted_without_waiting_for_completion(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Remap Async",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    partial_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Remap%20Async",
+        json={"mapping": {"canonical_user_id": "player_id", "event_time": "timestamp"}},
+    )
+    assert partial_mapping.status_code == 200
+    assert partial_mapping.json()["required_coverage"] < 95.0
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Remap Async",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    blocked = client.post(import_job["links"]["self"] + "/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    started = threading.Event()
+    release = threading.Event()
+
+    original_resume_job = ImportService.resume_job
+
+    def fake_resume_job(self, job_id):
+        started.set()
+        release.wait(timeout=5)
+        return original_resume_job(self, job_id)
+
+    monkeypatch.setattr("app.application.imports.ImportService.resume_job", fake_resume_job)
+
+    remapped = client.post(
+        import_job["links"]["self"] + "/remap-and-resume?background=true",
+        headers={"x-actor-role": "operator"},
+        json={
+            "mapping": {
+                "canonical_user_id": "player_id",
+                "event_name": "event_name",
+                "event_time": "timestamp",
+            }
+        },
+    )
+    assert remapped.status_code == 202
+    payload = remapped.json()
+    assert payload["accepted"] is True
+    assert payload["background"] is True
+    assert payload["started"] is True
+    assert payload["id"] == import_job["id"]
+    assert started.wait(timeout=2)
+
+    release.set()
+
+    completed = None
+    for _ in range(50):
+        completed = client.get(import_job["links"]["self"])
+        assert completed.status_code == 200
+        if completed.json()["status"] == "completed":
+            break
+        time.sleep(0.05)
+    assert completed is not None
+    assert completed.json()["status"] == "completed"
+
+
 def test_export_requires_completed_prediction(client):
     with db_module.get_session_factory()() as session:
         repository = SqlAlchemyControlPlaneRepository(session)

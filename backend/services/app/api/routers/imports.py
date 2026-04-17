@@ -388,12 +388,40 @@ def remap_and_resume_import(
     job_id: str,
     payload: ImportRemapRequest,
     request: Request,
+    background: bool = False,
     service: ImportService = Depends(get_import_service),
 ):
     context = get_governance_context(request)
     ensure_permission(context, "imports.resume")
     ensure_permission(context, "mappings.update")
+    base_path = build_request_api_path(request, "/imports")
     try:
+        if background:
+            result = service.start_remap_and_resume_background(
+                job_id,
+                payload.mapping,
+                changed_by=payload.changed_by,
+                persist_source_mapping=payload.persist_source_mapping,
+                request_scope=get_request_context(),
+            )
+            job = result["job"]
+            response_payload = build_job_response(
+                job,
+                base_path=base_path,
+                extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"},
+            ).model_dump(mode="json")
+            response_payload.update({"accepted": True, "started": bool(result.get("started")), "background": True})
+            return JSONResponse(
+                status_code=status.HTTP_202_ACCEPTED,
+                content=build_audited_response(
+                    service.repository,
+                    context,
+                    action_type="imports_remap_and_resume",
+                    resource_type="import_job",
+                    resource_id=job_id,
+                    payload=response_payload,
+                ),
+            )
         job = service.remap_and_resume_job(
             job_id,
             payload.mapping,
@@ -412,8 +440,8 @@ def remap_and_resume_import(
         resource_id=job_id,
         payload=build_job_response(
             job,
-            base_path=build_request_api_path(request, "/imports"),
-            extra_links={"checkpoints": f"{build_request_api_path(request, '/imports')}/{job['id']}/checkpoints"},
+            base_path=base_path,
+            extra_links={"checkpoints": f"{base_path}/{job['id']}/checkpoints"},
         ).model_dump(mode="json"),
     )
 
