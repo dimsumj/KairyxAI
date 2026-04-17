@@ -44,12 +44,12 @@ Across the console, the default presentation is now intentionally minimal: the m
    - if you belong to `1` organization with multiple active projects, continue to project selection for that org
    - if you belong to `2+` organizations, choose the organization you want to enter first
 3. In the project step, either choose an existing project or create a new project if your org role allows it.
-4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
+4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`. If you want Ask AI to query Amplitude or another remote MCP server, also save an entry under `MCP Connections`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, draft or update a push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
+9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, MCP-backed remote questions, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
 ### 2.3 Deployment Surface Notes
@@ -439,7 +439,7 @@ BigQuery table import behavior:
 - Completed churn-list imports can create and activate a linked list cohort.
 
 ### 3.3 Connectors
-Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
+Use this page to register upstream ingestion sources, campaign-provider credentials, backend-managed Ask AI runtimes, and remote MCP servers that Ask AI can query. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. MCP server URLs in v1 must be public `https://` Streamable HTTP endpoints. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
 
 This page follows the console-wide minimal UI pattern. Section-specific explanation moved behind small `?` help triggers beside the card titles and labels, and the always-visible helper paragraphs were removed.
 
@@ -481,6 +481,42 @@ Existing Anthropic profiles still render in the AI runtime list and Ask AI model
 Deployment note:
 - `LM Studio` and `Ollama` presets use localhost-style defaults for self-hosted or local deployments where the backend can reach that machine or network.
 - Hosted production deployments reject localhost and other private-network runtime URLs. Use a publicly reachable HTTPS endpoint or a self-hosted deployment in that case.
+
+#### MCP Connections
+
+Use this card to save remote Model Context Protocol servers for Ask AI. v1 supports public `https://` Streamable HTTP servers only, starts with Amplitude presets, keeps authorization actor-scoped, and blocks mutating MCP tools even if the remote server exposes them.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Connect MCP Server` | Button | Opens the MCP connection form. | None | The preset selector and endpoint fields appear. |
+| `Preset` | Select | Chooses a preset endpoint or `Custom Remote MCP`. | `Amplitude (US)` | The endpoint field is prefilled with the preset URL. |
+| `Connection Name` | Text box | Sets the label shown in the MCP connection list and Ask AI selection state. | `Product Analytics MCP` | The connection is saved under this name. |
+| `Endpoint URL` | Text box | Sets the remote MCP endpoint. For `Amplitude (US)` and `Amplitude (EU)`, the default endpoint is prefilled. For `Custom Remote MCP`, enter a public `https://` URL manually. | `https://mcp.amplitude.com/mcp` | Validation accepts the endpoint only when it is public HTTPS and not localhost or a private-network host. |
+| `Save MCP Connection` | Button | Validates the endpoint and saves the connection. | None | The connection appears in the MCP connection list. |
+| `Cancel` | Button | Hides the MCP form without saving changes. | None | The page returns to the MCP connection list. |
+| `Refresh` | Button | Reloads MCP connections and imported MCP snapshots for the current project. | None | The connection list and snapshot list refresh from the control plane. |
+| Connection row `Edit` | Row button | Loads the selected connection into the form. | None | The form switches to update mode for that connection. |
+| Connection row `Authorize` / `Reauthorize` | Row button | Starts the actor-scoped OAuth flow in a popup window for the selected MCP connection. | None | After the popup completes, the current actor becomes authorized for that connection. |
+| Connection row `Refresh Tools` | Row button | Re-discovers the remote MCP tool catalog after authorization. Only read-only tools remain usable in v1. | None | The connection row updates with the latest allowed-tool count. |
+| Connection row `Open In Ask AI` | Row button | Opens the Ask AI drawer and preselects this MCP connection for the next question. | None | Ask AI opens with this connection set in the current UI context. |
+| Connection row `Disconnect` | Row button | Removes the current actor's saved authorization for that MCP connection. | None | The row remains, but the current actor must authorize again before Ask AI can query it. |
+| Connection row `Delete` | Row button | Removes the saved MCP connection configuration. | None | The connection disappears from the list. |
+| `Import Snapshot` | Button | Appears in the MCP Result Workspace when the selected payload is a live MCP query result. | None | The result is persisted as an MCP snapshot in the current project. |
+| `Create Cohort From Snapshot` | Button | Appears when the selected imported snapshot contains identifier columns such as `canonical_user_id`, `player_id`, or `user_id`. | None | Kairyx creates a draft list cohort from the imported rows. |
+
+MCP presets shipped in the current frontend:
+
+| Preset | Endpoint URL | Notes |
+| --- | --- | --- |
+| `Amplitude (US)` | `https://mcp.amplitude.com/mcp` | Uses Amplitude's US MCP endpoint. |
+| `Amplitude (EU)` | `https://mcp.eu.amplitude.com/mcp` | Uses Amplitude's EU MCP endpoint. |
+| `Custom Remote MCP` | operator supplied | Must be a public `https://` Streamable HTTP MCP endpoint. |
+
+MCP connection rules:
+- v1 blocks localhost, `.local`, `.internal`, `.lan`, `.corp`, `.home`, `.test`, and private IP endpoints.
+- Authorization is actor-scoped. Another operator in the same project sees the same saved connection row, but must authorize separately.
+- Query results stay ephemeral until you click `Import Snapshot`.
+- `Create Cohort From Snapshot` is enabled only when the imported rows contain at least one usable identifier column.
 
 #### Data Source Connectors
 
@@ -1358,6 +1394,7 @@ The assistant can:
 - give sample SQL, JSON payloads, and example prompts
 - summarize the current dashboard
 - set up low-risk draft cohorts, experiment configs, connectors, and provider connections
+- query a selected `MCP Connection`, summarize the remote result, and leave the result in the MCP workspace for explicit import
 - reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
 - select an existing SendGrid template or Braze API campaign and create a draft email campaign
 - create a draft workflow linked to the cohort and optional email campaign
@@ -1388,7 +1425,7 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
-| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
+| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, MCP connection, imported MCP snapshot, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
 
@@ -1403,11 +1440,16 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 - `Set up a draft email campaign with SendGrid or Braze`
 - `Set up a draft workflow`
 - `Set up the whole prediction -> cohort -> email campaign -> workflow flow`
+- `Use the selected MCP connection to answer a remote analytics question`
+- `Import the latest MCP result as a snapshot`
+- `Create a draft cohort from the latest MCP snapshot`
 - grounded product help such as `How do I use this page?`, `Where do I do X?`, `Give me a sample payload`, or `Why is this failing?`
 
 The v1 agent executes only low-risk reads and draft/setup actions automatically. It does not auto-run destructive deletes. Cohort activation, experiment start/stop, experiment decision logging, and similar risky follow-up actions are held for explicit confirmation.
 
 Prediction-backed flows are asynchronous. If the agent starts a fresh prediction job, the drawer stays on the same session, exposes the prediction job as an artifact, and waits for you to click `Continue` after the prediction completes.
+
+MCP-backed questions require that the current page context already has an authorized MCP connection selected, such as by clicking `Open In Ask AI` from `Data Core -> Connectors -> MCP Connections`. The agent only uses read-only MCP tools automatically. Importing the result into a snapshot and turning a snapshot into a cohort remain explicit operator actions.
 
 #### Sample operator-flow prompt
 ```text

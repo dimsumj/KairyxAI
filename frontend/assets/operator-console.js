@@ -2448,6 +2448,7 @@ export function initializeOperatorConsole() {
                     loadSavedConnectors();
                     loadAiModelProfileWorkspace({ preserveSelection: true });
                     loadProviderConnectionWorkspace({ preserveSelection: true });
+                    loadMcpConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
                     loadDataSandboxMappingControls();
@@ -3158,10 +3159,26 @@ export function initializeOperatorConsole() {
                 openai_compatible: 'Custom OpenAI-compatible',
                 anthropic: 'Anthropic',
             };
+            const mcpPresetDefaults = {
+                amplitude_us: {
+                    label: 'Amplitude (US)',
+                    endpoint_url: 'https://mcp.amplitude.com/mcp',
+                },
+                amplitude_eu: {
+                    label: 'Amplitude (EU)',
+                    endpoint_url: 'https://mcp.eu.amplitude.com/mcp',
+                },
+                custom: {
+                    label: 'Custom Remote MCP',
+                    endpoint_url: '',
+                },
+            };
             let backendMode = 'unknown';
             let cachedConnectors = [];
             let connectorListRenderRequestId = 0;
             let cachedProviderConnections = [];
+            let cachedMcpConnections = [];
+            let cachedMcpSnapshots = [];
             let cachedAgentModelProfiles = [];
             let selectedAiModelProfileId = null;
             let cachedImports = [];
@@ -3196,21 +3213,26 @@ export function initializeOperatorConsole() {
                 const visibleConnectors = getVisibleSourceConnectors();
                 const configuredCount = visibleConnectors.length;
                 const providerConnectionCount = getProviderConnections().length;
+                const mcpConnectionCount = Array.isArray(cachedMcpConnections) ? cachedMcpConnections.length : 0;
                 const aiRuntimeCount = getPersistedAiModelProfiles().length;
                 const hasBigQuery = visibleConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
+                const hasIngestionSource = visibleConnectors.some((connector) => {
+                    const type = String(connector.type || '').toLowerCase();
+                    return ['amplitude', 'adjust', 'appsflyer', 'bigquery'].includes(type);
+                });
                 const summaryText = message || (
-                    configuredCount === 0 && providerConnectionCount === 0 && aiRuntimeCount === 0
-                        ? 'No connections yet.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} provider${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} runtime${aiRuntimeCount === 1 ? '' : 's'}${hasBigQuery ? ' · BigQuery ready' : ''}`
+                    configuredCount === 0 && providerConnectionCount === 0 && mcpConnectionCount === 0 && aiRuntimeCount === 0
+                        ? 'No connectors configured yet. Start with BigQuery, an ingestion source, a campaign provider, or an MCP server.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${mcpConnectionCount ? ` · ${mcpConnectionCount} MCP connection${mcpConnectionCount === 1 ? '' : 's'}` : ''}${aiRuntimeCount ? ` · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
                 );
                 if (operatorHubConnectorsSummary) {
                     operatorHubConnectorsSummary.textContent = summaryText;
                 }
                 if (connectorsPageSummary && !message) {
-                    const totalConfigured = configuredCount + providerConnectionCount + aiRuntimeCount;
+                    const totalConfigured = configuredCount + providerConnectionCount + mcpConnectionCount + aiRuntimeCount;
                     connectorsPageSummary.textContent = totalConfigured === 0
-                        ? 'No connections yet.'
-                        : `${configuredCount} source${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} provider${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} runtime${aiRuntimeCount === 1 ? '' : 's'}`;
+                        ? 'Connect your first source, campaign provider, MCP server, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.'
+                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} · ${mcpConnectionCount} MCP connection${mcpConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'} configured.`;
                 }
             }
 
@@ -10736,6 +10758,21 @@ export function initializeOperatorConsole() {
             const providerConnectionTypeSelect = document.getElementById('provider-connection-type-select');
             const providerConnectionNameInput = document.getElementById('provider-connection-name-input');
             const providerConnectionConfigFields = document.getElementById('provider-connection-config-fields');
+            const addMcpConnectionBtn = document.getElementById('add-mcp-connection-btn');
+            const mcpConnectionRefreshBtn = document.getElementById('mcp-connection-refresh-btn');
+            const mcpConnectionSaveBtn = document.getElementById('mcp-connection-save-btn');
+            const mcpConnectionCancelBtn = document.getElementById('mcp-connection-cancel-btn');
+            const mcpConnectionStatus = document.getElementById('mcp-connection-status');
+            const mcpConnectionList = document.getElementById('mcp-connection-list');
+            const mcpConnectionFormContainer = document.getElementById('mcp-connection-form-container');
+            const mcpConnectionPresetSelect = document.getElementById('mcp-connection-preset-select');
+            const mcpConnectionNameInput = document.getElementById('mcp-connection-name-input');
+            const mcpConnectionEndpointInput = document.getElementById('mcp-connection-endpoint-input');
+            const mcpImportSnapshotBtn = document.getElementById('mcp-import-snapshot-btn');
+            const mcpCreateSnapshotCohortBtn = document.getElementById('mcp-create-snapshot-cohort-btn');
+            const mcpResultStatus = document.getElementById('mcp-result-status');
+            const mcpResultOutput = document.getElementById('mcp-result-output');
+            const mcpSnapshotList = document.getElementById('mcp-snapshot-list');
             const emailCampaignRefreshBtn = document.getElementById('email-campaign-refresh-btn');
             const emailCampaignSelectedLabel = document.getElementById('email-campaign-selected-label');
             const emailCampaignStatus = document.getElementById('email-campaign-status');
@@ -10774,6 +10811,10 @@ export function initializeOperatorConsole() {
             const emailCampaignClearSelectionBtn = document.getElementById('email-campaign-clear-selection-btn');
             let selectedEmailCampaignId = null;
             let selectedProviderConnectionId = null;
+            let editingMcpConnectionId = null;
+            let selectedMcpConnectionId = null;
+            let selectedMcpSnapshotId = null;
+            let selectedMcpQueryResult = null;
             const orchestratorRunStatus = document.getElementById('orchestrator-run-status');
             const orchestratorRunOutput = document.getElementById('orchestrator-run-output');
             const activationIngestStatus = document.getElementById('activation-ingest-status');
@@ -11814,6 +11855,490 @@ export function initializeOperatorConsole() {
                         }
                     });
                 });
+            }
+
+            function getMcpConnections() {
+                return Array.isArray(cachedMcpConnections) ? [...cachedMcpConnections] : [];
+            }
+
+            function findMcpConnection(mcpConnectionId) {
+                return getMcpConnections().find((item) => item.mcp_connection_id === mcpConnectionId) || null;
+            }
+
+            function findMcpSnapshot(snapshotId) {
+                return (Array.isArray(cachedMcpSnapshots) ? cachedMcpSnapshots : []).find((item) => item.snapshot_id === snapshotId) || null;
+            }
+
+            function getCurrentMcpPreset() {
+                return String(mcpConnectionPresetSelect?.value || 'amplitude_us').trim().toLowerCase() || 'amplitude_us';
+            }
+
+            function syncMcpConnectionPresetFields({ preserveEndpoint = false } = {}) {
+                const preset = getCurrentMcpPreset();
+                const defaults = mcpPresetDefaults[preset] || mcpPresetDefaults.custom;
+                if (mcpConnectionEndpointInput && (!preserveEndpoint || !String(mcpConnectionEndpointInput.value || '').trim())) {
+                    mcpConnectionEndpointInput.value = defaults.endpoint_url || '';
+                }
+                if (mcpConnectionNameInput && !String(mcpConnectionNameInput.value || '').trim() && defaults.label) {
+                    mcpConnectionNameInput.placeholder = `${defaults.label} Connection`;
+                }
+            }
+
+            function setMcpConnectionFormVisible(isVisible, { preset = '', preserveValues = false } = {}) {
+                if (addMcpConnectionBtn) {
+                    addMcpConnectionBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
+                if (mcpConnectionFormContainer) {
+                    mcpConnectionFormContainer.style.display = isVisible ? 'block' : 'none';
+                }
+                if (!isVisible) {
+                    editingMcpConnectionId = null;
+                    if (mcpConnectionPresetSelect) {
+                        mcpConnectionPresetSelect.value = 'amplitude_us';
+                    }
+                    if (mcpConnectionNameInput) {
+                        mcpConnectionNameInput.value = '';
+                    }
+                    if (mcpConnectionEndpointInput) {
+                        mcpConnectionEndpointInput.value = mcpPresetDefaults.amplitude_us.endpoint_url;
+                    }
+                    return;
+                }
+                if (preset && mcpConnectionPresetSelect) {
+                    mcpConnectionPresetSelect.value = preset;
+                }
+                if (!preserveValues) {
+                    editingMcpConnectionId = null;
+                }
+                syncMcpConnectionPresetFields({ preserveEndpoint: preserveValues });
+                if (!preserveValues && mcpConnectionNameInput) {
+                    mcpConnectionNameInput.focus();
+                }
+            }
+
+            async function refreshMcpConnectionsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return getMcpConnections();
+                }
+                const payload = await apiRequest('/mcp-connections');
+                cachedMcpConnections = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                renderConnectorEntrySummary();
+                return getMcpConnections();
+            }
+
+            async function refreshMcpSnapshotsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return Array.isArray(cachedMcpSnapshots) ? cachedMcpSnapshots : [];
+                }
+                const payload = await apiRequest('/mcp-connections/snapshots');
+                cachedMcpSnapshots = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedMcpSnapshots;
+            }
+
+            function loadMcpConnectionIntoForm(mcpConnectionId) {
+                const connection = findMcpConnection(mcpConnectionId);
+                if (!connection) {
+                    setMcpConnectionFormVisible(false);
+                    return;
+                }
+                editingMcpConnectionId = connection.mcp_connection_id;
+                setMcpConnectionFormVisible(true, {
+                    preset: connection.preset_key || 'custom',
+                    preserveValues: true,
+                });
+                if (mcpConnectionPresetSelect) {
+                    mcpConnectionPresetSelect.value = connection.preset_key || 'custom';
+                }
+                if (mcpConnectionNameInput) {
+                    mcpConnectionNameInput.value = connection.name || '';
+                }
+                if (mcpConnectionEndpointInput) {
+                    mcpConnectionEndpointInput.value = connection.endpoint_url || '';
+                }
+                setInlineStatus(mcpConnectionStatus, `Editing ${connection.name}.`);
+            }
+
+            async function saveMcpConnection() {
+                const name = String(mcpConnectionNameInput?.value || '').trim();
+                const presetKey = getCurrentMcpPreset();
+                const endpointUrl = String(mcpConnectionEndpointInput?.value || '').trim();
+                if (!name) {
+                    throw new Error('Connection name is required.');
+                }
+                setInlineStatus(mcpConnectionStatus, selectedMcpConnectionId ? 'Updating MCP connection...' : 'Saving MCP connection...');
+                await apiRequest('/mcp-connections/validate', {
+                    method: 'POST',
+                    body: {
+                        preset_key: presetKey,
+                        endpoint_url: endpointUrl,
+                    },
+                });
+                const response = editingMcpConnectionId
+                    ? await apiRequest(`/mcp-connections/${encodeURIComponent(editingMcpConnectionId)}`, {
+                        method: 'PATCH',
+                        body: {
+                            name,
+                            preset_key: presetKey,
+                            endpoint_url: endpointUrl,
+                        },
+                    })
+                    : await apiRequest('/mcp-connections', {
+                        method: 'POST',
+                        body: {
+                            name,
+                            preset_key: presetKey,
+                            endpoint_url: endpointUrl,
+                        },
+                    });
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+                selectMcpConnection(response.mcp_connection_id);
+                loadMcpConnectionIntoForm(response.mcp_connection_id);
+                setInlineStatus(mcpConnectionStatus, `Saved MCP connection ${response.name}.`);
+                return response;
+            }
+
+            async function deleteMcpConnection(mcpConnectionId) {
+                const connection = findMcpConnection(mcpConnectionId);
+                if (!connection) {
+                    throw new Error(`MCP connection '${mcpConnectionId}' not found.`);
+                }
+                if (!confirm(`Delete ${connection.name}? This removes the saved MCP connection configuration.`)) {
+                    return null;
+                }
+                setInlineStatus(mcpConnectionStatus, `Deleting ${connection.name}...`);
+                await apiRequest(`/mcp-connections/${encodeURIComponent(mcpConnectionId)}`, { method: 'DELETE' });
+                if (selectedMcpConnectionId === mcpConnectionId) {
+                    selectedMcpConnectionId = null;
+                    selectedMcpQueryResult = null;
+                    selectedMcpSnapshotId = null;
+                    setMcpConnectionFormVisible(false);
+                    renderMcpResultWorkspace();
+                }
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+                setInlineStatus(mcpConnectionStatus, `Deleted ${connection.name}.`);
+                return connection;
+            }
+
+            async function startMcpAuthorization(mcpConnectionId) {
+                const connection = findMcpConnection(mcpConnectionId);
+                if (!connection) {
+                    throw new Error(`MCP connection '${mcpConnectionId}' not found.`);
+                }
+                setInlineStatus(mcpConnectionStatus, `Starting OAuth for ${connection.name}...`);
+                const payload = await apiRequest(`/mcp-connections/${encodeURIComponent(mcpConnectionId)}/connect/start`, {
+                    method: 'POST',
+                });
+                const popup = window.open(payload.authorization_url, 'kairyx-mcp-oauth', 'width=960,height=760');
+                if (!popup) {
+                    throw new Error('Browser blocked the OAuth popup.');
+                }
+                await new Promise((resolve, reject) => {
+                    let settled = false;
+                    const timeoutId = window.setTimeout(() => {
+                        if (settled) return;
+                        settled = true;
+                        window.removeEventListener('message', onMessage);
+                        reject(new Error('Timed out waiting for the MCP authorization callback.'));
+                    }, 120000);
+                    function onMessage(event) {
+                        if (event.origin !== window.location.origin) return;
+                        if (event.data?.type !== 'kairyx:mcp-oauth-complete') return;
+                        if (String(event.data?.mcpConnectionId || '') !== mcpConnectionId) return;
+                        if (settled) return;
+                        settled = true;
+                        window.clearTimeout(timeoutId);
+                        window.removeEventListener('message', onMessage);
+                        if (!event.data?.ok) {
+                            reject(new Error('MCP authorization failed.'));
+                            return;
+                        }
+                        resolve();
+                    }
+                    window.addEventListener('message', onMessage);
+                });
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+                setInlineStatus(mcpConnectionStatus, `Authorized ${connection.name}.`);
+            }
+
+            async function disconnectMcpConnection(mcpConnectionId) {
+                const connection = findMcpConnection(mcpConnectionId);
+                if (!connection) {
+                    throw new Error(`MCP connection '${mcpConnectionId}' not found.`);
+                }
+                setInlineStatus(mcpConnectionStatus, `Disconnecting ${connection.name}...`);
+                await apiRequest(`/mcp-connections/${encodeURIComponent(mcpConnectionId)}/disconnect`, {
+                    method: 'POST',
+                });
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+                setInlineStatus(mcpConnectionStatus, `Disconnected ${connection.name}.`);
+            }
+
+            async function refreshMcpConnectionTools(mcpConnectionId) {
+                const connection = findMcpConnection(mcpConnectionId);
+                if (!connection) {
+                    throw new Error(`MCP connection '${mcpConnectionId}' not found.`);
+                }
+                setInlineStatus(mcpConnectionStatus, `Refreshing tools for ${connection.name}...`);
+                await apiRequest(`/mcp-connections/${encodeURIComponent(mcpConnectionId)}/refresh-tools`, {
+                    method: 'POST',
+                });
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+                setInlineStatus(mcpConnectionStatus, `Refreshed tools for ${connection.name}.`);
+            }
+
+            function selectMcpConnection(mcpConnectionId) {
+                selectedMcpConnectionId = String(mcpConnectionId || '').trim() || null;
+                syncCopilotAgentContextChrome();
+            }
+
+            function selectMcpSnapshot(snapshotId) {
+                selectedMcpSnapshotId = String(snapshotId || '').trim() || null;
+                renderMcpResultWorkspace();
+                syncCopilotAgentContextChrome();
+            }
+
+            function selectMcpQueryResult(queryResult) {
+                selectedMcpQueryResult = queryResult ? JSON.parse(JSON.stringify(queryResult)) : null;
+                if (selectedMcpQueryResult?.mcp_connection_id) {
+                    selectedMcpConnectionId = String(selectedMcpQueryResult.mcp_connection_id || '').trim() || selectedMcpConnectionId;
+                }
+                renderMcpResultWorkspace();
+                syncCopilotAgentContextChrome();
+            }
+
+            function renderMcpResultWorkspace() {
+                const snapshot = findMcpSnapshot(selectedMcpSnapshotId);
+                const queryResult = selectedMcpQueryResult;
+                const payload = snapshot || queryResult || null;
+                const hasImportableQuery = Boolean(queryResult && queryResult.mcp_connection_id);
+                const identifierFields = Array.isArray(snapshot?.identifier_fields) ? snapshot.identifier_fields : [];
+                if (mcpImportSnapshotBtn) {
+                    mcpImportSnapshotBtn.disabled = !hasImportableQuery;
+                }
+                if (mcpCreateSnapshotCohortBtn) {
+                    mcpCreateSnapshotCohortBtn.disabled = !(snapshot && identifierFields.length);
+                }
+                renderJsonOutput(
+                    mcpResultOutput,
+                    payload,
+                    'Select an MCP result or snapshot to inspect it here.',
+                );
+                if (mcpResultStatus) {
+                    const statusMessage = snapshot
+                        ? `${snapshot.name || snapshot.snapshot_id} · ${snapshot.row_count || 0} row(s) · ${identifierFields.join(', ') || 'no cohort IDs'}`
+                        : queryResult
+                            ? `${queryResult.question || 'MCP result'} · ${(queryResult.rows || []).length} row(s)`
+                            : 'Select an MCP result or snapshot.';
+                    setInlineStatus(mcpResultStatus, statusMessage);
+                }
+            }
+
+            function renderMcpSnapshotList(items = cachedMcpSnapshots) {
+                renderSimpleTable(
+                    mcpSnapshotList,
+                    [
+                        { label: 'Snapshot', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.snapshot_id || '-')}</div>` },
+                        { label: 'Rows', render: (item) => escapeHtml(String(item.row_count || 0)) },
+                        { label: 'Identifiers', render: (item) => escapeHtml((item.identifier_fields || []).join(', ') || '-') },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-mcp-snapshot-action="open" data-mcp-snapshot-id="${escapeHtml(item.snapshot_id)}">Open</button>
+                                    <button type="button" data-mcp-snapshot-action="cohort" data-mcp-snapshot-id="${escapeHtml(item.snapshot_id)}" ${Array.isArray(item.identifier_fields) && item.identifier_fields.length ? '' : 'disabled'}>Create Cohort</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    Array.isArray(items) ? items : [],
+                    'No MCP snapshots imported yet.',
+                );
+                mcpSnapshotList?.querySelectorAll('[data-mcp-snapshot-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const snapshotId = String(button.dataset.mcpSnapshotId || '').trim();
+                        const action = String(button.dataset.mcpSnapshotAction || '').trim();
+                        if (!snapshotId || !action) {
+                            return;
+                        }
+                        if (action === 'open') {
+                            selectMcpSnapshot(snapshotId);
+                            return;
+                        }
+                        try {
+                            selectMcpSnapshot(snapshotId);
+                            await createCohortFromSelectedMcpSnapshot();
+                        } catch (error) {
+                            setInlineStatus(mcpResultStatus, error.message || 'Failed to create a cohort from the MCP snapshot.', true);
+                        }
+                    });
+                });
+            }
+
+            function renderMcpConnectionList(items = getMcpConnections()) {
+                renderSimpleTable(
+                    mcpConnectionList,
+                    [
+                        { label: 'Connection', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.mcp_connection_id || '-')}</div>` },
+                        { label: 'Preset', render: (item) => `<span class="pill">${escapeHtml((mcpPresetDefaults[item.preset_key || 'custom'] || {}).label || item.preset_key || 'Custom')}</span>` },
+                        { label: 'Endpoint', render: (item) => `<span>${escapeHtml(item.endpoint_url || '-')}</span><div class="subtle">${escapeHtml(item.transport_type || 'streamable_http')}</div>` },
+                        { label: 'Auth', render: (item) => `<span class="pill">${escapeHtml((item.authorization || {}).status || 'not_authorized')}</span>` },
+                        { label: 'Allowed Tools', render: (item) => escapeHtml(String((item.allowed_tools || []).length || 0)) },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => `
+                                <div class="table-actions">
+                                    <button type="button" data-mcp-connection-action="edit" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}">Edit</button>
+                                    <button type="button" data-mcp-connection-action="auth" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}">${String((item.authorization || {}).status || '') === 'authorized' ? 'Reauthorize' : 'Authorize'}</button>
+                                    <button type="button" data-mcp-connection-action="refresh" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}">Refresh Tools</button>
+                                    <button type="button" data-mcp-connection-action="ask" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}">Open In Ask AI</button>
+                                    <button type="button" data-mcp-connection-action="disconnect" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}" ${String((item.authorization || {}).status || '') === 'authorized' ? '' : 'disabled'}>Disconnect</button>
+                                    <button type="button" data-mcp-connection-action="delete" data-mcp-connection-id="${escapeHtml(item.mcp_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
+                                </div>
+                            `,
+                        },
+                    ],
+                    items,
+                    'No MCP connections yet.',
+                );
+                mcpConnectionList?.querySelectorAll('[data-mcp-connection-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const mcpConnectionId = String(button.dataset.mcpConnectionId || '').trim();
+                        const action = String(button.dataset.mcpConnectionAction || '').trim();
+                        if (!mcpConnectionId || !action) {
+                            return;
+                        }
+                        if (action === 'edit') {
+                            loadMcpConnectionIntoForm(mcpConnectionId);
+                            return;
+                        }
+                        if (action === 'auth') {
+                            try {
+                                await startMcpAuthorization(mcpConnectionId);
+                            } catch (error) {
+                                setInlineStatus(mcpConnectionStatus, error.message || 'Failed to start MCP authorization.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'refresh') {
+                            try {
+                                await refreshMcpConnectionTools(mcpConnectionId);
+                            } catch (error) {
+                                setInlineStatus(mcpConnectionStatus, error.message || 'Failed to refresh MCP tools.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'ask') {
+                            selectMcpConnection(mcpConnectionId);
+                            try {
+                                await setCopilotAgentDrawerOpen(true);
+                            } catch (error) {
+                                setInlineStatus(mcpConnectionStatus, error.message || 'Failed to open Ask AI for the MCP connection.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'disconnect') {
+                            try {
+                                await disconnectMcpConnection(mcpConnectionId);
+                            } catch (error) {
+                                setInlineStatus(mcpConnectionStatus, error.message || 'Failed to disconnect the MCP connection.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'delete') {
+                            try {
+                                await deleteMcpConnection(mcpConnectionId);
+                            } catch (error) {
+                                setInlineStatus(mcpConnectionStatus, error.message || 'Failed to delete the MCP connection.', true);
+                            }
+                        }
+                    });
+                });
+            }
+
+            async function importCurrentMcpSnapshot() {
+                const queryResult = selectedMcpQueryResult ? JSON.parse(JSON.stringify(selectedMcpQueryResult)) : null;
+                if (!queryResult || !queryResult.mcp_connection_id) {
+                    throw new Error('Select an MCP query result first.');
+                }
+                const suggestedName = `${findMcpConnection(queryResult.mcp_connection_id)?.name || 'MCP'} Snapshot ${new Date().toLocaleString()}`;
+                const name = window.prompt('Snapshot name', suggestedName);
+                if (name === null) {
+                    return null;
+                }
+                setInlineStatus(mcpResultStatus, 'Importing MCP snapshot...');
+                const snapshot = await apiRequest(`/mcp-connections/${encodeURIComponent(queryResult.mcp_connection_id)}/snapshots`, {
+                    method: 'POST',
+                    body: {
+                        name,
+                        query_result: {
+                            question: queryResult.question || '',
+                            answer: queryResult.answer || '',
+                            rows: Array.isArray(queryResult.rows) ? queryResult.rows : [],
+                            tool_calls: Array.isArray(queryResult.tool_calls) ? queryResult.tool_calls : [],
+                            result: queryResult.result || {},
+                        },
+                    },
+                });
+                await refreshMcpSnapshotsState();
+                selectMcpSnapshot(snapshot.snapshot_id);
+                renderMcpSnapshotList(cachedMcpSnapshots);
+                setInlineStatus(mcpResultStatus, `Imported ${snapshot.name}.`);
+                return snapshot;
+            }
+
+            async function createCohortFromSelectedMcpSnapshot() {
+                const snapshot = findMcpSnapshot(selectedMcpSnapshotId);
+                if (!snapshot) {
+                    throw new Error('Select an imported MCP snapshot first.');
+                }
+                const suggestedName = `${snapshot.name || 'MCP Snapshot'} Cohort`;
+                const name = window.prompt('Cohort name', suggestedName);
+                if (name === null || !String(name).trim()) {
+                    return null;
+                }
+                setInlineStatus(mcpResultStatus, 'Creating cohort from MCP snapshot...');
+                const payload = await apiRequest(`/mcp-connections/snapshots/${encodeURIComponent(snapshot.snapshot_id)}/cohorts`, {
+                    method: 'POST',
+                    body: {
+                        name,
+                        description: `Created from MCP snapshot ${snapshot.snapshot_id}.`,
+                    },
+                });
+                setInlineStatus(mcpResultStatus, `Created cohort ${(payload.cohort || {}).name || name}.`);
+                return payload;
+            }
+
+            async function loadMcpConnectionWorkspace({ preserveSelection = true } = {}) {
+                try {
+                    const [connections, snapshots] = await Promise.all([
+                        refreshMcpConnectionsState(),
+                        refreshMcpSnapshotsState(),
+                    ]);
+                    if (!preserveSelection) {
+                        setMcpConnectionFormVisible(false);
+                    } else if (selectedMcpConnectionId && !connections.some((item) => item.mcp_connection_id === selectedMcpConnectionId)) {
+                        selectedMcpConnectionId = null;
+                    }
+                    if (selectedMcpSnapshotId && !snapshots.some((item) => item.snapshot_id === selectedMcpSnapshotId)) {
+                        selectedMcpSnapshotId = null;
+                    }
+                    renderMcpConnectionList(connections);
+                    renderMcpSnapshotList(snapshots);
+                    renderMcpResultWorkspace();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedMcpConnections = [];
+                        cachedMcpSnapshots = [];
+                        renderMcpConnectionList([]);
+                        renderMcpSnapshotList([]);
+                        renderMcpResultWorkspace();
+                        setInlineStatus(mcpConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        return;
+                    }
+                    setInlineStatus(mcpConnectionStatus, error.message || 'Failed to load MCP connections.', true);
+                }
             }
 
             async function loadProviderConnectionWorkspace({ preserveSelection = true } = {}) {
@@ -14142,6 +14667,8 @@ export function initializeOperatorConsole() {
                     selected_email_provider_connection_id: String(emailCampaignProviderSelect?.value || '').trim() || null,
                     selected_email_provider_type: getCurrentEmailCampaignProviderType(),
                     selected_email_template_id: String(emailCampaignTemplateSelect?.value || '').trim() || null,
+                    selected_mcp_connection_id: selectedMcpConnectionId || null,
+                    selected_mcp_snapshot_id: selectedMcpSnapshotId || null,
                 };
             }
 
@@ -14565,6 +15092,25 @@ export function initializeOperatorConsole() {
                     if (workflowId) {
                         await loadWorkflowStudioSelection('workflow', workflowId);
                     }
+                    return;
+                }
+                if (resourceType === 'mcp_connection') {
+                    activateModule('data-core', 'data-core-connectors');
+                    await loadMcpConnectionWorkspace({ preserveSelection: true });
+                    selectMcpConnection(artifact.focus?.mcp_connection_id || artifact.resource_id || null);
+                    return;
+                }
+                if (resourceType === 'mcp_query_result') {
+                    activateModule('data-core', 'data-core-connectors');
+                    await loadMcpConnectionWorkspace({ preserveSelection: true });
+                    selectMcpQueryResult(artifact.focus?.query_result || {});
+                    return;
+                }
+                if (resourceType === 'mcp_result_snapshot') {
+                    activateModule('data-core', 'data-core-connectors');
+                    await loadMcpConnectionWorkspace({ preserveSelection: true });
+                    selectMcpConnection(artifact.focus?.mcp_connection_id || null);
+                    selectMcpSnapshot(artifact.focus?.snapshot_id || artifact.resource_id || null);
                     return;
                 }
                 activateModule('data-core', 'data-core-connectors');
@@ -15049,6 +15595,40 @@ export function initializeOperatorConsole() {
                     providerConnectionStatus,
                     `Creating a new ${formatConnectorLabel(getCurrentProviderConnectionType())} provider connection.`,
                 );
+            });
+            mcpConnectionRefreshBtn?.addEventListener('click', async () => {
+                await loadMcpConnectionWorkspace({ preserveSelection: true });
+            });
+            addMcpConnectionBtn?.addEventListener('click', () => {
+                setMcpConnectionFormVisible(true, { preset: 'amplitude_us' });
+                setInlineStatus(mcpConnectionStatus, 'Creating a new MCP connection.');
+            });
+            mcpConnectionSaveBtn?.addEventListener('click', async () => {
+                try {
+                    await saveMcpConnection();
+                } catch (error) {
+                    setInlineStatus(mcpConnectionStatus, error.message || 'Failed to save the MCP connection.', true);
+                }
+            });
+            mcpConnectionCancelBtn?.addEventListener('click', () => {
+                setMcpConnectionFormVisible(false);
+            });
+            mcpConnectionPresetSelect?.addEventListener('change', () => {
+                syncMcpConnectionPresetFields({ preserveEndpoint: false });
+            });
+            mcpImportSnapshotBtn?.addEventListener('click', async () => {
+                try {
+                    await importCurrentMcpSnapshot();
+                } catch (error) {
+                    setInlineStatus(mcpResultStatus, error.message || 'Failed to import the MCP snapshot.', true);
+                }
+            });
+            mcpCreateSnapshotCohortBtn?.addEventListener('click', async () => {
+                try {
+                    await createCohortFromSelectedMcpSnapshot();
+                } catch (error) {
+                    setInlineStatus(mcpResultStatus, error.message || 'Failed to create a cohort from the MCP snapshot.', true);
+                }
             });
             emailCampaignRefreshBtn.addEventListener('click', async () => {
                 await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: true });

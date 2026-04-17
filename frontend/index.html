@@ -749,6 +749,59 @@
                 </div>
                 <div id="provider-connection-list"></div>
             </div>
+
+            <div id="mcp-connections-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>MCP Connections</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show MCP connection help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Save remote Model Context Protocol servers here so Ask AI can query external platforms like Amplitude with actor-scoped OAuth and explicit result imports.</span>
+                        </span>
+                    </h2>
+                    <div class="inline-actions">
+                        <button id="add-mcp-connection-btn" type="button">Connect MCP Server</button>
+                        <button id="mcp-connection-refresh-btn" type="button">Refresh</button>
+                        <span id="mcp-connection-status" class="subtle"></span>
+                    </div>
+                </div>
+                <div id="mcp-connection-form-container" style="display: none;">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="mcp-connection-preset-select">Preset</label>
+                            <select id="mcp-connection-preset-select">
+                                <option value="amplitude_us" selected>Amplitude (US)</option>
+                                <option value="amplitude_eu">Amplitude (EU)</option>
+                                <option value="custom">Custom Remote MCP</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="mcp-connection-name-input">Connection Name</label>
+                            <input type="text" id="mcp-connection-name-input" placeholder="e.g. Product Analytics MCP">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="mcp-connection-endpoint-input">Endpoint URL</label>
+                        <input type="text" id="mcp-connection-endpoint-input" placeholder="https://mcp.amplitude.com/mcp">
+                    </div>
+                    <p class="subtle">Only public `https://` Streamable HTTP MCP endpoints are supported in v1. Localhost, private-network, and stdio servers are intentionally blocked.</p>
+                    <div class="inline-actions">
+                        <button id="mcp-connection-save-btn" type="button">Save MCP Connection</button>
+                        <button id="mcp-connection-cancel-btn" type="button" style="background-color: var(--subtle-text);">Cancel</button>
+                    </div>
+                </div>
+                <div id="mcp-connection-list"></div>
+                <div style="margin-top: 1rem;">
+                    <h3 style="margin-bottom: 0.5rem;">MCP Result Workspace</h3>
+                    <div class="inline-actions" style="margin-bottom: 0.5rem;">
+                        <button id="mcp-import-snapshot-btn" type="button" disabled>Import Snapshot</button>
+                        <button id="mcp-create-snapshot-cohort-btn" type="button" disabled>Create Cohort From Snapshot</button>
+                        <span id="mcp-result-status" class="subtle"></span>
+                    </div>
+                    <pre id="mcp-result-output" style="min-height: 140px;">Select an MCP result or snapshot to inspect it here.</pre>
+                    <div id="mcp-snapshot-list" style="margin-top: 1rem;"></div>
+                </div>
+            </div>
         </section>
 
         <section id="data-sandbox" class="page">

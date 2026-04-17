@@ -25,6 +25,7 @@ from app.api.routers import (
     health,
     imports,
     mappings,
+    mcp_connections,
     onboarding,
     organization_invites,
     organization_members,
@@ -153,6 +154,7 @@ def create_app() -> FastAPI:
             "/health/live",
             f"{settings.api_v1_prefix}/health/live",
             f"{settings.api_v1_prefix}/auth/oidc-config",
+            f"{settings.api_v1_prefix}/mcp-connections/connect/callback",
             "/",
         }
         if request_path.startswith("/static/") or request_path in public_paths:
@@ -352,6 +354,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.api_v1_prefix)
     app.include_router(tenants.router, prefix=settings.api_v1_prefix)
     app.include_router(provider_connections.router, prefix=settings.api_v1_prefix)
+    app.include_router(mcp_connections.router, prefix=settings.api_v1_prefix)
     app.include_router(connectors.router, prefix=settings.api_v1_prefix)
     app.include_router(mappings.router, prefix=settings.api_v1_prefix)
     app.include_router(onboarding.router, prefix=settings.api_v1_prefix)

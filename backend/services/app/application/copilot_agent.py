@@ -24,6 +24,7 @@ from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
 from app.application.copilot_help_catalog import build_help_support_answer
 from app.application.health_monitor import HealthMonitorService
+from app.application.mcp_connections import McpConnectionService
 from app.application.provider_connections import ProviderConnectionService
 from app.application.secret_refs import redact_secret_values
 from app.application.sql_workspace import SqlWorkspaceService
@@ -195,6 +196,24 @@ ACTION_REGISTRY: Dict[str, AgentActionSpec] = {
         permissions=("copilot.agent.run", "experiments.config.write"),
         risk_level="low",
     ),
+    "query_mcp_connection": AgentActionSpec(
+        action_type="query_mcp_connection",
+        title="Query MCP connection",
+        permissions=("copilot.agent.run", "mcp_connections.read"),
+        risk_level="low",
+    ),
+    "import_mcp_snapshot": AgentActionSpec(
+        action_type="import_mcp_snapshot",
+        title="Import MCP snapshot",
+        permissions=("copilot.agent.run", "mcp_connections.write"),
+        risk_level="low",
+    ),
+    "create_cohort_from_mcp_snapshot": AgentActionSpec(
+        action_type="create_cohort_from_mcp_snapshot",
+        title="Create cohort from MCP snapshot",
+        permissions=("copilot.agent.run", "cohorts.create"),
+        risk_level="low",
+    ),
     "activate_cohort": AgentActionSpec(
         action_type="activate_cohort",
         title="Activate cohort",
@@ -266,6 +285,26 @@ class CopilotAgentModelAdapter(Protocol):
     def draft_builder(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
         ...
 
+    def plan_mcp_step(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        ...
+
+    def summarize_mcp_results(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> str:
+        ...
+
 
 class ConfiguredCopilotAgentModel:
     def __init__(self, profile: Dict[str, Any] | None):
@@ -289,7 +328,7 @@ class ConfiguredCopilotAgentModel:
             "task": "Classify the operator request and extract structured slots for the Kytrics/Kairyx control plane.",
             "instructions": [
                 "Return JSON only.",
-                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, draft_audience_builder, setup_operator_flow, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
+                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, draft_audience_builder, setup_operator_flow, query_mcp_connection, import_mcp_snapshot, create_cohort_from_mcp_snapshot, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
                 "Fill slots only when explicitly present or strongly implied.",
                 "Do not invent SQL, identifiers, or credentials.",
             ],
@@ -453,6 +492,83 @@ class ConfiguredCopilotAgentModel:
         except Exception:
             return fallback
 
+    def plan_mcp_step(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not self._is_ai_enabled():
+            return {}
+        payload = {
+            "task": "Choose the next read-only MCP tool call for the operator request.",
+            "instructions": [
+                "Return JSON only.",
+                "You may choose at most one tool call per step.",
+                "If the current evidence is sufficient, set done=true and provide answer.",
+                "Only use the provided tool_catalog names.",
+                "Arguments must be valid JSON objects.",
+            ],
+            "response_contract": {
+                "thought": "string",
+                "done": "boolean",
+                "tool_name": "string",
+                "arguments": {"any": "json"},
+                "answer": "string",
+            },
+            "session_state": {
+                "status": session_state.get("status"),
+                "current_intent": session_state.get("current_intent"),
+            },
+            "ui_context": ui_context,
+            "hint": hint,
+            "message": prompt,
+            "fallback": {},
+        }
+        try:
+            raw = self._request_text(payload)
+            parsed = extract_json_object(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def summarize_mcp_results(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> str:
+        if not self._is_ai_enabled():
+            return ""
+        payload = {
+            "task": "Summarize grounded MCP tool results for the operator.",
+            "instructions": [
+                "Return JSON only.",
+                "Use the tool results as the source of truth.",
+                "Keep the answer concise and specific.",
+                "Do not claim actions happened outside the recorded MCP tool calls.",
+            ],
+            "response_contract": {"answer": "string"},
+            "session_state": {
+                "status": session_state.get("status"),
+                "current_intent": session_state.get("current_intent"),
+            },
+            "ui_context": ui_context,
+            "hint": hint,
+            "message": prompt,
+            "fallback": {"answer": ""},
+        }
+        try:
+            raw = self._request_text(payload)
+            parsed = extract_json_object(raw)
+            return str(parsed.get("answer") or "").strip() if isinstance(parsed, dict) else ""
+        except Exception:
+            return ""
+
     def _is_ai_enabled(self) -> bool:
         return self.runtime.is_enabled()
 
@@ -485,6 +601,8 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         slots["sql"] = sql
     selected_cohort_id = str(ui_context.get("selected_cohort_id") or "").strip()
     current_experiment_id = str(ui_context.get("current_experiment_id") or "").strip()
+    selected_mcp_connection_id = str(ui_context.get("selected_mcp_connection_id") or "").strip()
+    selected_mcp_snapshot_id = str(ui_context.get("selected_mcp_snapshot_id") or "").strip()
     is_help_support_request = any(
         phrase in lowered
         for phrase in (
@@ -515,6 +633,14 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         return {"intent": "unsupported", "slots": slots, "notes": ["Destructive delete flows are out of scope for the v1 agent."]}
     if is_help_support_request:
         return {"intent": "help_support", "slots": slots}
+    if any(phrase in lowered for phrase in ("import snapshot", "save snapshot", "import the result", "save the result")):
+        slots.setdefault("mcp_snapshot_id", selected_mcp_snapshot_id or None)
+        slots.setdefault("mcp_connection_id", selected_mcp_connection_id or None)
+        return {"intent": "import_mcp_snapshot", "slots": slots}
+    if any(phrase in lowered for phrase in ("create cohort from snapshot", "make cohort from snapshot", "create cohort from the snapshot")):
+        slots.setdefault("mcp_snapshot_id", selected_mcp_snapshot_id or None)
+        slots.setdefault("mcp_connection_id", selected_mcp_connection_id or None)
+        return {"intent": "create_cohort_from_mcp_snapshot", "slots": slots}
     if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign", "workflow")) and any(
         token in lowered for token in ("high risk", "churn", "prediction", "cohort", "audience")
     ):
@@ -566,6 +692,11 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         return {"intent": "record_experiment_decision", "slots": slots}
     if any(phrase in lowered for phrase in ("summarize dashboard", "summarise dashboard", "dashboard summary", "summarize the dashboard", "summarise the dashboard")):
         return {"intent": "summarize_dashboard", "slots": slots}
+    if selected_mcp_connection_id:
+        slots.setdefault("mcp_connection_id", selected_mcp_connection_id)
+        return {"intent": "query_mcp_connection", "slots": slots}
+    if "mcp" in lowered or ("amplitude" in lowered and any(token in lowered for token in ("query", "search", "look up", "find", "analyze", "analyse", "show", "what", "which"))):
+        return {"intent": "query_mcp_connection", "slots": slots}
     if any(phrase in lowered for phrase in ("set up a connection", "setup a connection", "create a connection", "set up connection", "setup connection")):
         scope, connection_type = detect_connection_scope_and_type(lowered)
         if scope:
@@ -650,6 +781,7 @@ class CopilotAgentService:
         self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.workflows = WorkflowService(repository)
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
+        self.mcp_connections = McpConnectionService(repository, settings, cohort_service=self.cohorts)
         self.sendgrid_provider = SendGridProviderService(repository)
         self.braze_provider = BrazeProviderService(repository)
         self.model_runtime_resolver = TextModelRuntimeResolver(repository, circuit_namespace="copilot_agent")
@@ -683,6 +815,8 @@ class CopilotAgentService:
             "waiting_for_action_type": None,
             "waiting_for_resource_id": None,
             "pending_flow": None,
+            "latest_mcp_query_result": None,
+            "latest_mcp_snapshot_id": None,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         }
@@ -741,7 +875,7 @@ class CopilotAgentService:
             model_adapter.parse_message(message, session_state=session, ui_context=merged_ui_context),
             message=message,
         )
-        plan = self._build_plan(message=message, parsed=parsed, ui_context=merged_ui_context, context=context)
+        plan = self._build_plan(message=message, parsed=parsed, session=session, ui_context=merged_ui_context, context=context)
 
         completed_actions: List[Dict[str, Any]] = []
         pending_confirmations: List[Dict[str, Any]] = []
@@ -818,6 +952,7 @@ class CopilotAgentService:
                 "waiting_for_action_type": execution_result.get("waiting_for_action_type", session.get("waiting_for_action_type")),
                 "waiting_for_resource_id": execution_result.get("waiting_for_resource_id", session.get("waiting_for_resource_id")),
                 "pending_flow": execution_result.get("pending_flow", session.get("pending_flow")),
+                **dict(execution_result.get("session_patch") or {}),
                 "updated_at": datetime.utcnow().isoformat(),
             }
         )
@@ -958,6 +1093,7 @@ class CopilotAgentService:
         *,
         message: str,
         parsed: Dict[str, Any],
+        session: Dict[str, Any],
         ui_context: Dict[str, Any],
         context: GovernanceContext,
     ) -> Dict[str, Any]:
@@ -1029,6 +1165,22 @@ class CopilotAgentService:
             clarifications.extend(self._operator_flow_clarifications(slots, ui_context=ui_context))
             if not clarifications:
                 actions.append(self._operator_flow_action(slots, ui_context=ui_context))
+        elif intent == "query_mcp_connection":
+            clarifications.extend(self._mcp_connection_clarifications(slots, ui_context=ui_context, context=context))
+            if not clarifications:
+                actions.append(self._mcp_query_action(slots, ui_context=ui_context, context=context))
+        elif intent == "import_mcp_snapshot":
+            latest_query_result = dict(session.get("latest_mcp_query_result") or {})
+            if not latest_query_result:
+                assistant_message = "Run an MCP query first or open an MCP result before importing a snapshot."
+            else:
+                actions.append(self._mcp_snapshot_import_action(slots, latest_query_result=latest_query_result))
+        elif intent == "create_cohort_from_mcp_snapshot":
+            snapshot_id = str(slots.get("mcp_snapshot_id") or ui_context.get("selected_mcp_snapshot_id") or session.get("latest_mcp_snapshot_id") or "").strip()
+            if not snapshot_id:
+                assistant_message = "Import an MCP snapshot first, then I can create a cohort from it."
+            else:
+                actions.append(self._mcp_snapshot_cohort_action(slots, snapshot_id=snapshot_id))
         elif intent in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
             cohort_id = str(slots.get("cohort_id") or "").strip()
             if not cohort_id:
@@ -1544,6 +1696,67 @@ class CopilotAgentService:
             },
         }
 
+    def _mcp_connection_clarifications(
+        self,
+        slots: Dict[str, Any],
+        *,
+        ui_context: Dict[str, Any],
+        context: GovernanceContext,
+    ) -> List[Dict[str, Any]]:
+        connection = self._resolve_mcp_connection_candidate(slots, ui_context=ui_context, actor_id=context.actor_id)
+        if connection is not None:
+            return []
+        options = [
+            str(item.get("mcp_connection_id") or "")
+            for item in self.mcp_connections.list_connections(actor_id=context.actor_id)
+            if str(item.get("status") or "").lower() == "active"
+        ]
+        return [
+            {
+                "key": "mcp_connection_id",
+                "label": "MCP Connection",
+                "question": "Which MCP connection should I use for this question?",
+                "required": True,
+                "input_type": "choice" if options else "text",
+                "options": options,
+            }
+        ]
+
+    def _mcp_query_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any], context: GovernanceContext) -> Dict[str, Any]:
+        connection = self._resolve_mcp_connection_candidate(slots, ui_context=ui_context, actor_id=context.actor_id)
+        return {
+            "action_type": "query_mcp_connection",
+            "title": ACTION_REGISTRY["query_mcp_connection"].title,
+            "parameters": {
+                "mcp_connection_id": str((connection or {}).get("mcp_connection_id") or slots.get("mcp_connection_id") or ""),
+                "question": str(slots.get("source_message") or ""),
+            },
+        }
+
+    def _mcp_snapshot_import_action(self, slots: Dict[str, Any], *, latest_query_result: Dict[str, Any]) -> Dict[str, Any]:
+        connection_id = str((latest_query_result or {}).get("mcp_connection_id") or slots.get("mcp_connection_id") or "").strip()
+        return {
+            "action_type": "import_mcp_snapshot",
+            "title": ACTION_REGISTRY["import_mcp_snapshot"].title,
+            "parameters": {
+                "mcp_connection_id": connection_id,
+                "name": str(slots.get("name") or ""),
+                "query_result": latest_query_result,
+            },
+        }
+
+    def _mcp_snapshot_cohort_action(self, slots: Dict[str, Any], *, snapshot_id: str) -> Dict[str, Any]:
+        return {
+            "action_type": "create_cohort_from_mcp_snapshot",
+            "title": ACTION_REGISTRY["create_cohort_from_mcp_snapshot"].title,
+            "parameters": {
+                "snapshot_id": snapshot_id,
+                "name": str(slots.get("name") or default_named_resource(prefix="mcp", suffix="snapshot_cohort")),
+                "description": str(slots.get("description") or ""),
+                "tags": list(slots.get("tags") or ["mcp", "snapshot"]),
+            },
+        }
+
     def _prediction_target_from_slots(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
         prediction_job_id = str(slots.get("prediction_job_id") or "").strip()
         if prediction_job_id:
@@ -1592,6 +1805,24 @@ class CopilotAgentService:
             for item in self.provider_connections.list_connections()
             if str(item.get("status") or "").lower() == "active"
             and (not requested_provider or str(item.get("provider") or "").lower() == requested_provider)
+        ]
+        if len(connections) == 1:
+            return connections[0]
+        return None
+
+    def _resolve_mcp_connection_candidate(
+        self,
+        slots: Dict[str, Any],
+        *,
+        ui_context: Dict[str, Any],
+        actor_id: str,
+    ) -> Dict[str, Any] | None:
+        requested_id = str(slots.get("mcp_connection_id") or ui_context.get("selected_mcp_connection_id") or "").strip()
+        if requested_id:
+            return self.mcp_connections.get_connection(requested_id, actor_id=actor_id)
+        connections = [
+            item for item in self.mcp_connections.list_connections(actor_id=actor_id)
+            if str(item.get("status") or "").lower() == "active"
         ]
         if len(connections) == 1:
             return connections[0]
@@ -1682,6 +1913,7 @@ class CopilotAgentService:
         waiting_for_action_type = None
         waiting_for_resource_id = None
         pending_flow = None
+        session_patch: Dict[str, Any] = {}
         for planned_action in plan["actions"]:
             action_type = str(planned_action["action_type"])
             parameters = dict(planned_action.get("parameters") or {})
@@ -1730,6 +1962,7 @@ class CopilotAgentService:
                 )
                 completed_actions.append(action_payload)
                 artifacts.extend(action_payload["artifacts"])
+                session_patch.update(dict(result.get("session_patch") or {}))
                 if bool(result.get("is_async")):
                     session_status = str(result.get("session_status") or "waiting_for_prediction")
                     async_status = str(result.get("async_status") or session_status)
@@ -1774,6 +2007,7 @@ class CopilotAgentService:
             "waiting_for_action_type": waiting_for_action_type,
             "waiting_for_resource_id": waiting_for_resource_id,
             "pending_flow": pending_flow,
+            "session_patch": session_patch,
         }
 
     def _create_action_run(self, session_id: str, action_type: str, title: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -1850,6 +2084,50 @@ class CopilotAgentService:
                 context=context,
                 model_adapter=model_adapter,
             )
+        if action_type == "query_mcp_connection":
+            query_result = self.mcp_connections.run_prompt(
+                str(parameters.get("mcp_connection_id") or ""),
+                actor_id=context.actor_id,
+                question=str(parameters.get("question") or ""),
+                model_adapter=model_adapter,
+                session_state=session,
+                ui_context=ui_context,
+            )
+            connection = self.mcp_connections.get_connection(str(parameters.get("mcp_connection_id") or ""), actor_id=context.actor_id) or {}
+            row_count = len(list(query_result.get("rows") or []))
+            return {
+                "summary": str(query_result.get("answer") or f"Ran the MCP query with {row_count} row(s)."),
+                "result": {"query_result": query_result, "mcp_connection": connection},
+                "artifacts": [
+                    artifact_for_mcp_connection(connection),
+                    artifact_for_mcp_query_result(query_result),
+                ],
+                "session_patch": {"latest_mcp_query_result": query_result},
+            }
+        if action_type == "import_mcp_snapshot":
+            snapshot = self.mcp_connections.import_snapshot(
+                str(parameters.get("mcp_connection_id") or ""),
+                name=parameters.get("name") or None,
+                query_result=dict(parameters.get("query_result") or {}),
+            )
+            return {
+                "summary": f"Imported MCP snapshot `{snapshot['name']}` with {int(snapshot.get('row_count') or 0)} row(s).",
+                "result": {"snapshot": snapshot},
+                "artifacts": [artifact_for_mcp_result_snapshot(snapshot)],
+                "session_patch": {"latest_mcp_snapshot_id": snapshot["snapshot_id"]},
+            }
+        if action_type == "create_cohort_from_mcp_snapshot":
+            cohort = self.mcp_connections.create_cohort_from_snapshot(
+                str(parameters.get("snapshot_id") or ""),
+                name=str(parameters.get("name") or default_named_resource(prefix="mcp", suffix="snapshot_cohort")),
+                description=str(parameters.get("description") or ""),
+                tags=list(parameters.get("tags") or ["mcp", "snapshot"]),
+            )
+            return {
+                "summary": f"Created draft cohort `{cohort['name']}` from snapshot `{parameters.get('snapshot_id')}`.",
+                "result": {"cohort": cohort, "snapshot_id": str(parameters.get('snapshot_id') or "")},
+                "artifacts": [artifact_for_cohort(cohort)],
+            }
         if action_type == "upsert_connector":
             connector = self.connectors.create_connector(parameters["name"], parameters["connector_type"], parameters["config"])
             return {
@@ -2750,6 +3028,12 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
         return "Create a draft workflow linked to the selected cohort or email campaign."
     if action_type == "setup_operator_flow":
         return "Set up the prediction, saved query, cohort, email campaign, and workflow draft chain."
+    if action_type == "query_mcp_connection":
+        return "Use the selected read-only MCP tools to answer the operator question with grounded remote context."
+    if action_type == "import_mcp_snapshot":
+        return "Persist the latest MCP query result as a reusable snapshot."
+    if action_type == "create_cohort_from_mcp_snapshot":
+        return f"Create a draft list cohort from snapshot `{parameters.get('snapshot_id')}`."
     if action_type == "preview_sql":
         return "Run a read-only SQL preview before creating the cohort."
     if action_type == "save_query":
@@ -2788,6 +3072,12 @@ def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: Li
         return "Create a workflow in draft only and leave publish/run as separate actions."
     if intent == "setup_operator_flow":
         return "Build the prediction-to-campaign draft flow with prediction, SQL, cohort, email campaign, and optional workflow steps."
+    if intent == "query_mcp_connection":
+        return "Use the selected MCP connection and only read-safe tools to answer the question."
+    if intent == "import_mcp_snapshot":
+        return "Persist the latest MCP result as a snapshot for later reuse."
+    if intent == "create_cohort_from_mcp_snapshot":
+        return "Create a draft list cohort from an imported MCP snapshot."
     if intent == "setup_experiment":
         return "Save the experiment config in a non-running state and leave start as a separate confirmed action."
     if notes:
@@ -2846,6 +3136,12 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     provider_connection_match = re.search(r"\b(pc_[A-Za-z0-9]+)\b", message)
     if provider_connection_match:
         slots["provider_connection_id"] = provider_connection_match.group(1).strip()
+    mcp_connection_match = re.search(r"\b(mcpc_[A-Za-z0-9]+)\b", message)
+    if mcp_connection_match:
+        slots["mcp_connection_id"] = mcp_connection_match.group(1).strip()
+    snapshot_match = re.search(r"\b(mcps_[A-Za-z0-9]+)\b", message)
+    if snapshot_match:
+        slots["mcp_snapshot_id"] = snapshot_match.group(1).strip()
     import_job_match = re.search(r"\b(imp_[A-Za-z0-9]+)\b", message)
     if import_job_match:
         slots["import_job_id"] = import_job_match.group(1).strip()
@@ -3037,6 +3333,14 @@ def sanitize_action_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
 def deterministic_action_summary(action_type: str, result: Dict[str, Any]) -> str:
     if action_type == "summarize_dashboard":
         return str(((result.get("dashboard_summary") or {}).get("headline")) or "Summarized the dashboard.")
+    if action_type == "query_mcp_connection":
+        return str(((result.get("query_result") or {}).get("answer")) or "Queried the MCP connection.")
+    if action_type == "import_mcp_snapshot":
+        snapshot = result.get("snapshot") or {}
+        return f"Imported MCP snapshot `{snapshot.get('name') or snapshot.get('snapshot_id') or 'snapshot'}`."
+    if action_type == "create_cohort_from_mcp_snapshot":
+        cohort = result.get("cohort") or {}
+        return f"Created cohort `{cohort.get('name') or cohort.get('cohort_id') or 'cohort'}` from the MCP snapshot."
     return f"Completed `{action_type}`."
 
 
@@ -3108,6 +3412,55 @@ def artifact_for_provider_connection(connection: Dict[str, Any]) -> Dict[str, An
         "api_path": f"/api/v1/provider-connections/{quote(connection_id)}" if connection_id else "",
         "focus": {"provider_connection_id": connection_id},
         "status": str(connection.get("status") or ""),
+    }
+
+
+def artifact_for_mcp_connection(connection: Dict[str, Any]) -> Dict[str, Any]:
+    connection_id = str(connection.get("mcp_connection_id") or "")
+    return {
+        "resource_type": "mcp_connection",
+        "resource_id": connection_id,
+        "label": str(connection.get("name") or connection_id or "MCP Connection"),
+        "module_id": "data-core",
+        "page_id": "connectors",
+        "api_path": f"/api/v1/mcp-connections/{quote(connection_id)}" if connection_id else "",
+        "focus": {"mcp_connection_id": connection_id},
+        "status": str(connection.get("status") or ""),
+    }
+
+
+def artifact_for_mcp_query_result(query_result: Dict[str, Any]) -> Dict[str, Any]:
+    query_id = str(query_result.get("query_id") or "")
+    rows = list(query_result.get("rows") or [])
+    return {
+        "resource_type": "mcp_query_result",
+        "resource_id": query_id,
+        "label": str(query_result.get("question") or "MCP Query Result"),
+        "module_id": "data-core",
+        "page_id": "connectors",
+        "api_path": "",
+        "focus": {"query_result": query_result, "mcp_connection_id": query_result.get("mcp_connection_id")},
+        "status": "ready",
+        "status_detail": f"{len(rows)} row(s)",
+    }
+
+
+def artifact_for_mcp_result_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    snapshot_id = str(snapshot.get("snapshot_id") or "")
+    return {
+        "resource_type": "mcp_result_snapshot",
+        "resource_id": snapshot_id,
+        "label": str(snapshot.get("name") or snapshot_id or "MCP Snapshot"),
+        "module_id": "data-core",
+        "page_id": "connectors",
+        "api_path": f"/api/v1/mcp-connections/snapshots" if snapshot_id else "",
+        "focus": {
+            "snapshot_id": snapshot_id,
+            "mcp_connection_id": snapshot.get("mcp_connection_id"),
+            "identifier_fields": list(snapshot.get("identifier_fields") or []),
+        },
+        "status": str(snapshot.get("status") or "ready"),
+        "status_detail": f"{int(snapshot.get('row_count') or 0)} row(s)",
     }
 
 

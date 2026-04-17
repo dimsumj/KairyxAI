@@ -17,6 +17,7 @@ from app.application.exports import ExportService
 from app.application.health_monitor import HealthMonitorService
 from app.application.imports import ImportService
 from app.application.mappings import MappingService
+from app.application.mcp_connections import McpConnectionService
 from app.application.predictions import PredictionService
 from app.application.projects import ProjectWorkspaceService
 from app.application.sendgrid_provider import SendGridProviderService
@@ -163,3 +164,10 @@ def get_project_workspace_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> ProjectWorkspaceService:
     return ProjectWorkspaceService(repository)
+
+
+def get_mcp_connection_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
+) -> McpConnectionService:
+    return McpConnectionService(repository, settings)
