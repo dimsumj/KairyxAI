@@ -181,7 +181,9 @@ class MappingService:
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
         sample_events = self._load_job_sample_events(scope_key) if scope_type == "job" else self._load_source_sample_events(connector_name)
-        analysis_rows = list(sample_events or self._fallback_analysis_rows(connector_name))
+        analysis_rows = list(sample_events)
+        if scope_type != "job" and not analysis_rows:
+            analysis_rows = list(self._fallback_analysis_rows(connector_name))
         observed_paths = self._observed_paths(analysis_rows) if analysis_rows else {}
         suggestions = self._heuristic_suggestions(
             current,
