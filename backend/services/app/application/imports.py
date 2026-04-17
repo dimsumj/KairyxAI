@@ -1485,6 +1485,56 @@ class ImportService:
         self._commit_session()
         return self.run_job(job_id)
 
+    def remap_and_resume_job(
+        self,
+        job_id: str,
+        mapping: Dict[str, Any],
+        *,
+        changed_by: str = "system",
+        persist_source_mapping: bool = True,
+    ) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+
+        status = str(job.get("status") or "").lower()
+        if status != JobStatus.AWAITING_MAPPING.value:
+            raise ValueError("Only awaiting_mapping jobs can be remapped and resumed.")
+
+        connector_ref = job["spec"].get("connector_id") or job["spec"]["source_name"]
+        connector_record = self.repository.get_connector(
+            connector_ref,
+            tenant_id=job.get("tenant_id"),
+            project_id=job.get("project_id"),
+        )
+        if connector_record is None:
+            raise KeyError(connector_ref)
+
+        mapping_service = MappingService(self.repository)
+        normalized_mapping = {
+            str(field): value
+            for field, value in dict(mapping or {}).items()
+            if str(field or "").strip()
+        }
+
+        if persist_source_mapping:
+            mapping_service.save_mapping(
+                connector_record["name"],
+                normalized_mapping,
+                scope_type="source",
+                changed_by=changed_by,
+            )
+
+        mapping_service.save_mapping(
+            connector_record["name"],
+            normalized_mapping,
+            scope_type="job",
+            scope_key=job_id,
+            changed_by=changed_by,
+        )
+        self._commit_session()
+        return self.resume_job(job_id)
+
     def replay_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
         if job is None:

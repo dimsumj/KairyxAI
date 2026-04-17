@@ -498,6 +498,71 @@ def test_import_quality_resume_and_replay(client):
     assert delete_denied.status_code == 403
 
 
+def test_import_remap_and_resume_saves_source_memory_and_reprocesses(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Remap",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    partial_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Remap",
+        json={"mapping": {"canonical_user_id": "player_id", "event_time": "timestamp"}},
+    )
+    assert partial_mapping.status_code == 200
+    assert partial_mapping.json()["required_coverage"] < 95.0
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Remap",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    blocked = client.post(import_job["links"]["self"] + "/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    remapped = client.post(
+        import_job["links"]["self"] + "/remap-and-resume",
+        headers={"x-actor-role": "operator"},
+        json={
+            "mapping": {
+                "canonical_user_id": "player_id",
+                "event_name": "event_name",
+                "event_time": "timestamp",
+            }
+        },
+    )
+    assert remapped.status_code == 200
+    assert remapped.json()["status"] == "completed"
+    assert remapped.json()["quality_report"]["required_mapping_coverage"] == 100.0
+
+    source_mapping = client.get("/api/v1/mappings/Adjust%20Remap")
+    assert source_mapping.status_code == 200
+    assert source_mapping.json()["mapping"]["canonical_user_id"] == "player_id"
+    assert source_mapping.json()["mapping"]["event_name"] == "event_name"
+    assert source_mapping.json()["mapping"]["event_time"] == "timestamp"
+
+    job_mapping = client.get(f"/api/v1/mappings/Adjust%20Remap?scope_type=job&scope_key={import_job['id']}")
+    assert job_mapping.status_code == 200
+    assert job_mapping.json()["mapping"]["event_name"] == "event_name"
+    assert job_mapping.json()["effective_mapping"]["event_time"] == "timestamp"
+
+    quality_after_resume = client.get(import_job["links"]["self"] + "/quality")
+    assert quality_after_resume.status_code == 200
+    assert quality_after_resume.json()["quality_report"]["required_mapping_coverage"] == 100.0
+    assert quality_after_resume.json()["quality_report"]["canonical_user_id_coverage"] >= 90.0
+
+
 def test_export_diagnostics_retry_and_rbac(client, monkeypatch):
     _seed_mock_warehouse()
     _seed_prediction_job()

@@ -727,11 +727,12 @@
                  </div>
                  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem;">
                      <button id="data-sandbox-load-mapping-btn">Load Mapping</button>
-                     <button id="data-sandbox-save-mapping-btn">Save Mapping</button>
+                     <button id="data-sandbox-save-mapping-btn">Save Mapping Memory</button>
                      <button id="data-sandbox-preview-mapping-btn">Preview Mapping</button>
                      <button id="data-sandbox-coverage-btn">Coverage</button>
-                     <button id="data-sandbox-process-mapping-btn">Process After Mapping</button>
+                     <button id="data-sandbox-process-mapping-btn">Save and Reprocess Import</button>
                  </div>
+                 <div id="data-sandbox-action-hint" class="mapping-guided-meta" style="margin: -0.2rem 0 1rem;"></div>
                  <p style="font-size: 0.85rem; color: var(--text-secondary);">
                     Example mapping keys: <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, <code>source_event_id</code>, <code>campaign</code>, <code>adset</code>, <code>media_source</code>. Values are raw JSON paths like <code>event_properties.PID</code>.
                  </p>

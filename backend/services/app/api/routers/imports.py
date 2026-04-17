@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.schemas.jobs import build_job_response
 from app.application.imports import ImportService
@@ -33,6 +33,12 @@ class ImportBackfillRequest(BaseModel):
     end_date: str
     mode: str = "replay_rejected_rows"
     limit_jobs: int = 50
+
+
+class ImportRemapRequest(BaseModel):
+    mapping: dict[str, object] = Field(default_factory=dict)
+    changed_by: str = "system"
+    persist_source_mapping: bool = True
 
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -367,6 +373,41 @@ def resume_import(job_id: str, request: Request, service: ImportService = Depend
         service.repository,
         context,
         action_type="imports_resume",
+        resource_type="import_job",
+        resource_id=job_id,
+        payload=build_job_response(
+            job,
+            base_path=build_request_api_path(request, "/imports"),
+            extra_links={"checkpoints": f"{build_request_api_path(request, '/imports')}/{job['id']}/checkpoints"},
+        ).model_dump(mode="json"),
+    )
+
+
+@router.post("/{job_id}/remap-and-resume")
+def remap_and_resume_import(
+    job_id: str,
+    payload: ImportRemapRequest,
+    request: Request,
+    service: ImportService = Depends(get_import_service),
+):
+    context = get_governance_context(request)
+    ensure_permission(context, "imports.resume")
+    ensure_permission(context, "mappings.update")
+    try:
+        job = service.remap_and_resume_job(
+            job_id,
+            payload.mapping,
+            changed_by=payload.changed_by,
+            persist_source_mapping=payload.persist_source_mapping,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Import job '{job_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="imports_remap_and_resume",
         resource_type="import_job",
         resource_id=job_id,
         payload=build_job_response(
