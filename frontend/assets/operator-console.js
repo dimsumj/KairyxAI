@@ -10684,6 +10684,18 @@ export function initializeOperatorConsole() {
             const audienceBuilderJobGroup = document.getElementById('audience-builder-job-group');
             const audienceBuilderJobSelect = document.getElementById('audience-builder-job-select');
             const audienceBuilderSourceSummary = document.getElementById('audience-builder-source-summary');
+            const audienceBuilderManagedSqlGroup = document.getElementById('audience-builder-managed-sql-group');
+            const audienceBuilderSavedQuerySelect = document.getElementById('audience-builder-saved-query-select');
+            const audienceBuilderConnectorGroup = document.getElementById('audience-builder-connector-group');
+            const audienceBuilderConnectorStatus = document.getElementById('audience-builder-connector-status');
+            const audienceBuilderConnectorSelect = document.getElementById('audience-builder-connector-select');
+            const audienceBuilderConnectorTableSelect = document.getElementById('audience-builder-connector-table-select');
+            const audienceBuilderConnectorRefreshTablesBtn = document.getElementById('audience-builder-connector-refresh-tables-btn');
+            const audienceBuilderSelectedColumnsInput = document.getElementById('audience-builder-selected-columns-input');
+            const audienceBuilderWhereSqlInput = document.getElementById('audience-builder-where-sql-input');
+            const audienceBuilderCanonicalUserIdFieldInput = document.getElementById('audience-builder-canonical-user-id-field-input');
+            const audienceBuilderEmailFieldInput = document.getElementById('audience-builder-email-field-input');
+            const audienceBuilderExternalUserIdFieldInput = document.getElementById('audience-builder-external-user-id-field-input');
             const audienceBuilderAddConditionBtn = document.getElementById('audience-builder-add-condition-btn');
             const audienceBuilderFilters = document.getElementById('audience-builder-filters');
             const audienceBuilderManualListGroup = document.getElementById('audience-builder-manual-list-group');
@@ -10810,6 +10822,7 @@ export function initializeOperatorConsole() {
             let audienceBuilderOptions = null;
             let audienceBuilderPreview = null;
             let audienceBuilderConditions = [];
+            let audienceBuilderConnectorTables = [];
             let selectedWorkflowId = null;
             let selectedWorkflowBuilderId = null;
             let selectedWorkflowStudioType = 'all';
@@ -10928,6 +10941,17 @@ export function initializeOperatorConsole() {
                 return (document.getElementById('orchestrator-reference-time-input').value || '').trim() || null;
             }
 
+            function getCohortSourceLabel(cohort = {}) {
+                return String(cohort?.source_label || cohort?.source_kind || '').trim();
+            }
+
+            function formatCohortSelectLabel(cohort = {}) {
+                const sourceLabel = getCohortSourceLabel(cohort);
+                const statusLabel = String(cohort?.status || 'unknown').trim();
+                const baseLabel = String(cohort?.name || cohort?.cohort_id || 'Cohort').trim();
+                return sourceLabel ? `${baseLabel} (${statusLabel}) · ${sourceLabel}` : `${baseLabel} (${statusLabel})`;
+            }
+
             function populateWorkflowCohortSelect(cohorts = []) {
                 const select = document.getElementById('workflow-cohort-select');
                 const previousValue = select.value;
@@ -10935,7 +10959,7 @@ export function initializeOperatorConsole() {
                 cohorts.forEach((cohort) => {
                     const option = document.createElement('option');
                     option.value = cohort.cohort_id;
-                    option.textContent = `${cohort.name} (${cohort.status})`;
+                    option.textContent = formatCohortSelectLabel(cohort);
                     select.appendChild(option);
                 });
                 if (cohorts.some((item) => item.cohort_id === previousValue)) {
@@ -11156,7 +11180,11 @@ export function initializeOperatorConsole() {
                 if (cohortId) {
                     const cohort = findCohort(cohortId);
                     const cohortName = String(cohort?.name || '').trim();
-                    return cohortName ? `${cohortName} (${cohortId})` : cohortId;
+                    const sourceLabel = getCohortSourceLabel(cohort || {});
+                    if (cohortName) {
+                        return sourceLabel ? `${cohortName} (${cohortId}) · ${sourceLabel}` : `${cohortName} (${cohortId})`;
+                    }
+                    return cohortId;
                 }
                 const predictionJobId = String((audience || {}).prediction_job_id || '').trim();
                 if (!predictionJobId) {
@@ -11174,7 +11202,7 @@ export function initializeOperatorConsole() {
                 items.forEach((cohort) => {
                     const option = document.createElement('option');
                     option.value = cohort.cohort_id;
-                    option.textContent = `${cohort.name || cohort.cohort_id} (${cohort.status || 'unknown'})`;
+                    option.textContent = formatCohortSelectLabel(cohort);
                     emailCampaignCohortSelect.appendChild(option);
                 });
                 if (previousValue && items.some((item) => item.cohort_id === previousValue)) {
@@ -12474,6 +12502,117 @@ export function initializeOperatorConsole() {
                 return String(audienceBuilderBasisSelect?.value || audienceBuilderOptions?.defaults?.audience_basis || 'prediction').trim().toLowerCase() || 'prediction';
             }
 
+            function populateAudienceBuilderSavedQuerySelect({ preserveSelection = true } = {}) {
+                if (!audienceBuilderSavedQuerySelect) {
+                    return;
+                }
+                setSelectOptions(
+                    audienceBuilderSavedQuerySelect,
+                    (cachedSavedQueries || []).map((query) => ({
+                        id: query.query_id,
+                        label: `${query.name || query.query_id} · ${formatDateTime(query.updated_at)}`,
+                    })),
+                    {
+                        placeholder: 'Use the current SQL below',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderSavedQuerySelect.value
+                            ? [audienceBuilderSavedQuerySelect.value]
+                            : [],
+                    },
+                );
+            }
+
+            function getAudienceBuilderSelectedConnector() {
+                const connectorId = String(audienceBuilderConnectorSelect?.value || '').trim();
+                return (audienceBuilderOptions?.warehouse_connectors || []).find((item) => String(item.connector_id || '') === connectorId) || null;
+            }
+
+            function populateAudienceBuilderConnectorSelect({ preserveSelection = true } = {}) {
+                if (!audienceBuilderConnectorSelect) {
+                    return;
+                }
+                setSelectOptions(
+                    audienceBuilderConnectorSelect,
+                    (audienceBuilderOptions?.warehouse_connectors || []).map((connector) => ({
+                        id: connector.connector_id,
+                        label: `${connector.name || connector.connector_id} · ${(connector.project_id || 'project').toString()}.${(connector.dataset_id || 'dataset').toString()}`,
+                    })),
+                    {
+                        placeholder: 'Select connector',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderConnectorSelect.value
+                            ? [audienceBuilderConnectorSelect.value]
+                            : [],
+                    },
+                );
+            }
+
+            function populateAudienceBuilderConnectorTableSelect({ preserveSelection = true } = {}) {
+                if (!audienceBuilderConnectorTableSelect) {
+                    return;
+                }
+                setSelectOptions(
+                    audienceBuilderConnectorTableSelect,
+                    (audienceBuilderConnectorTables || []).map((item) => ({
+                        id: item.table_name,
+                        label: `${item.table_name || '-'} · ${item.table_type || 'table'}${Number.isFinite(item.row_count) ? ` · ${item.row_count} rows` : ''}`,
+                    })),
+                    {
+                        placeholder: 'Select table or view',
+                        valueKey: 'id',
+                        labelKey: 'label',
+                        selectedValues: preserveSelection && audienceBuilderConnectorTableSelect.value
+                            ? [audienceBuilderConnectorTableSelect.value]
+                            : [],
+                    },
+                );
+            }
+
+            async function loadAudienceBuilderConnectorTables({ preserveSelection = true } = {}) {
+                const connector = getAudienceBuilderSelectedConnector();
+                if (!connector) {
+                    audienceBuilderConnectorTables = [];
+                    populateAudienceBuilderConnectorTableSelect({ preserveSelection: false });
+                    setInlineStatus(audienceBuilderConnectorStatus, 'Choose a BigQuery connector to list tables.');
+                    return;
+                }
+                try {
+                    setInlineStatus(audienceBuilderConnectorStatus, 'Loading connector tables...');
+                    const payload = await apiRequest(`/connectors/${encodeURIComponent(connector.name)}/tables`);
+                    audienceBuilderConnectorTables = Array.isArray(payload.items) ? payload.items : [];
+                    populateAudienceBuilderConnectorTableSelect({ preserveSelection });
+                    setInlineStatus(
+                        audienceBuilderConnectorStatus,
+                        audienceBuilderConnectorTables.length
+                            ? `Loaded ${audienceBuilderConnectorTables.length} table(s) from ${connector.name}.`
+                            : `No tables were returned for ${connector.name}.`,
+                    );
+                } catch (error) {
+                    audienceBuilderConnectorTables = [];
+                    populateAudienceBuilderConnectorTableSelect({ preserveSelection: false });
+                    setInlineStatus(audienceBuilderConnectorStatus, error.message || 'Failed to load connector tables.', true);
+                }
+            }
+
+            function getAudienceBuilderColumnMapping() {
+                const mapping = {};
+                const canonicalUserIdField = String(audienceBuilderCanonicalUserIdFieldInput?.value || '').trim();
+                const emailField = String(audienceBuilderEmailFieldInput?.value || '').trim();
+                const externalUserIdField = String(audienceBuilderExternalUserIdFieldInput?.value || '').trim();
+                if (canonicalUserIdField) {
+                    mapping.canonical_user_id = canonicalUserIdField;
+                }
+                if (emailField) {
+                    mapping.email = emailField;
+                }
+                if (externalUserIdField) {
+                    mapping.external_user_id = externalUserIdField;
+                }
+                return mapping;
+            }
+
             function getAudienceBuilderPredictionScope() {
                 return String(audienceBuilderPredictionScopeSelect?.value || audienceBuilderOptions?.defaults?.prediction_scope || 'source').trim().toLowerCase() || 'source';
             }
@@ -12532,11 +12671,13 @@ export function initializeOperatorConsole() {
                 const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
                 const proposedNames = Array.isArray(preview.proposed_names) ? preview.proposed_names : [];
                 const conditions = Array.isArray(request.conditions) ? request.conditions : [];
+                const previewFields = Array.isArray(preview.preview_fields) ? preview.preview_fields : [];
                 const summaryCards = [
                     { label: 'Members', value: String(preview.member_count || 0) },
                     { label: 'Mode', value: String(preview.mode || 'combined').replace(/_/g, ' ') },
                     { label: 'Refresh', value: String(request.refresh_mode || 'manual') },
                     { label: 'Output', value: proposedNames.length > 1 ? `${proposedNames.length} draft cohorts` : '1 draft cohort' },
+                    { label: 'Source', value: String(preview.source_label || preview.source_kind || request.audience_basis || '-').replace(/_/g, ' ') },
                 ];
                 const warningsMarkup = warnings.length
                     ? `<div class="subtle" style="color: var(--danger-600);">${warnings.map((item) => escapeHtml(item)).join('<br>')}</div>`
@@ -12561,6 +12702,10 @@ export function initializeOperatorConsole() {
                     <div class="builder-preview-stat" style="grid-column: 1 / -1;">
                         <span>Tags</span>
                         <div>${(request.tags || []).length ? request.tags.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') : '<span class="subtle">No tags yet.</span>'}</div>
+                    </div>
+                    <div class="builder-preview-stat" style="grid-column: 1 / -1;">
+                        <span>Discovered Fields</span>
+                        <div>${previewFields.length ? previewFields.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') : '<span class="subtle">No sampled fields.</span>'}</div>
                     </div>
                     <div class="builder-preview-stat" style="grid-column: 1 / -1;">
                         <span>Filters</span>
@@ -12599,7 +12744,41 @@ export function initializeOperatorConsole() {
                     audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">No sources.</div>';
                     return;
                 }
-                if (getAudienceBuilderBasis() !== 'prediction') {
+                const basis = getAudienceBuilderBasis();
+                if (basis === 'managed_warehouse_sql') {
+                    const savedQuery = (cachedSavedQueries || []).find((item) => item.query_id === String(audienceBuilderSavedQuerySelect?.value || '').trim()) || null;
+                    audienceBuilderSourceSummary.innerHTML = savedQuery
+                        ? `
+                            <div class="builder-source-card">
+                                <div class="builder-source-head">
+                                    <strong>${escapeHtml(savedQuery.name || savedQuery.query_id || 'Saved query')}</strong>
+                                    <span class="pill">saved query</span>
+                                </div>
+                                <div class="subtle">${escapeHtml(savedQuery.query_id || '-')}</div>
+                                <div class="subtle">${escapeHtml(savedQuery.description || 'The current SQL editor value will be frozen into the cohort definition.')}</div>
+                            </div>
+                        `
+                        : '<div class="list-empty">Using the current SQL workspace text.</div>';
+                    return;
+                }
+                if (basis === 'connector_bigquery_table') {
+                    const connector = getAudienceBuilderSelectedConnector();
+                    const tableName = String(audienceBuilderConnectorTableSelect?.value || '').trim();
+                    audienceBuilderSourceSummary.innerHTML = connector
+                        ? `
+                            <div class="builder-source-card">
+                                <div class="builder-source-head">
+                                    <strong>${escapeHtml(connector.name || connector.connector_id || 'BigQuery connector')}</strong>
+                                    <span class="pill">${escapeHtml(tableName || 'select table')}</span>
+                                </div>
+                                <div class="subtle">${escapeHtml(`${connector.project_id || 'project'}.${connector.dataset_id || 'dataset'}`)}</div>
+                                <div class="subtle">${escapeHtml(String(audienceBuilderWhereSqlInput?.value || '').trim() || 'No optional filter applied.')}</div>
+                            </div>
+                        `
+                        : '<div class="list-empty">Choose a BigQuery connector and table.</div>';
+                    return;
+                }
+                if (basis !== 'prediction') {
                     audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Not used here.</div>';
                     return;
                 }
@@ -12760,9 +12939,13 @@ export function initializeOperatorConsole() {
                 const predictionScope = getAudienceBuilderPredictionScope();
                 const supportsPrediction = basis === 'prediction';
                 const supportsFilters = basis === 'prediction' || basis === 'behavior';
+                const isManagedWarehouse = basis === 'managed_warehouse_sql';
+                const isConnectorTable = basis === 'connector_bigquery_table';
                 audienceBuilderPredictionControls?.classList.toggle('hidden', !supportsPrediction);
                 audienceBuilderSourceGroup?.classList.toggle('hidden', !supportsPrediction || predictionScope !== 'source');
                 audienceBuilderJobGroup?.classList.toggle('hidden', !supportsPrediction || predictionScope === 'source');
+                audienceBuilderManagedSqlGroup?.classList.toggle('hidden', !isManagedWarehouse);
+                audienceBuilderConnectorGroup?.classList.toggle('hidden', !isConnectorTable);
                 audienceBuilderManualListGroup?.classList.toggle('hidden', basis !== 'manual_list');
                 if (audienceBuilderOutputModeSelect) {
                     audienceBuilderOutputModeSelect.disabled = !supportsPrediction;
@@ -12773,7 +12956,7 @@ export function initializeOperatorConsole() {
                 if (audienceBuilderAddConditionBtn) {
                     audienceBuilderAddConditionBtn.style.display = supportsFilters ? 'inline-flex' : 'none';
                 }
-                if (basis === 'advanced_sql') {
+                if (isManagedWarehouse) {
                     document.getElementById('audience-sql-section')?.setAttribute('open', 'open');
                 }
                 renderAudienceBuilderSourceSummary();
@@ -12848,6 +13031,7 @@ export function initializeOperatorConsole() {
                         selectedValues: preserveSelection ? getSelectedMultiSelectValues(audienceBuilderJobSelect) : [],
                     },
                 );
+                populateAudienceBuilderConnectorSelect({ preserveSelection });
                 syncAudienceBuilderVisibility();
             }
 
@@ -12855,6 +13039,7 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest('/cohorts/builder/options');
                 audienceBuilderOptions = payload || {};
                 populateAudienceBuilderOptionSelects({ preserveSelection });
+                populateAudienceBuilderSavedQuerySelect({ preserveSelection });
                 if (audienceBuilderLogicSelect && !audienceBuilderLogicSelect.value) {
                     audienceBuilderLogicSelect.value = audienceBuilderOptions?.defaults?.logic || 'AND';
                 }
@@ -12916,7 +13101,13 @@ export function initializeOperatorConsole() {
                             value_type: condition.value_type || getAudienceBuilderFieldMeta(condition.field)?.value_type || 'string',
                         })),
                     members: basis === 'manual_list' ? parseAudienceBuilderMembersInput() : [],
-                    sql: basis === 'advanced_sql' ? String(document.getElementById('sql-workspace-textarea')?.value || '').trim() : '',
+                    sql: basis === 'managed_warehouse_sql' ? String(document.getElementById('sql-workspace-textarea')?.value || '').trim() : '',
+                    saved_query_id: basis === 'managed_warehouse_sql' ? String(audienceBuilderSavedQuerySelect?.value || '').trim() : '',
+                    connector_id: basis === 'connector_bigquery_table' ? String(audienceBuilderConnectorSelect?.value || '').trim() : '',
+                    table_name: basis === 'connector_bigquery_table' ? String(audienceBuilderConnectorTableSelect?.value || '').trim() : '',
+                    selected_columns: basis === 'connector_bigquery_table' ? splitCsv(audienceBuilderSelectedColumnsInput?.value || '') : [],
+                    where_sql: basis === 'connector_bigquery_table' ? String(audienceBuilderWhereSqlInput?.value || '').trim() : '',
+                    column_mapping: basis === 'connector_bigquery_table' ? getAudienceBuilderColumnMapping() : {},
                 };
                 if (basis !== 'prediction') {
                     request.output_mode = 'combined';
@@ -13002,6 +13193,53 @@ export function initializeOperatorConsole() {
                     const members = Array.isArray(request.members) ? request.members : [];
                     audienceBuilderMembersInput.value = members.length ? JSON.stringify(members, null, 2) : '';
                 }
+                if (audienceBuilderSavedQuerySelect) {
+                    ensureSelectOption(
+                        audienceBuilderSavedQuerySelect,
+                        String(request.saved_query_id || '').trim(),
+                        String(
+                            (cachedSavedQueries || []).find((item) => item.query_id === String(request.saved_query_id || '').trim())?.name
+                            || request.saved_query_id
+                            || 'Saved query'
+                        ),
+                    );
+                    audienceBuilderSavedQuerySelect.value = String(request.saved_query_id || '').trim();
+                }
+                if (audienceBuilderConnectorSelect) {
+                    ensureSelectOption(
+                        audienceBuilderConnectorSelect,
+                        String(request.connector_id || '').trim(),
+                        String(
+                            (audienceBuilderOptions?.warehouse_connectors || []).find((item) => item.connector_id === String(request.connector_id || '').trim())?.name
+                            || request.connector_id
+                            || 'Connector'
+                        ),
+                    );
+                    audienceBuilderConnectorSelect.value = String(request.connector_id || '').trim();
+                }
+                if (audienceBuilderConnectorTableSelect) {
+                    ensureSelectOption(
+                        audienceBuilderConnectorTableSelect,
+                        String(request.table_name || '').trim(),
+                        String(request.table_name || '').trim(),
+                    );
+                    audienceBuilderConnectorTableSelect.value = String(request.table_name || '').trim();
+                }
+                if (audienceBuilderSelectedColumnsInput) {
+                    audienceBuilderSelectedColumnsInput.value = Array.isArray(request.selected_columns) ? request.selected_columns.join(', ') : '';
+                }
+                if (audienceBuilderWhereSqlInput) {
+                    audienceBuilderWhereSqlInput.value = String(request.where_sql || '').trim();
+                }
+                if (audienceBuilderCanonicalUserIdFieldInput) {
+                    audienceBuilderCanonicalUserIdFieldInput.value = String((request.column_mapping || {}).canonical_user_id || '').trim();
+                }
+                if (audienceBuilderEmailFieldInput) {
+                    audienceBuilderEmailFieldInput.value = String((request.column_mapping || {}).email || '').trim();
+                }
+                if (audienceBuilderExternalUserIdFieldInput) {
+                    audienceBuilderExternalUserIdFieldInput.value = String((request.column_mapping || {}).external_user_id || '').trim();
+                }
                 document.getElementById('sql-workspace-textarea').value = String(request.sql || builderState.sql || '').trim()
                     || document.getElementById('sql-workspace-textarea').value;
                 audienceBuilderConditions = Array.isArray(request.conditions)
@@ -13076,15 +13314,24 @@ export function initializeOperatorConsole() {
                 const sourceBreakdown = (definition.provenance || {}).source_breakdown || [];
                 const conditions = Array.isArray(definition.conditions) ? definition.conditions : [];
                 const description = String(cohort.description || '').trim();
+                const sourceLabel = getCohortSourceLabel(cohort);
+                const sourceSummary = cohort.source_summary || {};
+                const sourceSummaryText = sourceSummary.saved_query_name
+                    ? `${sourceSummary.saved_query_name}${sourceSummary.saved_query_id ? ` (${sourceSummary.saved_query_id})` : ''}`
+                    : sourceSummary.connector_name
+                        ? `${sourceSummary.connector_name}${sourceSummary.table_name ? ` · ${sourceSummary.table_name}` : ''}`
+                        : '';
                 return `
                     <div class="stats-grid">
                         <div class="stat-card"><div class="label">Status</div><div class="value">${escapeHtml(cohort.status || '-')}</div></div>
                         <div class="stat-card"><div class="label">Members</div><div class="value">${escapeHtml(String(cohort.member_count || 0))}</div></div>
                         <div class="stat-card"><div class="label">Refresh Mode</div><div class="value">${escapeHtml(cohort.refresh_mode || '-')}</div></div>
                         <div class="stat-card"><div class="label">Version</div><div class="value">${escapeHtml(String(cohort.version || cohort.version_id || 1))}</div></div>
+                        ${sourceLabel ? `<div class="stat-card"><div class="label">Source</div><div class="value">${escapeHtml(sourceLabel)}</div></div>` : ''}
                     </div>
                     <div class="subtle">Last refreshed: ${escapeHtml(formatDateTime(cohort.last_refreshed_at))}</div>
                     ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+                    ${sourceSummaryText ? `<div class="subtle">Source summary: ${escapeHtml(sourceSummaryText)}</div>` : ''}
                     ${isGuided ? `
                         <div class="builder-preview-summary" style="margin-top: 1rem;">
                             <div class="builder-preview-stat">
@@ -13203,6 +13450,7 @@ export function initializeOperatorConsole() {
 
             function renderSavedQueries(items = []) {
                 cachedSavedQueries = Array.isArray(items) ? items : [];
+                populateAudienceBuilderSavedQuerySelect({ preserveSelection: true });
                 renderSimpleTable(
                     sqlSavedQueryList,
                     [
@@ -13301,7 +13549,14 @@ export function initializeOperatorConsole() {
                 renderSimpleTable(
                     audienceCohortList,
                     [
-                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.cohort_id || '-')}</div>` },
+                        {
+                            label: 'Name',
+                            render: (item) => `
+                                <strong>${escapeHtml(item.name || '-')}</strong>
+                                <div class="subtle">${escapeHtml(item.cohort_id || '-')}</div>
+                                ${getCohortSourceLabel(item) ? `<div><span class="pill">${escapeHtml(getCohortSourceLabel(item))}</span></div>` : ''}
+                            `,
+                        },
                         { label: 'Type', render: (item) => `<span class="pill">${escapeHtml(item.type || '-')}</span>` },
                         { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
                         { label: 'Members', render: (item) => escapeHtml(String(item.member_count || 0)) },
@@ -14966,6 +15221,9 @@ export function initializeOperatorConsole() {
                 }
                 syncAudienceBuilderVisibility();
                 resetAudienceBuilderPreview('Preview cleared.');
+                if (getAudienceBuilderBasis() === 'connector_bigquery_table' && audienceBuilderConnectorSelect?.value) {
+                    loadAudienceBuilderConnectorTables({ preserveSelection: true });
+                }
             });
             audienceBuilderPredictionScopeSelect?.addEventListener('change', () => {
                 syncAudienceBuilderVisibility();
@@ -15005,9 +15263,48 @@ export function initializeOperatorConsole() {
                 resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('sql-workspace-textarea')?.addEventListener('input', () => {
-                if (getAudienceBuilderBasis() === 'advanced_sql') {
+                if (getAudienceBuilderBasis() === 'managed_warehouse_sql') {
                     resetAudienceBuilderPreview('Preview cleared.');
                 }
+            });
+            audienceBuilderSavedQuerySelect?.addEventListener('change', () => {
+                const selectedQuery = (cachedSavedQueries || []).find((item) => item.query_id === String(audienceBuilderSavedQuerySelect.value || '').trim()) || null;
+                if (selectedQuery) {
+                    document.getElementById('sql-workspace-textarea').value = selectedQuery.sql || '';
+                    document.getElementById('sql-saved-query-name').value = selectedQuery.name || '';
+                    document.getElementById('sql-saved-query-description').value = selectedQuery.description || '';
+                }
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderConnectorSelect?.addEventListener('change', async () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Preview cleared.');
+                await loadAudienceBuilderConnectorTables({ preserveSelection: false });
+            });
+            audienceBuilderConnectorRefreshTablesBtn?.addEventListener('click', async () => {
+                await loadAudienceBuilderConnectorTables({ preserveSelection: true });
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderConnectorTableSelect?.addEventListener('change', () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderSelectedColumnsInput?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderWhereSqlInput?.addEventListener('input', () => {
+                renderAudienceBuilderSourceSummary();
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderCanonicalUserIdFieldInput?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderEmailFieldInput?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Preview cleared.');
+            });
+            audienceBuilderExternalUserIdFieldInput?.addEventListener('input', () => {
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             actionHistoryRefreshBtn.addEventListener('click', loadActionHistory);
             document.getElementById('audience-refresh-list-btn').addEventListener('click', loadAudienceEngine);

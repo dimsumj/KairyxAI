@@ -988,6 +988,68 @@
 
                 <div id="audience-builder-source-summary" class="builder-source-summary"></div>
 
+                <div id="audience-builder-managed-sql-group" class="grid-2 hidden">
+                    <div class="form-group">
+                        <label for="audience-builder-saved-query-select">Saved Query</label>
+                        <select id="audience-builder-saved-query-select">
+                            <option value="">Use the current SQL below</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Source Notes</label>
+                        <div class="subtle">Use the current SQL workspace text, or pick a saved query to load and freeze into the cohort definition.</div>
+                    </div>
+                </div>
+
+                <div id="audience-builder-connector-group" class="card hidden" style="margin-top: 1rem;">
+                    <div class="module-section-header">
+                        <h3>BigQuery Connector Source</h3>
+                        <span id="audience-builder-connector-status" class="subtle"></span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="audience-builder-connector-select">BigQuery Connector</label>
+                            <select id="audience-builder-connector-select">
+                                <option value="">Select connector</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-builder-connector-table-select">Table / View</label>
+                            <select id="audience-builder-connector-table-select">
+                                <option value="">Select table or view</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button id="audience-builder-connector-refresh-tables-btn" type="button">Refresh Tables</button>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="audience-builder-selected-columns-input">Selected Columns (optional)</label>
+                            <input type="text" id="audience-builder-selected-columns-input" placeholder="player_id,email_address,external_user_id,reward_code">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-builder-where-sql-input">Safe Filter (optional)</label>
+                            <input type="text" id="audience-builder-where-sql-input" placeholder="send_flag = 'yes'">
+                        </div>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="audience-builder-canonical-user-id-field-input">Canonical User ID Field</label>
+                            <input type="text" id="audience-builder-canonical-user-id-field-input" placeholder="player_id">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-builder-email-field-input">Email Field (optional)</label>
+                            <input type="text" id="audience-builder-email-field-input" placeholder="email_address">
+                        </div>
+                        <div class="form-group">
+                            <label for="audience-builder-external-user-id-field-input">External User ID Field (optional)</label>
+                            <input type="text" id="audience-builder-external-user-id-field-input" placeholder="external_user_id">
+                        </div>
+                    </div>
+                </div>
+
                 <div class="module-section-header">
                     <h3>Filters</h3>
                     <div class="inline-actions">
@@ -1044,7 +1106,7 @@
                 </div>
 
                 <details id="audience-sql-section" class="builder-advanced-panel">
-                    <summary>Advanced SQL</summary>
+                    <summary>Managed Warehouse SQL</summary>
                     <div class="module-section-header" style="margin-top: 1rem;">
                         <h3>SQL Workspace</h3>
                         <span class="pill">Read Only</span>

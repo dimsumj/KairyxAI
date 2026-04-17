@@ -78,8 +78,9 @@ def get_experiment_service(
 
 def get_cohort_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
 ) -> CohortService:
-    return CohortService(repository)
+    return CohortService(repository, settings=settings)
 
 
 def get_sql_workspace_service(

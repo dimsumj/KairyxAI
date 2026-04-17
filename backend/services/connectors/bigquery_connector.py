@@ -164,6 +164,7 @@ class BigQueryConnector:
             rows = self._filter_mock_rows(
                 rows,
                 resolved_columns=resolved_columns,
+                where_sql=resolved_where_sql,
                 timestamp_column=resolved_timestamp_column,
                 start_date=start_date,
                 end_date=end_date,
@@ -263,11 +264,14 @@ class BigQueryConnector:
         rows: List[Dict[str, Any]],
         *,
         resolved_columns: List[str],
+        where_sql: str,
         timestamp_column: str | None,
         start_date: str | None,
         end_date: str | None,
     ) -> List[Dict[str, Any]]:
         filtered = rows
+        if where_sql:
+            filtered = [item for item in filtered if BigQueryConnector._matches_mock_where_sql(item, where_sql)]
         if timestamp_column and start_date and end_date:
             start_text = str(start_date)
             end_text = str(end_date)
@@ -290,6 +294,53 @@ class BigQueryConnector:
         for item in filtered:
             projected.append({field: item.get(field) for field in resolved_columns})
         return projected
+
+    @staticmethod
+    def _matches_mock_where_sql(item: Dict[str, Any], where_sql: str) -> bool:
+        clauses = [part.strip() for part in re.split(r"\bAND\b", str(where_sql or ""), flags=re.IGNORECASE) if part.strip()]
+        for clause in clauses:
+            if not BigQueryConnector._matches_mock_where_clause(item, clause):
+                return False
+        return True
+
+    @staticmethod
+    def _matches_mock_where_clause(item: Dict[str, Any], clause: str) -> bool:
+        in_match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s+(NOT\s+IN|IN)\s*\((.+)\)", clause, flags=re.IGNORECASE)
+        if in_match:
+            field_name = in_match.group(1)
+            operator = in_match.group(2).upper().replace(" ", "")
+            values = [
+                BigQueryConnector._parse_mock_where_literal(value)
+                for value in in_match.group(3).split(",")
+                if str(value).strip()
+            ]
+            actual = item.get(field_name)
+            return actual not in values if operator == "NOTIN" else actual in values
+
+        binary_match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=)\s*(.+)", clause)
+        if not binary_match:
+            raise ValueError("where_sql contains unsupported SQL.")
+        field_name = binary_match.group(1)
+        operator = binary_match.group(2)
+        expected = BigQueryConnector._parse_mock_where_literal(binary_match.group(3))
+        actual = item.get(field_name)
+        return actual != expected if operator == "!=" else actual == expected
+
+    @staticmethod
+    def _parse_mock_where_literal(value: Any) -> Any:
+        text = str(value or "").strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+            return text[1:-1]
+        lowered = text.lower()
+        if lowered == "null":
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return float(text)
+            except ValueError:
+                return text
 
     @staticmethod
     def _is_mock_mode() -> bool:

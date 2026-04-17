@@ -5,8 +5,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from app.application.connectors import ConnectorService
 from app.application.experiments import ExperimentConfigService
 from app.core.errors import ResourceLockedError
+from app.core.settings import Settings, get_settings
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 
@@ -15,7 +17,8 @@ BUILDER_AUDIENCE_BASES = {
     "prediction": "Prediction results",
     "behavior": "Behavior / attributes",
     "manual_list": "Manual list",
-    "advanced_sql": "Advanced SQL",
+    "managed_warehouse_sql": "Managed warehouse query",
+    "connector_bigquery_table": "BigQuery connector table",
 }
 BUILDER_PREDICTION_SCOPES = {
     "source": "By source",
@@ -150,9 +153,11 @@ BUILDER_FILTER_FIELDS: List[Dict[str, Any]] = [
 
 
 class CohortService:
-    def __init__(self, repository, bigquery_service: BigQueryService | None = None):
+    def __init__(self, repository, settings: Settings | None = None, bigquery_service: BigQueryService | None = None):
         self.repository = repository
+        self.settings = settings or get_settings()
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+        self.connectors = ConnectorService(repository)
         self.experiments = ExperimentConfigService(repository)
 
     def _commit_session(self) -> None:
@@ -162,6 +167,17 @@ class CohortService:
 
     def get_builder_options(self) -> Dict[str, Any]:
         prediction_jobs = self._builder_prediction_job_options()
+        warehouse_connectors = [
+            {
+                "connector_id": item.get("connector_id"),
+                "name": item.get("name"),
+                "type": item.get("type"),
+                "dataset_id": (item.get("config") or {}).get("dataset_id"),
+                "project_id": (item.get("config") or {}).get("project_id") or (item.get("config") or {}).get("gcp_project_id"),
+            }
+            for item in self.connectors.list_connectors()
+            if str(item.get("type") or "").strip().lower() == "bigquery"
+        ]
         latest_by_source: Dict[str, Dict[str, Any]] = {}
         for job in prediction_jobs:
             source_name = str(job.get("source_name") or "").strip()
@@ -183,6 +199,7 @@ class CohortService:
             "filter_fields": list(BUILDER_FILTER_FIELDS),
             "prediction_sources": list(latest_by_source.values()),
             "prediction_jobs": prediction_jobs,
+            "warehouse_connectors": warehouse_connectors,
         }
 
     def preview_builder(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -196,6 +213,9 @@ class CohortService:
                 "preview_members": item["members"][:20],
                 "source_breakdown": item["source_breakdown"],
                 "resolved_predictions": item["resolved_predictions"],
+                "source_kind": item.get("source_kind"),
+                "source_label": item.get("source_label"),
+                "preview_fields": sorted({key for member in item["members"][:20] for key in member.keys()}),
             }
             for item in plans
         ]
@@ -210,6 +230,9 @@ class CohortService:
             "preview_members": plan_preview[0]["preview_members"] if plan_preview else [],
             "source_breakdown": plan_preview[0]["source_breakdown"] if plan_preview else [],
             "resolved_predictions": plan_preview[0]["resolved_predictions"] if plan_preview else [],
+            "source_kind": plan_preview[0]["source_kind"] if plan_preview else None,
+            "source_label": plan_preview[0]["source_label"] if plan_preview else None,
+            "preview_fields": plan_preview[0]["preview_fields"] if plan_preview else [],
             "proposed_names": [item["name"] for item in plan_preview],
             "cohort_plans": plan_preview,
             "warnings": warnings,
@@ -280,7 +303,7 @@ class CohortService:
             "last_refresh_error": None,
             "refresh_failures": 0,
             "metrics_summary": self._empty_metrics_summary(),
-            "activation_preflight": self._build_activation_preflight([], False, None),
+            "activation_preflight": self._build_activation_preflight([], False, None, definition=definition),
         }
         record = self.repository.upsert_resource("cohort", cohort_id, status="draft", name=name, payload=payload)
         self._create_definition_version(cohort_id, 1, payload)
@@ -493,6 +516,7 @@ class CohortService:
                 False,
                 payload.get("latest_snapshot_id"),
                 refresh_error=str(last_error),
+                definition=payload.get("definition") or {},
             )
             saved = self.repository.upsert_resource(
                 "cohort",
@@ -530,7 +554,12 @@ class CohortService:
             "removed": len(previous_ids - current_ids),
             "unchanged": len(current_ids & previous_ids),
         }
-        payload["activation_preflight"] = self._build_activation_preflight(members, True, snapshot_id)
+        payload["activation_preflight"] = self._build_activation_preflight(
+            members,
+            True,
+            snapshot_id,
+            definition=payload.get("definition") or {},
+        )
         if str(payload.get("status") or "") == "archived":
             next_status = "archived"
         else:
@@ -570,6 +599,7 @@ class CohortService:
             payload.get("latest_members") or [],
             str(payload.get("last_refresh_status") or "") == "success",
             payload.get("latest_snapshot_id"),
+            definition=payload.get("definition") or {},
         )
         if not preflight.get("eligible"):
             self.repository.record_resource_event(
@@ -737,6 +767,7 @@ class CohortService:
 
     def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        source_metadata = self._source_metadata_for_definition(payload.get("definition") or {})
         payload.setdefault("version", int(payload.get("version_id") or payload.get("version") or 1))
         payload.setdefault("version_id", int(payload.get("version") or payload.get("version_id") or 1))
         payload.setdefault("refresh_policy", self._build_refresh_policy(payload.get("refresh_mode") or "manual"))
@@ -749,6 +780,7 @@ class CohortService:
                 payload.get("latest_members") or [],
                 str(payload.get("last_refresh_status") or "") == "success",
                 payload.get("latest_snapshot_id"),
+                definition=payload.get("definition") or {},
             ),
         )
         payload.setdefault("created_at", record["created_at"])
@@ -758,10 +790,15 @@ class CohortService:
         payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
         payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
+        payload.setdefault("source_kind", source_metadata.get("source_kind"))
+        payload.setdefault("source_label", source_metadata.get("source_label"))
+        payload.setdefault("source_summary", source_metadata.get("source_summary") or {})
         return payload
 
     def _normalize_builder_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         audience_basis = str(payload.get("audience_basis") or "prediction").strip().lower()
+        if audience_basis == "advanced_sql":
+            audience_basis = "managed_warehouse_sql"
         if audience_basis not in BUILDER_AUDIENCE_BASES:
             audience_basis = "prediction"
         prediction_scope = str(payload.get("prediction_scope") or "source").strip().lower()
@@ -792,6 +829,16 @@ class CohortService:
             "conditions": [self._normalize_builder_condition(item) for item in list(payload.get("conditions") or [])],
             "members": list(payload.get("members") or []),
             "sql": str(payload.get("sql") or "").strip(),
+            "saved_query_id": str(payload.get("saved_query_id") or "").strip(),
+            "connector_id": str(payload.get("connector_id") or "").strip(),
+            "table_name": str(payload.get("table_name") or "").strip(),
+            "selected_columns": [str(item).strip() for item in list(payload.get("selected_columns") or []) if str(item).strip()],
+            "where_sql": str(payload.get("where_sql") or "").strip(),
+            "column_mapping": {
+                str(key).strip(): str(value).strip()
+                for key, value in dict(payload.get("column_mapping") or {}).items()
+                if str(key).strip() and str(value).strip()
+            },
             "activate": bool(payload.get("activate")),
             "warnings": warnings,
         }
@@ -837,7 +884,11 @@ class CohortService:
             return [self._build_behavior_builder_plan(normalized)]
         if audience_basis == "manual_list":
             return [self._build_manual_builder_plan(normalized)]
-        return [self._build_sql_builder_plan(normalized)]
+        if audience_basis == "managed_warehouse_sql":
+            return [self._build_managed_warehouse_sql_builder_plan(normalized)]
+        if audience_basis == "connector_bigquery_table":
+            return [self._build_connector_bigquery_table_builder_plan(normalized)]
+        raise ValueError(f"Unsupported audience basis '{audience_basis}'.")
 
     def _builder_prediction_job_options(self) -> List[Dict[str, Any]]:
         options: List[Dict[str, Any]] = []
@@ -967,20 +1018,25 @@ class CohortService:
             "tags": normalized["tags"] or ["guided-builder", "manual-list"],
         }
 
-    def _build_sql_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
-        sql = normalized["sql"]
-        if not sql:
-            raise ValueError("Enter SQL in the Advanced section before previewing or creating the cohort.")
-        result = self.bigquery_service.run_readonly_query(sql, limit=1000)
-        members = [self._normalize_member(row) for row in result.get("rows") or [] if self._normalize_member(row).get("canonical_user_id")]
+    def _build_managed_warehouse_sql_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        sql, saved_query = self._resolve_managed_warehouse_sql(normalized)
+        members = self._materialize_managed_warehouse_sql(
+            {
+                "sql": sql,
+                "saved_query_id": saved_query.get("query_id") if saved_query else normalized.get("saved_query_id"),
+                "saved_query_name": saved_query.get("name") if saved_query else "",
+            }
+        )
         definition = {
             "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
-            "audience_basis": "advanced_sql",
-            "source_kind": "sql_workspace",
+            "audience_basis": "managed_warehouse_sql",
+            "source_kind": "managed_warehouse_sql",
             "split_strategy": "combined",
             "dedupe_key": "canonical_user_id",
             "sql": sql,
-            "preview_row_count": int(result.get("row_count") or len(result.get("rows") or [])),
+            "saved_query_id": saved_query.get("query_id") if saved_query else normalized.get("saved_query_id"),
+            "saved_query_name": saved_query.get("name") if saved_query else "",
+            "preview_row_count": len(members),
         }
         return {
             "name": normalized["name"],
@@ -989,9 +1045,194 @@ class CohortService:
             "members": members,
             "source_breakdown": [],
             "resolved_predictions": [],
-            "description": normalized["description"] or "Guided advanced SQL cohort.",
-            "tags": normalized["tags"] or ["guided-builder", "advanced-sql"],
+            "description": normalized["description"] or "Warehouse-backed cohort using a managed warehouse query snapshot.",
+            "tags": normalized["tags"] or ["guided-builder", "managed-warehouse"],
+            "source_kind": "managed_warehouse_sql",
+            "source_label": "Managed Warehouse",
         }
+
+    def _build_connector_bigquery_table_builder_plan(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        connector_record = self._get_reverse_etl_connector(normalized.get("connector_id"))
+        members = self._materialize_connector_bigquery_table(
+            {
+                "connector_id": connector_record.get("connector_id"),
+                "connector_name": connector_record.get("name"),
+                "table_name": normalized.get("table_name"),
+                "selected_columns": list(normalized.get("selected_columns") or []),
+                "where_sql": normalized.get("where_sql"),
+                "column_mapping": dict(normalized.get("column_mapping") or {}),
+            }
+        )
+        definition = {
+            "entrypoint": GUIDED_BUILDER_ENTRYPOINT,
+            "audience_basis": "connector_bigquery_table",
+            "source_kind": "connector_bigquery_table",
+            "split_strategy": "combined",
+            "dedupe_key": "canonical_user_id",
+            "connector_id": connector_record.get("connector_id"),
+            "connector_name": connector_record.get("name"),
+            "table_name": normalized.get("table_name"),
+            "selected_columns": list(normalized.get("selected_columns") or []),
+            "where_sql": normalized.get("where_sql") or "",
+            "column_mapping": dict(normalized.get("column_mapping") or {}),
+            "preview_row_count": len(members),
+        }
+        return {
+            "name": normalized["name"],
+            "cohort_type": "sql",
+            "definition": definition,
+            "members": members,
+            "source_breakdown": [],
+            "resolved_predictions": [],
+            "description": normalized["description"] or "Warehouse-backed cohort using a tenant BigQuery connector table snapshot.",
+            "tags": normalized["tags"] or ["guided-builder", "bigquery-connector"],
+            "source_kind": "connector_bigquery_table",
+            "source_label": "BigQuery Connector",
+        }
+
+    def _resolve_managed_warehouse_sql(self, normalized: Dict[str, Any]) -> tuple[str, Dict[str, Any] | None]:
+        sql = str(normalized.get("sql") or "").strip()
+        saved_query_id = str(normalized.get("saved_query_id") or "").strip()
+        if sql:
+            saved_query = self.repository.get_resource("saved_query", saved_query_id) if saved_query_id else None
+            return sql, (saved_query.get("payload") or {}) if saved_query else None
+        if not saved_query_id:
+            raise ValueError("Enter SQL or choose a saved query before previewing or creating the warehouse audience.")
+        saved_query_record = self.repository.get_resource("saved_query", saved_query_id)
+        if saved_query_record is None:
+            raise ValueError(f"Saved query '{saved_query_id}' was not found.")
+        saved_query = dict(saved_query_record.get("payload") or {})
+        resolved_sql = str(saved_query.get("sql") or "").strip()
+        if not resolved_sql:
+            raise ValueError(f"Saved query '{saved_query_id}' does not contain SQL.")
+        return resolved_sql, saved_query
+
+    def _get_reverse_etl_connector(self, connector_ref: Any) -> Dict[str, Any]:
+        resolved_ref = str(connector_ref or "").strip()
+        if not resolved_ref:
+            raise ValueError("Choose a BigQuery connector before previewing or creating the warehouse audience.")
+        connector_record = self.repository.get_connector(resolved_ref)
+        if connector_record is None:
+            raise ValueError(f"Connector '{resolved_ref}' was not found.")
+        if str(connector_record.get("type") or "").strip().lower() != "bigquery":
+            raise ValueError("Reverse ETL connector cohorts currently support BigQuery connectors only.")
+        return connector_record
+
+    def _materialize_managed_warehouse_sql(self, definition: Dict[str, Any]) -> List[Dict[str, Any]]:
+        sql = str(definition.get("sql") or "").strip()
+        if not sql:
+            raise ValueError("Warehouse SQL cohorts require a frozen SQL definition.")
+        limit = self._reverse_etl_preview_limit()
+        result = self.bigquery_service.run_readonly_query(sql, limit=limit)
+        members = self._dedupe_members_by_canonical_user_id(
+            [self._normalize_member(row) for row in result.get("rows") or [] if self._normalize_member(row).get("canonical_user_id")]
+        )
+        self._enforce_reverse_etl_member_cap(members, source_kind="managed_warehouse_sql")
+        return members
+
+    def _materialize_connector_bigquery_table(self, definition: Dict[str, Any]) -> List[Dict[str, Any]]:
+        connector_record = self._get_reverse_etl_connector(definition.get("connector_id") or definition.get("connector_name"))
+        connector_ref = str(connector_record.get("connector_id") or connector_record.get("name") or "")
+        table_name = str(definition.get("table_name") or "").strip()
+        if not table_name:
+            raise ValueError("BigQuery connector cohorts require a table name.")
+        column_mapping = {
+            str(key).strip(): str(value).strip()
+            for key, value in dict(definition.get("column_mapping") or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        if not str(column_mapping.get("canonical_user_id") or "").strip():
+            raise ValueError("BigQuery connector cohorts require a canonical_user_id column mapping.")
+        page_size = min(1000, self._reverse_etl_preview_limit())
+        cursor = None
+        deduped_members: Dict[str, Dict[str, Any]] = {}
+        while True:
+            payload = self.connectors.fetch_table_rows_page(
+                connector_ref,
+                table_name,
+                cursor=cursor,
+                page_size=page_size,
+                selected_columns=list(definition.get("selected_columns") or []) or None,
+                where_sql=str(definition.get("where_sql") or "").strip() or None,
+            )
+            for raw_row in list(payload.get("rows") or []):
+                member = self._map_connector_row_to_member(raw_row, column_mapping)
+                canonical_user_id = str(member.get("canonical_user_id") or "").strip()
+                if not canonical_user_id:
+                    continue
+                deduped_members[canonical_user_id] = member
+                if len(deduped_members) > int(self.settings.max_reverse_etl_members_per_snapshot):
+                    self._enforce_reverse_etl_member_cap(list(deduped_members.values()), source_kind="connector_bigquery_table")
+            cursor = payload.get("next_cursor")
+            if not cursor:
+                break
+        members = list(deduped_members.values())
+        self._enforce_reverse_etl_member_cap(members, source_kind="connector_bigquery_table")
+        return members
+
+    def _map_connector_row_to_member(self, raw_row: Dict[str, Any], column_mapping: Dict[str, str]) -> Dict[str, Any]:
+        member = self._normalize_member(dict(raw_row or {}))
+        for target_field, source_field in column_mapping.items():
+            if source_field in member:
+                member[target_field] = member.get(source_field)
+        canonical_user_id = member.get("canonical_user_id") or member.get("user_id") or member.get("player_id")
+        if canonical_user_id is not None:
+            member["canonical_user_id"] = str(canonical_user_id)
+        return member
+
+    def _enforce_reverse_etl_member_cap(self, members: List[Dict[str, Any]], *, source_kind: str) -> None:
+        cap = int(self.settings.max_reverse_etl_members_per_snapshot)
+        if len(members) <= cap:
+            return
+        label = "Managed Warehouse" if source_kind == "managed_warehouse_sql" else "BigQuery Connector"
+        raise ValueError(
+            f"Reverse ETL snapshot exceeds the tenant cap of {cap} members for {label} audiences."
+        )
+
+    def _reverse_etl_preview_limit(self) -> int:
+        return max(1, int(self.settings.max_reverse_etl_members_per_snapshot) + 1)
+
+    @staticmethod
+    def _dedupe_members_by_canonical_user_id(members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        deduped: Dict[str, Dict[str, Any]] = {}
+        for member in members:
+            canonical_user_id = str(member.get("canonical_user_id") or "").strip()
+            if not canonical_user_id:
+                continue
+            deduped[canonical_user_id] = dict(member)
+        return list(deduped.values())
+
+    def _source_metadata_for_definition(self, definition: Dict[str, Any]) -> Dict[str, Any]:
+        audience_basis = str(definition.get("audience_basis") or "").strip().lower()
+        if audience_basis == "managed_warehouse_sql":
+            return {
+                "source_kind": "managed_warehouse_sql",
+                "source_label": "Managed Warehouse",
+                "source_summary": {
+                    "saved_query_id": definition.get("saved_query_id"),
+                    "saved_query_name": definition.get("saved_query_name"),
+                },
+            }
+        if audience_basis == "connector_bigquery_table":
+            return {
+                "source_kind": "connector_bigquery_table",
+                "source_label": "BigQuery Connector",
+                "source_summary": {
+                    "connector_id": definition.get("connector_id"),
+                    "connector_name": definition.get("connector_name"),
+                    "table_name": definition.get("table_name"),
+                },
+            }
+        return {
+            "source_kind": definition.get("source_kind"),
+            "source_label": None,
+            "source_summary": {},
+        }
+
+    @staticmethod
+    def _is_reverse_etl_definition(definition: Dict[str, Any]) -> bool:
+        audience_basis = str((definition or {}).get("audience_basis") or "").strip().lower()
+        return audience_basis in {"managed_warehouse_sql", "connector_bigquery_table"}
 
     def _prediction_builder_rows_for_jobs(self, resolved_predictions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         selected_ids = {str(item.get("prediction_job_id") or "") for item in resolved_predictions}
@@ -1413,14 +1654,19 @@ class CohortService:
         snapshot_id: str | None,
         *,
         refresh_error: str | None = None,
+        definition: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         total = len(members)
         resolved = sum(1 for item in members if item.get("canonical_user_id"))
+        reverse_etl_within_cap = True
+        if self._is_reverse_etl_definition(definition or {}):
+            reverse_etl_within_cap = total <= int(self.settings.max_reverse_etl_members_per_snapshot)
         checks = {
             "non_empty": total > 0,
             "canonical_user_id_coverage": 100.0 if total and resolved == total else (round((resolved / total) * 100.0, 2) if total else 0.0),
             "refresh_success": bool(refresh_success),
             "snapshot_ready": bool(snapshot_id),
+            "reverse_etl_member_cap": reverse_etl_within_cap,
         }
         reasons = []
         if not checks["non_empty"]:
@@ -1431,6 +1677,8 @@ class CohortService:
             reasons.append(refresh_error or "refresh_not_successful")
         if not checks["snapshot_ready"]:
             reasons.append("snapshot_missing")
+        if not checks["reverse_etl_member_cap"]:
+            reasons.append("reverse_etl_member_cap_exceeded")
         return {
             "eligible": not reasons,
             "checks": checks,
@@ -1465,6 +1713,8 @@ class CohortService:
                     members.append({"canonical_user_id": str(item)})
             return members
         if resolved_type == "sql":
+            if str(definition.get("entrypoint") or "").strip().lower() == GUIDED_BUILDER_ENTRYPOINT:
+                return self._materialize_guided_builder(definition)
             sql = str(definition.get("sql") or "").strip()
             result = self.bigquery_service.run_readonly_query(sql, limit=max(1000, int(definition.get("limit") or 1000)))
             return [self._normalize_member(row) for row in result.get("rows") or [] if self._normalize_member(row).get("canonical_user_id")]
@@ -1474,10 +1724,16 @@ class CohortService:
 
     def _materialize_guided_builder(self, definition: Dict[str, Any]) -> List[Dict[str, Any]]:
         audience_basis = str(definition.get("audience_basis") or "").strip().lower()
+        if audience_basis == "manual_list":
+            return self._normalize_manual_members(list(definition.get("members") or []))
         if audience_basis == "behavior":
             rows = [self._normalize_member(row) for row in self.bigquery_service.get_rows_for_alias("mart_user_daily")]
             filtered_rows = self._filter_builder_rows(rows, list(definition.get("conditions") or []), str(definition.get("logic") or "AND").upper())
             return self._dedupe_builder_rows(filtered_rows)
+        if audience_basis == "managed_warehouse_sql":
+            return self._materialize_managed_warehouse_sql(definition)
+        if audience_basis == "connector_bigquery_table":
+            return self._materialize_connector_bigquery_table(definition)
         resolved_predictions = [
             {
                 "prediction_job_id": str(item.get("prediction_job_id") or ""),
@@ -1612,7 +1868,8 @@ def default_builder_name(audience_basis: str) -> str:
         "prediction": "prediction_cohort",
         "behavior": "behavior_cohort",
         "manual_list": "manual_list_cohort",
-        "advanced_sql": "advanced_sql_cohort",
+        "managed_warehouse_sql": "managed_warehouse_cohort",
+        "connector_bigquery_table": "connector_table_cohort",
     }.get(str(audience_basis or "").strip().lower(), "cohort")
     return f"guided_{suffix}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
 

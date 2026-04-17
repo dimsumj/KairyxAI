@@ -55,6 +55,9 @@ class CohortResponse(BaseModel):
     refresh_policy: Dict[str, Any] = Field(default_factory=dict)
     activation_preflight: Dict[str, Any] = Field(default_factory=dict)
     metrics_summary: Dict[str, Any] = Field(default_factory=dict)
+    source_kind: str | None = None
+    source_label: str | None = None
+    source_summary: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 
@@ -93,4 +96,10 @@ class CohortBuilderRequest(BaseModel):
     conditions: List[CohortBuilderCondition] = Field(default_factory=list)
     members: List[Any] = Field(default_factory=list)
     sql: str = ""
+    saved_query_id: str = ""
+    connector_id: str = ""
+    table_name: str = ""
+    selected_columns: List[str] = Field(default_factory=list)
+    where_sql: str = ""
+    column_mapping: Dict[str, str] = Field(default_factory=dict)
     activate: bool = False
