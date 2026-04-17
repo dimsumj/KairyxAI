@@ -8337,6 +8337,7 @@ export function initializeOperatorConsole() {
             const importSchemaOutput = document.getElementById('import-schema-output');
             let importListInterval = null;
             let selectedImportJobId = null;
+            const importExpandedJobIds = new Set();
 
             function getImportConnectorByName(sourceName = '') {
                 const normalizedSourceName = String(sourceName || '').trim();
@@ -8658,6 +8659,214 @@ export function initializeOperatorConsole() {
                 return !['failed', 'error'].includes(normalizedStatus);
             }
 
+            function getImportEventCount(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const sourceStat = (job.source_stats || [])[0] || {};
+                const processing = job.processing_stats || details.processing || {};
+                return Number(
+                    details.events_staged
+                    || progress.total
+                    || sourceStat.ingested_events
+                    || processing.events_staging_written
+                    || processing.raw_normalized_events
+                    || 0
+                );
+            }
+
+            function getImportProfileCount(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const identitySummary = details.identity_summary || {};
+                return Number(identitySummary.profiles || 0);
+            }
+
+            function getImportCuratedCount(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const processing = job.processing_stats || details.processing || {};
+                const warehouseStats = processing.warehouse_stats || {};
+                const curation = warehouseStats.curation || {};
+                return Number(curation.curated_rows || processing.deduped_events || 0);
+            }
+
+            function getImportRejectCount(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const processing = job.processing_stats || details.processing || {};
+                return Number(processing.pipeline_dead_letters_written || details.rows_rejected || 0);
+            }
+
+            function getImportDuplicateCount(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const processing = job.processing_stats || details.processing || {};
+                const warehouseStats = processing.warehouse_stats || {};
+                const curation = warehouseStats.curation || {};
+                return Number(curation.duplicates_removed || processing.duplicates_removed || 0);
+            }
+
+            function getImportExpandedDetails(job = {}) {
+                const progress = job.progress || {};
+                const details = progress.details || {};
+                const qualityReport = details.quality_report || {};
+                const identitySummary = details.identity_summary || {};
+                const sourceStat = (job.source_stats || [])[0] || {};
+                const eventCount = getImportEventCount(job);
+                const curatedCount = getImportCuratedCount(job);
+                const profileCount = getImportProfileCount(job);
+                const duplicateCount = getImportDuplicateCount(job);
+                const rejectCount = getImportRejectCount(job);
+                const rowsEvaluated = Number(identitySummary.rows_evaluated || 0);
+                const mappingCoverage = Number(details.mapping_coverage || job.mapping_coverage || 0);
+                const canonicalCoverage = Number(qualityReport.canonical_user_id_coverage || identitySummary.canonical_user_id_coverage || 0);
+                const dedupeRate = Number(qualityReport.dedupe_rate || 0);
+                const rejectRate = Number(qualityReport.reject_rate || 0);
+                const sourceType = String(sourceStat.type || '').trim();
+                const sourceName = String(sourceStat.source || '').trim() || String(job.spec?.source_name || '').trim() || '-';
+                const rangeStart = String(job.start_date || '').trim();
+                const rangeEnd = String(job.end_date || '').trim();
+                const failureReason = getImportFailureReason(job);
+                const failureStage = getImportFailureStage(job);
+                return {
+                    sourceName,
+                    sourceType,
+                    rangeLabel: rangeStart || rangeEnd ? `${rangeStart || '-'} -> ${rangeEnd || '-'}` : 'Not specified',
+                    eventCount,
+                    curatedCount,
+                    profileCount,
+                    duplicateCount,
+                    rejectCount,
+                    rowsEvaluated,
+                    mappingCoverage,
+                    canonicalCoverage,
+                    dedupeRate,
+                    rejectRate,
+                    failureReason,
+                    failureStage,
+                    updatedAt: job.updated_at || job.created_at || job.timestamp || '',
+                };
+            }
+
+            function renderImportExpandedRow(job = {}) {
+                const details = getImportExpandedDetails(job);
+                const failureMarkup = details.failureReason
+                    ? `
+                        <div class="import-detail-callout">
+                            <strong>Issue:</strong> ${escapeHtml(details.failureReason)}
+                            ${details.failureStage ? `<span class="subtle">(${escapeHtml(details.failureStage.replace(/_/g, ' '))})</span>` : ''}
+                        </div>
+                    `
+                    : '';
+                const sourceTypeLabel = details.sourceType ? `${details.sourceName} (${formatConnectorLabel(details.sourceType)})` : details.sourceName;
+                const metrics = [
+                    { label: 'Events', value: formatCount(details.eventCount) },
+                    { label: 'Profiles', value: details.profileCount > 0 ? formatCount(details.profileCount) : '-' },
+                    { label: 'Curated Events', value: details.curatedCount > 0 ? formatCount(details.curatedCount) : '-' },
+                    { label: 'Duplicates Removed', value: details.duplicateCount > 0 ? formatCount(details.duplicateCount) : '0' },
+                    { label: 'Rejected Rows', value: details.rejectCount > 0 ? formatCount(details.rejectCount) : '0' },
+                    { label: 'Rows Evaluated', value: details.rowsEvaluated > 0 ? formatCount(details.rowsEvaluated) : '-' },
+                    { label: 'Mapping Coverage', value: details.mappingCoverage > 0 ? `${details.mappingCoverage.toFixed(1)}%` : '-' },
+                    { label: 'Canonical Coverage', value: details.canonicalCoverage > 0 ? `${details.canonicalCoverage.toFixed(1)}%` : '-' },
+                    { label: 'Dedupe Rate', value: details.dedupeRate > 0 ? `${details.dedupeRate.toFixed(1)}%` : '0.0%' },
+                    { label: 'Reject Rate', value: details.rejectRate > 0 ? `${details.rejectRate.toFixed(1)}%` : '0.0%' },
+                ];
+                return `
+                    <tr class="import-detail-row" id="job-detail-${escapeHtml(job.id)}"${importExpandedJobIds.has(job.id) ? '' : ' hidden'}>
+                        <td colspan="5">
+                            <div class="import-detail-panel">
+                                <div class="import-detail-header">
+                                    <div>
+                                        <strong>${escapeHtml(job.name || 'Import')}</strong>
+                                        <div class="subtle">Source: ${escapeHtml(sourceTypeLabel)} | Range: ${escapeHtml(details.rangeLabel)}</div>
+                                    </div>
+                                    <div class="subtle">Updated ${escapeHtml(details.updatedAt ? new Date(details.updatedAt).toLocaleString() : '-')}</div>
+                                </div>
+                                ${failureMarkup}
+                                <div class="import-detail-grid">
+                                    ${metrics.map((item) => `
+                                        <div class="import-detail-card">
+                                            <div class="import-detail-label">${escapeHtml(item.label)}</div>
+                                            <div class="import-detail-value">${escapeHtml(item.value)}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            function renderImportPrimaryRow(job = {}) {
+                const statusClass = getImportStatusClass(job);
+                const expirationId = `expires-in-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                const rowId = `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                const actionsCellId = `actions-cell-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                const detailRowId = `job-detail-${job.id}`;
+                const isExpanded = importExpandedJobIds.has(job.id);
+                const sourceName = String((((job.source_stats || [])[0] || {}).source) || '').trim();
+                const subtitle = sourceName ? `${sourceName} | ${formatCount(getImportEventCount(job))} events` : `${formatCount(getImportEventCount(job))} events`;
+                const expirationCellHtml = job.status === 'Ready to Use' && job.expiration_timestamp
+                    ? `<td id="${expirationId}" data-expiration="${job.expiration_timestamp}">-</td>`
+                    : `<td>-</td>`;
+                return `
+                    <tr id="${rowId}">
+                        <td>
+                            <div class="import-row-title">
+                                <button
+                                    type="button"
+                                    class="import-row-toggle"
+                                    data-import-toggle="${escapeHtml(job.id)}"
+                                    aria-expanded="${isExpanded ? 'true' : 'false'}"
+                                    aria-controls="${escapeHtml(detailRowId)}"
+                                    title="${isExpanded ? 'Collapse import summary' : 'Expand import summary'}"
+                                >${isExpanded ? '▾' : '▸'}</button>
+                                <div class="import-row-name-block">
+                                    <div class="import-row-name">${escapeHtml(job.name || 'Import')}</div>
+                                    <div class="subtle">${escapeHtml(subtitle)}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td>${escapeHtml(new Date(job.timestamp).toLocaleString())}</td>
+                        <td>${renderImportStatus(job, statusClass)}</td>
+                        ${expirationCellHtml}
+                        <td id="${actionsCellId}">${getActionButtonsHTML(job)}</td>
+                    </tr>
+                `;
+            }
+
+            function renderImportListTable(imports = []) {
+                let table = importListContainer.querySelector('table');
+                if (!table) {
+                    importListContainer.innerHTML = `
+                        <div class="table-shell">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Import Name</th>
+                                        <th>Timestamp</th>
+                                        <th>Status</th>
+                                        <th>Expires In</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    `;
+                    table = importListContainer.querySelector('table');
+                }
+                const tbody = table.querySelector('tbody');
+                tbody.innerHTML = imports
+                    .map((job) => `${renderImportPrimaryRow(job)}${renderImportExpandedRow(job)}`)
+                    .join('');
+                imports.forEach((job) => {
+                    const rowId = `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+                    const row = document.getElementById(rowId);
+                    addActionListeners(row, job);
+                });
+            }
+
             function populateImportDetailSelect(imports = []) {
                 if (!importDetailSelect) return;
                 const previous = selectedImportJobId || importDetailSelect.value;
@@ -8793,84 +9002,14 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     const priorSelectedImport = selectedImportJobId;
-
-                    // If table doesn't exist, create it
-                    let table = importListContainer.querySelector('table');
-                    if (!table) {
-                        importListContainer.innerHTML = `
-                            <div class="table-shell">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Import Name</th>
-                                            <th>Timestamp</th>
-                                            <th>Status</th>
-                                            <th>Expires In</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                        `;
-                        table = importListContainer.querySelector('table');
-                    }
-                    const tbody = table.querySelector('tbody');
-                    const activeRowIds = new Set(imports.map((job) => `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`));
-                    Array.from(tbody.querySelectorAll('tr')).forEach((row) => {
-                        if (!activeRowIds.has(row.id)) {
-                            row.remove();
+                    const activeJobIds = new Set(imports.map((job) => job.id));
+                    Array.from(importExpandedJobIds).forEach((jobId) => {
+                        if (!activeJobIds.has(jobId)) {
+                            importExpandedJobIds.delete(jobId);
                         }
                     });
 
-                    // Update rows in place
-                    imports.forEach(job => {
-                        const statusClass = getImportStatusClass(job);
-                        const expirationId = `expires-in-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
-                        const rowId = `job-row-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
-                        const actionsCellId = `actions-cell-${job.id.replace(/[^a-zA-Z0-9]/g, "")}`;
-                        let row = document.getElementById(rowId);
-                        
-                        if (row) {
-                            // If row exists, just update the status if it changed
-                            const newStatusHTML = renderImportStatus(job, statusClass);
-                            const statusCell = row.cells[2];
-                            if (statusCell.innerHTML !== newStatusHTML || row.cells[0].textContent !== job.name) {
-                                // Update status and actions if status changed
-                                row.cells[0].textContent = job.name;
-                                statusCell.innerHTML = newStatusHTML;
-                                const actionsCell = document.getElementById(actionsCellId);
-                                actionsCell.innerHTML = getActionButtonsHTML(job);
-                                addActionListeners(row, job);
-
-                                if (job.status === 'Ready to Use' && job.expiration_timestamp) {
-                                    const expirationCell = row.cells[3];
-                                    expirationCell.id = expirationId;
-                                    expirationCell.dataset.expiration = job.expiration_timestamp;
-                                    startCountdownTimers();
-                                }
-                            }
-                        } else {
-                            // If row doesn't exist, create it
-                            const newRow = tbody.insertRow();
-                            newRow.id = rowId;
-                            
-                            const expirationCellHtml = job.status === 'Ready to Use' && job.expiration_timestamp
-                                ? `<td id="${expirationId}" data-expiration="${job.expiration_timestamp}">-</td>`
-                                : `<td>-</td>`;
-                            
-                            const actionsCellHtml = `<td id="${actionsCellId}">${getActionButtonsHTML(job)}</td>`;
-
-                            newRow.innerHTML = `
-                                <td>${job.name}</td>
-                                <td>${new Date(job.timestamp).toLocaleString()}</td>
-                                <td>${renderImportStatus(job, statusClass)}</td>
-                                ${expirationCellHtml}
-                                ${actionsCellHtml}
-                            `;
-                            addActionListeners(newRow, job);
-                        }
-                    });
+                    renderImportListTable(imports);
                     populateImportDetailSelect(imports);
                     if (!priorSelectedImport && selectedImportJobId) {
                         renderJsonOutput(importDetailOutput, null, 'Select a view to load import diagnostics on demand.');
@@ -9147,6 +9286,19 @@ export function initializeOperatorConsole() {
 
             function addActionListeners(rowElement, job) {
                 if (!rowElement || !job) return rowElement;
+                const toggleButton = rowElement.querySelector('[data-import-toggle]');
+                if (toggleButton) {
+                    toggleButton.addEventListener('click', () => {
+                        const isExpanded = importExpandedJobIds.has(job.id);
+                        if (isExpanded) {
+                            importExpandedJobIds.delete(job.id);
+                        } else {
+                            importExpandedJobIds.add(job.id);
+                        }
+                        renderImportListTable(cachedImports);
+                        startCountdownTimers();
+                    });
+                }
                 const actionButton = rowElement.querySelector('[data-import-action]');
                 if (!actionButton) return rowElement;
 

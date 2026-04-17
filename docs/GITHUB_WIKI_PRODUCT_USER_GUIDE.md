@@ -291,6 +291,7 @@ Import failure help tooltips now render above nearby controls so the failure rea
 | `Activate Cohort` | Checkbox | For `churn_list`, immediately make the imported churn roster available as a cohort. | Checked | Backend activates the generated cohort after import completion. |
 | `Cohort Name` | Text | Optional display name for an activated churn-list cohort. | `High Risk APAC` | Activated cohort uses that name instead of the default. |
 | `Import Data` / `Import BigQuery Table` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
+| Import row disclosure arrow | Row toggle | Expands an import in place to inspect summary metrics without leaving the list. | Click the arrow beside `Amplitude 1 - 2026-03-22 10:15:00` | A detail panel opens below the row with events, profiles, curated events, duplicates removed, rejected rows, coverage percentages, source, date range, and any failure reason. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose a non-failed import job for detail views. Failed imports remain visible in the imported-data table, but they are excluded from downstream selectors such as `Import Operations`. | `import_20260322_101500` | Detail actions apply to the selected non-failed import. |
@@ -300,6 +301,13 @@ Import failure help tooltips now render above nearby controls so the failure rea
 | `Alias` | Select | Choose a warehouse contract alias. | `standardized` | Contract detail request targets that alias. |
 | `Load Contract` | Button | Loads the selected schema contract on demand. | None | Contract JSON appears in the schema output. |
 | `List All` | Button | Lists all available schema contracts on demand. | None | Contract list is displayed for all aliases. |
+
+#### Operator flow
+1. Create or wait for an import to appear in `Imported Data`.
+2. Click the disclosure arrow at the start of a row to expand the import summary in place.
+3. Review the inline metrics for total events, estimated profiles, curated events, duplicates removed, rejected rows, mapping coverage, and canonical coverage.
+4. If the import failed, use the expanded row to see the failure reason and phase before opening the deeper `Import Operations` views.
+5. Use `Load Operations`, `Load Quality`, or `Load Manifests` when you need the full JSON diagnostics after the inline summary.
 
 #### Sample import input
 ```json
