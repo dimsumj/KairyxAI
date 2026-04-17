@@ -14,6 +14,14 @@ These instructions apply to the entire repository.
 - Do not commit absolute filesystem paths, worktree paths, `.codex` paths, or machine-specific home-directory references into the repository.
 - Use the `repo-path-hygiene` skill when it is available for documentation, specs, runbooks, READMEs, wiki-source docs, or any change that introduces or rewrites repository file references.
 
+## UI Minimalism
+
+- Keep operator-facing UI clean, minimal, and task-first.
+- Prefer short labels, direct controls, and visible status over persistent instructional paragraphs.
+- When extra explanation is helpful but not required to complete the task, move it behind a hover or focus `?` tooltip instead of leaving it always visible.
+- Keep critical warnings, validation errors, and live status messages inline only when the user must act on them immediately.
+- Use the `skills/ui-clean-minimal/SKILL.md` guidance for UI-heavy changes when you add or revise screens, forms, cards, or control groups.
+
 ## Main-Agent Workflow
 
 - For every repo-changing bug fix, feature implementation, refactor, or production code change, the main agent must use a main-agent -> sub-agent workflow. The main agent remains accountable for the final result and must not skip delegation.

@@ -375,12 +375,20 @@ export function initializeOperatorConsole() {
                 positionStatusTooltipLayer(anchor);
             }
 
+            function getFloatingTooltipAnchor(target) {
+                return target?.closest?.('.status-help, .inline-help-button') || null;
+            }
+
+            function getFloatingTooltipSource(anchor) {
+                return anchor?.parentElement?.querySelector('.status-tooltip-source, .inline-help-source') || null;
+            }
+
             function syncStatusTooltipFromEventTarget(target) {
-                const anchor = target?.closest?.('.status-help');
+                const anchor = getFloatingTooltipAnchor(target);
                 if (!anchor) {
                     return;
                 }
-                const tooltipSource = anchor.parentElement?.querySelector('.status-tooltip-source');
+                const tooltipSource = getFloatingTooltipSource(anchor);
                 if (!tooltipSource) {
                     hideStatusTooltipLayer();
                     return;
@@ -4912,12 +4920,12 @@ export function initializeOperatorConsole() {
                 }
             });
             document.addEventListener('mouseover', (event) => {
-                if (event.target?.closest?.('.status-help')) {
+                if (getFloatingTooltipAnchor(event.target)) {
                     syncStatusTooltipFromEventTarget(event.target);
                 }
             });
             document.addEventListener('mouseout', (event) => {
-                const anchor = event.target?.closest?.('.status-help');
+                const anchor = getFloatingTooltipAnchor(event.target);
                 if (!anchor) {
                     return;
                 }
@@ -4929,12 +4937,12 @@ export function initializeOperatorConsole() {
                 }
             });
             document.addEventListener('focusin', (event) => {
-                if (event.target?.closest?.('.status-help')) {
+                if (getFloatingTooltipAnchor(event.target)) {
                     syncStatusTooltipFromEventTarget(event.target);
                 }
             });
             document.addEventListener('focusout', (event) => {
-                const anchor = event.target?.closest?.('.status-help');
+                const anchor = getFloatingTooltipAnchor(event.target);
                 if (!anchor) {
                     return;
                 }
@@ -6656,7 +6664,7 @@ export function initializeOperatorConsole() {
                 if (!visibleConnectors.length) {
                     const emptyState = document.createElement('div');
                     emptyState.className = 'card connector-empty-state';
-                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No data source connectors configured yet. Use Connect Data Source to add your first ingestion source, BigQuery dataset, or legacy provider record.</p>';
+                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No data source connectors yet.</p>';
                     connectorListDiv.replaceChildren(emptyState);
                     return;
                 }
@@ -6923,7 +6931,7 @@ export function initializeOperatorConsole() {
                         },
                     ],
                     profiles,
-                    'No Ask AI runtimes saved yet. Use Connect Ask AI Runtime to add Gemini, LM Studio, Ollama, or a custom OpenAI-compatible endpoint that the backend can reach.',
+                    'No Ask AI runtimes yet.',
                 );
                 aiModelProfileList?.querySelectorAll('[data-ai-model-profile-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -9197,6 +9205,19 @@ export function initializeOperatorConsole() {
                     .replace(/'/g, '&#39;');
             }
 
+            function buildHelpTooltip(contentHtml, ariaLabel = 'Show help') {
+                const normalizedContent = String(contentHtml || '').trim();
+                if (!normalizedContent) {
+                    return '';
+                }
+                return `
+                    <span class="inline-help">
+                        <button type="button" class="inline-help-button" aria-label="${escapeHtml(ariaLabel)}">?</button>
+                        <span class="inline-help-source" aria-hidden="true">${normalizedContent}</span>
+                    </span>
+                `.trim();
+            }
+
             function renderExpandableText(value, maxLength = 140) {
                 const raw = String(value ?? '').trim();
                 if (!raw) {
@@ -9987,11 +10008,13 @@ export function initializeOperatorConsole() {
             }
 
             function renderDataSandboxMemory() {
-                if (!dataSandboxMemoryGrid || !dataSandboxMemorySummary) return;
+                if (!dataSandboxMemoryGrid) return;
                 const connectorName = dataSandboxMappingConnectorSelect.value;
                 if (!connectorName) {
-                    dataSandboxMemorySummary.textContent = '';
-                    dataSandboxMemoryGrid.innerHTML = '<div class="mapping-guided-meta">Select a connector to inspect saved mapping memory.</div>';
+                    if (dataSandboxMemorySummary) {
+                        dataSandboxMemorySummary.textContent = '';
+                    }
+                    dataSandboxMemoryGrid.innerHTML = '';
                     return;
                 }
                 const memoryItems = getDataSandboxMappingMemory();
@@ -10002,12 +10025,14 @@ export function initializeOperatorConsole() {
                     (total, item) => total + Number(item.manualConfirmationCount || 0) + Number(item.successfulImportCount || 0),
                     0,
                 );
-                if (learnedSignalCount > 0) {
-                    dataSandboxMemorySummary.textContent = `Learned from confirmed saves and successful imports${savedVersionCount > 0 ? `, with ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'} for context` : ''}.`;
-                } else if (savedVersionCount > 0) {
-                    dataSandboxMemorySummary.textContent = `Built from ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'}.`;
-                } else {
-                    dataSandboxMemorySummary.textContent = 'No learned mapping memory yet. Suggestions are currently heuristic.';
+                if (dataSandboxMemorySummary) {
+                    if (learnedSignalCount > 0) {
+                        dataSandboxMemorySummary.textContent = `Learned from confirmed saves and successful imports${savedVersionCount > 0 ? `, with ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'} for context` : ''}.`;
+                    } else if (savedVersionCount > 0) {
+                        dataSandboxMemorySummary.textContent = `Built from ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'}.`;
+                    } else {
+                        dataSandboxMemorySummary.textContent = 'No learned mapping memory yet. Suggestions are currently heuristic.';
+                    }
                 }
                 dataSandboxMemoryGrid.innerHTML = memoryItems.map((memoryItem) => {
                     const suggestion = getDataSandboxSuggestion(memoryItem.key);
@@ -10038,28 +10063,30 @@ export function initializeOperatorConsole() {
                     const topPathMarkup = memoryItem.topPath
                         ? `<div class="mapping-memory-path"><strong>Preferred path:</strong> ${escapeHtml(memoryItem.topPath)}</div>`
                         : '<div class="mapping-memory-path"><strong>Preferred path:</strong> No saved memory yet</div>';
-                    const alternativesMarkup = memoryItem.alternatives.length
-                        ? `<div class="mapping-guided-meta"><strong>Other saved paths:</strong> ${escapeHtml(memoryItem.alternatives.map(([path, count]) => `${path} (${count})`).join(', '))}</div>`
-                        : '';
+                    const memoryHelpContent = `
+                        ${memoryItem.successfulImportCount > 0 || memoryItem.manualConfirmationCount > 0
+                            ? `<div><strong>Learned memory:</strong> ${memoryItem.successfulImportCount} successful import${memoryItem.successfulImportCount === 1 ? '' : 's'} and ${memoryItem.manualConfirmationCount} confirmed save${memoryItem.manualConfirmationCount === 1 ? '' : 's'} currently reinforce this path.</div>`
+                            : (memoryItem.populatedVersions > 0
+                                ? `<div><strong>Saved history:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved source versions include this field.</div>`
+                                : '<div><strong>Learned memory:</strong> No prior confirmed mapping evidence yet.</div>')}
+                        ${memoryItem.crossEventSignal
+                            ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
+                            : ''}
+                        <div><strong>Correction rule:</strong> ${selectedJob
+                            ? 'Use Save Mapping Memory if future imports should inherit the correction without touching the paused job. Use Save and Reprocess Import when the current paused import should rerun with this editor.'
+                            : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
+                        ${memoryItem.alternatives.length
+                            ? `<div><strong>Other saved paths:</strong> ${escapeHtml(memoryItem.alternatives.map(([path, count]) => `${path} (${count})`).join(', '))}</div>`
+                            : ''}
+                    `;
                     return `
                         <div class="mapping-memory-card">
-                            <div class="mapping-memory-label">${escapeHtml(memoryItem.label)}</div>
+                            <div class="mapping-memory-label">
+                                <span>${escapeHtml(memoryItem.label)}</span>
+                                ${buildHelpTooltip(memoryHelpContent, `Show ${memoryItem.label} saved mapping details`)}
+                            </div>
                             ${topPathMarkup}
                             <div class="mapping-memory-badges">${badges.join('')}</div>
-                            <div class="mapping-guided-meta">
-                                ${memoryItem.successfulImportCount > 0 || memoryItem.manualConfirmationCount > 0
-                                    ? `<div><strong>Learned memory:</strong> ${memoryItem.successfulImportCount} successful import${memoryItem.successfulImportCount === 1 ? '' : 's'} and ${memoryItem.manualConfirmationCount} confirmed save${memoryItem.manualConfirmationCount === 1 ? '' : 's'} currently reinforce this path.</div>`
-                                    : (memoryItem.populatedVersions > 0
-                                        ? `<div><strong>Saved history:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved source versions include this field.</div>`
-                                        : '<div><strong>Learned memory:</strong> No prior confirmed mapping evidence yet.</div>')}
-                                ${memoryItem.crossEventSignal
-                                    ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
-                                    : ''}
-                                <div><strong>Correction rule:</strong> ${selectedJob
-                                    ? 'Use Save Mapping Memory if future imports should inherit the correction without touching the paused job. Use Save and Reprocess Import when the current paused import should rerun with this editor.'
-                                    : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
-                            </div>
-                            ${alternativesMarkup}
                         </div>
                     `;
                 }).join('');
@@ -10118,11 +10145,11 @@ export function initializeOperatorConsole() {
                     }
                 }
                 if (!connectorName) {
-                    dataSandboxGuidedMapping.innerHTML = '<div class="mapping-guided-meta">Select a connector to load raw field candidates.</div>';
+                    dataSandboxGuidedMapping.innerHTML = '';
                     return;
                 }
                 if (!dataSandboxFieldCandidates.length) {
-                    dataSandboxGuidedMapping.innerHTML = '<div class="mapping-guided-meta">No raw field candidates available yet. Load a paused import job or provide a sample event below.</div>';
+                    dataSandboxGuidedMapping.innerHTML = '<div class="list-empty">No field candidates.</div>';
                     return;
                 }
 
@@ -10174,19 +10201,22 @@ export function initializeOperatorConsole() {
                     const correctionText = currentPath && suggestion?.suggested_path && currentPath !== suggestion.suggested_path
                         ? `<div><strong>Correction:</strong> the editor currently overrides the suggested path with ${escapeHtml(currentPath)}. Save to persist that correction in the selected scope.</div>`
                         : `<div><strong>Correction:</strong> changing this selector updates the JSON editor immediately.</div>`;
+                    const fieldHelpContent = `
+                        ${suggestionText}
+                        ${suggestionSourceText}
+                        ${sampleText}
+                        ${presenceText}
+                        ${correctionText}
+                    `;
                     return `
                         <div class="mapping-guided-card">
-                            <label for="data-sandbox-guided-${escapeHtml(fieldKey)}">${escapeHtml(fieldConfig.label)}${fieldConfig.required ? ' *' : ''}</label>
+                            <div class="field-label-with-help">
+                                <label for="data-sandbox-guided-${escapeHtml(fieldKey)}">${escapeHtml(fieldConfig.label)}${fieldConfig.required ? ' *' : ''}</label>
+                                ${buildHelpTooltip(fieldHelpContent, `Show ${fieldConfig.label} mapping guidance`)}
+                            </div>
                             <select id="data-sandbox-guided-${escapeHtml(fieldKey)}" data-field="${escapeHtml(fieldKey)}">
                                 ${optionMarkup}
                             </select>
-                            <div class="mapping-guided-meta">
-                                ${suggestionText}
-                                ${suggestionSourceText}
-                                ${sampleText}
-                                ${presenceText}
-                                ${correctionText}
-                            </div>
                         </div>
                     `;
                 }).join('');
@@ -11723,7 +11753,7 @@ export function initializeOperatorConsole() {
                         },
                     ],
                     items,
-                    'No provider connections yet. Use Connect Campaign Provider to add one.',
+                    'No provider connections yet.',
                 );
                 providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
                     button.addEventListener('click', async () => {

@@ -28,6 +28,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Sidebar profile chip | Footer button | Shows the current signed-in identity at the bottom-left of the sidebar. Click it to open the account menu and use `Log out`. | `Studio Operator` | Opens the account menu, and `Log out` clears the app session then returns the shell to the organization URL gate. |
 | Top bar search | Search box | Enter a module title or section label to jump directly to it. The top bar keeps the search field on the left and the theme selector on the right. | `settings` | The matching module or section opens and the matching page becomes active. |
 | Theme mode selector | Three-button segmented control | Use the header buttons to follow the system theme or force light or dark mode. The preference is stored in local storage for the current browser. | `Dark` | The shell and module pages immediately switch to the selected theme mode. |
+| Context help `?` | Hover / focus tooltip trigger | When a heading or label shows a small `?`, hover it with the pointer or focus it with the keyboard to reveal optional help without adding persistent instructional copy to the page. | `Guided Field Mapping ?` | A tooltip appears above the page with the relevant explanation for that nearby section or field. |
 | Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. Click the same already-open module again in the expanded sidebar to collapse its section list while keeping the current page active. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout, and clicking the icon routes to the first section then dismisses the popout. The `Settings` module is the exception: it opens directly into the Settings page without a sidebar submenu. | `Audience Engine` | The first section under that module becomes active and the matching page content loads, and a repeated click on that same open module collapses the inline section list. |
 | Sidebar section list | Inline submenu or collapsed popout | Click any section button in the expanded list under a module, or in the collapsed right-side popout, to jump directly to that section. In collapsed mode, the popout closes after the navigation fires. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
@@ -437,6 +438,8 @@ BigQuery table import behavior:
 ### 3.3 Connectors
 Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
 
+The Connectors page now keeps the main cards visually minimal. Section-specific explanation moved behind small `?` help triggers beside the card titles, and empty states are intentionally short.
+
 #### AI Agents & Models
 
 | Control | Type | How to use it | Sample input | Expected result |
@@ -589,21 +592,23 @@ Teams that keep warehouse credentials in Secret Manager can still use:
 ### 3.4 Mappings
 Use the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize.
 
+The Mapping Sandbox now keeps the page action-first: persistent helper paragraphs were removed, section-level guidance moved into `?` help beside the headings and labels, and each guided-field or saved-memory card exposes its detail through a per-card `?` tooltip instead of always-visible multi-line helper text.
+
 #### Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Connector` | Select | Choose which connector mapping to load or edit. | `Amplitude 1` | The mapping actions target this connector. |
 | `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Save and Reprocess Import` targets this job for a background rerun. |
-| `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
-| `Saved Mapping Memory` | Read-only cards | Review which raw path has stayed stable across confirmed saves and successful imports, and whether the current suggestion matches that memory. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by learned mapping memory or only by the current raw-sample heuristics. |
+| `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. Use each field's `?` helper to inspect the suggestion source, sample values, cross-event signal, and correction context. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
+| `Saved Mapping Memory` | Read-only cards | Review which raw path currently stays preferred for each canonical field. Use the card-level `?` helper to inspect learned-memory evidence, saved-history context, and alternative paths. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by learned mapping memory or only by the current raw-sample heuristics. |
 | `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the editor loads the effective job mapping so the guided controls and JSON editor stay in sync. | None | Mapping JSON fills the editor. |
 | `Save Mapping Memory` | Button | Persists the current mapping JSON as the connector's source mapping so future imports from the same connector can reuse it. | None | Mapping memory is updated for future imports without rerunning the paused import. |
 | `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
 | `Coverage` | Button | Calculates mapping coverage against the selected connector. | None | Coverage summary appears. |
 | `Save and Reprocess Import` | Button | Persists the corrected connector mapping, applies the same mapping as a job override for the selected paused import, and resumes that import in the background. | None | Import processing reruns normalization and dedupe for the paused job using the corrected mapping, while the Mapping Sandbox status and the expanded import row keep updating with live progress. |
 | `Mapping JSON` | Text area | The canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
-| `Sample Raw Event` | Text area | A raw source event used for local preview. When a paused import is selected, the Mapping Sandbox now loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
+| `Sample Raw Event` | Text area | A raw source event used for local preview. When a paused import is selected, the Mapping Sandbox now loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. The nearby `?` helper explains how the sample picker and textarea work together. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
 | `Raw Sample Picker` | Select | Switch between returned raw sample events from the selected paused import. | `Sample 2 · purchase · player-123` | The textarea updates to the selected true raw event, and `Preview Mapping` / `Coverage` run against that sample. |
 
 #### Operator flow
@@ -611,8 +616,8 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 2. Select the paused job from `Awaiting Mapping Job`.
 3. Confirm the connector matches the paused import source.
 4. Review `Saved Mapping Memory` to see whether the connector has a stable learned mapping for each required field.
-5. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`. The cards now show whether the suggestion came from learned memory built from confirmed saves and successful imports or only from current raw-field heuristics, plus a cross-event presence signal from the loaded raw samples.
-6. If the suggestion is wrong, change the selector. The JSON editor updates immediately and the card calls out that the current editor choice is a manual correction.
+5. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`. Use each field's `?` helper when you need to inspect suggestion source, sample values, or cross-event presence.
+6. If the suggestion is wrong, change the selector. The JSON editor updates immediately, and the same field-level `?` helper reflects the current correction context.
 7. Use `Raw Sample Picker` to inspect the actual raw events returned from the paused import.
 8. Review or refine the generated `Mapping JSON`.
 9. Click `Coverage` or `Preview Mapping` if needed.

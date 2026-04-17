@@ -587,18 +587,22 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
-            <p id="connectors-page-summary" class="subtle">Connect your first source, campaign provider, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.</p>
 
             <div id="ai-model-profiles-section" class="card split-card">
                 <div class="module-section-header">
-                    <h2>AI Agents &amp; Models</h2>
+                    <h2 class="section-title-with-help">
+                        <span>AI Agents &amp; Models</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show AI runtime help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Add and manage Ask AI runtimes used by backend-powered assistant flows and AI-assisted mapping suggestions. Use this section for Gemini, LM Studio, Ollama, or custom OpenAI-compatible endpoints that the backend can reach.</span>
+                        </span>
+                    </h2>
                     <div class="inline-actions">
                         <button id="add-ai-model-profile-btn" type="button">Connect Ask AI Runtime</button>
                         <button id="ai-model-profile-refresh-btn" type="button">Refresh</button>
                         <span id="ai-model-profile-status" class="subtle"></span>
                     </div>
                 </div>
-                <p class="subtle">Manage the backend-run model profiles that power Ask AI and AI-assisted mapping suggestions. Save Gemini, LM Studio, Ollama, or custom OpenAI-compatible runtimes here, then choose which one new Ask AI sessions should use by default. OpenAI-compatible endpoints must be reachable from the backend runtime; localhost presets are intended for self-hosted or local deployments.</p>
                 <p id="ai-model-profile-legacy-note" class="subtle" style="display: none;"></p>
                 <div id="ai-model-profile-form-container" style="display: none;">
                     <div class="grid-2">
@@ -631,12 +635,17 @@
 
             <div class="card split-card" id="source-connectors-section">
                 <div class="module-section-header">
-                    <h2>Data Source Connectors</h2>
+                    <h2 class="section-title-with-help">
+                        <span>Data Source Connectors</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show data connector help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Save ingestion sources and BigQuery connectors here. These records feed imports, prediction inputs, and source-level data access.</span>
+                        </span>
+                    </h2>
                     <div class="inline-actions">
                         <button id="add-connector-btn" type="button">Connect Data Source</button>
                     </div>
                 </div>
-                <p class="subtle">Use this section for ingestion sources, BigQuery, and connector records used by imports, prediction inputs, and legacy activation plumbing. Ask AI runtimes are managed separately above.</p>
                 <div id="connector-list">
                     <!-- Saved connectors will be dynamically added here -->
                 </div>
@@ -669,14 +678,19 @@
 
             <div id="provider-connections-section" class="card split-card">
                 <div class="module-section-header">
-                    <h2>Campaign Provider Connections</h2>
+                    <h2 class="section-title-with-help">
+                        <span>Campaign Provider Connections</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show campaign provider help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Save tenant-scoped SendGrid, Braze, and Push Provider credentials here. Action Orchestrator reuses these saved provider connections for live delivery.</span>
+                        </span>
+                    </h2>
                     <div class="inline-actions">
                         <button id="add-provider-connection-btn" type="button">Connect Campaign Provider</button>
                         <button id="provider-connection-refresh-btn" type="button">Refresh</button>
                         <span id="provider-connection-status" class="subtle"></span>
                     </div>
                 </div>
-                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid, Braze, and push-provider credentials here. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
                 <div id="provider-connection-form-container" style="display: none;">
                     <div class="grid-2">
                         <div class="form-group">
@@ -705,8 +719,13 @@
         <section id="data-sandbox" class="page">
             <h1>Mapping Sandbox</h1>
             <div class="card">
-                 <h2 style="margin-top: 2rem;">Manual Field Mapping</h2>
-                 <p>Override raw field paths when a connector payload uses mismatched or duplicate field names before normalization.</p>
+                 <h2 class="section-title-with-help" style="margin-top: 2rem;">
+                     <span>Manual Field Mapping</span>
+                     <span class="inline-help">
+                         <button type="button" class="inline-help-button" aria-label="Show manual field mapping help">?</button>
+                         <span class="inline-help-source" aria-hidden="true">Use manual mapping when a connector payload needs explicit raw-path overrides before normalization. Save Mapping updates future memory, while Save and Reprocess Import reruns the selected paused import with the current editor.</span>
+                     </span>
+                 </h2>
                  <div id="data-sandbox-mapping-status" style="font-size: 0.9rem; min-height: 1.25rem; margin-bottom: 0.75rem;"></div>
                  <div class="form-group">
                      <label for="data-sandbox-mapping-connector">Connector</label>
@@ -715,7 +734,13 @@
                      </select>
                  </div>
                  <div class="form-group">
-                     <label for="data-sandbox-awaiting-job">Awaiting Mapping Job</label>
+                     <div class="field-label-with-help">
+                         <label for="data-sandbox-awaiting-job">Awaiting Mapping Job</label>
+                         <span class="inline-help">
+                             <button type="button" class="inline-help-button" aria-label="Show awaiting mapping job help">?</button>
+                             <span class="inline-help-source" aria-hidden="true">Choose a paused <code>Awaiting Mapping</code> import when you want the current mapping editor to reprocess that same job. Leave this empty when you only want to update future mapping memory.</span>
+                         </span>
+                     </div>
                      <select id="data-sandbox-awaiting-job">
                          <option value="">No paused import job</option>
                      </select>
@@ -727,21 +752,27 @@
                      <button id="data-sandbox-coverage-btn">Coverage</button>
                      <button id="data-sandbox-process-mapping-btn">Save and Reprocess Import</button>
                  </div>
-                 <div id="data-sandbox-action-hint" class="mapping-guided-meta" style="margin: -0.2rem 0 1rem;"></div>
-                 <p style="font-size: 0.85rem; color: var(--text-secondary);">
-                    Example mapping keys: <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, <code>source_event_id</code>, <code>campaign</code>, <code>adset</code>, <code>media_source</code>. Values are raw JSON paths like <code>event_properties.PID</code>.
-                 </p>
                  <div class="mapping-guided-shell">
                      <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                         <h3 style="margin: 0;">Guided Field Mapping</h3>
-                         <div id="data-sandbox-guided-hint" style="font-size: 0.85rem; color: var(--text-secondary);"></div>
+                         <h3 class="section-title-with-help" style="margin: 0;">
+                             <span>Guided Field Mapping</span>
+                             <span class="inline-help">
+                                 <button type="button" class="inline-help-button" aria-label="Show guided field mapping help">?</button>
+                                 <span class="inline-help-source" aria-hidden="true">Match each canonical field to the best raw property path. Use the per-field <code>?</code> buttons for suggestions, sample values, cross-event coverage, and correction context.</span>
+                             </span>
+                         </h3>
                      </div>
                      <div id="data-sandbox-guided-mapping" class="mapping-guided-grid"></div>
                  </div>
                  <div class="mapping-memory-shell">
                      <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                         <h3 style="margin: 0;">Saved Mapping Memory</h3>
-                         <div id="data-sandbox-memory-summary" class="mapping-guided-meta"></div>
+                         <h3 class="section-title-with-help" style="margin: 0;">
+                             <span>Saved Mapping Memory</span>
+                             <span class="inline-help">
+                                 <button type="button" class="inline-help-button" aria-label="Show saved mapping memory help">?</button>
+                                 <span class="inline-help-source" aria-hidden="true">This section shows the currently preferred saved path for each canonical field plus any stability badges. Use the card-level <code>?</code> buttons for learned-memory details, saved-history context, and alternative paths.</span>
+                             </span>
+                         </h3>
                      </div>
                      <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
                  </div>
@@ -764,12 +795,17 @@
                  <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
                      <div class="form-group" style="margin-bottom: 0;">
                          <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                             <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                             <div class="field-label-with-help" style="margin-bottom: 0;">
+                                 <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                                 <span class="inline-help">
+                                     <button type="button" class="inline-help-button" aria-label="Show sample raw event help">?</button>
+                                     <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use the JSON in this editor. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
+                                 </span>
+                             </div>
                              <select id="data-sandbox-sample-picker" style="max-width: 22rem;">
                                  <option value="">No raw samples loaded</option>
                              </select>
                          </div>
-                         <div id="data-sandbox-sample-meta" class="mapping-guided-meta" style="margin: 0.35rem 0 0.55rem;"></div>
                          <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
                      </div>
                      <div class="form-group" style="margin-bottom: 0;">
