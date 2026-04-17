@@ -730,7 +730,7 @@ class ImportService:
         mode: str,
     ) -> Dict[str, Any]:
         processing_stats: Dict[str, Any] = {}
-        if notifications and self.settings.data_backend_mode == "mock":
+        if notifications:
             runner = DataflowNormalizationRunner(gcs_service=GcsService(), bigquery_service=self.bigquery_service)
             processing_stats = runner.process_notifications(
                 notifications,

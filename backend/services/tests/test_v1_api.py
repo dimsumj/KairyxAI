@@ -2545,6 +2545,55 @@ def test_import_staging_upload_delay_does_not_consume_network_timeout_budget(cli
     assert run_import.json()["progress"]["details"]["events_staged"] == 1
 
 
+def test_gcp_mode_import_materializes_curated_events_and_profiles(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        data_backend_mode="gcp",
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def single_page(self, start_date, end_date, page_size=None):
+        yield [
+            {
+                "player_id": "u_1",
+                "event_name": "session_start",
+                "timestamp": "2026-02-01T00:00:00",
+                "event_properties": {"platform": "ios"},
+            }
+        ]
+
+    monkeypatch.setattr("ingestion_service.IngestionService._iter_event_pages", single_page)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    payload = run_import.json()
+    assert payload["status"] == "completed"
+    assert payload["progress"]["details"]["processing"]["warehouse_stats"]["curation"]["curated_rows"] == 1
+    assert payload["progress"]["details"]["identity_summary"]["profiles"] == 1
+    assert payload["quality_report"]["canonical_user_id_coverage"] == 100.0
+
+
 def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
