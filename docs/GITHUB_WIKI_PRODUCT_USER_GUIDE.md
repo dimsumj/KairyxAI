@@ -585,7 +585,7 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 | `Connector` | Select | Choose which connector mapping to load or edit. | `Amplitude 1` | The mapping actions target this connector. |
 | `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Process After Mapping` targets this job. |
 | `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
-| `Saved Mapping Memory` | Read-only cards | Review which raw path has stayed stable across saved source mappings and whether the current suggestion matches that memory. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by saved source-memory history or only by the current raw-sample heuristics. |
+| `Saved Mapping Memory` | Read-only cards | Review which raw path has stayed stable across confirmed saves and successful imports, and whether the current suggestion matches that memory. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by learned mapping memory or only by the current raw-sample heuristics. |
 | `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the editor loads the effective job mapping so the guided controls and JSON editor stay in sync. | None | Mapping JSON fills the editor. |
 | `Save Mapping` | Button | Persists the current mapping JSON. With a paused import selected, the save becomes a `Job Override`; otherwise it updates the connector's source mapping. | None | Mapping is saved for the selected job override or source mapping scope. |
 | `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
@@ -599,8 +599,8 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 1. Open `Data Core -> Mappings`.
 2. Select the paused job from `Awaiting Mapping Job`.
 3. Confirm the connector matches the paused import source.
-4. Review `Saved Mapping Memory` to see whether the connector has a stable prior mapping for each required field.
-5. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`. The cards now show whether the suggestion came from saved source-memory history or only from current raw-field heuristics, plus a cross-event presence signal from the loaded raw samples.
+4. Review `Saved Mapping Memory` to see whether the connector has a stable learned mapping for each required field.
+5. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`. The cards now show whether the suggestion came from learned memory built from confirmed saves and successful imports or only from current raw-field heuristics, plus a cross-event presence signal from the loaded raw samples.
 6. If the suggestion is wrong, change the selector. The JSON editor updates immediately and the card calls out that the current editor choice is a manual correction.
 7. Use `Raw Sample Picker` to inspect the actual raw events returned from the paused import.
 8. Review or refine the generated `Mapping JSON`.

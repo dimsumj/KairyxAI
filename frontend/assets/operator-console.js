@@ -9583,6 +9583,7 @@ export function initializeOperatorConsole() {
             function getDataSandboxMappingMemory() {
                 const versions = Array.isArray(dataSandboxMappingVersions) ? dataSandboxMappingVersions : [];
                 return DATA_SANDBOX_MAPPING_FIELDS.map((fieldConfig) => {
+                    const suggestion = getDataSandboxSuggestion(fieldConfig.key);
                     const counts = new Map();
                     let populatedVersions = 0;
                     versions.forEach((item) => {
@@ -9596,15 +9597,22 @@ export function initializeOperatorConsole() {
                     });
                     const rankedPaths = Array.from(counts.entries())
                         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-                    const topPath = rankedPaths[0]?.[0] || '';
+                    const learnedPath = String(suggestion?.suggested_path || '').trim();
+                    const topPath = learnedPath || rankedPaths[0]?.[0] || '';
                     const topCount = rankedPaths[0]?.[1] || 0;
+                    const manualConfirmationCount = Number(suggestion?.manual_confirmation_count || 0);
+                    const successfulImportCount = Number(suggestion?.successful_import_count || 0);
+                    const profile = suggestion?.profile || {};
                     return {
                         ...fieldConfig,
                         totalVersions: versions.length,
                         populatedVersions,
                         topPath,
                         topCount,
-                        stable: populatedVersions > 1 && rankedPaths.length === 1,
+                        manualConfirmationCount,
+                        successfulImportCount,
+                        profile,
+                        stable: (populatedVersions > 1 && rankedPaths.length === 1) || Number(profile.event_type_coverage || 0) >= 0.6,
                         alternatives: rankedPaths.slice(1, 3),
                     };
                 });
@@ -9622,17 +9630,31 @@ export function initializeOperatorConsole() {
                 const currentMapping = getDataSandboxCurrentMapping({ silent: true });
                 const savedVersionCount = Number(Array.isArray(dataSandboxMappingVersions) ? dataSandboxMappingVersions.length : 0);
                 const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
-                dataSandboxMemorySummary.textContent = savedVersionCount > 0
-                    ? `Built from ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'}.`
-                    : 'No saved source mapping versions yet.';
+                const learnedSignalCount = memoryItems.reduce(
+                    (total, item) => total + Number(item.manualConfirmationCount || 0) + Number(item.successfulImportCount || 0),
+                    0,
+                );
+                if (learnedSignalCount > 0) {
+                    dataSandboxMemorySummary.textContent = `Learned from confirmed saves and successful imports${savedVersionCount > 0 ? `, with ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'} for context` : ''}.`;
+                } else if (savedVersionCount > 0) {
+                    dataSandboxMemorySummary.textContent = `Built from ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'}.`;
+                } else {
+                    dataSandboxMemorySummary.textContent = 'No learned mapping memory yet. Suggestions are currently heuristic.';
+                }
                 dataSandboxMemoryGrid.innerHTML = memoryItems.map((memoryItem) => {
                     const suggestion = getDataSandboxSuggestion(memoryItem.key);
                     const currentPath = String(currentMapping[memoryItem.key] || '').trim();
                     const badges = [];
+                    if (memoryItem.successfulImportCount > 0) {
+                        badges.push(`<span class="mapping-memory-badge is-good">${escapeHtml(`${memoryItem.successfulImportCount} successful import${memoryItem.successfulImportCount === 1 ? '' : 's'}`)}</span>`);
+                    }
+                    if (memoryItem.manualConfirmationCount > 0) {
+                        badges.push(`<span class="mapping-memory-badge is-info">${escapeHtml(`${memoryItem.manualConfirmationCount} confirmed save${memoryItem.manualConfirmationCount === 1 ? '' : 's'}`)}</span>`);
+                    }
                     if (memoryItem.stable) {
-                        badges.push(`<span class="mapping-memory-badge is-good">Stable across ${memoryItem.populatedVersions} saves</span>`);
+                        badges.push(`<span class="mapping-memory-badge is-good">Stable signal</span>`);
                     } else if (memoryItem.topPath) {
-                        badges.push(`<span class="mapping-memory-badge is-info">Seen in ${memoryItem.topCount}/${memoryItem.populatedVersions} populated saves</span>`);
+                        badges.push(`<span class="mapping-memory-badge is-info">Current preferred path</span>`);
                     }
                     if (memoryItem.topPath && suggestion?.suggested_path === memoryItem.topPath) {
                         badges.push('<span class="mapping-memory-badge is-good">Matches current suggestion</span>');
@@ -9654,11 +9676,16 @@ export function initializeOperatorConsole() {
                             ${topPathMarkup}
                             <div class="mapping-memory-badges">${badges.join('')}</div>
                             <div class="mapping-guided-meta">
-                                ${memoryItem.populatedVersions > 0
-                                    ? `<div><strong>Memory coverage:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved versions include this field.</div>`
-                                    : '<div><strong>Memory coverage:</strong> No saved versions include this field yet.</div>'}
+                                ${memoryItem.successfulImportCount > 0 || memoryItem.manualConfirmationCount > 0
+                                    ? `<div><strong>Learned memory:</strong> ${memoryItem.successfulImportCount} successful import${memoryItem.successfulImportCount === 1 ? '' : 's'} and ${memoryItem.manualConfirmationCount} confirmed save${memoryItem.manualConfirmationCount === 1 ? '' : 's'} currently reinforce this path.</div>`
+                                    : (memoryItem.populatedVersions > 0
+                                        ? `<div><strong>Saved history:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved source versions include this field.</div>`
+                                        : '<div><strong>Learned memory:</strong> No prior confirmed mapping evidence yet.</div>')}
+                                ${Number(memoryItem.profile?.event_type_coverage || 0) > 0
+                                    ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
+                                    : ''}
                                 <div><strong>Correction rule:</strong> ${selectedJob
-                                    ? 'The current paused import is using a job override. Save without a paused job selected to update source-memory history for future imports.'
+                                    ? 'The current paused import is using a job override. Save the corrected mapping, then process the paused import. That successful run will reinforce future suggestions.'
                                     : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
                             </div>
                             ${alternativesMarkup}
@@ -9712,9 +9739,9 @@ export function initializeOperatorConsole() {
                 );
                 if (dataSandboxGuidedHint) {
                     if (selectedJob) {
-                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Source memory below is built from saved source mappings; job overrides do not change that memory unless you later save a source mapping.`;
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Saving a correction lets you resume this paused import, and a successful run reinforces future auto-mapping memory.`;
                     } else if (connectorName) {
-                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Saved source mappings become the memory reused on future loads.`;
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Confirmed saves and successful imports become the memory reused on future loads.`;
                     } else {
                         dataSandboxGuidedHint.textContent = '';
                     }
@@ -9760,9 +9787,11 @@ export function initializeOperatorConsole() {
                         : '<div><strong>Suggested:</strong> pick the best matching raw property path</div>';
                     const suggestionSourceText = suggestion?.suggested_path
                         ? (
-                            memory?.topPath && memory.topPath === suggestion.suggested_path
-                                ? `<div><strong>Learned from:</strong> saved source mapping memory (${memory.topCount}/${memory.populatedVersions || 1} matching save${memory.topCount === 1 ? '' : 's'})</div>`
-                                : `<div><strong>Learned from:</strong> ${escapeHtml(String(suggestion.engine || 'raw-field heuristics').replace(/_/g, ' '))}</div>`
+                            (Number(suggestion?.successful_import_count || 0) > 0 || Number(suggestion?.manual_confirmation_count || 0) > 0)
+                                ? `<div><strong>Learned from:</strong> ${Number(suggestion?.successful_import_count || 0)} successful import${Number(suggestion?.successful_import_count || 0) === 1 ? '' : 's'} and ${Number(suggestion?.manual_confirmation_count || 0)} confirmed save${Number(suggestion?.manual_confirmation_count || 0) === 1 ? '' : 's'}.</div>`
+                                : (memory?.topPath && memory.topPath === suggestion.suggested_path
+                                    ? `<div><strong>Learned from:</strong> saved source mapping history (${memory.topCount}/${memory.populatedVersions || 1} matching save${memory.topCount === 1 ? '' : 's'})</div>`
+                                    : `<div><strong>Learned from:</strong> ${escapeHtml(String(suggestion.engine || 'raw-field heuristics').replace(/_/g, ' '))}</div>`)
                         )
                         : '<div><strong>Learned from:</strong> no suggestion yet</div>';
                     const sampleText = samplePreview.length
