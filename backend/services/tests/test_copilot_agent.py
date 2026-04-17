@@ -544,7 +544,7 @@ def test_copilot_agent_model_profiles_support_default_selection_and_provider_fal
     def _raise_requests(*args, **kwargs):
         raise RuntimeError("provider unavailable")
 
-    monkeypatch.setattr("app.application.copilot_agent.requests.post", _raise_requests)
+    monkeypatch.setattr("app.application.text_model_runtime.requests.post", _raise_requests)
 
     fallback = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -559,6 +559,119 @@ def test_copilot_agent_model_profiles_support_default_selection_and_provider_fal
     assert payload["session_state"]["effective_provider"] == "anthropic"
     assert payload["assistant_message"]
     assert payload["session_state"]["status"] == "active"
+
+
+def test_copilot_agent_model_profiles_allow_local_openai_without_api_key(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+
+    profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "LM Studio Local",
+            "provider": "openai",
+            "model_name": "local-llama-3.1",
+            "config": {
+                "base_url": "http://127.0.0.1:1234/v1/",
+                "runtime_preset": "lmstudio",
+            },
+            "is_default": True,
+        },
+    )
+    assert profile.status_code == 201, profile.text
+    payload = profile.json()
+    assert payload["config"]["api_key"] is None
+    assert payload["config"]["api_key_configured"] is False
+    assert payload["config"]["base_url"] == "http://127.0.0.1:1234/v1"
+    assert payload["config"]["runtime_preset"] == "lmstudio"
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "{\"assistant_message\":\"Use the cohort builder or ask the agent to draft it.\"}",
+                        }
+                    }
+                ]
+            }
+
+    captured = {}
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+        captured["json"] = json or {}
+        captured["timeout"] = timeout
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.application.text_model_runtime.requests.post", _fake_post)
+
+    session = client.post(
+        "/api/v1/copilot/agent/sessions",
+        headers=headers,
+        json={"title": "Local OpenAI Session", "ui_context": {}},
+    )
+    assert session.status_code == 201
+    session_id = session.json()["session_state"]["session_id"]
+    assert session.json()["session_state"]["effective_provider"] == "openai"
+    assert session.json()["session_state"]["effective_model_name"] == "local-llama-3.1"
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={"message": "How do I create a cohort?", "ui_context": {}},
+    )
+    assert response.status_code == 200
+    assert response.json()["assistant_message"]
+    assert captured["url"] == "http://127.0.0.1:1234/v1/chat/completions"
+    assert "Authorization" not in captured["headers"]
+    assert captured["json"]["model"] == "local-llama-3.1"
+
+
+def test_copilot_agent_model_profiles_reject_openai_without_api_key_or_base_url(client):
+    headers = _headers("operator", actor_id="agent_operator")
+
+    profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Broken OpenAI Profile",
+            "provider": "openai",
+            "model_name": "gpt-4.1-mini",
+            "config": {},
+        },
+    )
+    assert profile.status_code == 409
+    assert profile.json()["detail"] == "OpenAI agent model profiles require api_key or base_url."
+
+
+def test_copilot_agent_model_profiles_reject_private_openai_base_url_in_prod(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+    monkeypatch.setenv("APP_ENV", "prod")
+
+    profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Hosted LM Studio",
+            "provider": "openai",
+            "model_name": "local-llama-3.1",
+            "config": {
+                "base_url": "http://127.0.0.1:1234/v1",
+                "runtime_preset": "lmstudio",
+            },
+        },
+    )
+    assert profile.status_code == 409
+    assert (
+        profile.json()["detail"]
+        == "Private-network or localhost OpenAI-compatible runtime base_url values are only allowed outside hosted production deployments."
+    )
 
 
 def test_copilot_agent_draft_sql_blocks_when_preview_lacks_canonical_user_id(client, monkeypatch):

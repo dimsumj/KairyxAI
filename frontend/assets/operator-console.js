@@ -2355,6 +2355,7 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'connectors') {
                     loadSavedConnectors();
+                    loadAiModelProfileWorkspace({ preserveSelection: true });
                     loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
@@ -3011,7 +3012,6 @@ export function initializeOperatorConsole() {
             const operatorHubConnectorsBtn = document.getElementById('operator-hub-connectors-btn');
             const operatorHubConnectorsSummary = document.getElementById('operator-hub-connectors-summary');
             const addConnectorBtn = document.getElementById('add-connector-btn');
-            const addConnectorCard = document.getElementById('add-connector-card');
             const addConnectorFormContainer = document.getElementById('add-connector-form-container');
             const cancelBtn = document.getElementById('cancel-add-connector-btn');
             const connectorDisplayNameInput = document.getElementById('connector-display-name');
@@ -3020,6 +3020,18 @@ export function initializeOperatorConsole() {
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
             const connectorsPageSummary = document.getElementById('connectors-page-summary');
+            const addAiModelProfileBtn = document.getElementById('add-ai-model-profile-btn');
+            const aiModelProfileRefreshBtn = document.getElementById('ai-model-profile-refresh-btn');
+            const aiModelProfileStatus = document.getElementById('ai-model-profile-status');
+            const aiModelProfileLegacyNote = document.getElementById('ai-model-profile-legacy-note');
+            const aiModelProfileFormContainer = document.getElementById('ai-model-profile-form-container');
+            const aiModelProfileRuntimeSelect = document.getElementById('ai-model-profile-runtime-select');
+            const aiModelProfileNameInput = document.getElementById('ai-model-profile-name-input');
+            const aiModelProfileFields = document.getElementById('ai-model-profile-fields');
+            const aiModelProfileDefaultCheckbox = document.getElementById('ai-model-profile-default-checkbox');
+            const aiModelProfileSaveBtn = document.getElementById('ai-model-profile-save-btn');
+            const aiModelProfileCancelBtn = document.getElementById('ai-model-profile-cancel-btn');
+            const aiModelProfileList = document.getElementById('ai-model-profile-list');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -3042,10 +3054,19 @@ export function initializeOperatorConsole() {
                 braze: 'Braze',
                 wynn_push_notifier: 'Wynn PushNotifier',
             };
+            const aiRuntimePresetLabels = {
+                gemini: 'Gemini',
+                lmstudio: 'LM Studio',
+                ollama: 'Ollama',
+                openai_compatible: 'Custom OpenAI-compatible',
+                anthropic: 'Anthropic',
+            };
             let backendMode = 'unknown';
             let cachedConnectors = [];
             let connectorListRenderRequestId = 0;
             let cachedProviderConnections = [];
+            let cachedAgentModelProfiles = [];
+            let selectedAiModelProfileId = null;
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedCohorts = [];
@@ -3064,29 +3085,43 @@ export function initializeOperatorConsole() {
             const emailCampaignAssetCache = new Map();
             const emailCampaignAudienceFieldCache = new Map();
 
+            function getVisibleSourceConnectors(connectors = cachedConnectors) {
+                return (Array.isArray(connectors) ? connectors : []).filter((connector) => (
+                    String(connector.type || '').toLowerCase() !== 'google'
+                ));
+            }
+
+            function getPersistedAiModelProfiles(items = cachedAgentModelProfiles) {
+                return (Array.isArray(items) ? items : []).filter((item) => !Boolean(item.system_managed));
+            }
+
             function renderConnectorEntrySummary(message = '') {
-                const configuredCount = cachedConnectors.length;
+                const visibleConnectors = getVisibleSourceConnectors();
+                const configuredCount = visibleConnectors.length;
                 const providerConnectionCount = getProviderConnections().length;
-                const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
-                const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
+                const aiRuntimeCount = getPersistedAiModelProfiles().length;
+                const hasBigQuery = visibleConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
+                const hasIngestionSource = visibleConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
                 const summaryText = message || (
-                    configuredCount === 0 && providerConnectionCount === 0
+                    configuredCount === 0 && providerConnectionCount === 0 && aiRuntimeCount === 0
                         ? 'No connectors configured yet. Start with BigQuery, an ingestion source, or a campaign provider.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${aiRuntimeCount ? ` · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
                 );
                 if (operatorHubConnectorsSummary) {
                     operatorHubConnectorsSummary.textContent = summaryText;
                 }
                 if (connectorsPageSummary && !message) {
-                    const totalConfigured = configuredCount + providerConnectionCount;
+                    const totalConfigured = configuredCount + providerConnectionCount + aiRuntimeCount;
                     connectorsPageSummary.textContent = totalConfigured === 0
-                        ? 'Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.'
-                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} and ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
+                        ? 'Connect your first source, campaign provider, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.'
+                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'} configured.`;
                 }
             }
 
             function setConnectorFormVisible(isVisible, { connectorType = '' } = {}) {
-                addConnectorCard.style.display = isVisible ? 'none' : 'block';
+                if (addConnectorBtn) {
+                    addConnectorBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
                 addConnectorFormContainer.style.display = isVisible ? 'block' : 'none';
                 if (!isVisible) {
                     connectorTypeSelect.value = '';
@@ -5481,9 +5516,27 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                syncLegacyAiRuntimeNotice();
                 importBigQueryTableCache.clear();
                 renderConnectorEntrySummary();
                 return cachedConnectors;
+            }
+
+            function syncLegacyAiRuntimeNotice() {
+                if (!aiModelProfileLegacyNote) {
+                    return;
+                }
+                const legacyGoogleConnectors = (cachedConnectors || []).filter(
+                    (connector) => String(connector.type || '').trim().toLowerCase() === 'google'
+                );
+                if (!legacyGoogleConnectors.length) {
+                    aiModelProfileLegacyNote.textContent = '';
+                    aiModelProfileLegacyNote.style.display = 'none';
+                    return;
+                }
+                const connectorLabel = legacyGoogleConnectors.length === 1 ? 'connector' : 'connectors';
+                aiModelProfileLegacyNote.textContent = `${legacyGoogleConnectors.length} legacy Google AI ${connectorLabel} still exist and remain an Ask AI fallback until migrated into AI Agents & Models.`;
+                aiModelProfileLegacyNote.style.display = 'block';
             }
 
             async function refreshImportsState() {
@@ -6490,15 +6543,16 @@ export function initializeOperatorConsole() {
                 if (!connectorListDiv) {
                     return;
                 }
-                if (!connectors.length) {
+                const visibleConnectors = getVisibleSourceConnectors(connectors);
+                if (!visibleConnectors.length) {
                     const emptyState = document.createElement('div');
                     emptyState.className = 'card connector-empty-state';
-                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p>';
+                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No data source connectors configured yet. Use Connect Data Source to add your first ingestion source, BigQuery dataset, or legacy provider record.</p>';
                     connectorListDiv.replaceChildren(emptyState);
                     return;
                 }
                 const fragment = document.createDocumentFragment();
-                connectors.forEach((connector) => {
+                visibleConnectors.forEach((connector) => {
                     fragment.appendChild(buildConnectorCard(connector));
                 });
                 connectorListDiv.replaceChildren(fragment);
@@ -6524,6 +6578,481 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
+            function getAiRuntimeProfileDescriptor(profile = {}) {
+                const provider = String(profile.provider || '').trim().toLowerCase();
+                const config = profile.config || {};
+                const preset = String(config.runtime_preset || '').trim().toLowerCase();
+                if (provider === 'gemini') {
+                    return {
+                        preset: 'gemini',
+                        label: 'Gemini',
+                        provider: 'gemini',
+                        providerLabel: 'Gemini',
+                        endpointLabel: 'Google-hosted',
+                        supportsEditing: !Boolean(profile.system_managed),
+                    };
+                }
+                if (provider === 'openai') {
+                    const normalizedPreset = preset === 'lmstudio' || preset === 'ollama' ? preset : 'openai_compatible';
+                    return {
+                        preset: normalizedPreset,
+                        label: aiRuntimePresetLabels[normalizedPreset] || 'Custom OpenAI-compatible',
+                        provider: 'openai',
+                        providerLabel: 'OpenAI-compatible',
+                        endpointLabel: String(config.base_url || '').trim() || 'Default OpenAI endpoint',
+                        supportsEditing: true,
+                    };
+                }
+                if (provider === 'anthropic') {
+                    return {
+                        preset: 'anthropic',
+                        label: 'Anthropic',
+                        provider: 'anthropic',
+                        providerLabel: 'Anthropic',
+                        endpointLabel: String(config.base_url || '').trim() || 'Anthropic-hosted',
+                        supportsEditing: false,
+                    };
+                }
+                return {
+                    preset: provider || 'model',
+                    label: profile.name || 'Model Profile',
+                    provider,
+                    providerLabel: provider || 'model',
+                    endpointLabel: String(config.base_url || '').trim() || 'Managed endpoint',
+                    supportsEditing: false,
+                };
+            }
+
+            function nextAiModelProfileName(runtimePreset = 'gemini') {
+                const preset = String(runtimePreset || 'gemini').trim().toLowerCase() || 'gemini';
+                const baseLabel = aiRuntimePresetLabels[preset] || 'Ask AI Runtime';
+                const existingNames = new Set(
+                    (cachedAgentModelProfiles || []).map((item) => String(item.name || '').trim().toLowerCase()).filter(Boolean)
+                );
+                if (!existingNames.has(baseLabel.toLowerCase())) {
+                    return baseLabel;
+                }
+                let suffix = 2;
+                while (existingNames.has(`${baseLabel} ${suffix}`.toLowerCase())) {
+                    suffix += 1;
+                }
+                return `${baseLabel} ${suffix}`;
+            }
+
+            function setAiModelProfileFormVisible(isVisible, { runtimePreset = '', preserveValues = false } = {}) {
+                if (addAiModelProfileBtn) {
+                    addAiModelProfileBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
+                if (aiModelProfileFormContainer) {
+                    aiModelProfileFormContainer.style.display = isVisible ? 'block' : 'none';
+                }
+                if (!isVisible) {
+                    selectedAiModelProfileId = null;
+                    if (aiModelProfileRuntimeSelect) {
+                        aiModelProfileRuntimeSelect.value = 'gemini';
+                    }
+                    if (aiModelProfileNameInput) {
+                        aiModelProfileNameInput.value = '';
+                    }
+                    if (aiModelProfileDefaultCheckbox) {
+                        aiModelProfileDefaultCheckbox.checked = false;
+                    }
+                    syncAiModelProfileFormFields();
+                    setInlineStatus(aiModelProfileStatus, '');
+                    return;
+                }
+                if (runtimePreset && aiModelProfileRuntimeSelect) {
+                    aiModelProfileRuntimeSelect.value = runtimePreset;
+                }
+                syncAiModelProfileFormFields();
+                if (!preserveValues) {
+                    selectedAiModelProfileId = null;
+                    if (aiModelProfileNameInput) {
+                        aiModelProfileNameInput.value = nextAiModelProfileName(aiModelProfileRuntimeSelect?.value || runtimePreset || 'gemini');
+                        aiModelProfileNameInput.focus();
+                    }
+                    if (aiModelProfileDefaultCheckbox) {
+                        aiModelProfileDefaultCheckbox.checked = false;
+                    }
+                }
+                syncAiModelProfileFormState();
+            }
+
+            function syncAiModelProfileFormFields() {
+                if (!aiModelProfileFields) {
+                    return;
+                }
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase();
+                if (runtimePreset === 'gemini') {
+                    aiModelProfileFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ai-model-profile-gemini-model-input">Gemini Model</label>
+                                <select id="ai-model-profile-gemini-model-input">
+                                    <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+                                    <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                                    <option value="gemini-flash-latest">gemini-flash-latest</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-gemini-api-key-input">Google API Key</label>
+                                <input type="password" id="ai-model-profile-gemini-api-key-input" placeholder="AIza...">
+                            </div>
+                        </div>
+                        <p class="subtle">Gemini profiles run through the backend. API keys are encrypted before storage and are never returned in plaintext after save.</p>
+                    `;
+                } else {
+                    const presetLabel = aiRuntimePresetLabels[runtimePreset] || 'Custom OpenAI-compatible';
+                    const defaultBaseUrl = runtimePreset === 'lmstudio'
+                        ? 'http://127.0.0.1:1234/v1'
+                        : runtimePreset === 'ollama'
+                            ? 'http://127.0.0.1:11434/v1'
+                            : 'https://api.openai.com/v1';
+                    const defaultApiKey = '';
+                    const defaultModelName = runtimePreset === 'lmstudio'
+                        ? 'local-model'
+                        : runtimePreset === 'ollama'
+                            ? 'llama3.1'
+                            : 'gpt-4.1-mini';
+                    aiModelProfileFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ai-model-profile-openai-model-input">Model Name</label>
+                                <input type="text" id="ai-model-profile-openai-model-input" value="${escapeHtml(defaultModelName)}" placeholder="e.g. gpt-4.1-mini">
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-openai-api-key-input">${presetLabel} API Key / Token</label>
+                                <input type="password" id="ai-model-profile-openai-api-key-input" value="${escapeHtml(defaultApiKey)}" placeholder="${runtimePreset === 'openai_compatible' ? 'Optional bearer token' : 'Optional when the local server ignores auth'}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ai-model-profile-openai-base-url-input">Base URL</label>
+                            <input type="text" id="ai-model-profile-openai-base-url-input" value="${escapeHtml(defaultBaseUrl)}" placeholder="https://api.openai.com/v1">
+                        </div>
+                        <p class="subtle">Use an OpenAI-compatible endpoint. Base URLs with or without a trailing <code>/v1</code> both work. The configured endpoint must be reachable from the backend runtime. Local presets such as LM Studio and Ollama are intended for self-hosted or local deployments, and they usually leave the API key blank because the local server ignores bearer auth by default.</p>
+                    `;
+                }
+            }
+
+            function syncAiModelProfileFormState() {
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase() || 'gemini';
+                const editingProfile = selectedAiModelProfileId
+                    ? (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === selectedAiModelProfileId) || null
+                    : null;
+                const isEditing = Boolean(editingProfile);
+                if (aiModelProfileSaveBtn) {
+                    aiModelProfileSaveBtn.textContent = isEditing ? 'Update Runtime' : 'Save Runtime';
+                }
+                if (aiModelProfileNameInput && !String(aiModelProfileNameInput.value || '').trim() && !isEditing) {
+                    aiModelProfileNameInput.value = nextAiModelProfileName(runtimePreset);
+                }
+                const apiKeyInput = document.getElementById(
+                    runtimePreset === 'gemini'
+                        ? 'ai-model-profile-gemini-api-key-input'
+                        : 'ai-model-profile-openai-api-key-input'
+                );
+                if (isEditing && apiKeyInput && !String(apiKeyInput.value || '').trim()) {
+                    apiKeyInput.placeholder = 'Stored securely. Enter a new token only if you want to rotate it.';
+                }
+            }
+
+            function renderAiModelProfileList(items = cachedAgentModelProfiles) {
+                const profiles = Array.isArray(items) ? items : [];
+                renderSimpleTable(
+                    aiModelProfileList,
+                    [
+                        {
+                            label: 'Runtime',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const badges = [
+                                    `<span class="pill">${escapeHtml(descriptor.label)}</span>`,
+                                    item.is_default ? '<span class="pill">Default</span>' : '',
+                                    item.system_managed ? '<span class="pill">System</span>' : '',
+                                ].filter(Boolean).join(' ');
+                                return `<strong>${escapeHtml(item.name || descriptor.label)}</strong><div class="subtle">${escapeHtml(item.model_profile_id || '-')}</div><div class="table-badge-row">${badges}</div>`;
+                            },
+                        },
+                        {
+                            label: 'Model',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const endpoint = descriptor.provider === 'gemini' ? descriptor.endpointLabel : (descriptor.endpointLabel || 'Managed endpoint');
+                                return `<span>${escapeHtml(item.model_name || '-')}</span><div class="subtle">${escapeHtml(endpoint)}</div>`;
+                            },
+                        },
+                        {
+                            label: 'Provider',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const config = item.config || {};
+                                const secretConfigured = Boolean(config.api_key_configured);
+                                return `<span>${escapeHtml(descriptor.providerLabel)}</span><div class="subtle">${secretConfigured ? 'Secret stored' : 'Secret missing'}</div>`;
+                            },
+                        },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at || item.created_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const editButton = descriptor.supportsEditing && !item.system_managed
+                                    ? `<button type="button" data-ai-model-profile-action="edit" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}">Edit</button>`
+                                    : '';
+                                const defaultButton = item.is_default
+                                    ? `<button type="button" disabled>Default</button>`
+                                    : (!item.system_managed
+                                        ? `<button type="button" data-ai-model-profile-action="default" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}">Set Default</button>`
+                                        : '');
+                                const deleteButton = item.system_managed
+                                    ? ''
+                                    : `<button type="button" data-ai-model-profile-action="delete" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}" style="background-color: var(--subtle-text);">Delete</button>`;
+                                return `<div class="table-actions">${[editButton, defaultButton, deleteButton].filter(Boolean).join('')}</div>`;
+                            },
+                        },
+                    ],
+                    profiles,
+                    'No Ask AI runtimes saved yet. Use Connect Ask AI Runtime to add Gemini, LM Studio, Ollama, or a custom OpenAI-compatible endpoint that the backend can reach.',
+                );
+                aiModelProfileList?.querySelectorAll('[data-ai-model-profile-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const modelProfileId = String(button.dataset.aiModelProfileId || '').trim();
+                        const action = String(button.dataset.aiModelProfileAction || '').trim();
+                        if (!modelProfileId || !action) {
+                            return;
+                        }
+                        if (action === 'edit') {
+                            loadAiModelProfileIntoForm(modelProfileId);
+                            return;
+                        }
+                        if (action === 'default') {
+                            try {
+                                await setAiModelProfileDefault(modelProfileId);
+                            } catch (error) {
+                                setInlineStatus(aiModelProfileStatus, error.message || 'Failed to set the default Ask AI runtime.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'delete') {
+                            try {
+                                await deleteAiModelProfile(modelProfileId);
+                            } catch (error) {
+                                setInlineStatus(aiModelProfileStatus, error.message || 'Failed to delete the Ask AI runtime.', true);
+                            }
+                        }
+                    });
+                });
+            }
+
+            async function refreshAgentModelProfilesState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedAgentModelProfiles;
+                }
+                const payload = await apiRequest('/copilot/agent/model-profiles');
+                cachedAgentModelProfiles = Array.isArray(payload.items) ? payload.items : [];
+                renderConnectorEntrySummary();
+                return cachedAgentModelProfiles;
+            }
+
+            function loadAiModelProfileIntoForm(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile || profile.system_managed) {
+                    return;
+                }
+                const descriptor = getAiRuntimeProfileDescriptor(profile);
+                selectedAiModelProfileId = profile.model_profile_id;
+                setAiModelProfileFormVisible(true, {
+                    runtimePreset: descriptor.preset === 'anthropic' ? 'openai_compatible' : descriptor.preset,
+                    preserveValues: true,
+                });
+                if (aiModelProfileRuntimeSelect && descriptor.preset !== 'anthropic') {
+                    aiModelProfileRuntimeSelect.value = descriptor.preset;
+                }
+                syncAiModelProfileFormFields();
+                if (aiModelProfileNameInput) {
+                    aiModelProfileNameInput.value = profile.name || '';
+                }
+                if (aiModelProfileDefaultCheckbox) {
+                    aiModelProfileDefaultCheckbox.checked = Boolean(profile.is_default);
+                }
+                if (profile.provider === 'gemini') {
+                    const modelInput = document.getElementById('ai-model-profile-gemini-model-input');
+                    const apiKeyInput = document.getElementById('ai-model-profile-gemini-api-key-input');
+                    if (modelInput) {
+                        ensureSelectOption(modelInput, String(profile.model_name || '').trim(), String(profile.model_name || '').trim());
+                        modelInput.value = String(profile.model_name || '').trim();
+                    }
+                    if (apiKeyInput) {
+                        apiKeyInput.value = '';
+                    }
+                } else if (profile.provider === 'openai') {
+                    const modelInput = document.getElementById('ai-model-profile-openai-model-input');
+                    const apiKeyInput = document.getElementById('ai-model-profile-openai-api-key-input');
+                    const baseUrlInput = document.getElementById('ai-model-profile-openai-base-url-input');
+                    if (modelInput) {
+                        modelInput.value = String(profile.model_name || '').trim();
+                    }
+                    if (apiKeyInput) {
+                        apiKeyInput.value = '';
+                    }
+                    if (baseUrlInput) {
+                        baseUrlInput.value = String((profile.config || {}).base_url || '').trim();
+                    }
+                }
+                syncAiModelProfileFormState();
+                setInlineStatus(
+                    aiModelProfileStatus,
+                    Boolean((profile.config || {}).api_key_configured)
+                        ? `Editing ${profile.name}. Leave the API key blank to keep the stored secret.`
+                        : `Editing ${profile.name}.`,
+                );
+            }
+
+            function buildAiModelProfileRequestBody() {
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase() || 'gemini';
+                const name = String(aiModelProfileNameInput?.value || '').trim();
+                if (!name) {
+                    throw new Error('Profile name is required.');
+                }
+                if (runtimePreset === 'gemini') {
+                    const modelName = String(document.getElementById('ai-model-profile-gemini-model-input')?.value || '').trim();
+                    const apiKey = String(document.getElementById('ai-model-profile-gemini-api-key-input')?.value || '').trim();
+                    if (!selectedAiModelProfileId && !apiKey) {
+                        throw new Error('Google API Key is required for a new Gemini runtime.');
+                    }
+                    return {
+                        name,
+                        provider: 'gemini',
+                        model_name: modelName || null,
+                        is_default: Boolean(aiModelProfileDefaultCheckbox?.checked),
+                        config: {
+                            ...(apiKey ? { api_key: apiKey } : {}),
+                        },
+                    };
+                }
+                const modelName = String(document.getElementById('ai-model-profile-openai-model-input')?.value || '').trim();
+                const apiKey = String(document.getElementById('ai-model-profile-openai-api-key-input')?.value || '').trim();
+                const baseUrl = String(document.getElementById('ai-model-profile-openai-base-url-input')?.value || '').trim();
+                if (!modelName) {
+                    throw new Error('Model name is required for OpenAI-compatible runtimes.');
+                }
+                if (!baseUrl) {
+                    throw new Error('Base URL is required for OpenAI-compatible runtimes.');
+                }
+                return {
+                    name,
+                    provider: 'openai',
+                    model_name: modelName,
+                    is_default: Boolean(aiModelProfileDefaultCheckbox?.checked),
+                    config: {
+                        base_url: baseUrl,
+                        runtime_preset: runtimePreset,
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    },
+                };
+            }
+
+            async function syncAiModelProfileConsumers(preferredModelProfileId = '') {
+                renderCopilotAgentModelProfiles(cachedAgentModelProfiles);
+                const preferred = String(preferredModelProfileId || '').trim();
+                if (preferred && copilotAgentModelSelect) {
+                    ensureSelectOption(copilotAgentModelSelect, preferred, preferred);
+                    copilotAgentModelSelect.value = preferred;
+                    copilotAgentSelectedModelProfileId = preferred;
+                }
+                renderConnectorEntrySummary();
+            }
+
+            async function saveAiModelProfile() {
+                const body = buildAiModelProfileRequestBody();
+                setInlineStatus(
+                    aiModelProfileStatus,
+                    selectedAiModelProfileId ? 'Updating Ask AI runtime...' : 'Saving Ask AI runtime...',
+                );
+                const response = selectedAiModelProfileId
+                    ? await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(selectedAiModelProfileId)}`, {
+                        method: 'PATCH',
+                        body,
+                    })
+                    : await apiRequest('/copilot/agent/model-profiles', {
+                        method: 'POST',
+                        body,
+                    });
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers(response.model_profile_id);
+                loadAiModelProfileIntoForm(response.model_profile_id);
+                setInlineStatus(aiModelProfileStatus, `Saved Ask AI runtime ${response.name}.`);
+                return response;
+            }
+
+            async function setAiModelProfileDefault(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile) {
+                    throw new Error(`Agent model profile '${modelProfileId}' not found.`);
+                }
+                setInlineStatus(aiModelProfileStatus, `Setting ${profile.name} as the Ask AI default...`);
+                await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(modelProfileId)}`, {
+                    method: 'PATCH',
+                    body: { is_default: true },
+                });
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers(modelProfileId);
+                setInlineStatus(aiModelProfileStatus, `${profile.name} is now the Ask AI default.`);
+            }
+
+            async function deleteAiModelProfile(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile) {
+                    throw new Error(`Agent model profile '${modelProfileId}' not found.`);
+                }
+                if (!confirm(`Delete ${profile.name}? This removes the saved Ask AI runtime.`)) {
+                    return null;
+                }
+                setInlineStatus(aiModelProfileStatus, `Deleting ${profile.name}...`);
+                await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(modelProfileId)}`, { method: 'DELETE' });
+                if (selectedAiModelProfileId === modelProfileId) {
+                    setAiModelProfileFormVisible(false);
+                }
+                if (copilotAgentSelectedModelProfileId === modelProfileId) {
+                    copilotAgentSelectedModelProfileId = '';
+                }
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers();
+                setInlineStatus(aiModelProfileStatus, `Deleted ${profile.name}.`);
+                return profile;
+            }
+
+            async function loadAiModelProfileWorkspace({ preserveSelection = true } = {}) {
+                try {
+                    const profiles = await refreshAgentModelProfilesState();
+                    if (!preserveSelection) {
+                        setAiModelProfileFormVisible(false);
+                    } else if (selectedAiModelProfileId && profiles.some((item) => item.model_profile_id === selectedAiModelProfileId)) {
+                        loadAiModelProfileIntoForm(selectedAiModelProfileId);
+                    } else if (aiModelProfileFormContainer?.style.display !== 'none') {
+                        syncAiModelProfileFormState();
+                    }
+                    renderAiModelProfileList(profiles);
+                    await syncAiModelProfileConsumers();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedAgentModelProfiles = [];
+                        renderAiModelProfileList([]);
+                        if (aiModelProfileLegacyNote) {
+                            aiModelProfileLegacyNote.textContent = '';
+                            aiModelProfileLegacyNote.style.display = 'none';
+                        }
+                        setAiModelProfileFormVisible(false);
+                        setInlineStatus(aiModelProfileStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        await syncAiModelProfileConsumers();
+                        return;
+                    }
+                    setInlineStatus(aiModelProfileStatus, error.message || 'Failed to load Ask AI runtimes.', true);
                 }
             }
 
@@ -6558,18 +7087,6 @@ export function initializeOperatorConsole() {
                     <div class="form-group">
                         <label for="appsflyer_pull_api_url">AppsFlyer Pull API URL (optional)</label>
                         <input type="text" id="appsflyer_pull_api_url" placeholder="https://...">
-                    </div>`,
-                google: `
-                    <div class="form-group">
-                        <label for="google_api_key">Google API Key</label>
-                        <input type="password" id="google_api_key" placeholder="Enter your Google API Key">
-                    </div>
-                    <div class="form-group">
-                        <label for="model_name">Gemini Model Version</label>
-                        <select id="model_name" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px;">
-                            <option value="gemini-flash-latest" selected>gemini-flash-latest (Default)</option>
-                            <option value="gemini-pro-latest">gemini-pro-latest</option>
-                        </select>
                     </div>`,
                 bigquery: `
                     <div class="form-group">
@@ -6632,6 +7149,36 @@ export function initializeOperatorConsole() {
                 setConnectorFormVisible(false);
             });
 
+            addAiModelProfileBtn?.addEventListener('click', () => {
+                setAiModelProfileFormVisible(true);
+            });
+
+            aiModelProfileCancelBtn?.addEventListener('click', () => {
+                setAiModelProfileFormVisible(false);
+            });
+
+            aiModelProfileRefreshBtn?.addEventListener('click', () => {
+                loadAiModelProfileWorkspace({ preserveSelection: true });
+            });
+
+            aiModelProfileRuntimeSelect?.addEventListener('change', () => {
+                const previousSuggestedName = nextAiModelProfileName(aiModelProfileRuntimeSelect.value);
+                syncAiModelProfileFormFields();
+                if (!selectedAiModelProfileId) {
+                    aiModelProfileNameInput.value = previousSuggestedName;
+                }
+                syncAiModelProfileFormState();
+            });
+
+            aiModelProfileSaveBtn?.addEventListener('click', async () => {
+                try {
+                    await saveAiModelProfile();
+                } catch (error) {
+                    console.error('Error saving Ask AI runtime:', error);
+                    setInlineStatus(aiModelProfileStatus, error.message || 'Failed to save the Ask AI runtime.', true);
+                }
+            });
+
             connectorTypeSelect.addEventListener('change', (e) => {
                 const type = e.target.value;
                 if (type && connectorFields[type]) {
@@ -6669,11 +7216,6 @@ export function initializeOperatorConsole() {
                         api_token: document.getElementById('appsflyer_api_token').value,
                         app_id: document.getElementById('appsflyer_app_id').value,
                         pull_api_url: document.getElementById('appsflyer_pull_api_url').value || undefined
-                    };
-                } else if (type === 'google') {
-                    payload = {
-                        api_key: document.getElementById('google_api_key').value,
-                        model_name: document.getElementById('model_name').value || null
                     };
                 } else if (type === 'bigquery') {
                     const credentialMode = String(document.getElementById('bigquery_credentials_entry_mode')?.value || 'upload').toLowerCase();
@@ -11978,6 +12520,7 @@ export function initializeOperatorConsole() {
 
             function renderCopilotAgentModelProfiles(items = []) {
                 copilotAgentModelProfiles = Array.isArray(items) ? items : [];
+                cachedAgentModelProfiles = copilotAgentModelProfiles;
                 if (!copilotAgentModelSelect) return;
                 const options = [];
                 if (!copilotAgentModelProfiles.length) {
@@ -12015,10 +12558,11 @@ export function initializeOperatorConsole() {
                 copilotAgentModelSelect.disabled = true;
                 setInlineStatus(copilotAgentModelStatus, 'Loading agent model profiles...');
                 try {
-                    const payload = await apiRequest('/copilot/agent/model-profiles');
-                    renderCopilotAgentModelProfiles(payload.items || []);
+                    const items = await refreshAgentModelProfilesState();
+                    renderCopilotAgentModelProfiles(items);
                 } catch (error) {
                     copilotAgentModelProfiles = [];
+                    cachedAgentModelProfiles = [];
                     copilotAgentModelSelect.innerHTML = '<option value="">Deterministic fallback</option>';
                     copilotAgentModelSelect.disabled = true;
                     copilotAgentSelectedModelProfileId = '';

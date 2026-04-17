@@ -8,17 +8,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Protocol
 from urllib.parse import quote
 
-import requests
 from fastapi import HTTPException
 
-from app.application.agent_model_profiles import AgentModelProfileService
 from app.application.email_campaigns import EmailCampaignService
 from app.application.sendgrid_provider import SendGridProviderService
 from app.application.braze_provider import BrazeProviderService
 from app.application.workflows import WorkflowService
 from app.application.predictions import PredictionService
+from app.application.text_model_runtime import ConfiguredTextModelRuntime, TextModelRuntimeResolver
 from bigquery_service import BigQueryService, get_shared_bigquery_service
-from gemini_client import GeminiClient
 
 from app.application.cohorts import CohortService
 from app.application.connectors import ConnectorService
@@ -263,10 +261,10 @@ class CopilotAgentModelAdapter(Protocol):
 class ConfiguredCopilotAgentModel:
     def __init__(self, profile: Dict[str, Any] | None):
         self.profile = dict(profile or {})
-        self.provider = str(self.profile.get("provider") or "deterministic").strip().lower() or "deterministic"
-        self.model_name = str(self.profile.get("model_name") or "").strip()
-        self.config = dict(self.profile.get("config") or {})
-        self.gemini_client = self._build_gemini_client()
+        self.runtime = ConfiguredTextModelRuntime(self.profile, circuit_namespace="copilot_agent")
+        self.provider = self.runtime.provider
+        self.model_name = self.runtime.model_name
+        self.config = dict(self.runtime.config or {})
 
     def parse_message(
         self,
@@ -385,84 +383,10 @@ class ConfiguredCopilotAgentModel:
             return fallback
 
     def _is_ai_enabled(self) -> bool:
-        if self.provider == "gemini":
-            return self.gemini_client is not None
-        if self.provider in {"openai", "anthropic"}:
-            return bool(str(self.config.get("api_key") or "").strip()) and bool(self.model_name)
-        return False
-
-    def _build_gemini_client(self) -> GeminiClient | None:
-        if self.provider != "gemini":
-            return None
-        api_key = str(self.config.get("api_key") or "").strip()
-        if not api_key:
-            return None
-        try:
-            return GeminiClient(
-                api_key=api_key,
-                model_name=self.model_name or None,
-                circuit_namespace="copilot_agent",
-            )
-        except Exception:
-            return None
+        return self.runtime.is_enabled()
 
     def _request_text(self, payload: Dict[str, Any]) -> str:
-        if self.provider == "gemini" and self.gemini_client is not None:
-            return self.gemini_client.get_ai_response(json.dumps(payload))
-        prompt = json.dumps(payload)
-        if self.provider == "openai":
-            return self._call_openai(prompt)
-        if self.provider == "anthropic":
-            return self._call_anthropic(prompt)
-        return ""
-
-    def _call_openai(self, prompt: str) -> str:
-        api_key = str(self.config.get("api_key") or "").strip()
-        base_url = str(self.config.get("base_url") or "https://api.openai.com").strip().rstrip("/")
-        response = requests.post(
-            f"{base_url}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model_name,
-                "temperature": 0,
-                "messages": [
-                    {"role": "system", "content": "Return JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        return str((((payload.get("choices") or [{}])[0].get("message") or {}).get("content")) or "")
-
-    def _call_anthropic(self, prompt: str) -> str:
-        api_key = str(self.config.get("api_key") or "").strip()
-        base_url = str(self.config.get("base_url") or "https://api.anthropic.com").strip().rstrip("/")
-        response = requests.post(
-            f"{base_url}/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": self.model_name,
-                "max_tokens": 1200,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        content = payload.get("content") or []
-        if not content:
-            return ""
-        first_block = content[0] or {}
-        return str(first_block.get("text") or "")
+        return self.runtime.request_text(payload)
 
 
 def extract_json_object(raw_response: Any) -> Any:
@@ -653,7 +577,7 @@ class CopilotAgentService:
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
         self.sendgrid_provider = SendGridProviderService(repository)
         self.braze_provider = BrazeProviderService(repository)
-        self.model_profiles = AgentModelProfileService(repository)
+        self.model_runtime_resolver = TextModelRuntimeResolver(repository, circuit_namespace="copilot_agent")
 
     def create_session(
         self,
@@ -2359,28 +2283,15 @@ class CopilotAgentService:
         raise HTTPException(status_code=409, detail=f"Could not uniquely resolve template '{normalized_hint}' on provider connection '{provider_connection_id}'.")
 
     def _resolve_session_model(self, requested_model_profile_id: str | None) -> Dict[str, Any]:
-        profile = self.model_profiles.resolve_profile(requested_model_profile_id)
-        if profile is None:
-            return {
-                "model_profile_id": None,
-                "effective_provider": "deterministic",
-                "effective_model_name": "",
-                "model_selection_source": "deterministic_fallback",
-            }
-        return {
-            "model_profile_id": str(profile.get("model_profile_id") or ""),
-            "effective_provider": str(profile.get("provider") or "deterministic"),
-            "effective_model_name": str(profile.get("model_name") or ""),
-            "model_selection_source": str(profile.get("model_selection_source") or "profile"),
-        }
+        return self.model_runtime_resolver.resolve(requested_model_profile_id).as_session_selection()
 
     def _model_adapter_for_session(self, session: Dict[str, Any]) -> CopilotAgentModelAdapter:
         profile_id = str(session.get("model_profile_id") or "").strip() or None
         try:
-            profile = self.model_profiles.resolve_profile(profile_id)
+            runtime = self.model_runtime_resolver.resolve(profile_id).runtime
         except KeyError:
-            profile = None
-        return ConfiguredCopilotAgentModel(profile)
+            runtime = None
+        return ConfiguredCopilotAgentModel(runtime.profile if runtime is not None else None)
 
     def _decorate_session_async_state(self, session: Dict[str, Any]) -> Dict[str, Any]:
         decorated = dict(session or {})
