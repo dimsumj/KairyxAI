@@ -1585,7 +1585,7 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
         def __init__(self, *args, **kwargs):
             pass
 
-        def generate_content(self, prompt):
+        def get_ai_response(self, prompt):
             return """
             {
               "suggestions": [
@@ -1600,7 +1600,7 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
             """
 
     monkeypatch.setenv("GOOGLE_API_KEY", "mock-key")
-    monkeypatch.setattr("app.application.mappings.GeminiClient", FakeGeminiClient)
+    monkeypatch.setattr("app.application.text_model_runtime.GeminiClient", FakeGeminiClient)
 
     client.post(
         "/api/v1/connectors",
@@ -1659,7 +1659,81 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
     assert suggestions.status_code == 200
     assert suggestions.json()["engine"] == "ai_assisted"
     assert suggestions.json()["model_name"] == "gemini-test"
-    assert suggestions.json()["suggestions"][0]["suggested_path"] == "event_properties.campaign"
+    campaign_suggestion = next(item for item in suggestions.json()["suggestions"] if item["field"] == "campaign")
+    assert campaign_suggestion["suggested_path"] == "event_properties.campaign"
+
+
+def test_mapping_suggestions_use_default_openai_model_profile(client, monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            {
+                              "suggestions": [
+                                {
+                                  "field": "campaign",
+                                  "suggested_path": "event_properties.openai_campaign",
+                                  "confidence": 0.91,
+                                  "rationale": "OpenAI-compatible model selected the nested field."
+                                }
+                              ]
+                            }
+                            """,
+                        }
+                    }
+                ]
+            }
+
+    captured = {}
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+        captured["json"] = json or {}
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.application.text_model_runtime.requests.post", _fake_post)
+
+    headers = {"x-actor-role": "operator"}
+    profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Ollama Mapping",
+            "provider": "openai",
+            "model_name": "llama3.1",
+            "config": {
+                "base_url": "http://127.0.0.1:11434/v1",
+                "runtime_preset": "ollama",
+            },
+            "is_default": True,
+        },
+    )
+    assert profile.status_code == 201, profile.text
+
+    client.post(
+        "/api/v1/connectors",
+        json={"name": "Adjust Source", "type": "adjust", "config": {"api_token": "adjust-token"}},
+    )
+    client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id"}},
+    )
+
+    suggestions = client.get("/api/v1/mappings/Adjust%20Source/suggestions")
+    assert suggestions.status_code == 200
+    assert suggestions.json()["engine"] == "ai_assisted"
+    assert suggestions.json()["model_name"] == "llama3.1"
+    campaign_suggestion = next(item for item in suggestions.json()["suggestions"] if item["field"] == "campaign")
+    assert campaign_suggestion["suggested_path"] == "event_properties.openai_campaign"
+    assert captured["url"] == "http://127.0.0.1:11434/v1/chat/completions"
+    assert "Authorization" not in captured["headers"]
 
 
 def test_copilot_comparison_and_experiment_statistics(client):
