@@ -1,8 +1,10 @@
 # bigquery_service.py
 
 from collections import Counter
+import copy
 from functools import lru_cache
 import hashlib
+import logging
 import os
 import json
 import re
@@ -24,6 +26,8 @@ INT64_MIN = -(2**63)
 _INVALID_STORAGE_FIELD_CHARS_RE = re.compile(r"[^A-Za-z0-9_]")
 _VALID_STORAGE_FIELD_START_RE = re.compile(r"^[A-Za-z_]")
 _MAX_STORAGE_FIELD_NAME_LENGTH = 300
+_SCHEMA_TYPE_CHANGE_RE = re.compile(r"Field ([A-Za-z0-9_\.]+) has changed type from ([A-Z0-9_]+) to ([A-Z0-9_]+)")
+logger = logging.getLogger(__name__)
 
 
 def _is_int_like_scalar(value: Any) -> bool:
@@ -589,8 +593,20 @@ class BigQueryService:
                 autodetect=True,
                 ignore_unknown_values=True,
             )
-            load_job = self._client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()
+            try:
+                load_job = self._client.load_table_from_json(rows, table_id, job_config=job_config)
+                load_job.result()
+            except Exception as exc:
+                tolerated_rows, tolerance_summary = self._build_schema_tolerant_retry_rows(rows, exc)
+                if not tolerated_rows:
+                    raise
+                retry_job = self._client.load_table_from_json(tolerated_rows, table_id, job_config=job_config)
+                retry_job.result()
+                logger.warning(
+                    "Applied BigQuery schema-drift tolerance for table %s. adjustments=%s",
+                    table_id,
+                    tolerance_summary,
+                )
             return
 
         try:
@@ -603,6 +619,142 @@ class BigQueryService:
     def _append_rows(self, rows: List[Dict[str, Any]], target: str = "events_staging"):
         with self._lock:
             self._append_rows_unlocked(rows, target=target)
+
+    @staticmethod
+    def _extract_schema_type_changes(error: Exception) -> List[Dict[str, str]]:
+        seen: set[tuple[str, str, str]] = set()
+        changes: List[Dict[str, str]] = []
+        for field_path, expected_type, incoming_type in _SCHEMA_TYPE_CHANGE_RE.findall(str(error or "")):
+            key = (field_path, expected_type, incoming_type)
+            if key in seen:
+                continue
+            seen.add(key)
+            changes.append(
+                {
+                    "field_path": field_path,
+                    "expected_type": expected_type,
+                    "incoming_type": incoming_type,
+                }
+            )
+        return changes
+
+    @staticmethod
+    def _coerce_schema_drift_value(value: Any, expected_type: str) -> tuple[Any, str | None]:
+        normalized_type = str(expected_type or "").strip().upper()
+        if value in (None, ""):
+            return value, None
+        if normalized_type in {"FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"}:
+            try:
+                return float(value), "coerced"
+            except (TypeError, ValueError):
+                return None, "dropped"
+        if normalized_type in {"INTEGER", "INT64"}:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return None, "dropped"
+            if not numeric.is_integer():
+                return None, "dropped"
+            return int(numeric), "coerced"
+        if normalized_type in {"BOOLEAN", "BOOL"}:
+            if isinstance(value, bool):
+                return value, None
+            lowered = str(value).strip().lower()
+            if lowered in {"true", "1", "yes", "y"}:
+                return True, "coerced"
+            if lowered in {"false", "0", "no", "n"}:
+                return False, "coerced"
+            return None, "dropped"
+        if normalized_type == "STRING":
+            if isinstance(value, str):
+                return value, None
+            if isinstance(value, (dict, list)):
+                return json.dumps(_sanitize_for_storage(value), sort_keys=True, default=str), "coerced"
+            return str(value), "coerced"
+        if normalized_type in {"TIMESTAMP", "DATETIME"}:
+            if isinstance(value, (int, float)):
+                coerced = datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+                return coerced, "coerced"
+            try:
+                coerced = datetime.fromisoformat(str(value).replace("Z", "+00:00")).isoformat()
+                return coerced, "coerced"
+            except ValueError:
+                return None, "dropped"
+        if normalized_type == "DATE":
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date().isoformat(), "coerced"
+            except ValueError:
+                return None, "dropped"
+        if normalized_type == "TIME":
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).time().isoformat(), "coerced"
+            except ValueError:
+                return None, "dropped"
+        return None, "dropped"
+
+    @classmethod
+    def _apply_schema_tolerance_to_row(cls, row: Dict[str, Any], field_path: str, expected_type: str) -> str | None:
+        path_parts = [part for part in str(field_path or "").split(".") if part]
+        if not path_parts:
+            return None
+        container: Any = row
+        for part in path_parts[:-1]:
+            if not isinstance(container, dict):
+                return None
+            container = container.get(part)
+        if not isinstance(container, dict):
+            return None
+        leaf = path_parts[-1]
+        if leaf not in container:
+            return None
+        coerced_value, action = cls._coerce_schema_drift_value(container.get(leaf), expected_type)
+        if action is None:
+            return None
+        container[leaf] = coerced_value
+        flags = list(row.get("data_quality_flags") or [])
+        flag = f"schema_type_{action}:{field_path}"
+        if flag not in flags:
+            flags.append(flag)
+        row["data_quality_flags"] = flags
+        return action
+
+    @classmethod
+    def _build_schema_tolerant_retry_rows(
+        cls,
+        rows: List[Dict[str, Any]],
+        error: Exception,
+    ) -> tuple[List[Dict[str, Any]] | None, List[Dict[str, Any]]]:
+        changes = cls._extract_schema_type_changes(error)
+        if not changes:
+            return None, []
+        tolerated_rows = copy.deepcopy(rows)
+        applied_changes: List[Dict[str, Any]] = []
+        for change in changes:
+            adjusted_rows = 0
+            dropped_rows = 0
+            for row in tolerated_rows:
+                action = cls._apply_schema_tolerance_to_row(
+                    row,
+                    change["field_path"],
+                    change["expected_type"],
+                )
+                if action == "coerced":
+                    adjusted_rows += 1
+                elif action == "dropped":
+                    dropped_rows += 1
+            if adjusted_rows or dropped_rows:
+                applied_changes.append(
+                    {
+                        "field_path": change["field_path"],
+                        "expected_type": change["expected_type"],
+                        "incoming_type": change["incoming_type"],
+                        "coerced_rows": adjusted_rows,
+                        "dropped_rows": dropped_rows,
+                    }
+                )
+        if not applied_changes:
+            return None, []
+        return tolerated_rows, applied_changes
 
     def _append_rows_unlocked(self, rows: List[Dict[str, Any]], target: str = "events_staging"):
         prepared_events = []

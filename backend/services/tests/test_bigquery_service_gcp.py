@@ -253,3 +253,59 @@ def test_write_events_staging_sanitizes_invalid_bigquery_field_names_before_load
     assert "$schema" not in row
     assert "1party" not in row
     assert row["event_properties"][_sanitize_storage_field_name("campaign-name")] == "launch"
+
+
+def test_write_events_staging_retries_schema_drift_by_coercing_or_dropping_field_values():
+    captured_calls: list[list[dict[str, object]]] = []
+
+    class FakeLoadJob:
+        def result(self):
+            return None
+
+    class FakeClient:
+        def load_table_from_json(self, rows, table_id, job_config=None):
+            captured_calls.append(rows)
+            if len(captured_calls) == 1:
+                raise RuntimeError(
+                    "Provided Schema does not match Table demo.scope.events_staging. "
+                    "Field event_properties.bingo_dropped_numbers has changed type from FLOAT to STRING"
+                )
+            return FakeLoadJob()
+
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._lock = threading.Lock()
+    service._table_id = "demo.scope.events_staging"
+    service._bigquery = SimpleNamespace(
+        LoadJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+        SourceFormat=SimpleNamespace(NEWLINE_DELIMITED_JSON="NEWLINE_DELIMITED_JSON"),
+        WriteDisposition=SimpleNamespace(WRITE_APPEND="WRITE_APPEND"),
+        CreateDisposition=SimpleNamespace(CREATE_IF_NEEDED="CREATE_IF_NEEDED"),
+    )
+    service._client = FakeClient()
+
+    service.write_events_staging(
+        [
+            {
+                "event_type": "spin_completed",
+                "event_properties": {
+                    "bingo_dropped_numbers": "17.5",
+                },
+                "data_quality_flags": [],
+            },
+            {
+                "event_type": "spin_completed",
+                "event_properties": {
+                    "bingo_dropped_numbers": "07,11,19",
+                },
+            },
+        ],
+        job_id="job-1",
+    )
+
+    assert len(captured_calls) == 2
+    retry_rows = captured_calls[1]
+    assert retry_rows[0]["event_properties"]["bingo_dropped_numbers"] == 17.5
+    assert retry_rows[1]["event_properties"]["bingo_dropped_numbers"] is None
+    assert "schema_type_coerced:event_properties.bingo_dropped_numbers" in retry_rows[0]["data_quality_flags"]
+    assert "schema_type_dropped:event_properties.bingo_dropped_numbers" in retry_rows[1]["data_quality_flags"]
