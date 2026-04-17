@@ -198,6 +198,7 @@ Behavior:
 - browser-entered secrets are sent to the backend-managed profile APIs and are redacted from later reads
 - OpenAI-compatible base URLs can be saved with or without a trailing `/v1`; the backend normalizes the final chat-completions URL for both cases
 - OpenAI-compatible local runtimes may omit `api_key` entirely when the endpoint does not require bearer auth
+- OpenAI-compatible runtime URLs are called by the backend, so localhost and other private-network hosts are only valid in self-hosted or local deployments; hosted production rejects them
 - the selected model profile applies to the current agent session only
 - deterministic parsing and message composition remain the fallback when the selected model is unavailable
 

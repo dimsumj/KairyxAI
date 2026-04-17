@@ -424,7 +424,7 @@ BigQuery table import behavior:
 - Completed churn-list imports can create and activate a linked list cohort.
 
 ### 3.3 Connectors
-Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses.
+Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
 
 #### AI Agents & Models
 
@@ -436,8 +436,8 @@ Use this page to register upstream ingestion sources, campaign-provider credenti
 | `Gemini Model` | Select | Appears when `Runtime Type` is `Gemini`. | `gemini-2.5-flash` | The saved runtime targets the selected Gemini model. |
 | `Google API Key` | Password box | Appears when `Runtime Type` is `Gemini`. | `AIza...` | The backend-managed Gemini profile stores the key securely. |
 | `Model Name` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. | `llama3.1` | Ask AI sends requests to that OpenAI-compatible model name. |
-| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. The current backend contract requires a non-empty value even for local runtimes. | `ollama` | The saved profile can pass bearer auth when the endpoint expects it. |
-| `Base URL` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Enter the server root without a trailing `/v1`. | `http://127.0.0.1:11434` | Kairyx appends the OpenAI-compatible chat-completions path automatically. |
+| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Leave it blank when the local or hosted OpenAI-compatible endpoint does not require bearer auth. | `sk-live-key` | The saved profile sends bearer auth only when a token is configured. |
+| `Base URL` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Base URLs with or without a trailing `/v1` both work, but the endpoint must be reachable from the backend runtime. | `http://127.0.0.1:11434/v1` | Kairyx targets the OpenAI-compatible chat-completions path correctly for that endpoint. |
 | `Use this runtime as the Ask AI default` | Checkbox | Makes the saved runtime the default model profile for new Ask AI sessions. | Checked | Ask AI uses this runtime unless the operator selects another profile for the session. |
 | `Save Runtime` / `Update Runtime` | Button | Saves the runtime. Leave the API key blank while editing if you want to keep the existing secret. | None | The runtime appears in the `AI Agents & Models` table. |
 | `Refresh` | Button | Reloads the current runtime list. | None | The runtime table refreshes from the control plane. |
@@ -455,11 +455,15 @@ Runtime presets shipped in the current frontend:
 | Runtime preset | Backend provider | Fields / behavior | Sample input |
 | --- | --- | --- | --- |
 | `Gemini` | `gemini` | `Google API Key`, `Gemini Model` | `api_key=google_key_123`, `model_name=gemini-2.5-flash` |
-| `LM Studio` | `openai` | `Model Name`, `API Key / Token`, `Base URL` with default `http://127.0.0.1:1234` | `model_name=local-model`, `api_key=lm-studio` |
-| `Ollama` | `openai` | `Model Name`, `API Key / Token`, `Base URL` with default `http://127.0.0.1:11434` | `model_name=llama3.1`, `api_key=ollama` |
-| `Custom OpenAI-compatible` | `openai` | `Model Name`, `API Key / Token`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com` |
+| `LM Studio` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:1234/v1` | `model_name=local-model`, `base_url=http://127.0.0.1:1234/v1` |
+| `Ollama` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:11434/v1` | `model_name=llama3.1`, `base_url=http://127.0.0.1:11434/v1` |
+| `Custom OpenAI-compatible` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com/v1` |
 
 Existing Anthropic profiles still render in the AI runtime list and Ask AI model selector when they were created through the API, but the current Connectors form does not create new Anthropic profiles.
+
+Deployment note:
+- `LM Studio` and `Ollama` presets use localhost-style defaults for self-hosted or local deployments where the backend can reach that machine or network.
+- Hosted production deployments reject localhost and other private-network runtime URLs. Use a publicly reachable HTTPS endpoint or a self-hosted deployment in that case.
 
 #### Data Source Connectors
 

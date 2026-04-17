@@ -17,6 +17,7 @@ Own connector configuration, health checks, freshness, and latest-ingestion stat
 ### Ownership Notes
 - In the current repository, connector control-plane functionality and source freshness belong to Data Core
 - The Connectors page is also the shipped UI surface for backend-managed Ask AI runtime setup, even though the underlying execution belongs to the Copilot agent model-profile APIs
+- OpenAI-compatible runtime URLs are executed by the backend, so localhost and other private-network hosts are only valid for self-hosted or local deployments
 - Production-grade governance for connector secrets is still owned by the Master PRD's Production Readiness workstream
 
 ---

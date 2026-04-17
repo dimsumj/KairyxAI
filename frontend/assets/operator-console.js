@@ -3023,6 +3023,7 @@ export function initializeOperatorConsole() {
             const addAiModelProfileBtn = document.getElementById('add-ai-model-profile-btn');
             const aiModelProfileRefreshBtn = document.getElementById('ai-model-profile-refresh-btn');
             const aiModelProfileStatus = document.getElementById('ai-model-profile-status');
+            const aiModelProfileLegacyNote = document.getElementById('ai-model-profile-legacy-note');
             const aiModelProfileFormContainer = document.getElementById('ai-model-profile-form-container');
             const aiModelProfileRuntimeSelect = document.getElementById('ai-model-profile-runtime-select');
             const aiModelProfileNameInput = document.getElementById('ai-model-profile-name-input');
@@ -5514,9 +5515,27 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                syncLegacyAiRuntimeNotice();
                 importBigQueryTableCache.clear();
                 renderConnectorEntrySummary();
                 return cachedConnectors;
+            }
+
+            function syncLegacyAiRuntimeNotice() {
+                if (!aiModelProfileLegacyNote) {
+                    return;
+                }
+                const legacyGoogleConnectors = (cachedConnectors || []).filter(
+                    (connector) => String(connector.type || '').trim().toLowerCase() === 'google'
+                );
+                if (!legacyGoogleConnectors.length) {
+                    aiModelProfileLegacyNote.textContent = '';
+                    aiModelProfileLegacyNote.style.display = 'none';
+                    return;
+                }
+                const connectorLabel = legacyGoogleConnectors.length === 1 ? 'connector' : 'connectors';
+                aiModelProfileLegacyNote.textContent = `${legacyGoogleConnectors.length} legacy Google AI ${connectorLabel} still exist and remain an Ask AI fallback until migrated into AI Agents & Models.`;
+                aiModelProfileLegacyNote.style.display = 'block';
             }
 
             async function refreshImportsState() {
@@ -6712,7 +6731,7 @@ export function initializeOperatorConsole() {
                             <label for="ai-model-profile-openai-base-url-input">Base URL</label>
                             <input type="text" id="ai-model-profile-openai-base-url-input" value="${escapeHtml(defaultBaseUrl)}" placeholder="https://api.openai.com/v1">
                         </div>
-                        <p class="subtle">Use an OpenAI-compatible endpoint. Base URLs with or without a trailing <code>/v1</code> both work. Local runtimes such as LM Studio and Ollama usually leave the API key blank because the local server ignores bearer auth by default.</p>
+                        <p class="subtle">Use an OpenAI-compatible endpoint. Base URLs with or without a trailing <code>/v1</code> both work. The configured endpoint must be reachable from the backend runtime. Local presets such as LM Studio and Ollama are intended for self-hosted or local deployments, and they usually leave the API key blank because the local server ignores bearer auth by default.</p>
                     `;
                 }
             }
@@ -6794,7 +6813,7 @@ export function initializeOperatorConsole() {
                         },
                     ],
                     profiles,
-                    'No Ask AI runtimes saved yet. Use Connect Ask AI Runtime to add Gemini, LM Studio, Ollama, or a custom OpenAI-compatible endpoint.',
+                    'No Ask AI runtimes saved yet. Use Connect Ask AI Runtime to add Gemini, LM Studio, Ollama, or a custom OpenAI-compatible endpoint that the backend can reach.',
                 );
                 aiModelProfileList?.querySelectorAll('[data-ai-model-profile-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -7023,6 +7042,10 @@ export function initializeOperatorConsole() {
                     if (isWorkspaceContextError(error)) {
                         cachedAgentModelProfiles = [];
                         renderAiModelProfileList([]);
+                        if (aiModelProfileLegacyNote) {
+                            aiModelProfileLegacyNote.textContent = '';
+                            aiModelProfileLegacyNote.style.display = 'none';
+                        }
                         setAiModelProfileFormVisible(false);
                         setInlineStatus(aiModelProfileStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         await syncAiModelProfileConsumers();
