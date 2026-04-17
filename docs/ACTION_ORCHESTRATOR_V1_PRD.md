@@ -32,7 +32,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 
 ### Functionality
 - `Email Campaigns` remains the dedicated builder for one-time SendGrid and Braze lifecycle sends
-- `Push Notifications` becomes the dedicated builder for Wynn-backed push workflows and simulator fallback
+- `Push Notifications` becomes the dedicated builder for provider-backed push workflows and simulator fallback
 - The push builder reuses the existing workflow contract with cohort, experiment, trigger, policy, provider connection, campaign name, title, body, deep link, deep-link token, JSON data, and provider options
 - `Workflow Studio` becomes the shared operating surface for email campaigns and push workflows
 - Workflow Studio shows `Name`, `Type`, `Provider`, `Status`, `Last Run`, `Next Run`, `Last Results`, `Total Results`, and actions

@@ -986,7 +986,7 @@ class WorkflowService:
             raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
         return str((record.get("payload") or {}).get("provider") or "").strip().lower()
 
-    def _is_live_wynn_push_action(self, action: Dict[str, Any]) -> bool:
+    def _is_live_provider_push_action(self, action: Dict[str, Any]) -> bool:
         if str(action.get("channel") or "").strip().lower() != "push_notification":
             return False
         provider_name = self._resolve_provider_name(action)
@@ -1002,11 +1002,11 @@ class WorkflowService:
             raise ValueError("Push notification workflows require body or content.")
         resolved["body"] = body
         resolved["content"] = body
-        if self._is_live_wynn_push_action(resolved):
+        if self._is_live_provider_push_action(resolved):
             if not str(resolved.get("title") or "").strip():
-                raise ValueError("Live Wynn push workflows require title.")
+                raise ValueError("Live push workflows require title.")
             if not body:
-                raise ValueError("Live Wynn push workflows require body.")
+                raise ValueError("Live push workflows require body.")
         return resolved
 
     def _build_publish_preflight(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
@@ -1037,7 +1037,7 @@ class WorkflowService:
         for action in [channel_config, *step_actions, *branch_actions]:
             if not isinstance(action, dict):
                 continue
-            if self._is_live_wynn_push_action(action):
+            if self._is_live_provider_push_action(action):
                 if not str(action.get("title") or "").strip() and "push_title_missing" not in reasons:
                     reasons.append("push_title_missing")
                 if not self._action_message_content(action) and "push_body_missing" not in reasons:

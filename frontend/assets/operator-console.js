@@ -3052,8 +3052,9 @@ export function initializeOperatorConsole() {
                 bigquery: 'BigQuery',
                 sendgrid: 'SendGrid',
                 braze: 'Braze',
-                wynn_push_notifier: 'Wynn PushNotifier',
+                wynn_push_notifier: 'Push Provider',
             };
+            const pushProviderTypes = new Set(['wynn_push_notifier']);
             const aiRuntimePresetLabels = {
                 gemini: 'Gemini',
                 lmstudio: 'LM Studio',
@@ -10294,18 +10295,18 @@ export function initializeOperatorConsole() {
 
             function getCampaignProviderConfig(providerType = 'sendgrid') {
                 const normalizedProvider = String(providerType || 'sendgrid').trim().toLowerCase();
-                if (normalizedProvider === 'wynn_push_notifier') {
+                if (pushProviderTypes.has(normalizedProvider)) {
                     return {
                         provider: 'wynn_push_notifier',
-                        label: 'Wynn PushNotifier',
+                        label: 'Push Provider',
                         credentialLabel: 'API token',
-                        assetLabel: 'Wynn Campaign API',
-                        assetOptionLabel: 'Select a Wynn PushNotifier connection',
-                        selectProviderMessage: 'Select a Wynn PushNotifier provider connection first.',
-                        emptyAssetMessage: 'Wynn PushNotifier connections do not browse messaging assets.',
-                        loadingAssetsMessage: 'Loading Wynn PushNotifier connection...',
+                        assetLabel: 'Push Delivery API',
+                        assetOptionLabel: 'Select a push provider connection',
+                        selectProviderMessage: 'Select a push provider connection first.',
+                        emptyAssetMessage: 'Push provider connections do not browse messaging assets.',
+                        loadingAssetsMessage: 'Loading push provider connection...',
                         loadedAssetNoun: 'connection',
-                        namePlaceholder: 'e.g. Wynn PushNotifier Production',
+                        namePlaceholder: 'e.g. Push Provider Production',
                     };
                 }
                 if (normalizedProvider === 'braze') {
@@ -10336,6 +10337,10 @@ export function initializeOperatorConsole() {
                 };
             }
 
+            function isPushProviderType(providerType = '') {
+                return pushProviderTypes.has(String(providerType || '').trim().toLowerCase());
+            }
+
             function getProviderConnections(providerType = '') {
                 const normalizedProvider = String(providerType || '').trim().toLowerCase();
                 const items = Array.isArray(cachedProviderConnections) ? cachedProviderConnections : [];
@@ -10356,8 +10361,15 @@ export function initializeOperatorConsole() {
                 });
             }
 
-            function getPushWorkflowProviderConnections(providerType = 'wynn_push_notifier') {
-                return getProviderConnections(providerType);
+            function getPushWorkflowProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                return getProviderConnections().filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
+                    if (!isPushProviderType(provider)) {
+                        return false;
+                    }
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
             }
 
             function findProviderConnection(providerConnectionId) {
@@ -10461,7 +10473,7 @@ export function initializeOperatorConsole() {
                 if (normalizedProvider === 'braze') {
                     return document.getElementById('provider-connection-braze-api-key-input');
                 }
-                if (normalizedProvider === 'wynn_push_notifier') {
+                if (isPushProviderType(normalizedProvider)) {
                     return document.getElementById('provider-connection-wynn-api-token-input');
                 }
                 return document.getElementById('provider-connection-sendgrid-api-key-input');
@@ -10516,15 +10528,15 @@ export function initializeOperatorConsole() {
                         </div>
                         <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
                     `;
-                } else if (providerType === 'wynn_push_notifier') {
+                } else if (isPushProviderType(providerType)) {
                     providerConnectionConfigFields.innerHTML = `
                         <div class="grid-2">
                             <div class="form-group">
-                                <label for="provider-connection-wynn-api-token-input">PushNotifier API Token</label>
-                                <input type="password" id="provider-connection-wynn-api-token-input" placeholder="Enter the Wynn PushNotifier bearer token">
+                                <label for="provider-connection-wynn-api-token-input">Push API Token</label>
+                                <input type="password" id="provider-connection-wynn-api-token-input" placeholder="Enter the push provider bearer token">
                             </div>
                             <div class="form-group">
-                                <label for="provider-connection-wynn-base-url-input">PushNotifier Base URL</label>
+                                <label for="provider-connection-wynn-base-url-input">Push Provider Base URL</label>
                                 <input type="text" id="provider-connection-wynn-base-url-input" placeholder="https://push.example.com">
                             </div>
                         </div>
@@ -10538,7 +10550,7 @@ export function initializeOperatorConsole() {
                                 <input type="password" id="provider-connection-wynn-callback-signing-secret-input" placeholder="Optional future callback secret">
                             </div>
                         </div>
-                        <p class="subtle">Use this connection when Kairyx should create visible push campaigns inside Wynn PushNotifier instead of using the simulator.</p>
+                        <p class="subtle">Use this connection when Kairyx should route live push delivery through your selected provider instead of using the simulator.</p>
                     `;
                 } else {
                     providerConnectionConfigFields.innerHTML = `
@@ -10589,8 +10601,8 @@ export function initializeOperatorConsole() {
                     apiKeyInput.placeholder = 'Enter your Braze REST API key';
                     return;
                 }
-                if (providerType === 'wynn_push_notifier') {
-                    apiKeyInput.placeholder = 'Enter the Wynn PushNotifier bearer token';
+                if (isPushProviderType(providerType)) {
+                    apiKeyInput.placeholder = 'Enter the push provider bearer token';
                     return;
                 }
                 apiKeyInput.placeholder = 'SG....';
@@ -10615,7 +10627,7 @@ export function initializeOperatorConsole() {
                     if (restEndpointInput) {
                         restEndpointInput.value = (provider.config || {}).rest_endpoint || '';
                     }
-                } else if (provider.provider === 'wynn_push_notifier') {
+                } else if (isPushProviderType(provider.provider)) {
                     const baseUrlInput = document.getElementById('provider-connection-wynn-base-url-input');
                     const defaultDeepLinkTokenInput = document.getElementById('provider-connection-wynn-default-deep-link-token-input');
                     const callbackSigningSecretInput = document.getElementById('provider-connection-wynn-callback-signing-secret-input');
@@ -10705,12 +10717,12 @@ export function initializeOperatorConsole() {
                         rest_endpoint: restEndpoint,
                         ...(apiKey ? { api_key: apiKey } : {}),
                     };
-                } else if (providerType === 'wynn_push_notifier') {
+                } else if (isPushProviderType(providerType)) {
                     const baseUrl = String(document.getElementById('provider-connection-wynn-base-url-input')?.value || '').trim();
                     const defaultDeepLinkToken = String(document.getElementById('provider-connection-wynn-default-deep-link-token-input')?.value || '').trim();
                     const callbackSigningSecret = String(document.getElementById('provider-connection-wynn-callback-signing-secret-input')?.value || '').trim();
                     if (!baseUrl) {
-                        throw new Error('PushNotifier Base URL is required.');
+                        throw new Error('Push provider base URL is required.');
                     }
                     config = {
                         base_url: baseUrl,
@@ -10773,7 +10785,7 @@ export function initializeOperatorConsole() {
                         hint: 'API-triggered campaigns',
                     };
                 }
-                if (normalizedProvider === 'wynn_push_notifier') {
+                if (isPushProviderType(normalizedProvider)) {
                     return {
                         detail: (provider?.config || {}).base_url || '-',
                         hint: 'Workflow push delivery',
@@ -10805,7 +10817,7 @@ export function initializeOperatorConsole() {
                             render: (item) => `
                                 <div class="table-actions">
                                     <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
-                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">${String(item.provider || '').toLowerCase() === 'wynn_push_notifier' ? 'Use in Workflow' : 'Use in Campaign'}</button>
+                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">${isPushProviderType(item.provider) ? 'Use in Push' : 'Use in Campaign'}</button>
                                     <button type="button" data-provider-connection-action="delete" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
                                 </div>
                             `,
@@ -10834,7 +10846,7 @@ export function initializeOperatorConsole() {
                             }
                             return;
                         }
-                        if (String(provider.provider || '').toLowerCase() === 'wynn_push_notifier') {
+                        if (isPushProviderType(provider.provider)) {
                             activateModule('action-orchestrator', 'action-orchestrator-push', {
                                 targetId: 'push-notifications-section',
                                 closeSidebar: true,

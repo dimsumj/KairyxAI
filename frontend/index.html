@@ -677,7 +677,7 @@
                         <span id="provider-connection-status" class="subtle"></span>
                     </div>
                 </div>
-                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid, Braze, and Wynn PushNotifier credentials here. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
+                <p class="subtle">Use Connect Campaign Provider to store tenant-scoped SendGrid, Braze, and push-provider credentials here. Browser-entered secrets are encrypted before storage and are never returned to the UI after save.</p>
                 <div id="provider-connection-form-container" style="display: none;">
                     <div class="grid-2">
                         <div class="form-group">
@@ -685,7 +685,7 @@
                             <select id="provider-connection-type-select">
                                 <option value="sendgrid" selected>SendGrid</option>
                                 <option value="braze">Braze</option>
-                                <option value="wynn_push_notifier">Wynn PushNotifier</option>
+                                <option value="wynn_push_notifier">Push Provider</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1116,7 +1116,7 @@ WHERE predicted_churn_risk = 'high'
                     <h2>Push Notifications</h2>
                     <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
                 </div>
-                <p class="subtle">Build Wynn PushNotifier workflows with scheduling, guardrails, and live-provider routing while keeping simulator fallback available.</p>
+                <p class="subtle">Build reusable push workflows with scheduling, guardrails, and live-provider routing while keeping simulator fallback available.</p>
                 <div class="grid-3">
                     <div class="form-group">
                         <label for="workflow-name-input">Name</label>
@@ -1226,7 +1226,7 @@ WHERE predicted_churn_risk = 'high'
                     <div class="grid-2">
                         <div class="form-group">
                             <label for="workflow-push-deep-link-input">Deep Link (optional)</label>
-                            <input type="text" id="workflow-push-deep-link-input" placeholder="wynn://promotions/welcome-back">
+                            <input type="text" id="workflow-push-deep-link-input" placeholder="app://promotions/welcome-back">
                         </div>
                         <div class="form-group">
                             <label for="workflow-push-deep-link-token-input">Deep Link Token (optional)</label>
@@ -1244,7 +1244,7 @@ WHERE predicted_churn_risk = 'high'
                             <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
                     </details>
-                    <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a Wynn PushNotifier connection when this workflow should create visible Wynn push campaigns for explicit player IDs.</p>
+                    <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a push provider connection when this workflow should route live push delivery for explicit player IDs.</p>
                 </div>
                 <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
                     <input type="checkbox" id="workflow-requires-confirmation-checkbox">

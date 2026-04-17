@@ -178,12 +178,12 @@ class ProviderConnectionService:
             return
         if normalized_provider == "wynn_push_notifier":
             if not ProviderConnectionService._has_secret_reference(config, "api_token"):
-                raise ValueError("Wynn PushNotifier provider connections require api_token.")
+                raise ValueError("Push provider connections require api_token.")
             base_url = str((config or {}).get("base_url") or "").strip()
             if not base_url:
-                raise ValueError("Wynn PushNotifier provider connections require base_url.")
+                raise ValueError("Push provider connections require base_url.")
             if not base_url.startswith(("https://", "http://")):
-                raise ValueError("Wynn PushNotifier provider base_url must start with https:// or http://.")
+                raise ValueError("Push provider base_url must start with https:// or http://.")
             return
         if normalized_provider != "braze":
             return
