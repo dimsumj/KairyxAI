@@ -181,11 +181,12 @@ class MappingService:
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
         sample_events = self._load_job_sample_events(scope_key) if scope_type == "job" else self._load_source_sample_events(connector_name)
-        observed_paths = self._observed_paths(sample_events)
+        analysis_rows = sample_events or self.bigquery_service.get_rows_for_alias("standardized")[:100]
+        observed_paths = self._observed_paths(analysis_rows)
         suggestions = self._heuristic_suggestions(
             current,
             observed_paths,
-            path_profiles=self._build_path_profiles(sample_events),
+            path_profiles=self._build_path_profiles(analysis_rows),
             memory=self.get_mapping_memory(connector_name),
         )
         engine = "heuristic"
