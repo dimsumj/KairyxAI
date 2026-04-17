@@ -1136,7 +1136,6 @@
             position: relative;
             display: inline-flex;
             align-items: center;
-            z-index: 1;
         }
         .status-help {
             display: inline-flex;
@@ -1158,12 +1157,13 @@
             outline: 2px solid var(--primary-color);
             outline-offset: 2px;
         }
-        .status-tooltip {
-            position: absolute;
-            bottom: calc(100% + 0.5rem);
-            left: 50%;
-            transform: translateX(-50%);
+        .status-tooltip-source {
             display: none;
+        }
+
+        .status-tooltip-layer {
+            position: fixed;
+            inset: 0 auto auto 0;
             width: min(24rem, calc(100vw - 4rem));
             padding: 0.75rem 0.9rem;
             border: 1px solid var(--border-color);
@@ -1174,15 +1174,8 @@
             font-size: 0.82rem;
             line-height: 1.45;
             white-space: normal;
-            z-index: 120;
-        }
-        .status-help-wrap:hover .status-tooltip,
-        .status-help-wrap:focus-within .status-tooltip {
-            display: block;
-        }
-        .status-help-wrap:hover,
-        .status-help-wrap:focus-within {
-            z-index: 120;
+            pointer-events: none;
+            z-index: 400;
         }
         .service-name {
             font-weight: 600;

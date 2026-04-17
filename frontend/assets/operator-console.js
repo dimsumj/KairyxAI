@@ -139,6 +139,7 @@ export function initializeOperatorConsole() {
             const workspaceCreateProjectStatus = document.getElementById('workspace-create-project-status');
             const workspaceCreateProjectCancelBtn = document.getElementById('workspace-create-project-cancel-btn');
             const workspaceCreateProjectSubmitBtn = document.getElementById('workspace-create-project-submit-btn');
+            const statusTooltipLayer = document.getElementById('status-tooltip-layer');
             const SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH = 1200;
             const SIDEBAR_MOBILE_MAX_WIDTH = 960;
             const TENANT_ID_STORAGE_KEY = 'kairyx.tenantId';
@@ -170,6 +171,7 @@ export function initializeOperatorConsole() {
             let navLinks = [];
             let navSubmenuLinks = [];
             let collapsedSidebarSuppressedModuleId = null;
+            let activeStatusTooltipAnchor = null;
             let oidcConfig = null;
             let accessToken = '';
             let authSessionState = null;
@@ -315,6 +317,75 @@ export function initializeOperatorConsole() {
                     return getModuleItems(moduleId)[0] || null;
                 }
                 return getModuleItems(moduleId).find((entry) => entry.id === itemOrPageId || entry.pageId === itemOrPageId) || null;
+            }
+
+            function hideStatusTooltipLayer() {
+                if (!statusTooltipLayer) {
+                    return;
+                }
+                statusTooltipLayer.innerHTML = '';
+                statusTooltipLayer.classList.add('hidden');
+                statusTooltipLayer.setAttribute('aria-hidden', 'true');
+                statusTooltipLayer.style.left = '';
+                statusTooltipLayer.style.top = '';
+                if (activeStatusTooltipAnchor) {
+                    activeStatusTooltipAnchor.removeAttribute('aria-describedby');
+                }
+                activeStatusTooltipAnchor = null;
+            }
+
+            function positionStatusTooltipLayer(anchor) {
+                if (!statusTooltipLayer || !anchor || statusTooltipLayer.classList.contains('hidden')) {
+                    return;
+                }
+                const spacing = 10;
+                const viewportPadding = 16;
+                const anchorRect = anchor.getBoundingClientRect();
+                const tooltipRect = statusTooltipLayer.getBoundingClientRect();
+                const maxLeft = Math.max(viewportPadding, window.innerWidth - tooltipRect.width - viewportPadding);
+                let left = anchorRect.left + (anchorRect.width / 2) - (tooltipRect.width / 2);
+                left = Math.min(Math.max(viewportPadding, left), maxLeft);
+
+                let top = anchorRect.top - tooltipRect.height - spacing;
+                if (top < viewportPadding) {
+                    top = Math.min(
+                        anchorRect.bottom + spacing,
+                        Math.max(viewportPadding, window.innerHeight - tooltipRect.height - viewportPadding),
+                    );
+                }
+
+                statusTooltipLayer.style.left = `${Math.round(left)}px`;
+                statusTooltipLayer.style.top = `${Math.round(top)}px`;
+            }
+
+            function showStatusTooltipLayer(anchor, tooltipSource) {
+                if (!statusTooltipLayer || !anchor || !tooltipSource) {
+                    return;
+                }
+                const tooltipHtml = String(tooltipSource.innerHTML || '').trim();
+                if (!tooltipHtml) {
+                    hideStatusTooltipLayer();
+                    return;
+                }
+                activeStatusTooltipAnchor = anchor;
+                statusTooltipLayer.innerHTML = tooltipHtml;
+                statusTooltipLayer.classList.remove('hidden');
+                statusTooltipLayer.setAttribute('aria-hidden', 'false');
+                anchor.setAttribute('aria-describedby', 'status-tooltip-layer');
+                positionStatusTooltipLayer(anchor);
+            }
+
+            function syncStatusTooltipFromEventTarget(target) {
+                const anchor = target?.closest?.('.status-help');
+                if (!anchor) {
+                    return;
+                }
+                const tooltipSource = anchor.parentElement?.querySelector('.status-tooltip-source');
+                if (!tooltipSource) {
+                    hideStatusTooltipLayer();
+                    return;
+                }
+                showStatusTooltipLayer(anchor, tooltipSource);
             }
 
             function syncCollapsedSidebarSubmenuSuppression() {
@@ -3003,7 +3074,13 @@ export function initializeOperatorConsole() {
                     topbarSearchInput.value = '';
                 }
             });
-            window.addEventListener('resize', syncSidebarResponsiveState);
+            window.addEventListener('resize', () => {
+                syncSidebarResponsiveState();
+                hideStatusTooltipLayer();
+            });
+            document.addEventListener('scroll', () => {
+                hideStatusTooltipLayer();
+            }, true);
             syncSidebarResponsiveState();
 
 
@@ -4834,9 +4911,44 @@ export function initializeOperatorConsole() {
                     setSidebarSessionMenuOpen(false);
                 }
             });
+            document.addEventListener('mouseover', (event) => {
+                if (event.target?.closest?.('.status-help')) {
+                    syncStatusTooltipFromEventTarget(event.target);
+                }
+            });
+            document.addEventListener('mouseout', (event) => {
+                const anchor = event.target?.closest?.('.status-help');
+                if (!anchor) {
+                    return;
+                }
+                if (event.relatedTarget && anchor.contains(event.relatedTarget)) {
+                    return;
+                }
+                if (activeStatusTooltipAnchor === anchor) {
+                    hideStatusTooltipLayer();
+                }
+            });
+            document.addEventListener('focusin', (event) => {
+                if (event.target?.closest?.('.status-help')) {
+                    syncStatusTooltipFromEventTarget(event.target);
+                }
+            });
+            document.addEventListener('focusout', (event) => {
+                const anchor = event.target?.closest?.('.status-help');
+                if (!anchor) {
+                    return;
+                }
+                if (event.relatedTarget && anchor.contains(event.relatedTarget)) {
+                    return;
+                }
+                if (activeStatusTooltipAnchor === anchor) {
+                    hideStatusTooltipLayer();
+                }
+            });
             document.addEventListener('keydown', (event) => {
                 if (event.key === 'Escape') {
                     setSidebarSessionMenuOpen(false);
+                    hideStatusTooltipLayer();
                 }
             });
 
@@ -5498,7 +5610,7 @@ export function initializeOperatorConsole() {
                     ? `${status} <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(progressText)}</span>`
                     : status;
                 const statusText = tooltip
-                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}">?</button><span class="status-tooltip" role="tooltip">${tooltip}</span></span></span>`
+                    ? `<span class="status-label">${statusLabel}<span class="status-help-wrap"><button type="button" class="status-help" aria-label="${failureTooltip ? 'Show import failure reason' : 'Show import status details'}">?</button><span class="status-tooltip-source" aria-hidden="true">${tooltip}</span></span></span>`
                     : statusLabel;
                 return `<span class="status-indicator ${statusClass}" style="display: inline-block; vertical-align: middle;"></span> ${statusText}`;
             }
