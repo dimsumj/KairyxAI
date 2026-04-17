@@ -588,12 +588,58 @@
 
         <section id="connectors" class="page">
             <h1>Connectors</h1>
-            <p id="connectors-page-summary" class="subtle">Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.</p>
-            <div id="connector-list">
-                <!-- Saved connectors will be dynamically added here -->
+            <p id="connectors-page-summary" class="subtle">Connect your first source, campaign provider, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.</p>
+
+            <div id="ai-model-profiles-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2>AI Agents &amp; Models</h2>
+                    <div class="inline-actions">
+                        <button id="add-ai-model-profile-btn" type="button">Connect Ask AI Runtime</button>
+                        <button id="ai-model-profile-refresh-btn" type="button">Refresh</button>
+                        <span id="ai-model-profile-status" class="subtle"></span>
+                    </div>
+                </div>
+                <p class="subtle">Manage the backend-run model profiles that power Ask AI and AI-assisted mapping suggestions. Save Gemini, LM Studio, Ollama, or custom OpenAI-compatible runtimes here, then choose which one new Ask AI sessions should use by default.</p>
+                <div id="ai-model-profile-form-container" style="display: none;">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="ai-model-profile-runtime-select">Runtime Type</label>
+                            <select id="ai-model-profile-runtime-select">
+                                <option value="gemini" selected>Gemini</option>
+                                <option value="lmstudio">LM Studio</option>
+                                <option value="ollama">Ollama</option>
+                                <option value="openai_compatible">Custom OpenAI-compatible</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ai-model-profile-name-input">Profile Name</label>
+                            <input type="text" id="ai-model-profile-name-input" placeholder="e.g. Default Ask AI Runtime">
+                        </div>
+                    </div>
+                    <div id="ai-model-profile-fields"></div>
+                    <label style="display: inline-flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                        <input type="checkbox" id="ai-model-profile-default-checkbox">
+                        Use this runtime as the Ask AI default
+                    </label>
+                    <div class="inline-actions" style="margin-top: 1rem;">
+                        <button id="ai-model-profile-save-btn" type="button">Save Runtime</button>
+                        <button id="ai-model-profile-cancel-btn" type="button" style="background-color: var(--subtle-text);">Cancel</button>
+                    </div>
+                </div>
+                <div id="ai-model-profile-list"></div>
             </div>
-            <div class="card" id="add-connector-card">
-                <button id="add-connector-btn">Connect Data Source</button>
+
+            <div class="card split-card" id="source-connectors-section">
+                <div class="module-section-header">
+                    <h2>Data Source Connectors</h2>
+                    <div class="inline-actions">
+                        <button id="add-connector-btn" type="button">Connect Data Source</button>
+                    </div>
+                </div>
+                <p class="subtle">Use this section for ingestion sources, BigQuery, and connector records used by imports, prediction inputs, and legacy activation plumbing. Ask AI runtimes are managed separately above.</p>
+                <div id="connector-list">
+                    <!-- Saved connectors will be dynamically added here -->
+                </div>
             </div>
 
             <div id="add-connector-form-container" class="card" style="display: none;">
@@ -609,7 +655,6 @@
                         <option value="amplitude">Amplitude</option>
                         <option value="adjust">Adjust</option>
                         <option value="appsflyer">AppsFlyer</option>
-                        <option value="google">Google Gemini</option>
                         <option value="bigquery">Google BigQuery</option>
                         <option value="sendgrid">SendGrid</option>
                         <option value="braze">Braze</option>

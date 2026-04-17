@@ -40,7 +40,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
    - if you belong to `1` organization with multiple active projects, continue to project selection for that org
    - if you belong to `2+` organizations, choose the organization you want to enter first
 3. In the project step, either choose an existing project or create a new project if your org role allows it.
-4. Go to `Data Core -> Connectors` and create at least one connector.
+4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Wynn PushNotifier provider connection, then go to `Action Orchestrator` to either draft an email campaign or create a workflow against a cohort.
@@ -424,35 +424,66 @@ BigQuery table import behavior:
 - Completed churn-list imports can create and activate a linked list cohort.
 
 ### 3.3 Connectors
-Use this page to register upstream ingestion sources and downstream service credentials.
+Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses.
 
-#### Shared controls
+#### AI Agents & Models
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Connect Data Source` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Connect Ask AI Runtime` | Button | Opens the model-profile form used by Ask AI. | None | The runtime setup form becomes visible. |
+| `Runtime Type` | Select | Chooses which Ask AI preset to configure. | `LM Studio` | The preset-specific model and endpoint fields appear. |
+| `Profile Name` | Text box | Sets the label shown in the AI runtime table and Ask AI model selector. | `LM Studio Local` | The runtime is saved under this name. |
+| `Gemini Model` | Select | Appears when `Runtime Type` is `Gemini`. | `gemini-2.5-flash` | The saved runtime targets the selected Gemini model. |
+| `Google API Key` | Password box | Appears when `Runtime Type` is `Gemini`. | `AIza...` | The backend-managed Gemini profile stores the key securely. |
+| `Model Name` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. | `llama3.1` | Ask AI sends requests to that OpenAI-compatible model name. |
+| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. The current backend contract requires a non-empty value even for local runtimes. | `ollama` | The saved profile can pass bearer auth when the endpoint expects it. |
+| `Base URL` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Enter the server root without a trailing `/v1`. | `http://127.0.0.1:11434` | Kairyx appends the OpenAI-compatible chat-completions path automatically. |
+| `Use this runtime as the Ask AI default` | Checkbox | Makes the saved runtime the default model profile for new Ask AI sessions. | Checked | Ask AI uses this runtime unless the operator selects another profile for the session. |
+| `Save Runtime` / `Update Runtime` | Button | Saves the runtime. Leave the API key blank while editing if you want to keep the existing secret. | None | The runtime appears in the `AI Agents & Models` table. |
+| `Refresh` | Button | Reloads the current runtime list. | None | The runtime table refreshes from the control plane. |
+| Runtime row `Edit` | Row button | Loads the saved runtime back into the form. | None | The form switches to update mode. |
+| Runtime row `Set Default` | Row button | Makes a non-default runtime the Ask AI default. | None | New Ask AI sessions use that runtime by default. |
+| Runtime row `Delete` | Row button | Deletes a saved non-system runtime after confirmation. | None | The runtime disappears from the list. |
+
+Credential storage behavior:
+- Browser-entered runtime secrets are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
+- Runtime reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
+- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
+
+Runtime presets shipped in the current frontend:
+
+| Runtime preset | Backend provider | Fields / behavior | Sample input |
+| --- | --- | --- | --- |
+| `Gemini` | `gemini` | `Google API Key`, `Gemini Model` | `api_key=google_key_123`, `model_name=gemini-2.5-flash` |
+| `LM Studio` | `openai` | `Model Name`, `API Key / Token`, `Base URL` with default `http://127.0.0.1:1234` | `model_name=local-model`, `api_key=lm-studio` |
+| `Ollama` | `openai` | `Model Name`, `API Key / Token`, `Base URL` with default `http://127.0.0.1:11434` | `model_name=llama3.1`, `api_key=ollama` |
+| `Custom OpenAI-compatible` | `openai` | `Model Name`, `API Key / Token`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com` |
+
+Existing Anthropic profiles still render in the AI runtime list and Ask AI model selector when they were created through the API, but the current Connectors form does not create new Anthropic profiles.
+
+#### Data Source Connectors
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Connect Data Source` | Button | Opens the source-connector creation form. | None | The connector type form becomes visible. |
 | `Display Name` | Text box | Sets the connector name shown in the saved connector list and used by downstream flows. | `Warehouse Scores` | The connector is saved under this name. |
 | `Select Connector Source` | Select | Chooses which connector form to render. | `Amplitude` | Connector-specific fields appear. |
 | `Save Connector` | Button | Saves the connector after the required fields are filled. | None | Connector is created and shown in the saved connector list. |
-| `Cancel` | Button | Resets the form and returns to the empty state. | None | Dynamic fields disappear and the add card returns. |
+| `Cancel` | Button | Resets the form and returns to the source-connector list. | None | Dynamic fields disappear and the form hides. |
 | Saved connector `Delete` | Row button | Deletes the connector after confirmation. | None | Connector is removed from the saved list. |
 
-Credential storage behavior:
-- Browser-entered secret fields are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
-- Connector reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
-- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
-
-#### Connector-specific fields
+#### Data-source connector fields
 
 | Connector type | Fields / API payload | Sample input |
 | --- | --- | --- |
 | `Amplitude` | `Amplitude API Key`, `Amplitude Secret Key` | `api_key=amp_public_123`, `secret_key=amp_secret_456` |
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
-| `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
 | `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
+
+Legacy `Google Gemini` connector records are no longer created from this generic connector form. Ask AI runtimes are managed through `AI Agents & Models` instead.
 
 For lifecycle email campaigns and Wynn-backed push workflows, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Wynn PushNotifier accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Wynn PushNotifier provider connections are used by `Action Orchestrator -> Create Workflow` when a `push_notification` workflow should create a visible campaign in Wynn PushNotifier instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
 
@@ -1220,7 +1251,7 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
-| `Agent Model` | Select | Choose which backend-managed model profile the agent should use for the next session. Gemini is the default when a default Gemini profile or system Gemini configuration exists. | `Gemini Drafts` | The next session runs with the selected provider and model metadata. |
+| `Agent Model` | Select | Choose which backend-managed model profile the agent should use for the next session. Configure these profiles in `Data Core -> Connectors -> AI Agents & Models`. Gemini stays the default when a default Gemini profile or system Gemini configuration exists. | `LM Studio Local` | The next session runs with the selected provider and model metadata. |
 | `Model status` | Status line | Read-only. Shows the effective provider, model name, and whether the choice came from a saved profile, system default, or deterministic fallback. | `Gemini - gemini-2.5-flash` | Confirms which model the agent is using. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, status, and async continuation state when a prediction-backed flow is waiting. | `Session cpa_... - waiting_for_prediction` | Confirms the active agent session and whether a follow-up `Continue` is possible. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |

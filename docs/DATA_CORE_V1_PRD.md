@@ -12,9 +12,11 @@ Own connector configuration, health checks, freshness, and latest-ingestion stat
 - Support health checks
 - Show freshness, `last_ingestion_status`, and `last_ingestion_at`
 - Surface connector setup as the first-run entry action from the main workbench and the first item inside Data Core navigation
+- Expose an `AI Agents & Models` subsection on the Connectors page that surfaces backend-managed Ask AI runtimes separately from ingestion and provider connectors
 
 ### Ownership Notes
 - In the current repository, connector control-plane functionality and source freshness belong to Data Core
+- The Connectors page is also the shipped UI surface for backend-managed Ask AI runtime setup, even though the underlying execution belongs to the Copilot agent model-profile APIs
 - Production-grade governance for connector secrets is still owned by the Master PRD's Production Readiness workstream
 
 ---

@@ -189,8 +189,15 @@ Supported providers in v1:
 - `anthropic`
 
 Behavior:
+- `Data Core -> Connectors -> AI Agents & Models` is the primary operator UI for runtime setup
+- the shipped Connectors presets are `Gemini`, `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`
+- `LM Studio`, `Ollama`, and `Custom OpenAI-compatible` all persist as backend-managed `openai` model profiles with preset metadata and a configurable `base_url`
+- existing Anthropic profiles remain supported in the agent and still appear in the runtime list when created through the API
 - Gemini remains the default when a default Gemini profile or system Gemini configuration is present
 - the browser never stores or calls vendor AI credentials directly
+- browser-entered secrets are sent to the backend-managed profile APIs and are redacted from later reads
+- OpenAI-compatible base URLs can be saved with or without a trailing `/v1`; the backend normalizes the final chat-completions URL for both cases
+- OpenAI-compatible local runtimes may omit `api_key` entirely when the endpoint does not require bearer auth
 - the selected model profile applies to the current agent session only
 - deterministic parsing and message composition remain the fallback when the selected model is unavailable
 
@@ -373,6 +380,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 - Dashboard summary defaults to the current workspace scope unless UI context narrows it further
 - New agent sessions default to an active status and store the latest preview, clarifications, and artifacts
 - Agent sessions default to the configured default model profile when one exists, with Gemini preferred when multiple defaults are not explicitly set
+- `Data Core -> Connectors -> AI Agents & Models` is the primary place where operators create or change the Ask AI default runtime
 - Connection setup auto-generates a name when the user does not provide one
 - Connector health check is attempted automatically after connector creation, but failure to run the health check does not roll back the connector
 - SQL cohort setup uses a SQL preview before cohort creation and saves the query as a reusable artifact
@@ -415,12 +423,14 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 - `POST /api/v1/copilot/agent/model-profiles`
   - create a backend-managed model profile for Gemini, OpenAI, or Anthropic
+  - the shipped Connectors UI maps `Gemini`, `LM Studio`, `Ollama`, and `Custom OpenAI-compatible` presets onto this endpoint
 
 - `GET /api/v1/copilot/agent/model-profiles/{model_profile_id}`
   - read one backend-managed model profile
 
 - `PATCH /api/v1/copilot/agent/model-profiles/{model_profile_id}`
   - update one backend-managed model profile
+  - `Set Default` in the Connectors runtime table uses this endpoint with `is_default = true`
 
 - `DELETE /api/v1/copilot/agent/model-profiles/{model_profile_id}`
   - delete one non-system-managed model profile
