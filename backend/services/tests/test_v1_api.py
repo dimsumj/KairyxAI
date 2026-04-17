@@ -642,6 +642,21 @@ def test_mapping_candidates_learn_from_successful_and_confirmed_mappings(client)
     assert confirmed_suggestions["canonical_user_id"]["manual_confirmation_count"] >= 1
 
 
+def test_mapping_get_endpoint_does_not_initialize_gcs_without_sample_loading(client, monkeypatch):
+    class FailOnInitGcsService:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("GcsService should not be constructed for basic mapping reads")
+
+    monkeypatch.setattr("app.application.mappings.GcsService", FailOnInitGcsService)
+
+    response = client.get("/api/v1/mappings/Adjust%20Source")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connector_name"] == "Adjust Source"
+    assert payload["mapping"] == {}
+
+
 def test_root_serves_frontend_shell(client):
     resp = client.get("/")
     assert resp.status_code == 200

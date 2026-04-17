@@ -16,8 +16,13 @@ class MappingService:
     def __init__(self, repository, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
-        self.gcs_service = GcsService()
+        self._gcs_service: GcsService | None = None
         self.model_runtime_resolver = TextModelRuntimeResolver(repository, circuit_namespace="mappings")
+
+    def _get_gcs_service(self) -> GcsService:
+        if self._gcs_service is None:
+            self._gcs_service = GcsService()
+        return self._gcs_service
 
     @staticmethod
     def _mapping_key(connector_name: str, scope_type: str = "source", scope_key: str | None = None) -> str:
@@ -775,7 +780,7 @@ class MappingService:
             if not blob_name:
                 continue
             try:
-                events = self.gcs_service.download_raw_events(blob_name)
+                events = self._get_gcs_service().download_raw_events(blob_name)
             except FileNotFoundError:
                 continue
             for event in events:
@@ -802,7 +807,7 @@ class MappingService:
             if not blob_name:
                 continue
             try:
-                events = self.gcs_service.download_raw_events(blob_name)
+                events = self._get_gcs_service().download_raw_events(blob_name)
             except FileNotFoundError:
                 continue
             for event in events:
