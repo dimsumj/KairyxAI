@@ -742,6 +742,13 @@
                      </div>
                      <div id="data-sandbox-guided-mapping" class="mapping-guided-grid"></div>
                  </div>
+                 <div class="mapping-memory-shell">
+                     <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                         <h3 style="margin: 0;">Saved Mapping Memory</h3>
+                         <div id="data-sandbox-memory-summary" class="mapping-guided-meta"></div>
+                     </div>
+                     <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
+                 </div>
                  <details style="margin-bottom: 1rem;">
                      <summary style="cursor: pointer; font-weight: 600;">Example mapping JSON</summary>
                      <pre style="margin-top: 0.75rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"><code>{
@@ -760,7 +767,13 @@
                  </div>
                  <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
                      <div class="form-group" style="margin-bottom: 0;">
-                         <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                         <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                             <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                             <select id="data-sandbox-sample-picker" style="max-width: 22rem;">
+                                 <option value="">No raw samples loaded</option>
+                             </select>
+                         </div>
+                         <div id="data-sandbox-sample-meta" class="mapping-guided-meta" style="margin: 0.35rem 0 0.55rem;"></div>
                          <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
                      </div>
                      <div class="form-group" style="margin-bottom: 0;">

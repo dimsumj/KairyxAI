@@ -448,8 +448,12 @@ Support one-click rollback to a previous version.
 - When a job enters `Awaiting Mapping`, the operator UI must expose discovered raw field paths from that job's staged import manifests
 - Required semantic targets such as `canonical_user_id`, `event_name`, and `event_time` must be selectable from dropdowns instead of requiring JSON-path typing only
 - Optional attribution targets such as `campaign`, `adset`, and `media_source` should use the same guided picker
+- The Mapping Sandbox should surface saved source-mapping history as mapping memory so the operator can see when a suggested path has stayed stable across prior saved mappings
+- Manual corrections must be visible before save, including when the current editor selection differs from the suggested path or the remembered source mapping
+- Cross-event presence signals from true raw sample events should be shown beside identifier candidates so operators can judge whether a field appears consistently across multiple sampled event names
 - If the operator is editing a paused job, save as `Job Override` by default; if no paused job is selected, save as `Source Mapping`
 - The mapping JSON editor may remain available as an advanced override surface, but it must stay in sync with the guided controls
+- The sample-preview area must use true raw sample events returned by the mapping-candidates surface for the selected paused import, not import-job metadata summaries
 
 #### 4.2.7.6 Replay After Mapping Fix
 - After a mapping fix, support reprocessing from `standardized -> unified`

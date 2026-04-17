@@ -9384,7 +9384,11 @@ export function initializeOperatorConsole() {
             const dataSandboxAwaitingJobSelect = document.getElementById('data-sandbox-awaiting-job');
             const dataSandboxGuidedHint = document.getElementById('data-sandbox-guided-hint');
             const dataSandboxGuidedMapping = document.getElementById('data-sandbox-guided-mapping');
+            const dataSandboxMemorySummary = document.getElementById('data-sandbox-memory-summary');
+            const dataSandboxMemoryGrid = document.getElementById('data-sandbox-memory-grid');
             const dataSandboxMappingJson = document.getElementById('data-sandbox-mapping-json');
+            const dataSandboxSamplePicker = document.getElementById('data-sandbox-sample-picker');
+            const dataSandboxSampleMeta = document.getElementById('data-sandbox-sample-meta');
             const dataSandboxSampleJson = document.getElementById('data-sandbox-sample-json');
             const dataSandboxPreviewResult = document.getElementById('data-sandbox-preview-result');
             const dataSandboxCoverageResult = document.getElementById('data-sandbox-coverage-result');
@@ -9406,6 +9410,9 @@ export function initializeOperatorConsole() {
             let dataSandboxAwaitingJobs = [];
             let dataSandboxFieldCandidates = [];
             let dataSandboxFieldSuggestions = [];
+            let dataSandboxMappingVersions = [];
+            let dataSandboxSampleEvents = [];
+            let dataSandboxSampleContextKey = '';
 
             function setDataSandboxMappingStatus(message = '', isError = false) {
                 if (!dataSandboxMappingStatusDiv) return;
@@ -9456,6 +9463,241 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function getDataSandboxSuggestion(fieldKey = '') {
+                return (dataSandboxFieldSuggestions || []).find((item) => String(item.field || '') === String(fieldKey || '')) || null;
+            }
+
+            function getDataSandboxSampleContextKey(connectorName = dataSandboxMappingConnectorSelect.value) {
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                return `${String(connectorName || '').trim()}::${selectedJob?.id || 'source'}`;
+            }
+
+            function getDataSandboxSampleEventName(sampleEvent = {}) {
+                const mapping = getDataSandboxCurrentMapping({ silent: true });
+                const suggestedEventNamePath = String(getDataSandboxSuggestion('event_name')?.suggested_path || '').trim();
+                return String(
+                    getPathValue(sampleEvent, mapping.event_name)
+                    || getPathValue(sampleEvent, suggestedEventNamePath)
+                    || pickValue(sampleEvent, ['event_name', 'eventName', 'event_type', 'name'], null)
+                    || ''
+                ).trim();
+            }
+
+            function getDataSandboxSampleUserValue(sampleEvent = {}) {
+                const mapping = getDataSandboxCurrentMapping({ silent: true });
+                const suggestedUserPath = String(getDataSandboxSuggestion('canonical_user_id')?.suggested_path || '').trim();
+                return String(
+                    getPathValue(sampleEvent, mapping.canonical_user_id)
+                    || getPathValue(sampleEvent, suggestedUserPath)
+                    || pickValue(sampleEvent, ['player_id', 'user_id', 'uid', 'PID', 'customer_user_id', 'appsflyer_id'], null)
+                    || ''
+                ).trim();
+            }
+
+            function describeDataSandboxSampleEvent(sampleEvent = {}, index = 0) {
+                const eventName = getDataSandboxSampleEventName(sampleEvent);
+                const userValue = getDataSandboxSampleUserValue(sampleEvent);
+                const parts = [`Sample ${index + 1}`];
+                if (eventName) {
+                    parts.push(eventName);
+                }
+                if (userValue) {
+                    parts.push(userValue);
+                }
+                return parts.join(' · ');
+            }
+
+            function setDataSandboxSampleValue(sampleEvent = {}, options = {}) {
+                if (!dataSandboxSampleJson) return;
+                const { source = 'candidate', force = false } = options;
+                const nextValue = JSON.stringify(sampleEvent || {}, null, 2);
+                const currentValue = (dataSandboxSampleJson.value || '').trim();
+                const priorAutoValue = dataSandboxSampleJson.dataset.autoValue || '';
+                const currentSource = dataSandboxSampleJson.dataset.sampleSource || '';
+                if (force || !currentValue || currentValue === priorAutoValue || currentSource !== 'manual') {
+                    dataSandboxSampleJson.value = nextValue;
+                    dataSandboxSampleJson.dataset.autoValue = nextValue;
+                    dataSandboxSampleJson.dataset.sampleSource = source;
+                }
+            }
+
+            function setDataSandboxSampleEvents(sampleEvents = [], options = {}) {
+                const events = Array.isArray(sampleEvents) ? sampleEvents.filter((item) => item && typeof item === 'object') : [];
+                const contextKey = String(options.contextKey || '').trim();
+                const contextChanged = contextKey && contextKey !== dataSandboxSampleContextKey;
+                dataSandboxSampleEvents = events;
+                if (contextKey) {
+                    dataSandboxSampleContextKey = contextKey;
+                }
+                if (events.length > 0) {
+                    const previousIndex = Number.parseInt(dataSandboxSamplePicker?.value || '0', 10);
+                    const nextIndex = contextChanged ? 0 : Math.min(Number.isFinite(previousIndex) ? previousIndex : 0, events.length - 1);
+                    if (dataSandboxSamplePicker) {
+                        dataSandboxSamplePicker.innerHTML = events.map((sampleEvent, index) => (
+                            `<option value="${index}">${escapeHtml(describeDataSandboxSampleEvent(sampleEvent, index))}</option>`
+                        )).join('');
+                        dataSandboxSamplePicker.value = String(nextIndex);
+                        dataSandboxSamplePicker.disabled = events.length <= 1;
+                    }
+                    setDataSandboxSampleValue(events[nextIndex], { source: 'candidate', force: contextChanged });
+                } else if (dataSandboxSamplePicker) {
+                    dataSandboxSamplePicker.innerHTML = '<option value="">No raw samples loaded</option>';
+                    dataSandboxSamplePicker.disabled = true;
+                    const currentValue = (dataSandboxSampleJson?.value || '').trim();
+                    const autoValue = dataSandboxSampleJson?.dataset.autoValue || '';
+                    const currentSource = dataSandboxSampleJson?.dataset.sampleSource || '';
+                    if (dataSandboxSampleJson && (!currentValue || currentValue === autoValue || currentSource !== 'manual')) {
+                        dataSandboxSampleJson.value = '';
+                        dataSandboxSampleJson.dataset.autoValue = '';
+                        dataSandboxSampleJson.dataset.sampleSource = '';
+                    }
+                }
+                renderDataSandboxSampleMeta();
+            }
+
+            function getDataSandboxFieldPresenceStats(path = '') {
+                const normalizedPath = String(path || '').trim();
+                if (!normalizedPath || !Array.isArray(dataSandboxSampleEvents) || !dataSandboxSampleEvents.length) {
+                    return null;
+                }
+                let presentCount = 0;
+                const eventNames = new Set();
+                dataSandboxSampleEvents.forEach((sampleEvent) => {
+                    const value = getPathValue(sampleEvent, normalizedPath);
+                    if (value === null || value === undefined || value === '') {
+                        return;
+                    }
+                    presentCount += 1;
+                    const eventName = getDataSandboxSampleEventName(sampleEvent);
+                    if (eventName) {
+                        eventNames.add(eventName);
+                    }
+                });
+                return {
+                    presentCount,
+                    totalSamples: dataSandboxSampleEvents.length,
+                    eventNameCount: eventNames.size,
+                };
+            }
+
+            function getDataSandboxMappingMemory() {
+                const versions = Array.isArray(dataSandboxMappingVersions) ? dataSandboxMappingVersions : [];
+                return DATA_SANDBOX_MAPPING_FIELDS.map((fieldConfig) => {
+                    const counts = new Map();
+                    let populatedVersions = 0;
+                    versions.forEach((item) => {
+                        const payloadMapping = item?.payload?.mapping || {};
+                        const path = String(payloadMapping[fieldConfig.key] || '').trim();
+                        if (!path) {
+                            return;
+                        }
+                        populatedVersions += 1;
+                        counts.set(path, (counts.get(path) || 0) + 1);
+                    });
+                    const rankedPaths = Array.from(counts.entries())
+                        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+                    const topPath = rankedPaths[0]?.[0] || '';
+                    const topCount = rankedPaths[0]?.[1] || 0;
+                    return {
+                        ...fieldConfig,
+                        totalVersions: versions.length,
+                        populatedVersions,
+                        topPath,
+                        topCount,
+                        stable: populatedVersions > 1 && rankedPaths.length === 1,
+                        alternatives: rankedPaths.slice(1, 3),
+                    };
+                });
+            }
+
+            function renderDataSandboxMemory() {
+                if (!dataSandboxMemoryGrid || !dataSandboxMemorySummary) return;
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    dataSandboxMemorySummary.textContent = '';
+                    dataSandboxMemoryGrid.innerHTML = '<div class="mapping-guided-meta">Select a connector to inspect saved mapping memory.</div>';
+                    return;
+                }
+                const memoryItems = getDataSandboxMappingMemory();
+                const currentMapping = getDataSandboxCurrentMapping({ silent: true });
+                const savedVersionCount = Number(Array.isArray(dataSandboxMappingVersions) ? dataSandboxMappingVersions.length : 0);
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                dataSandboxMemorySummary.textContent = savedVersionCount > 0
+                    ? `Built from ${savedVersionCount} saved source mapping version${savedVersionCount === 1 ? '' : 's'}.`
+                    : 'No saved source mapping versions yet.';
+                dataSandboxMemoryGrid.innerHTML = memoryItems.map((memoryItem) => {
+                    const suggestion = getDataSandboxSuggestion(memoryItem.key);
+                    const currentPath = String(currentMapping[memoryItem.key] || '').trim();
+                    const badges = [];
+                    if (memoryItem.stable) {
+                        badges.push(`<span class="mapping-memory-badge is-good">Stable across ${memoryItem.populatedVersions} saves</span>`);
+                    } else if (memoryItem.topPath) {
+                        badges.push(`<span class="mapping-memory-badge is-info">Seen in ${memoryItem.topCount}/${memoryItem.populatedVersions} populated saves</span>`);
+                    }
+                    if (memoryItem.topPath && suggestion?.suggested_path === memoryItem.topPath) {
+                        badges.push('<span class="mapping-memory-badge is-good">Matches current suggestion</span>');
+                    } else if (memoryItem.topPath && currentPath && currentPath !== memoryItem.topPath) {
+                        badges.push('<span class="mapping-memory-badge is-warn">Current editor selection differs</span>');
+                    }
+                    if (suggestion?.suggested_path && currentPath && currentPath !== suggestion.suggested_path) {
+                        badges.push('<span class="mapping-memory-badge is-warn">Manual correction in editor</span>');
+                    }
+                    const topPathMarkup = memoryItem.topPath
+                        ? `<div class="mapping-memory-path"><strong>Preferred path:</strong> ${escapeHtml(memoryItem.topPath)}</div>`
+                        : '<div class="mapping-memory-path"><strong>Preferred path:</strong> No saved memory yet</div>';
+                    const alternativesMarkup = memoryItem.alternatives.length
+                        ? `<div class="mapping-guided-meta"><strong>Other saved paths:</strong> ${escapeHtml(memoryItem.alternatives.map(([path, count]) => `${path} (${count})`).join(', '))}</div>`
+                        : '';
+                    return `
+                        <div class="mapping-memory-card">
+                            <div class="mapping-memory-label">${escapeHtml(memoryItem.label)}</div>
+                            ${topPathMarkup}
+                            <div class="mapping-memory-badges">${badges.join('')}</div>
+                            <div class="mapping-guided-meta">
+                                ${memoryItem.populatedVersions > 0
+                                    ? `<div><strong>Memory coverage:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved versions include this field.</div>`
+                                    : '<div><strong>Memory coverage:</strong> No saved versions include this field yet.</div>'}
+                                <div><strong>Correction rule:</strong> ${selectedJob
+                                    ? 'The current paused import is using a job override. Save without a paused job selected to update source-memory history for future imports.'
+                                    : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
+                            </div>
+                            ${alternativesMarkup}
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            function renderDataSandboxSampleMeta() {
+                if (!dataSandboxSampleMeta) return;
+                const currentValue = (dataSandboxSampleJson?.value || '').trim();
+                const autoValue = dataSandboxSampleJson?.dataset.autoValue || '';
+                const source = dataSandboxSampleJson?.dataset.sampleSource || '';
+                const selectedIndex = Number.parseInt(dataSandboxSamplePicker?.value || '0', 10);
+                const selectedSample = dataSandboxSampleEvents[selectedIndex] || null;
+                if (selectedSample) {
+                    const parts = [];
+                    parts.push(`Loaded from raw sample ${selectedIndex + 1}/${dataSandboxSampleEvents.length}.`);
+                    const eventName = getDataSandboxSampleEventName(selectedSample);
+                    const userValue = getDataSandboxSampleUserValue(selectedSample);
+                    if (eventName) {
+                        parts.push(`Event ${eventName}.`);
+                    }
+                    if (userValue) {
+                        parts.push(`ID signal ${userValue}.`);
+                    }
+                    if (source === 'manual' && currentValue && currentValue !== autoValue) {
+                        parts.push('The textarea has manual edits and no longer matches the loaded sample.');
+                    } else {
+                        parts.push('Preview and Coverage use this true raw sample payload.');
+                    }
+                    dataSandboxSampleMeta.textContent = parts.join(' ');
+                    return;
+                }
+                dataSandboxSampleMeta.textContent = currentValue
+                    ? 'Using manual sample JSON. Preview and Coverage use the text currently in the editor.'
+                    : 'Load a paused import job to pull true raw sample events into the editor.';
+            }
+
             function renderDataSandboxGuidedMapping() {
                 if (!dataSandboxGuidedMapping) return;
                 const connectorName = dataSandboxMappingConnectorSelect.value;
@@ -9470,9 +9712,9 @@ export function initializeOperatorConsole() {
                 );
                 if (dataSandboxGuidedHint) {
                     if (selectedJob) {
-                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Click Process After Mapping to resume the paused import.`;
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Source memory below is built from saved source mappings; job overrides do not change that memory unless you later save a source mapping.`;
                     } else if (connectorName) {
-                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}.`;
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Saved source mappings become the memory reused on future loads.`;
                     } else {
                         dataSandboxGuidedHint.textContent = '';
                     }
@@ -9507,16 +9749,31 @@ export function initializeOperatorConsole() {
                     pushOption(suggestion?.suggested_path);
                     (suggestion?.alternatives || []).forEach((item) => pushOption(item.path));
                     dataSandboxFieldCandidates.forEach((item) => pushOption(item.path));
+                    const memory = getDataSandboxMappingMemory().find((item) => item.key === fieldKey) || null;
                     const optionMarkup = ['<option value="">Select raw field path</option>']
                         .concat(options.map((item) => `<option value="${escapeHtml(item.path)}"${item.path === currentPath ? ' selected' : ''}>${escapeHtml(item.path)}</option>`))
                         .join('');
                     const samplePreview = (fieldsByPath.get(currentPath)?.sample_values || suggestion?.sample_values || []).slice(0, 2);
+                    const presenceStats = getDataSandboxFieldPresenceStats(currentPath || suggestion?.suggested_path || '');
                     const suggestionText = suggestion?.suggested_path
                         ? `<div><strong>Suggested:</strong> ${escapeHtml(String(suggestion.suggested_path))}</div>`
                         : '<div><strong>Suggested:</strong> pick the best matching raw property path</div>';
+                    const suggestionSourceText = suggestion?.suggested_path
+                        ? (
+                            memory?.topPath && memory.topPath === suggestion.suggested_path
+                                ? `<div><strong>Learned from:</strong> saved source mapping memory (${memory.topCount}/${memory.populatedVersions || 1} matching save${memory.topCount === 1 ? '' : 's'})</div>`
+                                : `<div><strong>Learned from:</strong> ${escapeHtml(String(suggestion.engine || 'raw-field heuristics').replace(/_/g, ' '))}</div>`
+                        )
+                        : '<div><strong>Learned from:</strong> no suggestion yet</div>';
                     const sampleText = samplePreview.length
                         ? `<div><strong>Samples:</strong> ${escapeHtml(samplePreview.join(', '))}</div>`
                         : '<div><strong>Samples:</strong> no sample values yet</div>';
+                    const presenceText = presenceStats
+                        ? `<div><strong>Cross-event signal:</strong> present in ${presenceStats.presentCount}/${presenceStats.totalSamples} sampled events across ${presenceStats.eventNameCount} event name${presenceStats.eventNameCount === 1 ? '' : 's'}.</div>`
+                        : '<div><strong>Cross-event signal:</strong> load raw samples to compare this path across event names.</div>';
+                    const correctionText = currentPath && suggestion?.suggested_path && currentPath !== suggestion.suggested_path
+                        ? `<div><strong>Correction:</strong> the editor currently overrides the suggested path with ${escapeHtml(currentPath)}. Save to persist that correction in the selected scope.</div>`
+                        : `<div><strong>Correction:</strong> changing this selector updates the JSON editor immediately.</div>`;
                     return `
                         <div class="mapping-guided-card">
                             <label for="data-sandbox-guided-${escapeHtml(fieldKey)}">${escapeHtml(fieldConfig.label)}${fieldConfig.required ? ' *' : ''}</label>
@@ -9525,7 +9782,10 @@ export function initializeOperatorConsole() {
                             </select>
                             <div class="mapping-guided-meta">
                                 ${suggestionText}
+                                ${suggestionSourceText}
                                 ${sampleText}
+                                ${presenceText}
+                                ${correctionText}
                             </div>
                         </div>
                     `;
@@ -9545,17 +9805,6 @@ export function initializeOperatorConsole() {
                         renderDataSandboxGuidedMapping();
                     });
                 });
-            }
-
-            function setDataSandboxAutoSample(sampleRecord) {
-                if (!dataSandboxSampleJson) return;
-                const nextValue = JSON.stringify(sampleRecord || {}, null, 2);
-                const currentValue = (dataSandboxSampleJson.value || '').trim();
-                const priorAutoValue = dataSandboxSampleJson.dataset.autoValue || '';
-                if (!currentValue || currentValue === priorAutoValue) {
-                    dataSandboxSampleJson.value = nextValue;
-                    dataSandboxSampleJson.dataset.autoValue = nextValue;
-                }
             }
 
             function renderDataSandboxCoverage(result = null) {
@@ -9602,6 +9851,7 @@ export function initializeOperatorConsole() {
                 if (!connectorName) {
                     dataSandboxFieldCandidates = [];
                     dataSandboxFieldSuggestions = [];
+                    setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
                     return;
                 }
@@ -9614,10 +9864,24 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}/candidates${suffix}`);
                 dataSandboxFieldCandidates = Array.isArray(payload.fields) ? payload.fields : [];
                 dataSandboxFieldSuggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
-                if (Array.isArray(payload.sample_events) && payload.sample_events.length > 0) {
-                    setDataSandboxAutoSample(payload.sample_events[0]);
-                }
+                setDataSandboxSampleEvents(payload.sample_events, { contextKey: getDataSandboxSampleContextKey(connectorName) });
                 renderDataSandboxGuidedMapping();
+            }
+
+            async function loadDataSandboxMappingVersions() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    dataSandboxMappingVersions = [];
+                    renderDataSandboxMemory();
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}/versions`);
+                    dataSandboxMappingVersions = Array.isArray(payload.items) ? payload.items : [];
+                } catch (error) {
+                    dataSandboxMappingVersions = [];
+                }
+                renderDataSandboxMemory();
             }
 
             async function loadDataSandboxMappingControls() {
@@ -9626,7 +9890,10 @@ export function initializeOperatorConsole() {
                     dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
                     dataSandboxFieldCandidates = [];
                     dataSandboxFieldSuggestions = [];
+                    dataSandboxMappingVersions = [];
+                    setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
+                    renderDataSandboxMemory();
                     dataSandboxLoadMappingBtn.disabled = true;
                     dataSandboxSaveMappingBtn.disabled = true;
                     dataSandboxPreviewMappingBtn.disabled = true;
@@ -9703,13 +9970,17 @@ export function initializeOperatorConsole() {
 
                     if ((dataSandboxMappingJson.value || '').trim() === '{}' && dataSandboxMappingConnectorSelect.value) {
                         await loadDataSandboxFieldMapping(true);
+                    } else if (dataSandboxMappingConnectorSelect.value) {
+                        await Promise.all([
+                            loadDataSandboxMappingVersions(),
+                            loadDataSandboxMappingCandidates(),
+                        ]);
                     }
 
                     if (dataSandboxAwaitingJobs.length > 0) {
                         setDataSandboxMappingStatus(`Paused import job detected: ${dataSandboxAwaitingJobs[0].name}. Review the mapping, then click "Process After Mapping".`);
                     } else {
                         setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings locally.');
-                        await loadDataSandboxMappingCandidates();
                     }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
@@ -9717,7 +9988,10 @@ export function initializeOperatorConsole() {
                         dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
                         dataSandboxFieldCandidates = [];
                         dataSandboxFieldSuggestions = [];
+                        dataSandboxMappingVersions = [];
+                        setDataSandboxSampleEvents([]);
                         renderDataSandboxGuidedMapping();
+                        renderDataSandboxMemory();
                         dataSandboxLoadMappingBtn.disabled = true;
                         dataSandboxSaveMappingBtn.disabled = true;
                         dataSandboxPreviewMappingBtn.disabled = true;
@@ -9728,7 +10002,10 @@ export function initializeOperatorConsole() {
                     }
                     dataSandboxFieldCandidates = [];
                     dataSandboxFieldSuggestions = [];
+                    dataSandboxMappingVersions = [];
+                    setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
+                    renderDataSandboxMemory();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
                 }
             }
@@ -9755,14 +10032,21 @@ export function initializeOperatorConsole() {
                         ? (data.effective_mapping || data.mapping || {})
                         : (data.mapping || {});
                     setDataSandboxMappingJsonValue(nextMapping);
-                    await loadDataSandboxMappingCandidates();
+                    await Promise.all([
+                        loadDataSandboxMappingVersions(),
+                        loadDataSandboxMappingCandidates(),
+                    ]);
+                    renderDataSandboxMemory();
                     if (!silent) {
                         setDataSandboxMappingStatus(`Loaded ${scope.scopeLabel}.`);
                     }
                 } catch (error) {
                     dataSandboxFieldCandidates = [];
                     dataSandboxFieldSuggestions = [];
+                    dataSandboxMappingVersions = [];
+                    setDataSandboxSampleEvents([]);
                     renderDataSandboxGuidedMapping();
+                    renderDataSandboxMemory();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping.', true);
                 }
             }
@@ -9902,9 +10186,6 @@ export function initializeOperatorConsole() {
                         </div>
                     `;
                     dataSandboxContentDiv.innerHTML = contentHtml;
-                    if (data.sample && data.sample[0]) {
-                        setDataSandboxAutoSample(data.sample[0]);
-                    }
 
                     // Render the chart
                     const ctx = document.getElementById('event-chart').getContext('2d');
@@ -9970,10 +10251,25 @@ export function initializeOperatorConsole() {
             dataSandboxPreviewMappingBtn.addEventListener('click', previewDataSandboxFieldMapping);
             dataSandboxCoverageBtn.addEventListener('click', loadDataSandboxMappingCoverage);
             dataSandboxProcessMappingBtn.addEventListener('click', processDataSandboxAwaitingJob);
+            dataSandboxSamplePicker?.addEventListener('change', () => {
+                const selectedIndex = Number.parseInt(dataSandboxSamplePicker.value || '0', 10);
+                const sampleEvent = dataSandboxSampleEvents[selectedIndex] || null;
+                if (sampleEvent) {
+                    setDataSandboxSampleValue(sampleEvent, { source: 'candidate', force: true });
+                }
+                renderDataSandboxSampleMeta();
+            });
+            dataSandboxSampleJson?.addEventListener('input', () => {
+                const currentValue = (dataSandboxSampleJson.value || '').trim();
+                const autoValue = dataSandboxSampleJson.dataset.autoValue || '';
+                dataSandboxSampleJson.dataset.sampleSource = currentValue && currentValue !== autoValue ? 'manual' : 'candidate';
+                renderDataSandboxSampleMeta();
+            });
             dataSandboxMappingJson.addEventListener('input', () => {
                 try {
                     getDataSandboxCurrentMapping();
                     renderDataSandboxGuidedMapping();
+                    renderDataSandboxMemory();
                 } catch (error) {
                     // Leave the existing guided controls in place until the JSON becomes valid again.
                 }

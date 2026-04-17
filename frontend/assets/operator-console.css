@@ -3226,7 +3226,22 @@
     background: rgba(15, 23, 42, 0.35);
 }
 
+.mapping-memory-shell {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 1rem;
+    background: rgba(15, 23, 42, 0.28);
+}
+
 .mapping-guided-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.9rem;
+    margin-top: 0.9rem;
+}
+
+.mapping-memory-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 0.9rem;
@@ -3238,6 +3253,13 @@
     border-radius: 0.9rem;
     border: 1px solid rgba(148, 163, 184, 0.16);
     background: rgba(15, 23, 42, 0.48);
+}
+
+.mapping-memory-card {
+    padding: 0.9rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(15, 23, 42, 0.4);
 }
 
 .mapping-guided-card label {
@@ -3255,6 +3277,57 @@
     font-size: 0.82rem;
     color: var(--text-secondary);
     line-height: 1.5;
+}
+
+.mapping-memory-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.45rem;
+    font-weight: 600;
+}
+
+.mapping-memory-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    word-break: break-word;
+    margin-bottom: 0.5rem;
+}
+
+.mapping-memory-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+
+.mapping-memory-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(15, 23, 42, 0.5);
+    font-size: 0.74rem;
+    color: var(--main-text);
+}
+
+.mapping-memory-badge.is-good {
+    border-color: rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.14);
+}
+
+.mapping-memory-badge.is-warn {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.14);
+}
+
+.mapping-memory-badge.is-info {
+    border-color: rgba(79, 70, 229, 0.35);
+    background: rgba(79, 70, 229, 0.14);
 }
 
 .mapping-guided-meta strong {
