@@ -438,6 +438,44 @@ def test_mapping_candidates_unwrap_actual_raw_events_from_canonical_wrappers(cli
     assert "player_id" not in paths
 
 
+def test_mapping_suggestions_do_not_borrow_unrelated_standardized_rows_without_samples(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Fresh Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": "other_job",
+                "source": "other_source",
+                "player_id": "other-player",
+                "canonical_user_id": "uid:other-player",
+                "event_type": "install",
+                "event_time": "2026-03-01T08:00:00",
+                "event_properties": {
+                    "external_user_id": "external-123",
+                },
+            }
+        ],
+        job_id="other_job",
+    )
+
+    resp = client.get("/api/v1/mappings/Fresh%20Source/suggestions")
+    assert resp.status_code == 200
+    payload = resp.json()
+    suggestions = {item["field"]: item["suggested_path"] for item in payload["suggestions"]}
+    assert suggestions["canonical_user_id"] == "player_id"
+    assert suggestions["event_name"] == "event_name"
+    assert suggestions["event_time"] == "timestamp"
+
+
 def test_mapping_candidates_learn_from_successful_and_confirmed_mappings(client):
     connector_resp = client.post(
         "/api/v1/connectors",

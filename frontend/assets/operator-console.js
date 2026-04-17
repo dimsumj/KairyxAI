@@ -9598,10 +9598,11 @@ export function initializeOperatorConsole() {
                     const rankedPaths = Array.from(counts.entries())
                         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
                     const learnedPath = String(suggestion?.suggested_path || '').trim();
-                    const topPath = learnedPath || rankedPaths[0]?.[0] || '';
-                    const topCount = rankedPaths[0]?.[1] || 0;
                     const manualConfirmationCount = Number(suggestion?.manual_confirmation_count || 0);
                     const successfulImportCount = Number(suggestion?.successful_import_count || 0);
+                    const hasLearnedMemory = manualConfirmationCount > 0 || successfulImportCount > 0;
+                    const topPath = hasLearnedMemory ? learnedPath : (rankedPaths[0]?.[0] || '');
+                    const topCount = rankedPaths[0]?.[1] || 0;
                     const profile = suggestion?.profile || {};
                     return {
                         ...fieldConfig,
@@ -9612,7 +9613,9 @@ export function initializeOperatorConsole() {
                         manualConfirmationCount,
                         successfulImportCount,
                         profile,
-                        stable: (populatedVersions > 1 && rankedPaths.length === 1) || Number(profile.event_type_coverage || 0) >= 0.6,
+                        hasLearnedMemory,
+                        stable: hasLearnedMemory ? (successfulImportCount + manualConfirmationCount > 1) : (populatedVersions > 1 && rankedPaths.length === 1),
+                        crossEventSignal: Number(profile.event_type_coverage || 0) >= 0.6,
                         alternatives: rankedPaths.slice(1, 3),
                     };
                 });
@@ -9652,8 +9655,11 @@ export function initializeOperatorConsole() {
                         badges.push(`<span class="mapping-memory-badge is-info">${escapeHtml(`${memoryItem.manualConfirmationCount} confirmed save${memoryItem.manualConfirmationCount === 1 ? '' : 's'}`)}</span>`);
                     }
                     if (memoryItem.stable) {
-                        badges.push(`<span class="mapping-memory-badge is-good">Stable signal</span>`);
-                    } else if (memoryItem.topPath) {
+                        badges.push(`<span class="mapping-memory-badge is-good">Stable memory</span>`);
+                    } else if (memoryItem.crossEventSignal) {
+                        badges.push('<span class="mapping-memory-badge is-info">Cross-event raw signal</span>');
+                    }
+                    if (memoryItem.topPath && (memoryItem.hasLearnedMemory || memoryItem.populatedVersions > 0)) {
                         badges.push(`<span class="mapping-memory-badge is-info">Current preferred path</span>`);
                     }
                     if (memoryItem.topPath && suggestion?.suggested_path === memoryItem.topPath) {
@@ -9681,7 +9687,7 @@ export function initializeOperatorConsole() {
                                     : (memoryItem.populatedVersions > 0
                                         ? `<div><strong>Saved history:</strong> ${memoryItem.populatedVersions}/${memoryItem.totalVersions} saved source versions include this field.</div>`
                                         : '<div><strong>Learned memory:</strong> No prior confirmed mapping evidence yet.</div>')}
-                                ${Number(memoryItem.profile?.event_type_coverage || 0) > 0
+                                ${memoryItem.crossEventSignal
                                     ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
                                     : ''}
                                 <div><strong>Correction rule:</strong> ${selectedJob

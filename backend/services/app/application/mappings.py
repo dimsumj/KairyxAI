@@ -181,8 +181,8 @@ class MappingService:
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
         sample_events = self._load_job_sample_events(scope_key) if scope_type == "job" else self._load_source_sample_events(connector_name)
-        analysis_rows = sample_events or self.bigquery_service.get_rows_for_alias("standardized")[:100]
-        observed_paths = self._observed_paths(analysis_rows)
+        analysis_rows = list(sample_events or self._fallback_analysis_rows(connector_name))
+        observed_paths = self._observed_paths(analysis_rows) if analysis_rows else {}
         suggestions = self._heuristic_suggestions(
             current,
             observed_paths,
@@ -728,6 +728,37 @@ class MappingService:
         for row in rows:
             self._collect_paths("", row, observed)
         return observed
+
+    def _fallback_analysis_rows(self, connector_name: str, *, limit: int = 100) -> List[Dict[str, Any]]:
+        rows = list(self.bigquery_service.get_rows_for_alias("standardized")[: max(limit * 2, limit)] or [])
+        if not rows:
+            return []
+        connector = self.repository.get_connector(connector_name)
+        connector_name_key = str(connector_name or "").strip().lower()
+        connector_type_key = str((connector or {}).get("type") or "").strip().lower()
+        matching_job_ids = {
+            str(item.get("id") or "").strip()
+            for item in self.repository.list_import_jobs()
+            if str(item.get("source_name") or "").strip().lower() == connector_name_key
+        }
+        exact_matches = [
+            row for row in rows
+            if (
+                str(row.get("source_config_id") or "").strip().lower() == connector_name_key
+                or str(row.get("source") or "").strip().lower() == connector_name_key
+                or str(row.get("job_id") or "").strip() in matching_job_ids
+            )
+        ]
+        if exact_matches:
+            return exact_matches[:limit]
+        if connector_type_key:
+            typed_matches = [
+                row for row in rows
+                if str(row.get("source") or "").strip().lower() == connector_type_key
+            ]
+            if typed_matches:
+                return typed_matches[:limit]
+        return []
 
     def _load_source_sample_events(self, connector_name: str, max_records: int = 50) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
