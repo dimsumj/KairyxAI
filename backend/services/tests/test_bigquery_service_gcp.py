@@ -22,6 +22,8 @@ def _install_fake_bigquery_module(monkeypatch, client_factory):
     bigquery_module = ModuleType("google.cloud.bigquery")
     bigquery_module.Client = client_factory
     bigquery_module.Dataset = lambda reference: SimpleNamespace(reference=reference, location=None)
+    bigquery_module.SchemaField = lambda name, field_type: SimpleNamespace(name=name, field_type=field_type)
+    bigquery_module.Table = lambda table_id, schema=None: SimpleNamespace(table_id=table_id, schema=schema or [])
     bigquery_module.QueryJobConfig = lambda **kwargs: SimpleNamespace(**kwargs)
     bigquery_module.ScalarQueryParameter = lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs)
     cloud_module.bigquery = bigquery_module
@@ -39,6 +41,7 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
         def __init__(self, project):
             self.project = project
             self.created_datasets = []
+            self.created_tables = []
             FakeClient.last_instance = self
 
         def get_dataset(self, dataset_ref):
@@ -47,6 +50,13 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
         def create_dataset(self, dataset, exists_ok=False):
             self.created_datasets.append((dataset.reference, dataset.location, exists_ok))
             return dataset
+
+        def get_table(self, table_id):
+            raise NotFoundError(f"{table_id} not found")
+
+        def create_table(self, table, exists_ok=False):
+            self.created_tables.append((table.table_id, [(field.name, field.field_type) for field in table.schema], exists_ok))
+            return table
 
     _install_fake_bigquery_module(monkeypatch, FakeClient)
     monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
@@ -63,9 +73,27 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
     assert FakeClient.last_instance.created_datasets == [
         ("demo-project.kairyx_platform_default_default", "us-central1", True)
     ]
+    assert FakeClient.last_instance.created_tables == [
+        (
+            "demo-project.kairyx_platform_default_default.pipeline_dead_letters",
+            [
+                ("job_id", "STRING"),
+                ("job_identifier", "STRING"),
+                ("player_id", "STRING"),
+                ("canonical_user_id", "STRING"),
+                ("event_type", "STRING"),
+                ("event_time", "TIMESTAMP"),
+                ("rejection_reason", "STRING"),
+                ("ingested_at", "TIMESTAMP"),
+                ("created_at", "TIMESTAMP"),
+                ("payload_json", "STRING"),
+            ],
+            True,
+        )
+    ]
 
 
-def test_get_pipeline_dead_letters_returns_empty_when_bigquery_table_is_missing():
+def test_get_pipeline_dead_letters_skips_query_when_bigquery_table_is_missing():
     service = BigQueryService.__new__(BigQueryService)
     service.mode = "bigquery"
     service._dead_letter_table_id = "demo.scope.pipeline_dead_letters"
@@ -73,12 +101,15 @@ def test_get_pipeline_dead_letters_returns_empty_when_bigquery_table_is_missing(
         QueryJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
         ScalarQueryParameter=lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs),
     )
-    service._client = SimpleNamespace(query=lambda *args, **kwargs: (_ for _ in ()).throw(NotFoundError("table not found")))
+    service._client = SimpleNamespace(
+        get_table=lambda *args, **kwargs: (_ for _ in ()).throw(NotFoundError("table not found")),
+        query=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Missing table should not be queried")),
+    )
 
     assert service.get_pipeline_dead_letters(limit=25) == []
 
 
-def test_list_prediction_results_returns_empty_when_bigquery_table_is_missing():
+def test_list_prediction_results_returns_empty_without_query_when_bigquery_table_is_missing():
     service = BigQueryService.__new__(BigQueryService)
     service.mode = "bigquery"
     service._prediction_results_table_id = "demo.scope.prediction_results"
@@ -86,7 +117,10 @@ def test_list_prediction_results_returns_empty_when_bigquery_table_is_missing():
         QueryJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
         ScalarQueryParameter=lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs),
     )
-    service._client = SimpleNamespace(query=lambda *args, **kwargs: (_ for _ in ()).throw(NotFoundError("table not found")))
+    service._client = SimpleNamespace(
+        get_table=lambda *args, **kwargs: (_ for _ in ()).throw(NotFoundError("table not found")),
+        query=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Missing table should not be queried")),
+    )
 
     payload = service.list_prediction_results("job-1", page=1, page_size=50)
 

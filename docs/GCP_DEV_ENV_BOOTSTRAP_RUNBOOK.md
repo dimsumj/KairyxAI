@@ -474,6 +474,8 @@ Important behavior:
 - if `CONTROL_PLANE_DATABASE_URL_SECRET` already exists, the script uses that password as the source of truth and resets the Cloud SQL user password to match it
 - if `CONTROL_PLANE_SECRET_KEY_SECRET` already exists, the script reuses it instead of rotating it
 - if `WORKER_SHARED_TOKEN_SECRET` already exists, the script reuses it instead of rotating it
+- the bootstrap script seeds only the bootstrap-scoped BigQuery dataset and `pipeline_dead_letters` table; later org/project-scoped datasets are created lazily at runtime
+- for those later org/project scopes, the runtime creates the scoped dataset automatically and ensures `pipeline_dead_letters` exists before first-read health or import analysis queries hit it
 
 ### 9.2 Deploy the five Cloud Run services
 Run:
@@ -666,6 +668,7 @@ python3 deploy/gcp/render_ci_env.py --check-only
 - BigQuery base dataset exists
 - bootstrap-scoped BigQuery dataset exists
 - `pipeline_dead_letters` exists in the bootstrap-scoped dataset
+- newly created org/project scopes create their BigQuery dataset lazily at runtime, and `pipeline_dead_letters` is created for that scope before first-read checks run
 - Pub/Sub topics exist
 - runtime and invoker service accounts exist
 
