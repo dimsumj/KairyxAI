@@ -243,10 +243,10 @@ export function initializeOperatorConsole() {
                     `,
                     items: [
                         { id: 'action-orchestrator-email-campaigns', label: 'Email Campaigns', pageId: 'action-orchestrator', targetId: 'email-campaigns-section' },
-                        { id: 'action-orchestrator-create', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-create-section' },
-                        { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-section' },
-                        { id: 'action-orchestrator-workflows', label: 'Workflows', pageId: 'action-orchestrator', targetId: 'workflow-list-section' },
-                        { id: 'action-orchestrator-deliveries', label: 'Deliveries', pageId: 'action-orchestrator', targetId: 'workflow-deliveries-section' },
+                        { id: 'action-orchestrator-push', label: 'Push Notifications', pageId: 'action-orchestrator', targetId: 'push-notifications-section' },
+                        { id: 'action-orchestrator-studio', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-studio-section' },
+                        { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-controls-section' },
+                        { id: 'action-orchestrator-deliveries', label: 'Deliveries', pageId: 'action-orchestrator', targetId: 'workflow-deliveries-audit-section' },
                     ],
                 },
                 'experiment-hub': {
@@ -3049,6 +3049,7 @@ export function initializeOperatorConsole() {
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedCohorts = [];
+            let cachedWorkflows = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
@@ -9219,6 +9220,7 @@ export function initializeOperatorConsole() {
             const sqlPreviewOutput = document.getElementById('sql-preview-output');
             const sqlSavedQueryList = document.getElementById('sql-saved-query-list');
             const workflowCreateStatus = document.getElementById('workflow-create-status');
+            const workflowBuilderSelectedLabel = document.getElementById('workflow-builder-selected-label');
             const workflowChannelSelect = document.getElementById('workflow-channel-select');
             const workflowEmailFields = document.getElementById('workflow-email-fields');
             const workflowPushFields = document.getElementById('workflow-push-fields');
@@ -9232,7 +9234,14 @@ export function initializeOperatorConsole() {
             const workflowPushScheduledAtInput = document.getElementById('workflow-push-scheduled-at-input');
             const workflowPushDataInput = document.getElementById('workflow-push-data-input');
             const workflowPushProviderOptionsInput = document.getElementById('workflow-push-provider-options-input');
-            const workflowList = document.getElementById('workflow-list');
+            const workflowClearSelectionBtn = document.getElementById('workflow-clear-selection-btn');
+            const workflowStudioList = document.getElementById('workflow-studio-list');
+            const workflowStudioStatus = document.getElementById('workflow-studio-status');
+            const workflowStudioSelectedLabel = document.getElementById('workflow-studio-selected-label');
+            const workflowStudioEmailScheduleGroup = document.getElementById('workflow-studio-email-schedule-group');
+            const workflowStudioEmailScheduleInput = document.getElementById('workflow-studio-email-schedule-input');
+            const workflowStudioActions = document.getElementById('workflow-studio-actions');
+            const workflowStudioDetailOutput = document.getElementById('workflow-studio-detail-output');
             const workflowSelectedLabel = document.getElementById('workflow-selected-label');
             const workflowExecutionsList = document.getElementById('workflow-executions-list');
             const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
@@ -9321,6 +9330,10 @@ export function initializeOperatorConsole() {
             const templatesSelectedLabel = document.getElementById('templates-selected-label');
             let selectedAudienceCohortId = null;
             let selectedWorkflowId = null;
+            let selectedWorkflowBuilderId = null;
+            let selectedWorkflowStudioType = 'all';
+            let selectedWorkflowStudioResourceType = null;
+            let selectedWorkflowStudioResourceId = null;
             let selectedTemplateId = null;
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
@@ -9481,6 +9494,141 @@ export function initializeOperatorConsole() {
                 if (workflowEmailFields) {
                     workflowEmailFields.style.display = channel === 'email' ? 'block' : 'none';
                 }
+            }
+
+            function syncWorkflowBuilderState(workflow = null) {
+                const selected = workflow && workflow.workflow_id ? workflow : null;
+                selectedWorkflowBuilderId = selected ? selected.workflow_id : null;
+                if (workflowBuilderSelectedLabel) {
+                    workflowBuilderSelectedLabel.textContent = selected
+                        ? `${selected.name || selected.workflow_id} · ${String(selected.status || 'draft').replace(/[_-]+/g, ' ')}`
+                        : 'No push workflow selected';
+                }
+                const createButton = document.getElementById('workflow-create-btn');
+                if (createButton) {
+                    createButton.textContent = selected ? 'Update Push Workflow' : 'Create Push Workflow';
+                }
+            }
+
+            function resetWorkflowBuilderForm() {
+                selectedWorkflowBuilderId = null;
+                document.getElementById('workflow-name-input').value = '';
+                document.getElementById('workflow-cohort-select').value = '';
+                document.getElementById('workflow-experiment-id-input').value = 'churn_rescue_v1';
+                document.getElementById('workflow-trigger-type-select').value = 'daily_schedule';
+                document.getElementById('workflow-trigger-hour-input').value = 10;
+                document.getElementById('workflow-trigger-minute-input').value = 0;
+                if (workflowChannelSelect) {
+                    workflowChannelSelect.value = 'push_notification';
+                }
+                document.getElementById('workflow-global-limit-input').value = 5;
+                document.getElementById('workflow-channel-limit-input').value = 5;
+                document.getElementById('workflow-cooldown-hours-input').value = 24;
+                document.getElementById('workflow-quiet-start-input').value = 22;
+                document.getElementById('workflow-quiet-end-input').value = 7;
+                document.getElementById('workflow-budget-limit-input').value = 25;
+                document.getElementById('workflow-blacklist-input').value = '';
+                if (workflowContentInput) {
+                    workflowContentInput.value = 'Come back for a reward.';
+                }
+                if (workflowPushProviderConnectionSelect) {
+                    workflowPushProviderConnectionSelect.value = '';
+                }
+                if (workflowPushCampaignNameInput) {
+                    workflowPushCampaignNameInput.value = 'winback_push';
+                }
+                if (workflowPushTitleInput) {
+                    workflowPushTitleInput.value = 'Come back';
+                }
+                if (workflowPushScheduledAtInput) {
+                    workflowPushScheduledAtInput.value = '';
+                }
+                if (workflowPushBodyInput) {
+                    workflowPushBodyInput.value = 'Rewards are waiting for you.';
+                }
+                if (workflowPushDeepLinkInput) {
+                    workflowPushDeepLinkInput.value = '';
+                }
+                if (workflowPushDeepLinkTokenInput) {
+                    workflowPushDeepLinkTokenInput.value = '';
+                }
+                if (workflowPushDataInput) {
+                    workflowPushDataInput.value = '{}';
+                }
+                if (workflowPushProviderOptionsInput) {
+                    workflowPushProviderOptionsInput.value = '{}';
+                }
+                document.getElementById('workflow-requires-confirmation-checkbox').checked = false;
+                syncWorkflowChannelFields();
+                syncWorkflowBuilderState(null);
+                setInlineStatus(workflowCreateStatus, 'Creating a new push workflow.');
+            }
+
+            function loadWorkflowIntoBuilder(workflow) {
+                if (!workflow) {
+                    resetWorkflowBuilderForm();
+                    return;
+                }
+                const trigger = workflow.trigger || {};
+                const policy = workflow.policy || {};
+                const budgetPolicy = workflow.budget_policy || {};
+                const channelConfig = workflow.channel_config || {};
+                document.getElementById('workflow-name-input').value = workflow.name || '';
+                document.getElementById('workflow-cohort-select').value = workflow.definition?.cohort_id || '';
+                document.getElementById('workflow-experiment-id-input').value = workflow.experiment_id || '';
+                document.getElementById('workflow-trigger-type-select').value = trigger.type || 'daily_schedule';
+                document.getElementById('workflow-trigger-hour-input').value = trigger.hour ?? 10;
+                document.getElementById('workflow-trigger-minute-input').value = trigger.minute ?? 0;
+                if (workflowChannelSelect) {
+                    workflowChannelSelect.value = String(channelConfig.channel || 'push_notification').trim().toLowerCase() || 'push_notification';
+                }
+                document.getElementById('workflow-global-limit-input').value = policy.global_daily_limit ?? 5;
+                document.getElementById('workflow-channel-limit-input').value = policy.channel_daily_limit ?? 5;
+                document.getElementById('workflow-cooldown-hours-input').value = policy.cooldown_hours ?? 24;
+                document.getElementById('workflow-quiet-start-input').value = (policy.quiet_hours || {}).start ?? 22;
+                document.getElementById('workflow-quiet-end-input').value = (policy.quiet_hours || {}).end ?? 7;
+                document.getElementById('workflow-budget-limit-input').value = budgetPolicy.daily_budget_limit ?? 25;
+                document.getElementById('workflow-blacklist-input').value = Array.isArray(policy.blacklist_ids) ? policy.blacklist_ids.join(',') : '';
+                if (workflowContentInput) {
+                    workflowContentInput.value = channelConfig.content || 'Come back for a reward.';
+                }
+                populateWorkflowPushProviderSelect({ preferredValue: channelConfig.provider_connection_id || '' });
+                if (workflowPushProviderConnectionSelect) {
+                    workflowPushProviderConnectionSelect.value = channelConfig.provider_connection_id || '';
+                }
+                if (workflowPushCampaignNameInput) {
+                    workflowPushCampaignNameInput.value = channelConfig.campaign_name || '';
+                }
+                if (workflowPushTitleInput) {
+                    workflowPushTitleInput.value = channelConfig.title || '';
+                }
+                if (workflowPushScheduledAtInput) {
+                    workflowPushScheduledAtInput.value = fromIsoToLocalDateTimeInput(channelConfig.scheduled_at);
+                }
+                if (workflowPushBodyInput) {
+                    workflowPushBodyInput.value = channelConfig.body || channelConfig.content || '';
+                }
+                if (workflowPushDeepLinkInput) {
+                    workflowPushDeepLinkInput.value = channelConfig.deep_link || '';
+                }
+                if (workflowPushDeepLinkTokenInput) {
+                    workflowPushDeepLinkTokenInput.value = channelConfig.deep_link_token || '';
+                }
+                if (workflowPushDataInput) {
+                    workflowPushDataInput.value = JSON.stringify(channelConfig.data || {}, null, 2);
+                }
+                if (workflowPushProviderOptionsInput) {
+                    workflowPushProviderOptionsInput.value = JSON.stringify(channelConfig.provider_options || {}, null, 2);
+                }
+                document.getElementById('workflow-requires-confirmation-checkbox').checked = Boolean(workflow.definition?.requires_confirmation);
+                syncWorkflowChannelFields();
+                syncWorkflowBuilderState(workflow);
+                setInlineStatus(
+                    workflowCreateStatus,
+                    String(workflow.status || '').toLowerCase() === 'published'
+                        ? 'Editing this workflow will create a new draft version.'
+                        : `Editing ${workflow.name || workflow.workflow_id}.`,
+                );
             }
 
             function findCohort(cohortId) {
@@ -9678,6 +9826,10 @@ export function initializeOperatorConsole() {
                 return (cachedEmailCampaigns || []).find((item) => item.email_campaign_id === emailCampaignId) || null;
             }
 
+            function findWorkflow(workflowId) {
+                return (cachedWorkflows || []).find((item) => item.workflow_id === workflowId) || null;
+            }
+
             async function refreshProviderConnectionsState() {
                 if (shouldBlockProtectedAppData()) {
                     return getProviderConnections();
@@ -9696,6 +9848,15 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest('/email-campaigns');
                 cachedEmailCampaigns = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedEmailCampaigns;
+            }
+
+            async function refreshWorkflowsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedWorkflows;
+                }
+                const payload = await apiRequest('/workflows');
+                cachedWorkflows = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedWorkflows;
             }
 
             function ensureSelectOption(select, value, label) {
@@ -10132,10 +10293,10 @@ export function initializeOperatorConsole() {
                             return;
                         }
                         if (String(provider.provider || '').toLowerCase() === 'wynn_push_notifier') {
-                            activateModule('action-orchestrator', 'action-orchestrator-create', {
+                            activateModule('action-orchestrator', 'action-orchestrator-push', {
+                                targetId: 'push-notifications-section',
                                 closeSidebar: true,
                                 scrollBehavior: 'smooth',
-                                reloadPage: true,
                             });
                             if (workflowChannelSelect) {
                                 workflowChannelSelect.value = 'push_notification';
@@ -10441,6 +10602,13 @@ export function initializeOperatorConsole() {
                 const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
                 renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
                 syncEmailCampaignBuilderState(campaign);
+                if (selectedWorkflowStudioResourceType === 'email_campaign' && selectedWorkflowStudioResourceId === selectedEmailCampaignId) {
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('email_campaign', campaign);
+                }
                 const providerType = String(
                     campaign.provider
                     || (findProviderConnection(campaign.provider_connection_id) || {}).provider
@@ -10715,6 +10883,7 @@ export function initializeOperatorConsole() {
                     syncEmailCampaignAudienceSourceFields();
                     syncEmailCampaignProviderFields();
                     renderEmailCampaignLists(campaigns);
+                    renderWorkflowStudioList();
                     const hasSelectedCampaign = preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId);
                     if (hasSelectedCampaign) {
                         await loadEmailCampaignDetail(selectedEmailCampaignId);
@@ -10744,9 +10913,11 @@ export function initializeOperatorConsole() {
                     if (isWorkspaceContextError(error)) {
                         cachedProviderConnections = [];
                         cachedCohorts = [];
+                        cachedEmailCampaigns = [];
                         setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
                         renderEmailCampaignLists([]);
+                        renderWorkflowStudioList();
                         resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
                         resetEmailCampaignAudienceFieldSelects('Finish workspace setup to inspect audience fields.');
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
@@ -11070,60 +11241,310 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function renderWorkflowList(items = []) {
+            function getWorkflowStudioItems() {
+                const emailItems = (cachedEmailCampaigns || []).map((item) => ({
+                    studio_type: 'email_campaign',
+                    studio_id: item.email_campaign_id,
+                    name: item.name || item.email_campaign_id,
+                    provider: item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid',
+                    status: item.status || 'draft',
+                    last_run_at: item.last_send_completed_at || item.last_send_started_at || null,
+                    next_run_at: ['draft', 'scheduled'].includes(String(item.status || '').toLowerCase()) ? item.schedule_at : null,
+                    last_results: item.result_summary || {},
+                    total_results: item.result_summary || {},
+                    resource: item,
+                }));
+                const workflowItems = (cachedWorkflows || []).map((item) => ({
+                    studio_type: 'workflow',
+                    studio_id: item.workflow_id,
+                    name: item.name || item.workflow_id,
+                    provider: (item.channel_config || {}).provider || (findProviderConnection((item.channel_config || {}).provider_connection_id) || {}).provider || ((item.channel_config || {}).channel || 'workflow'),
+                    status: item.status || 'draft',
+                    last_run_at: (item.runtime_summary || {}).last_run_at || null,
+                    next_run_at: (item.runtime_summary || {}).next_run_at || null,
+                    last_results: (item.runtime_summary || {}).last_result || {},
+                    total_results: (item.runtime_summary || {}).totals || {},
+                    resource: item,
+                }));
+                return [...emailItems, ...workflowItems].sort((left, right) => {
+                    const leftTime = parseIsoDate(left.last_run_at || left.next_run_at || left.resource.updated_at || left.resource.created_at).getTime();
+                    const rightTime = parseIsoDate(right.last_run_at || right.next_run_at || right.resource.updated_at || right.resource.created_at).getTime();
+                    return rightTime - leftTime;
+                });
+            }
+
+            function getFilteredWorkflowStudioItems() {
+                const filter = String(selectedWorkflowStudioType || 'all').trim().toLowerCase() || 'all';
+                const items = getWorkflowStudioItems();
+                if (filter === 'email_campaign') {
+                    return items.filter((item) => item.studio_type === 'email_campaign');
+                }
+                if (filter === 'workflow') {
+                    return items.filter((item) => item.studio_type === 'workflow');
+                }
+                if (filter === 'scheduled') {
+                    return items.filter((item) => ['scheduled', 'published'].includes(String(item.status || '').toLowerCase()));
+                }
+                if (filter === 'archived') {
+                    return items.filter((item) => String(item.status || '').toLowerCase() === 'archived');
+                }
+                return items;
+            }
+
+            function syncWorkflowStudioFilterButtons() {
+                document.querySelectorAll('[data-workflow-studio-filter]').forEach((button) => {
+                    const active = String(button.dataset.workflowStudioFilter || '').trim().toLowerCase() === selectedWorkflowStudioType;
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                });
+            }
+
+            function formatWorkflowStudioType(item) {
+                if (item.studio_type === 'email_campaign') {
+                    return 'Email Campaign';
+                }
+                const channel = String(((item.resource || {}).channel_config || {}).channel || '').trim().toLowerCase();
+                if (channel === 'email') {
+                    return 'Email Workflow';
+                }
+                return 'Push Workflow';
+            }
+
+            function formatWorkflowStudioLastResults(item) {
+                if (item.studio_type === 'email_campaign') {
+                    const summary = item.last_results || {};
+                    return `sent ${summary.sent_count || 0} · failed ${summary.failed_count || 0}`;
+                }
+                const summary = item.last_results || {};
+                return `ok ${summary.success || 0} · fail ${summary.failures || 0}`;
+            }
+
+            function formatWorkflowStudioTotalResults(item) {
+                if (item.studio_type === 'email_campaign') {
+                    const summary = item.total_results || {};
+                    return `sent ${summary.sent_count || 0}`;
+                }
+                const totals = item.total_results || {};
+                return `runs ${totals.runs || 0} · success ${totals.success || 0}`;
+            }
+
+            function renderWorkflowStudioActions(item) {
+                const status = String(item.status || '').toLowerCase();
+                if (item.studio_type === 'email_campaign') {
+                    return `
+                        <div class="table-actions">
+                            <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
+                            <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
+                            ${status !== 'scheduled' ? `<button type="button" data-workflow-studio-action="schedule" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Schedule</button>` : ''}
+                            ${['draft', 'scheduled'].includes(status) ? `<button type="button" data-workflow-studio-action="send-now" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Send Now</button>` : ''}
+                            ${status === 'scheduled'
+                                ? `<button type="button" data-workflow-studio-action="cancel" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Cancel</button>`
+                                : status === 'draft'
+                                    ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
+                                    : ''}
+                        </div>
+                    `;
+                }
+                return `
+                    <div class="table-actions">
+                        <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
+                        <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
+                        ${status === 'draft' ? `<button type="button" data-workflow-studio-action="publish" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Publish</button>` : ''}
+                        ${status === 'published' ? `<button type="button" data-workflow-studio-action="pause" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Pause</button>` : ''}
+                        ${status === 'paused' ? `<button type="button" data-workflow-studio-action="resume" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Resume</button>` : ''}
+                        ${status !== 'archived' ? `<button type="button" data-workflow-studio-action="test-run" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Test Run</button>` : ''}
+                        ${status === 'draft'
+                            ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
+                            : status !== 'archived'
+                                ? `<button type="button" data-workflow-studio-action="archive" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Archive</button>`
+                                : ''}
+                    </div>
+                `;
+            }
+
+            function renderWorkflowStudioList() {
+                const items = getFilteredWorkflowStudioItems();
+                syncWorkflowStudioFilterButtons();
                 renderSimpleTable(
-                    workflowList,
+                    workflowStudioList,
                     [
-                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.workflow_id || '-')}</div>` },
-                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
-                        { label: 'Trigger', render: (item) => escapeHtml((item.trigger || {}).type || '-') },
-                        { label: 'Experiment', render: (item) => escapeHtml(item.experiment_id || '-') },
-                        {
-                            label: 'Actions',
-                            render: (item) => `
-                                <div class="table-actions">
-                                    <button type="button" data-workflow-action="view" data-workflow-id="${escapeHtml(item.workflow_id)}">View</button>
-                                    <button type="button" data-workflow-action="publish" data-workflow-id="${escapeHtml(item.workflow_id)}">Publish</button>
-                                    <button type="button" data-workflow-action="pause" data-workflow-id="${escapeHtml(item.workflow_id)}">Pause</button>
-                                    <button type="button" data-workflow-action="resume" data-workflow-id="${escapeHtml(item.workflow_id)}">Resume</button>
-                                    <button type="button" data-workflow-action="test-run" data-workflow-id="${escapeHtml(item.workflow_id)}">Test Run</button>
-                                </div>
-                            `,
-                        },
+                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.studio_id || '-')}</div>` },
+                        { label: 'Type', render: (item) => `<span class="pill">${escapeHtml(formatWorkflowStudioType(item))}</span>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || '-'))}</span>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(String(item.status || '-').replace(/[_-]+/g, ' '))}</span>` },
+                        { label: 'Last Run', render: (item) => escapeHtml(formatDateTime(item.last_run_at)) },
+                        { label: 'Next Run', render: (item) => escapeHtml(formatDateTime(item.next_run_at)) },
+                        { label: 'Last Results', render: (item) => escapeHtml(formatWorkflowStudioLastResults(item)) },
+                        { label: 'Total Results', render: (item) => escapeHtml(formatWorkflowStudioTotalResults(item)) },
+                        { label: 'Actions', render: (item) => renderWorkflowStudioActions(item) },
                     ],
                     items,
-                    'No workflows yet.',
+                    'No scheduled email campaigns or push workflows yet.',
                 );
-                workflowList.querySelectorAll('[data-workflow-action]').forEach((button) => {
+                bindWorkflowStudioActionButtons(workflowStudioList);
+            }
+
+            function renderWorkflowStudioDetailActions(resourceType, resource) {
+                if (!workflowStudioActions) return;
+                if (!resourceType || !resource) {
+                    workflowStudioActions.innerHTML = '';
+                    if (workflowStudioEmailScheduleGroup) {
+                        workflowStudioEmailScheduleGroup.style.display = 'none';
+                    }
+                    return;
+                }
+                if (workflowStudioEmailScheduleGroup) {
+                    workflowStudioEmailScheduleGroup.style.display = resourceType === 'email_campaign' ? 'block' : 'none';
+                }
+                if (resourceType === 'email_campaign' && workflowStudioEmailScheduleInput) {
+                    workflowStudioEmailScheduleInput.value = fromIsoToLocalDateTimeInput(resource.schedule_at);
+                }
+                workflowStudioActions.innerHTML = renderWorkflowStudioActions({
+                    studio_type: resourceType,
+                    studio_id: resourceType === 'workflow' ? resource.workflow_id : resource.email_campaign_id,
+                    status: resource.status,
+                    resource,
+                });
+                bindWorkflowStudioActionButtons(workflowStudioActions);
+            }
+
+            async function loadWorkflowStudioSelection(resourceType, resourceId) {
+                selectedWorkflowStudioResourceType = resourceType || null;
+                selectedWorkflowStudioResourceId = resourceId || null;
+                if (!resourceType || !resourceId) {
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = 'No item selected';
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, null, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions(null, null);
+                    await loadWorkflowDetail(null);
+                    return;
+                }
+                if (resourceType === 'workflow') {
+                    const workflow = await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`);
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('workflow', workflow);
+                    await loadWorkflowDetail(resourceId);
+                    return;
+                }
+                const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`);
+                if (workflowStudioSelectedLabel) {
+                    workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                }
+                renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                renderWorkflowStudioDetailActions('email_campaign', campaign);
+                await loadWorkflowDetail(null);
+            }
+
+            async function handleWorkflowStudioAction(resourceType, resourceId, action) {
+                if (!resourceType || !resourceId || !action) return;
+                if (action === 'view') {
+                    await loadWorkflowStudioSelection(resourceType, resourceId);
+                    return;
+                }
+                if (resourceType === 'workflow') {
+                    if (action === 'edit') {
+                        const workflow = findWorkflow(resourceId) || await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`);
+                        loadWorkflowIntoBuilder(workflow);
+                        activateModule('action-orchestrator', 'action-orchestrator-push', {
+                            targetId: 'push-notifications-section',
+                            closeSidebar: true,
+                            scrollBehavior: 'smooth',
+                        });
+                        return;
+                    }
+                    if (action === 'publish') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/publish`, { method: 'POST' });
+                    }
+                    if (action === 'pause') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/pause`, { method: 'POST' });
+                    }
+                    if (action === 'resume') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/resume`, { method: 'POST' });
+                    }
+                    if (action === 'archive') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/archive`, { method: 'POST' });
+                    }
+                    if (action === 'delete') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`, { method: 'DELETE' });
+                        if (selectedWorkflowBuilderId === resourceId) {
+                            resetWorkflowBuilderForm();
+                        }
+                    }
+                    if (action === 'test-run') {
+                        const payload = await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/test-run`, {
+                            method: 'POST',
+                            body: { limit: 10, confirm: true, sandbox: true, reference_time: getCurrentWorkflowReferenceTime() },
+                        });
+                        renderJsonOutput(orchestratorRunOutput, payload, 'No workflow run output.');
+                        setInlineStatus(orchestratorRunStatus, `Workflow ${resourceId} test-run completed.`);
+                    }
+                    await loadActionOrchestrator();
+                    if (action === 'delete') {
+                        await loadWorkflowStudioSelection(null, null);
+                    } else {
+                        await loadWorkflowStudioSelection('workflow', resourceId);
+                    }
+                    return;
+                }
+                if (action === 'edit') {
+                    await loadEmailCampaignDetail(resourceId);
+                    activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                        targetId: 'email-campaigns-section',
+                        closeSidebar: true,
+                        scrollBehavior: 'smooth',
+                    });
+                    return;
+                }
+                if (action === 'schedule') {
+                    if (selectedWorkflowStudioResourceType !== 'email_campaign' || selectedWorkflowStudioResourceId !== resourceId) {
+                        await loadWorkflowStudioSelection('email_campaign', resourceId);
+                    }
+                    const scheduleAt = toIsoFromLocalDateTimeInput(workflowStudioEmailScheduleInput?.value || '');
+                    if (!scheduleAt) {
+                        throw new Error('Choose a schedule time in Workflow Studio before scheduling the campaign.');
+                    }
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`, {
+                        method: 'PATCH',
+                        body: { schedule_at: scheduleAt },
+                    });
+                }
+                if (action === 'send-now') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}/send-now`, { method: 'POST' });
+                }
+                if (action === 'cancel') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}/cancel`, { method: 'POST' });
+                }
+                if (action === 'delete') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`, { method: 'DELETE' });
+                    if (selectedEmailCampaignId === resourceId) {
+                        resetEmailCampaignForm();
+                    }
+                }
+                await loadActionOrchestrator();
+                if (action === 'delete') {
+                    await loadWorkflowStudioSelection(null, null);
+                } else {
+                    await loadWorkflowStudioSelection('email_campaign', resourceId);
+                }
+            }
+
+            function bindWorkflowStudioActionButtons(container) {
+                if (!container) return;
+                container.querySelectorAll('[data-workflow-studio-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
-                        const workflowId = button.dataset.workflowId;
-                        const action = button.dataset.workflowAction;
                         try {
-                            if (action === 'view') {
-                                await loadWorkflowDetail(workflowId);
-                                return;
-                            }
-                            if (action === 'publish') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/publish`, { method: 'POST' });
-                            }
-                            if (action === 'pause') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/pause`, { method: 'POST' });
-                            }
-                            if (action === 'resume') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/resume`, { method: 'POST' });
-                            }
-                            if (action === 'test-run') {
-                                const payload = await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/test-run`, {
-                                    method: 'POST',
-                                    body: { limit: 10, confirm: true, sandbox: true, reference_time: getCurrentWorkflowReferenceTime() },
-                                });
-                                renderJsonOutput(orchestratorRunOutput, payload, 'No workflow run output.');
-                                setInlineStatus(orchestratorRunStatus, `Workflow ${workflowId} test-run completed.`);
-                            }
-                            await loadActionOrchestrator();
-                            await loadWorkflowDetail(workflowId);
+                            await handleWorkflowStudioAction(
+                                button.dataset.workflowStudioType,
+                                button.dataset.workflowStudioId,
+                                button.dataset.workflowStudioAction,
+                            );
+                            setInlineStatus(workflowStudioStatus, '');
                         } catch (error) {
-                            setInlineStatus(workflowCreateStatus, error.message || `Failed to ${action} workflow.`, true);
+                            setInlineStatus(workflowStudioStatus, error.message || 'Failed to update Workflow Studio item.', true);
                         }
                     });
                 });
@@ -11145,6 +11566,14 @@ export function initializeOperatorConsole() {
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/policy-counters`),
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/delivery-diagnostics`),
                 ]);
+                if (selectedWorkflowStudioResourceType === 'workflow' && selectedWorkflowStudioResourceId === workflowId) {
+                    const workflow = findWorkflow(workflowId) || await apiRequest(`/workflows/${encodeURIComponent(workflowId)}`);
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('workflow', workflow);
+                }
                 renderSimpleTable(
                     workflowExecutionsList,
                     [
@@ -11173,7 +11602,8 @@ export function initializeOperatorConsole() {
 
             async function createWorkflow() {
                 try {
-                    setInlineStatus(workflowCreateStatus, 'Creating workflow...');
+                    const editingWorkflowId = selectedWorkflowBuilderId;
+                    setInlineStatus(workflowCreateStatus, editingWorkflowId ? 'Updating workflow...' : 'Creating workflow...');
                     const channel = String(workflowChannelSelect?.value || 'push_notification').trim().toLowerCase() || 'push_notification';
                     const pushChannelConfig = channel === 'push_notification'
                         ? {
@@ -11197,40 +11627,41 @@ export function initializeOperatorConsole() {
                         }
                         : null;
                     const actionConfig = pushChannelConfig || emailChannelConfig || {channel, content: ''};
-                    const payload = await apiRequest('/workflows', {
-                        method: 'POST',
-                        body: {
-                            name: document.getElementById('workflow-name-input').value || `workflow_${Date.now()}`,
-                            cohort_id: document.getElementById('workflow-cohort-select').value,
-                            experiment_id: document.getElementById('workflow-experiment-id-input').value || null,
-                            requires_confirmation: document.getElementById('workflow-requires-confirmation-checkbox').checked,
-                            schedule: { type: 'daily' },
-                            trigger: {
-                                type: document.getElementById('workflow-trigger-type-select').value || 'daily_schedule',
-                                hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
-                                minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
-                            },
-                            action: actionConfig,
-                            channel_config: actionConfig,
-                            policy: {
-                                global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
-                                channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
-                                cooldown_hours: Number(document.getElementById('workflow-cooldown-hours-input').value || 24),
-                                blacklist_ids: splitCsv(document.getElementById('workflow-blacklist-input').value),
-                                quiet_hours: {
-                                    start: Number(document.getElementById('workflow-quiet-start-input').value || 22),
-                                    end: Number(document.getElementById('workflow-quiet-end-input').value || 7),
-                                },
-                            },
-                            budget_policy: {
-                                daily_budget_limit: Number(document.getElementById('workflow-budget-limit-input').value || 25),
+                    const requestBody = {
+                        name: document.getElementById('workflow-name-input').value || `workflow_${Date.now()}`,
+                        cohort_id: document.getElementById('workflow-cohort-select').value,
+                        experiment_id: document.getElementById('workflow-experiment-id-input').value || null,
+                        requires_confirmation: document.getElementById('workflow-requires-confirmation-checkbox').checked,
+                        schedule: { type: 'daily' },
+                        trigger: {
+                            type: document.getElementById('workflow-trigger-type-select').value || 'daily_schedule',
+                            hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
+                            minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
+                        },
+                        action: actionConfig,
+                        channel_config: actionConfig,
+                        policy: {
+                            global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
+                            channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
+                            cooldown_hours: Number(document.getElementById('workflow-cooldown-hours-input').value || 24),
+                            blacklist_ids: splitCsv(document.getElementById('workflow-blacklist-input').value),
+                            quiet_hours: {
+                                start: Number(document.getElementById('workflow-quiet-start-input').value || 22),
+                                end: Number(document.getElementById('workflow-quiet-end-input').value || 7),
                             },
                         },
+                        budget_policy: {
+                            daily_budget_limit: Number(document.getElementById('workflow-budget-limit-input').value || 25),
+                        },
+                    };
+                    const payload = await apiRequest(editingWorkflowId ? `/workflows/${encodeURIComponent(editingWorkflowId)}` : '/workflows', {
+                        method: editingWorkflowId ? 'PUT' : 'POST',
+                        body: requestBody,
                     });
                     selectedWorkflowId = payload.workflow_id;
-                    setInlineStatus(workflowCreateStatus, `Created workflow ${payload.name}.`);
+                    setInlineStatus(workflowCreateStatus, `${editingWorkflowId ? 'Updated' : 'Created'} workflow ${payload.name}.`);
                     await loadActionOrchestrator();
-                    await loadWorkflowDetail(payload.workflow_id);
+                    await loadWorkflowStudioSelection('workflow', payload.workflow_id);
                 } catch (error) {
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to create workflow.', true);
                 }
@@ -11297,9 +11728,7 @@ export function initializeOperatorConsole() {
                     });
                     renderJsonOutput(orchestratorRunOutput, payload, 'No due workflows were executed.');
                     setInlineStatus(orchestratorRunStatus, `Executed ${Array.isArray(payload.items) ? payload.items.length : 0} workflow run(s).`);
-                    if (selectedWorkflowId) {
-                        await loadWorkflowDetail(selectedWorkflowId);
-                    }
+                    await loadActionOrchestrator();
                 } catch (error) {
                     setInlineStatus(orchestratorRunStatus, error.message || 'Failed to run due workflows.', true);
                 }
@@ -11318,36 +11747,64 @@ export function initializeOperatorConsole() {
 
             async function loadActionOrchestrator() {
                 try {
-                    const [workflowPayload, cohortPayload] = await Promise.all([
-                        apiRequest('/workflows'),
-                        apiRequest('/cohorts'),
+                    const [workflows, cohorts] = await Promise.all([
+                        refreshWorkflowsState(),
+                        refreshCohortsState(),
                         refreshProviderConnectionsState(),
                         refreshExportJobsState(),
                     ]);
-                    const workflows = Array.isArray(workflowPayload.items) ? workflowPayload.items : [];
-                    renderWorkflowList(workflows);
-                    populateWorkflowCohortSelect(cohortPayload.items || []);
+                    populateWorkflowCohortSelect(cohorts || []);
                     populateWorkflowPushProviderSelect();
                     syncWorkflowChannelFields();
                     populateExportJobSelect(cachedExportJobs);
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    if (selectedWorkflowBuilderId) {
+                        const selectedWorkflow = findWorkflow(selectedWorkflowBuilderId);
+                        if (selectedWorkflow) {
+                            loadWorkflowIntoBuilder(selectedWorkflow);
+                        } else {
+                            resetWorkflowBuilderForm();
+                        }
+                    } else {
+                        syncWorkflowBuilderState(null);
+                    }
+                    if (
+                        selectedWorkflowStudioResourceType === 'workflow'
+                        && selectedWorkflowStudioResourceId
+                        && workflows.some((item) => item.workflow_id === selectedWorkflowStudioResourceId)
+                    ) {
+                        await loadWorkflowStudioSelection('workflow', selectedWorkflowStudioResourceId);
+                        return;
+                    }
+                    if (
+                        selectedWorkflowStudioResourceType === 'email_campaign'
+                        && selectedWorkflowStudioResourceId
+                        && cachedEmailCampaigns.some((item) => item.email_campaign_id === selectedWorkflowStudioResourceId)
+                    ) {
+                        await loadWorkflowStudioSelection('email_campaign', selectedWorkflowStudioResourceId);
+                        return;
+                    }
+                    if (selectedWorkflowStudioResourceType || selectedWorkflowStudioResourceId) {
+                        await loadWorkflowStudioSelection(null, null);
+                        return;
+                    }
                     if (selectedWorkflowId && workflows.some((item) => item.workflow_id === selectedWorkflowId)) {
                         await loadWorkflowDetail(selectedWorkflowId);
-                    } else if (!selectedWorkflowId && workflows[0]) {
-                        await loadWorkflowDetail(workflows[0].workflow_id);
-                    } else if (!workflows.length) {
+                    } else {
                         await loadWorkflowDetail(null);
                     }
-                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
-                        renderWorkflowList([]);
+                        cachedWorkflows = [];
                         populateWorkflowCohortSelect([]);
                         populateWorkflowPushProviderSelect();
                         syncWorkflowChannelFields();
                         populateExportJobSelect([]);
                         await loadWorkflowDetail(null);
                         await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
+                        renderWorkflowStudioList();
+                        await loadWorkflowStudioSelection(null, null);
                         return;
                     }
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
@@ -11902,13 +12359,13 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (resourceType === 'workflow') {
-                    activateModule('action-orchestrator', 'action-orchestrator-workflows', {
-                        targetId: 'workflow-list-section',
+                    activateModule('action-orchestrator', 'action-orchestrator-studio', {
+                        targetId: 'workflow-studio-section',
                     });
                     await loadActionOrchestrator();
                     const workflowId = artifact.focus?.workflow_id || artifact.resource_id;
                     if (workflowId) {
-                        await loadWorkflowDetail(workflowId);
+                        await loadWorkflowStudioSelection('workflow', workflowId);
                     }
                     return;
                 }
@@ -12437,7 +12894,16 @@ export function initializeOperatorConsole() {
             });
             workflowChannelSelect?.addEventListener('change', syncWorkflowChannelFields);
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
-            document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);
+            workflowClearSelectionBtn?.addEventListener('click', () => {
+                resetWorkflowBuilderForm();
+            });
+            document.getElementById('workflow-studio-refresh-btn')?.addEventListener('click', loadActionOrchestrator);
+            document.querySelectorAll('[data-workflow-studio-filter]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    selectedWorkflowStudioType = String(button.dataset.workflowStudioFilter || 'all').trim().toLowerCase() || 'all';
+                    renderWorkflowStudioList();
+                });
+            });
             document.getElementById('orchestrator-run-due-btn').addEventListener('click', runDueWorkflows);
             document.getElementById('orchestrator-kill-on-btn').addEventListener('click', () => setKillSwitch(true));
             document.getElementById('orchestrator-kill-off-btn').addEventListener('click', () => setKillSwitch(false));

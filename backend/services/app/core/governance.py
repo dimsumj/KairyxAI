@@ -95,6 +95,8 @@ ROLE_PERMISSIONS = {
         "cohorts.compare.read",
         "cohorts.refresh_jobs.read",
         "workflows.create",
+        "workflows.archive",
+        "workflows.delete",
         "workflows.publish",
         "workflows.pause",
         "workflows.resume",

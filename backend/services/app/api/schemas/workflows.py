@@ -71,6 +71,7 @@ class WorkflowResponse(BaseModel):
     workflow_id: str
     name: str
     status: str
+    archived_at: str | None = None
     tenant_id: str | None = None
     project_id: str | None = None
     created_by: str = "system"
@@ -85,6 +86,7 @@ class WorkflowResponse(BaseModel):
     experiment_id: str | None = None
     channel_config: Dict[str, Any] = Field(default_factory=dict)
     publish_preflight: Dict[str, Any] = Field(default_factory=dict)
+    runtime_summary: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
 
