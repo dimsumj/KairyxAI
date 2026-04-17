@@ -8,13 +8,16 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 ## 2. Module Scope (v1)
 
 ### 2.1 In Scope
+- Operator surfaces: `Email Campaigns`, `Push Notifications`, `Workflow Studio`, `Runtime Controls`, and `Deliveries`
 - Trigger definitions: time-based, event-based, and threshold-based triggers
 - Action definitions: push / email / in-app / webhook (foundational support)
 - Workflow orchestration: branching, frequency caps, cooldown windows
 - Execution controls: draft, publish, pause, stop
+- Workflow lifecycle controls: archive for non-draft workflows and delete for draft workflows
 - Execution logs: send, fail, retry, skip reasons
 - Audience export jobs for Braze / SendGrid / Webhook, including export status, retry, and diagnostics
 - Safety mechanisms: manual confirmation, Kill Switch, budget thresholds, and frequency guardrails
+- Shared studio summaries for `last_run_at`, `last_test_run_at`, `next_run_at`, `last_result`, and cumulative totals
 
 ### 2.2 Out of Scope
 - Complex cross-channel journey orchestration with many stages
@@ -25,17 +28,24 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 
 ## 3. Detailed Submodule Design
 
-## 3.1 Workflow Builder
+## 3.1 Push Notifications Builder And Workflow Studio
 
 ### Functionality
-- Visual nodes: Trigger -> Filter -> Action -> Wait -> End
-- Conditional branches: IF / ELSE based on attributes, events, or tags
-- Workflow versioning for draft and published states
+- `Email Campaigns` remains the dedicated builder for one-time SendGrid and Braze lifecycle sends
+- `Push Notifications` becomes the dedicated builder for Wynn-backed push workflows and simulator fallback
+- The push builder reuses the existing workflow contract with cohort, experiment, trigger, policy, provider connection, campaign name, title, body, deep link, deep-link token, JSON data, and provider options
+- `Workflow Studio` becomes the shared operating surface for email campaigns and push workflows
+- Workflow Studio shows `Name`, `Type`, `Provider`, `Status`, `Last Run`, `Next Run`, `Last Results`, `Total Results`, and actions
+- Workflow Studio provides filters for `All`, `Email Campaigns`, `Push Workflows`, `Scheduled`, and `Archived`
+- Editing a push workflow reloads it into the `Push Notifications` builder and writes the next save as a new draft version on the same workflow resource
+- Non-draft workflows can be archived; only draft workflows can be deleted
+- Archived workflows remain visible for history and audit but cannot publish, resume, test-run, or execute on due-run
 
 ### DoD
-1. Base workflows can be created and saved
-2. New workflow versions can be published while keeping older versions
-3. Pause and resume are supported
+1. Base push workflows can be created, edited, and saved from `Push Notifications`
+2. Email campaigns and push workflows are both visible and manageable from `Workflow Studio`
+3. New workflow versions can be published while keeping older versions
+4. Pause, resume, archive, and draft-only delete are supported
 
 ---
 
@@ -162,6 +172,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 ---
 
 ## 4. Data Objects (v1)
+- `email_campaign`
 - `workflow`
 - `workflow_version`
 - `workflow_trigger_event`
@@ -173,15 +184,31 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 ---
 
 ## 5. API Draft (v1)
+- `GET /workflows`
 - `POST /workflows`
 - `GET /workflows/{id}`
+- `PUT /workflows/{id}`
 - `POST /workflows/{id}/publish`
 - `POST /workflows/{id}/pause`
 - `POST /workflows/{id}/resume`
+- `POST /workflows/{id}/archive`
+- `DELETE /workflows/{id}`
 - `POST /workflows/{id}/test-run` (sandbox only, must never reach real users)
 - `GET /workflows/{id}/executions`
+- `GET /email-campaigns`
+- `PATCH /email-campaigns/{id}`
+- `POST /email-campaigns/{id}/send-now`
+- `POST /email-campaigns/{id}/cancel`
 - `POST /orchestrator/kill-switch/on`
 - `POST /orchestrator/kill-switch/off`
+
+Workflow response additions:
+- `archived_at`
+- `runtime_summary.last_run_at`
+- `runtime_summary.last_test_run_at`
+- `runtime_summary.next_run_at`
+- `runtime_summary.last_result`
+- `runtime_summary.totals`
 
 ---
 

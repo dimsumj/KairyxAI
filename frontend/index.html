@@ -1111,153 +1111,188 @@ WHERE predicted_churn_risk = 'high'
                 </div>
                 <pre id="email-campaign-detail-output" class="json-output">Selected email campaign details will appear here.</pre>
             </div>
-            <div class="grid-2">
-                <div id="experiment-control-section" class="card split-card">
-                    <div class="module-section-header">
-                        <h2>Create Workflow</h2>
-                        <span class="pill">daily_schedule / manual_test</span>
+            <div id="push-notifications-section" class="card split-card" style="margin-top: 1rem;">
+                <div class="module-section-header">
+                    <h2>Push Notifications</h2>
+                    <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
+                </div>
+                <p class="subtle">Build Wynn PushNotifier workflows with scheduling, guardrails, and live-provider routing while keeping simulator fallback available.</p>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="workflow-name-input">Name</label>
+                        <input type="text" id="workflow-name-input" placeholder="daily_churn_rescue">
                     </div>
-                    <div class="grid-3">
+                    <div class="form-group">
+                        <label for="workflow-cohort-select">Cohort</label>
+                        <select id="workflow-cohort-select">
+                            <option value="">Load cohorts first</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-experiment-id-input">Experiment ID</label>
+                        <input type="text" id="workflow-experiment-id-input" value="churn_rescue_v1">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="workflow-trigger-type-select">Trigger Type</label>
+                        <select id="workflow-trigger-type-select">
+                            <option value="daily_schedule" selected>daily_schedule</option>
+                            <option value="manual_test">manual_test</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-trigger-hour-input">Hour</label>
+                        <input type="number" id="workflow-trigger-hour-input" min="0" max="23" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-trigger-minute-input">Minute</label>
+                        <input type="number" id="workflow-trigger-minute-input" min="0" max="59" value="0">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="workflow-channel-select">Channel</label>
+                        <select id="workflow-channel-select">
+                            <option value="push_notification" selected>Push Notification</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-global-limit-input">Global Daily Limit</label>
+                        <input type="number" id="workflow-global-limit-input" min="1" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-channel-limit-input">Channel Daily Limit</label>
+                        <input type="number" id="workflow-channel-limit-input" min="1" value="5">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label for="workflow-cooldown-hours-input">Cooldown Hours</label>
+                        <input type="number" id="workflow-cooldown-hours-input" min="0" value="24">
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-quiet-start-input">Quiet Hours Start</label>
+                        <input type="number" id="workflow-quiet-start-input" min="0" max="23" value="22">
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-quiet-end-input">Quiet Hours End</label>
+                        <input type="number" id="workflow-quiet-end-input" min="0" max="23" value="7">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="workflow-budget-limit-input">Daily Budget Limit</label>
+                        <input type="number" id="workflow-budget-limit-input" min="0" value="25">
+                    </div>
+                    <div class="form-group">
+                        <label for="workflow-blacklist-input">Blacklist IDs (comma separated)</label>
+                        <input type="text" id="workflow-blacklist-input" placeholder="user_1,user_2">
+                    </div>
+                </div>
+                <div id="workflow-email-fields" style="display: none;">
+                    <div class="form-group">
+                        <label for="workflow-content-input">Email Content</label>
+                        <textarea id="workflow-content-input" style="min-height: 8rem;">Come back for a reward.</textarea>
+                    </div>
+                </div>
+                <div id="workflow-push-fields">
+                    <div class="grid-2">
                         <div class="form-group">
-                            <label for="workflow-name-input">Name</label>
-                            <input type="text" id="workflow-name-input" placeholder="daily_churn_rescue">
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-cohort-select">Cohort</label>
-                            <select id="workflow-cohort-select">
-                                <option value="">Load cohorts first</option>
+                            <label for="workflow-push-provider-connection-select">Provider Connection</label>
+                            <select id="workflow-push-provider-connection-select">
+                                <option value="">Simulator only (no provider connection)</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="workflow-experiment-id-input">Experiment ID</label>
-                            <input type="text" id="workflow-experiment-id-input" value="churn_rescue_v1">
-                        </div>
-                    </div>
-                    <div class="grid-3">
-                        <div class="form-group">
-                            <label for="workflow-trigger-type-select">Trigger Type</label>
-                            <select id="workflow-trigger-type-select">
-                                <option value="daily_schedule" selected>daily_schedule</option>
-                                <option value="manual_test">manual_test</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-trigger-hour-input">Hour</label>
-                            <input type="number" id="workflow-trigger-hour-input" min="0" max="23" value="10">
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-trigger-minute-input">Minute</label>
-                            <input type="number" id="workflow-trigger-minute-input" min="0" max="59" value="0">
-                        </div>
-                    </div>
-                    <div class="grid-3">
-                        <div class="form-group">
-                            <label for="workflow-channel-select">Channel</label>
-                            <select id="workflow-channel-select">
-                                <option value="push_notification" selected>Push Notification</option>
-                                <option value="email">Email</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-global-limit-input">Global Daily Limit</label>
-                            <input type="number" id="workflow-global-limit-input" min="1" value="5">
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-channel-limit-input">Channel Daily Limit</label>
-                            <input type="number" id="workflow-channel-limit-input" min="1" value="5">
-                        </div>
-                    </div>
-                    <div class="grid-3">
-                        <div class="form-group">
-                            <label for="workflow-cooldown-hours-input">Cooldown Hours</label>
-                            <input type="number" id="workflow-cooldown-hours-input" min="0" value="24">
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-quiet-start-input">Quiet Hours Start</label>
-                            <input type="number" id="workflow-quiet-start-input" min="0" max="23" value="22">
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-quiet-end-input">Quiet Hours End</label>
-                            <input type="number" id="workflow-quiet-end-input" min="0" max="23" value="7">
+                            <label for="workflow-push-campaign-name-input">Campaign Name</label>
+                            <input type="text" id="workflow-push-campaign-name-input" value="winback_push">
                         </div>
                     </div>
                     <div class="grid-2">
                         <div class="form-group">
-                            <label for="workflow-budget-limit-input">Daily Budget Limit</label>
-                            <input type="number" id="workflow-budget-limit-input" min="0" value="25">
+                            <label for="workflow-push-title-input">Title</label>
+                            <input type="text" id="workflow-push-title-input" value="Come back">
                         </div>
                         <div class="form-group">
-                            <label for="workflow-blacklist-input">Blacklist IDs (comma separated)</label>
-                            <input type="text" id="workflow-blacklist-input" placeholder="user_1,user_2">
+                            <label for="workflow-push-scheduled-at-input">Schedule Override (optional)</label>
+                            <input type="datetime-local" id="workflow-push-scheduled-at-input">
                         </div>
                     </div>
-                    <div id="workflow-email-fields" style="display: none;">
+                    <div class="form-group">
+                        <label for="workflow-push-body-input">Body</label>
+                        <textarea id="workflow-push-body-input" style="min-height: 8rem;">Rewards are waiting for you.</textarea>
+                    </div>
+                    <div class="grid-2">
                         <div class="form-group">
-                            <label for="workflow-content-input">Email Content</label>
-                            <textarea id="workflow-content-input" style="min-height: 8rem;">Come back for a reward.</textarea>
+                            <label for="workflow-push-deep-link-input">Deep Link (optional)</label>
+                            <input type="text" id="workflow-push-deep-link-input" placeholder="wynn://promotions/welcome-back">
+                        </div>
+                        <div class="form-group">
+                            <label for="workflow-push-deep-link-token-input">Deep Link Token (optional)</label>
+                            <input type="text" id="workflow-push-deep-link-token-input" placeholder="campaign-default-token">
                         </div>
                     </div>
-                    <div id="workflow-push-fields">
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="workflow-push-provider-connection-select">Provider Connection</label>
-                                <select id="workflow-push-provider-connection-select">
-                                    <option value="">Simulator only (no provider connection)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="workflow-push-campaign-name-input">Campaign Name</label>
-                                <input type="text" id="workflow-push-campaign-name-input" value="winback_push">
-                            </div>
-                        </div>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="workflow-push-title-input">Title</label>
-                                <input type="text" id="workflow-push-title-input" value="Come back">
-                            </div>
-                            <div class="form-group">
-                                <label for="workflow-push-scheduled-at-input">Schedule Override (optional)</label>
-                                <input type="datetime-local" id="workflow-push-scheduled-at-input">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-push-body-input">Body</label>
-                            <textarea id="workflow-push-body-input" style="min-height: 8rem;">Rewards are waiting for you.</textarea>
-                        </div>
-                        <div class="grid-2">
-                            <div class="form-group">
-                                <label for="workflow-push-deep-link-input">Deep Link (optional)</label>
-                                <input type="text" id="workflow-push-deep-link-input" placeholder="wynn://promotions/welcome-back">
-                            </div>
-                            <div class="form-group">
-                                <label for="workflow-push-deep-link-token-input">Deep Link Token (optional)</label>
-                                <input type="text" id="workflow-push-deep-link-token-input" placeholder="campaign-default-token">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="workflow-push-data-input">Push Data JSON</label>
-                            <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
-                        </div>
-                        <details>
-                            <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
-                            <div class="form-group" style="margin-top: 0.75rem;">
-                                <label for="workflow-push-provider-options-input">Provider Options JSON</label>
-                                <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
-                            </div>
-                        </details>
-                        <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a Wynn PushNotifier connection when this workflow should create visible Wynn push campaigns for explicit player IDs.</p>
+                    <div class="form-group">
+                        <label for="workflow-push-data-input">Push Data JSON</label>
+                        <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
                     </div>
-                    <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
-                        <input type="checkbox" id="workflow-requires-confirmation-checkbox">
-                        Requires manual confirmation
-                    </label>
+                    <details>
+                        <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
+                        <div class="form-group" style="margin-top: 0.75rem;">
+                            <label for="workflow-push-provider-options-input">Provider Options JSON</label>
+                            <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                        </div>
+                    </details>
+                    <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a Wynn PushNotifier connection when this workflow should create visible Wynn push campaigns for explicit player IDs.</p>
+                </div>
+                <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                    <input type="checkbox" id="workflow-requires-confirmation-checkbox">
+                    Requires manual confirmation
+                </label>
+                <div class="inline-actions">
+                    <button id="workflow-create-btn">Create Push Workflow</button>
+                    <button id="workflow-clear-selection-btn" type="button">Clear</button>
+                    <span id="workflow-create-status" class="subtle"></span>
+                </div>
+            </div>
+
+            <div id="workflow-studio-section" class="card" style="margin-top: 1rem;">
+                <div class="module-section-header">
+                    <div>
+                        <h2>Workflow Studio</h2>
+                        <div class="subtle">Schedule email campaigns, manage push workflows, and inspect the latest runtime state from one surface.</div>
+                    </div>
                     <div class="inline-actions">
-                        <button id="workflow-create-btn">Create Workflow</button>
-                        <span id="workflow-create-status" class="subtle"></span>
+                        <button id="workflow-studio-refresh-btn" type="button">Refresh</button>
+                        <span id="workflow-studio-status" class="subtle"></span>
                     </div>
                 </div>
+                <div class="inline-actions" id="workflow-studio-filters" style="margin-bottom: 1rem;">
+                    <button type="button" data-workflow-studio-filter="all">All</button>
+                    <button type="button" data-workflow-studio-filter="email_campaign">Email Campaigns</button>
+                    <button type="button" data-workflow-studio-filter="workflow">Push Workflows</button>
+                    <button type="button" data-workflow-studio-filter="scheduled">Scheduled</button>
+                    <button type="button" data-workflow-studio-filter="archived">Archived</button>
+                </div>
+                <div id="workflow-studio-list"></div>
+            </div>
 
-                <div id="experiment-summary-section" class="card split-card">
+            <div class="grid-2" style="margin-top: 1rem;">
+                <div id="workflow-studio-detail-section" class="card split-card">
+                    <div class="module-section-header">
+                        <h2>Selected Item</h2>
+                        <span id="workflow-studio-selected-label" class="pill">No item selected</span>
+                    </div>
+                    <div id="workflow-studio-email-schedule-group" class="form-group" style="display: none;">
+                        <label for="workflow-studio-email-schedule-input">Schedule Email Campaign</label>
+                        <input type="datetime-local" id="workflow-studio-email-schedule-input">
+                    </div>
+                    <div id="workflow-studio-actions" class="inline-actions"></div>
+                    <pre id="workflow-studio-detail-output" class="json-output">Selected workflow or email campaign details will appear here.</pre>
+                </div>
+
+                <div id="workflow-runtime-controls-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Runtime Controls</h2>
                         <span class="pill">Policies, Callbacks, Exports</span>
@@ -1316,16 +1351,8 @@ WHERE predicted_churn_risk = 'high'
                 </div>
             </div>
 
-            <div class="card">
-                <div class="module-section-header">
-                    <h2>Workflows</h2>
-                    <button id="workflow-refresh-list-btn">Refresh</button>
-                </div>
-                <div id="workflow-list"></div>
-            </div>
-
             <div class="grid-2">
-                <div id="experiment-results-section" class="card split-card">
+                <div id="workflow-executions-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Executions & Policy Counters</h2>
                         <span id="workflow-selected-label" class="pill">No workflow selected</span>
@@ -1333,7 +1360,7 @@ WHERE predicted_churn_risk = 'high'
                     <div id="workflow-executions-list"></div>
                     <pre id="workflow-policy-output" class="json-output">Policy counters will appear here.</pre>
                 </div>
-                <div class="card split-card">
+                <div id="workflow-deliveries-audit-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Deliveries</h2>
                         <span class="pill">Audited</span>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from engagement_executor import EngagementExecutor
@@ -82,6 +82,8 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be edited.")
         definition = dict(payload.get("definition") or {})
         if patch.get("cohort_id") and self.cohorts.get_cohort(str(patch["cohort_id"])) is None:
             raise KeyError(str(patch["cohort_id"]))
@@ -122,7 +124,7 @@ class WorkflowService:
         return self._to_response(saved)
 
     def list_versions(self, workflow_id: str) -> Dict[str, Any]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         return {"workflow_id": workflow_id, "items": self.repository.list_resource_versions("workflow", workflow_id)}
 
@@ -142,18 +144,20 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_confirmed", payload=payload)
         return payload
 
-    def get_workflow(self, workflow_id: str) -> Dict[str, Any] | None:
+    def get_workflow(self, workflow_id: str, *, include_runtime_summary: bool = True) -> Dict[str, Any] | None:
         record = self.repository.get_resource("workflow", workflow_id)
-        return self._to_response(record) if record else None
+        return self._to_response(record, include_runtime_summary=include_runtime_summary) if record else None
 
-    def list_workflows(self) -> List[Dict[str, Any]]:
-        return [self._to_response(item) for item in self.repository.list_resources("workflow")]
+    def list_workflows(self, *, include_runtime_summary: bool = True) -> List[Dict[str, Any]]:
+        return [self._to_response(item, include_runtime_summary=include_runtime_summary) for item in self.repository.list_resources("workflow")]
 
     def publish_workflow(self, workflow_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("workflow", workflow_id)
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be published.")
         self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
@@ -171,6 +175,45 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_published", payload={"version": version, "preflight": preflight})
         return self._to_response(saved)
 
+    def archive_workflow(self, workflow_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            raise KeyError(workflow_id)
+        payload = dict(record.get("payload") or {})
+        status = str(payload.get("status") or "").lower()
+        if status == "draft":
+            raise ValueError("Draft workflows should be deleted instead of archived.")
+        if status == "archived":
+            raise ValueError("Workflow is already archived.")
+        payload["status"] = "archived"
+        payload["archived_at"] = datetime.utcnow().isoformat()
+        saved = self.repository.upsert_resource("workflow", workflow_id, status="archived", name=payload.get("name"), payload=payload)
+        self.repository.record_resource_event(
+            "workflow",
+            workflow_id,
+            event_type="workflow_archived",
+            payload={"status": "archived", "archived_at": payload["archived_at"]},
+        )
+        self.repository.record_action(
+            "workflow_archived",
+            "workflow",
+            workflow_id,
+            {"workflow_id": workflow_id, "archived_at": payload["archived_at"]},
+        )
+        return self._to_response(saved)
+
+    def delete_workflow(self, workflow_id: str) -> bool:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            return False
+        payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() != "draft":
+            raise ValueError("Only draft workflows can be deleted.")
+        deleted = self.repository.delete_resource("workflow", workflow_id)
+        if deleted:
+            self.repository.record_action("workflow_deleted", "workflow", workflow_id, {"workflow_id": workflow_id})
+        return deleted
+
     def pause_workflow(self, workflow_id: str) -> Dict[str, Any]:
         return self._set_status(workflow_id, "paused", "workflow_paused")
 
@@ -179,6 +222,8 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be resumed.")
         self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
@@ -208,19 +253,17 @@ class WorkflowService:
         return record.get("payload") or {"enabled": False}
 
     def list_executions(self, workflow_id: str) -> List[Dict[str, Any]]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         return [item.get("payload") or {} for item in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500)]
 
     def list_deliveries(self, workflow_id: str) -> List[Dict[str, Any]]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
-        items = []
-        for record in self.repository.list_resources("workflow_delivery"):
-            payload = record.get("payload") or {}
-            if str(payload.get("workflow_id") or "") == workflow_id:
-                items.append(payload)
-        return items
+        return [
+            record.get("payload") or {}
+            for record in self.repository.list_resources("workflow_delivery", name=workflow_id)
+        ]
 
     def get_delivery_diagnostics(self, workflow_id: str) -> Dict[str, Any]:
         deliveries = self.list_deliveries(workflow_id)
@@ -272,7 +315,7 @@ class WorkflowService:
         }
 
     def get_policy_counters(self, workflow_id: str) -> Dict[str, Any]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         policy_items = [
             item.get("payload") or {}
@@ -436,6 +479,8 @@ class WorkflowService:
         workflow = self.get_workflow(workflow_id)
         if workflow is None:
             raise KeyError(workflow_id)
+        if workflow["status"] == "archived":
+            raise ValueError("Archived workflows cannot be executed.")
         if workflow["status"] not in {"published", "draft"}:
             raise ValueError("Only draft or published workflows can be executed.")
         return self._execute_workflow(
@@ -461,7 +506,7 @@ class WorkflowService:
         action_date = resolved_time.date().isoformat()
         tokens = dict(confirmation_tokens or {})
         runs = []
-        for workflow in self.list_workflows():
+        for workflow in self.list_workflows(include_runtime_summary=False):
             if workflow.get("status") != "published":
                 continue
             trigger = workflow.get("trigger") or {}
@@ -575,12 +620,14 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot change status.")
         payload["status"] = status
         saved = self.repository.upsert_resource("workflow", workflow_id, status=status, name=payload.get("name"), payload=payload)
         self.repository.record_resource_event("workflow", workflow_id, event_type=event_type, payload={"status": status})
         return self._to_response(saved)
 
-    def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _to_response(self, record: Dict[str, Any], *, include_runtime_summary: bool = True) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
         definition = payload.get("definition") or {}
         payload.setdefault("trigger", definition.get("trigger") or definition.get("schedule") or {"type": "daily_schedule"})
@@ -588,6 +635,7 @@ class WorkflowService:
         payload.setdefault("budget_policy", definition.get("budget_policy") or {})
         payload.setdefault("experiment_id", definition.get("experiment_id"))
         payload.setdefault("channel_config", definition.get("channel_config") or definition.get("action") or {})
+        payload.setdefault("archived_at", payload.get("archived_at"))
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
         payload.setdefault("tenant_id", record.get("tenant_id"))
@@ -595,7 +643,140 @@ class WorkflowService:
         payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
         payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
+        if include_runtime_summary:
+            payload["runtime_summary"] = self._build_runtime_summary(payload)
         return redact_secret_values(payload)
+
+    def _build_runtime_summary(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
+        workflow_id = str(workflow.get("workflow_id") or "").strip()
+        default_summary = {
+            "last_run_at": None,
+            "last_test_run_at": None,
+            "next_run_at": None,
+            "last_result": {},
+            "totals": {
+                "runs": 0,
+                "test_runs": 0,
+                "triggered": 0,
+                "executed": 0,
+                "success": 0,
+                "failures": 0,
+                "holdout": 0,
+                "filtered_out": 0,
+                "policy_blocked": 0,
+                "duplicate_suppressed": 0,
+                "budget_exhausted": 0,
+                "invalid_target": 0,
+            },
+        }
+        if not workflow_id:
+            return default_summary
+
+        events = [
+            item.get("payload") or {}
+            for item in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500)
+        ]
+        if not events:
+            if self._workflow_has_next_run(workflow):
+                default_summary["next_run_at"] = self._compute_next_run_at(workflow, None)
+            return default_summary
+
+        live_runs = [event for event in events if not self._is_test_execution(event)]
+        test_runs = [event for event in events if self._is_test_execution(event)]
+        latest_live = self._latest_execution_event(live_runs)
+        latest_test = self._latest_execution_event(test_runs)
+
+        totals = dict(default_summary["totals"])
+        for event in live_runs:
+            totals["runs"] += 1
+            for key in ("triggered", "executed", "success", "failures", "holdout", "filtered_out", "policy_blocked", "duplicate_suppressed", "budget_exhausted", "invalid_target"):
+                totals[key] += int(event.get(key) or 0)
+        totals["test_runs"] = len(test_runs)
+
+        return {
+            "last_run_at": latest_live.get("recorded_at") if latest_live else None,
+            "last_test_run_at": latest_test.get("recorded_at") if latest_test else None,
+            "next_run_at": self._compute_next_run_at(workflow, latest_live),
+            "last_result": self._compact_execution_summary(latest_live),
+            "totals": totals,
+        }
+
+    @staticmethod
+    def _latest_execution_event(events: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+        if not events:
+            return None
+        return max(
+            events,
+            key=lambda item: WorkflowService._parse_execution_sort_key(
+                str(item.get("recorded_at") or item.get("reference_time") or "")
+            ),
+        )
+
+    @staticmethod
+    def _is_test_execution(event: Dict[str, Any]) -> bool:
+        return bool(event.get("sandbox")) or str(event.get("trigger_type") or "").lower() == "manual_test"
+
+    @staticmethod
+    def _parse_execution_sort_key(value: str) -> datetime:
+        raw = str(value or "").strip()
+        if not raw:
+            return datetime.min
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return datetime.min
+
+    @staticmethod
+    def _workflow_has_next_run(workflow: Dict[str, Any]) -> bool:
+        return (
+            str(workflow.get("status") or "").lower() == "published"
+            and str((workflow.get("trigger") or {}).get("type") or "").lower() == "daily_schedule"
+        )
+
+    def _compute_next_run_at(self, workflow: Dict[str, Any], latest_live: Dict[str, Any] | None) -> str | None:
+        if not self._workflow_has_next_run(workflow):
+            return None
+        if str(workflow.get("status") or "").lower() == "archived":
+            return None
+        trigger = dict(workflow.get("trigger") or {})
+        hour = int(trigger.get("hour") or 0)
+        minute = int(trigger.get("minute") or 0)
+        now = datetime.utcnow()
+        if latest_live:
+            base = self._parse_execution_sort_key(str(latest_live.get("recorded_at") or latest_live.get("reference_time") or ""))
+            if base != datetime.min:
+                anchor = max(base, now)
+                candidate = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate <= anchor:
+                    candidate += timedelta(days=1)
+                return candidate.isoformat()
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.isoformat()
+
+    @staticmethod
+    def _compact_execution_summary(event: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not event:
+            return {}
+        return {
+            "trigger_type": event.get("trigger_type"),
+            "recorded_at": event.get("recorded_at"),
+            "triggered": int(event.get("triggered") or 0),
+            "executed": int(event.get("executed") or 0),
+            "success": int(event.get("success") or 0),
+            "failures": int(event.get("failures") or 0),
+            "holdout": int(event.get("holdout") or 0),
+            "filtered_out": int(event.get("filtered_out") or 0),
+            "policy_blocked": int(event.get("policy_blocked") or 0),
+            "duplicate_suppressed": int(event.get("duplicate_suppressed") or 0),
+            "budget_exhausted": int(event.get("budget_exhausted") or 0),
+            "invalid_target": int(event.get("invalid_target") or 0),
+        }
 
     def _normalize_trigger(self, trigger: Dict[str, Any]) -> Dict[str, Any]:
         raw_type = str((trigger or {}).get("type") or "daily").lower()

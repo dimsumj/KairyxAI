@@ -43,7 +43,7 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Wynn PushNotifier provider connection, then go to `Action Orchestrator` to either draft an email campaign or create a workflow against a cohort.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Wynn PushNotifier provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, draft or update a push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -487,6 +487,7 @@ Deployment note:
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
+
 Legacy `Google Gemini` connector records are no longer created from this generic connector form. Ask AI runtimes are managed through `AI Agents & Models` instead.
 
 For lifecycle email campaigns and Wynn-backed push workflows, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Wynn PushNotifier accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Wynn PushNotifier provider connections are used by `Action Orchestrator -> Create Workflow` when a `push_notification` workflow should create a visible campaign in Wynn PushNotifier instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
@@ -508,7 +509,7 @@ Use the dedicated provider-connection card on `Data Core -> Connectors` to manag
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
 | Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
 | Provider row `Use in Campaign` | Row button | Visible for SendGrid and Braze rows. Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
-| Provider row `Use in Workflow` | Row button | Visible for Wynn PushNotifier rows. Jumps to `Action Orchestrator -> Create Workflow` and preselects that provider connection in the push workflow composer. | None | The workflow form is preloaded for Wynn-backed `push_notification` delivery. |
+| Provider row `Use in Workflow` | Row button | Visible for Wynn PushNotifier rows. Jumps to `Action Orchestrator -> Push Notifications` and preselects that provider connection in the push workflow composer. | None | The push workflow builder is preloaded for Wynn-backed `push_notification` delivery. |
 | Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
@@ -960,44 +961,46 @@ State rules:
 - Only `draft` campaigns can be deleted.
 - `sent`, `sent_with_errors`, `failed`, and `cancelled` campaigns stay read-only in the browser list and detail view.
 
-### 5.2 Create Workflow
+### 5.2 Push Notifications
+
+Use this section to create or update Wynn-backed push workflows. The push builder reuses the existing workflow backend, keeps the simulator fallback when no provider connection is selected, and writes draft workflow versions that later move through `Workflow Studio`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Name` | Text box | Workflow name. | `daily_churn_rescue` | Stored as workflow name. |
+| `Name` | Text box | Workflow name. | `daily_churn_rescue` | Stored as the workflow name. |
 | `Cohort` | Select | Choose the source cohort. | `cohort_20260322_1200` | Workflow binds to that cohort. |
 | `Experiment ID` | Text box | Link the workflow to an experiment id. | `churn_rescue_v1` | Publish and measurement use this experiment id. |
 | `Trigger Type` | Select | Choose `daily_schedule` or `manual_test`. | `daily_schedule` | Trigger config uses the selected type. |
 | `Hour` | Number box | Scheduled run hour. | `10` | Daily run executes at 10:00. |
-| `Minute` | Number box | Scheduled run minute. | `0` | Daily run executes at `:00`. |
-| `Channel` | Select | Choose message channel. | `push_notification` | Action uses the selected channel. |
+| `Minute` | Number box | Scheduled run minute. | `15` | Daily run executes at `:15`. |
+| `Channel` | Select | Fixed to `Push Notification` for this builder. | `Push Notification` | Workflow action stays on the push path. |
 | `Global Daily Limit` | Number box | Max sends per day across workflow. | `5` | Policy blocks sends beyond five. |
-| `Channel Daily Limit` | Number box | Max sends per channel per day. | `5` | Policy applies per channel. |
+| `Channel Daily Limit` | Number box | Max push sends per day. | `5` | Policy applies at the push-channel level. |
 | `Cooldown Hours` | Number box | Cooldown per user. | `24` | Same user is skipped for 24 hours. |
 | `Quiet Hours Start` | Number box | Start of no-send window. | `22` | Sends are blocked after 22:00. |
 | `Quiet Hours End` | Number box | End of no-send window. | `7` | Sends resume at 07:00. |
 | `Daily Budget Limit` | Number box | Workflow budget cap. | `25` | Policy blocks sends beyond budget. |
 | `Blacklist IDs (comma separated)` | Text box | Users who should never receive this workflow. | `user_1,user_2` | Those users are always skipped. |
-| `Email Content` | Text area | Visible only when `Channel` is `Email`. Sets the body used by the legacy email workflow path. | `Come back for a reward.` | Used as workflow content for the email channel. |
-| `Provider Connection` | Select | Visible only when `Channel` is `Push Notification`. Leave it blank to keep simulator delivery, or choose a Wynn PushNotifier connection for live Wynn delivery. | `Wynn PushNotifier Production` | The workflow uses the selected provider connection at execution time. |
-| `Campaign Name` | Text box | Visible only when `Channel` is `Push Notification`. Sets the Wynn campaign label created for the workflow send. | `winback_push` | The outbound payload includes `campaign_name`. |
-| `Title` | Text box | Visible only when `Channel` is `Push Notification`. Required for live Wynn delivery. | `Come back` | The outbound payload includes `title`. |
-| `Schedule Override (optional)` | Date/time picker | Visible only when `Channel` is `Push Notification`. Converts the local date and time into an ISO timestamp and sends it as a one-time override for Wynn PushNotifier. | `2026-04-16 11:30` | The outbound payload includes `scheduled_at`. |
-| `Body` | Text area | Visible only when `Channel` is `Push Notification`. Required for live Wynn delivery and also used as simulator content when no provider connection is selected. | `Rewards are waiting for you.` | The outbound payload includes `body`. |
-| `Deep Link (optional)` | Text box | Visible only when `Channel` is `Push Notification`. Sets the deep link metadata stored on the push request. | `wynn://promotions/welcome-back` | The outbound payload includes `deep_link`. |
-| `Deep Link Token (optional)` | Text box | Visible only when `Channel` is `Push Notification`. Overrides the provider connection's default deep link token for this workflow. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
-| `Push Data JSON` | Text area | Visible only when `Channel` is `Push Notification`. Must be valid JSON object text. | `{"reward_id":"reward_pack"}` | The outbound payload includes `data`. |
+| `Provider Connection` | Select | Leave blank to keep simulator delivery, or choose a Wynn PushNotifier connection for live Wynn delivery. | `Wynn PushNotifier Production` | Execution uses the selected provider connection. |
+| `Campaign Name` | Text box | Sets the Wynn campaign label created for the workflow send. | `winback_push` | The outbound payload includes `campaign_name`. |
+| `Title` | Text box | Required for live Wynn delivery. | `Come back` | The outbound payload includes `title`. |
+| `Schedule Override (optional)` | Date/time picker | Converts the local date and time into an ISO timestamp for Wynn PushNotifier. | `2026-04-16 11:30` | The outbound payload includes `scheduled_at`. |
+| `Body` | Text area | Required for live Wynn delivery and also used as simulator content when no provider connection is selected. | `Rewards are waiting for you.` | The outbound payload includes `body`. |
+| `Deep Link (optional)` | Text box | Sets the deep link metadata stored on the push request. | `wynn://promotions/welcome-back` | The outbound payload includes `deep_link`. |
+| `Deep Link Token (optional)` | Text box | Overrides the provider connection's default deep link token for this workflow. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
+| `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"reward_pack"}` | The outbound payload includes `data`. |
 | `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for push workflows. | None | The advanced JSON field becomes visible. |
-| `Provider Options JSON` | Text area | Visible inside `Advanced Provider Options` for `Push Notification`. Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
+| `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
 | `Requires manual confirmation` | Checkbox | Require manual confirmation before high-risk execution. | Checked | Workflow is marked confirmation-required. |
-| `Create Workflow` | Button | Creates the workflow draft. | None | Workflow appears in the workflow list. |
+| `Create Push Workflow` / `Update Push Workflow` | Button | Creates a new draft workflow or updates the selected workflow back into a draft version. | None | The workflow is saved and becomes manageable in `Workflow Studio`. |
+| `Clear` | Button | Clears the selected workflow and resets the builder to a new draft. | None | The form is ready for a new push workflow. |
 
-Channel behavior:
-- When `Channel` is `Push Notification`, the email content field is hidden and the push composer fields are shown.
+Push builder behavior:
 - Leaving `Provider Connection` blank keeps the legacy simulator path for push workflows.
 - Selecting a Wynn PushNotifier provider connection switches the workflow to live Wynn delivery. Kairyx sends explicit cohort member `canonical_user_id` values as Wynn `player_ids`.
 - Live Wynn push workflows require both `Title` and `Body`.
-- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be created.
+- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
+- Editing a published or paused workflow creates a new draft version on that same workflow record.
 
 #### Sample push workflow request
 ```json
@@ -1009,7 +1012,7 @@ Channel behavior:
   "trigger": {
     "type": "daily_schedule",
     "hour": 10,
-    "minute": 0
+    "minute": 15
   },
   "action": {
     "channel": "push_notification",
@@ -1046,18 +1049,70 @@ Channel behavior:
 }
 ```
 
-#### Sample workflow output
+#### Sample workflow response
 ```json
 {
   "workflow_id": "wf_20260322_1215",
-  "name": "daily_churn_rescue",
+  "name": "daily_churn_rescue_push",
   "status": "draft",
-  "cohort_id": "cohort_20260322_1200",
-  "experiment_id": "churn_rescue_v1"
+  "archived_at": null,
+  "experiment_id": "churn_rescue_v1",
+  "runtime_summary": {
+    "last_run_at": null,
+    "last_test_run_at": null,
+    "next_run_at": null,
+    "last_result": {},
+    "totals": {
+      "runs": 0,
+      "test_runs": 0,
+      "triggered": 0,
+      "executed": 0,
+      "success": 0,
+      "failures": 0
+    }
+  }
 }
 ```
 
-### 5.3 Runtime Controls
+### 5.3 Workflow Studio
+
+Use this section to schedule email campaigns, manage push workflows, and review a unified operational summary. The table merges both resource types and adds a selected-item panel so operators can edit, schedule, archive, or inspect the current record without switching pages.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Refresh` | Button | Reloads email campaigns, push workflows, and the selected detail panel. | None | The studio list and detail state refresh. |
+| `All` / `Email Campaigns` / `Push Workflows` / `Scheduled` / `Archived` | Filter buttons | Narrow the studio table to the relevant resource set. | `Scheduled` | Only scheduled email campaigns and published push workflows remain visible. |
+| `Name` | Table column | Read-only. Shows the resource name plus the underlying id. | `daily_churn_rescue_push` | Operators can identify the exact campaign or workflow record. |
+| `Type` | Table column | Read-only. Distinguishes `Email Campaign` from `Push Workflow`. | `Push Workflow` | The operator can see which builder to use for edits. |
+| `Provider` | Table column | Read-only. Shows SendGrid, Braze, Wynn PushNotifier, simulator, or workflow channel fallback. | `Wynn PushNotifier` | The delivery target is visible from the list. |
+| `Status` | Table column | Read-only. Shows draft, scheduled, published, paused, sent, failed, cancelled, or archived state. | `archived` | The lifecycle state is visible from the list. |
+| `Last Run` | Table column | Read-only. Uses workflow `runtime_summary.last_run_at` or campaign send timestamps. | `2026-03-10 10:15` | Operators can see the last live execution time. |
+| `Next Run` | Table column | Read-only. Uses workflow `runtime_summary.next_run_at` or campaign `schedule_at`. | `2026-03-11 10:15` | Operators can see the next due time. |
+| `Last Results` | Table column | Read-only. Shows compact counts from the latest execution or send. | `ok 42 · fail 3` | The most recent outcome is summarized without opening raw JSON. |
+| `Total Results` | Table column | Read-only. Shows aggregate run or send counts. | `runs 7 · success 255` | Operators can gauge cumulative performance quickly. |
+| `Selected Item` | Detail panel | Shows the current campaign or workflow JSON plus resource-specific actions. | None | Detail JSON and action buttons appear for the selected item. |
+| `Schedule Email Campaign` | Date/time picker | Visible only when an email campaign is selected. Sets the campaign schedule directly from Workflow Studio. | `2026-04-20 09:30` | The selected email campaign moves to `scheduled`. |
+| Email item `View` | Row or detail button | Loads the selected email campaign into the detail panel. | None | Campaign detail JSON appears. |
+| Email item `Edit` | Row or detail button | Opens the campaign in `Email Campaigns`. | None | The email builder loads the selected campaign. |
+| Email item `Schedule` | Row or detail button | Uses the detail-panel schedule picker to create or update `schedule_at`. | None | The email campaign becomes scheduled. |
+| Email item `Send Now` | Row or detail button | Executes the selected draft or scheduled campaign immediately. | None | Campaign runs and records result counts. |
+| Email item `Cancel` | Row or detail button | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
+| Email item `Delete` | Row or detail button | Deletes a draft campaign. | None | Draft campaign is removed. |
+| Push item `View` | Row or detail button | Loads the selected workflow into the detail panel. | None | Workflow detail JSON appears. |
+| Push item `Edit` | Row or detail button | Opens the workflow in `Push Notifications`. | None | The push builder loads the selected workflow. |
+| Push item `Publish` | Row or detail button | Publishes a draft workflow after preflight checks. | None | Workflow status becomes `published`. |
+| Push item `Pause` | Row or detail button | Pauses a published workflow. | None | Workflow status becomes `paused`. |
+| Push item `Resume` | Row or detail button | Resumes a paused workflow. | None | Workflow status becomes `published`. |
+| Push item `Test Run` | Row or detail button | Runs the workflow in sandbox mode. | None | Test-run output appears in the runtime output panel and `last_test_run_at` updates after refresh. |
+| Push item `Archive` | Row or detail button | Archives a non-draft workflow so it remains visible but cannot run again. | None | Workflow status becomes `archived`. |
+| Push item `Delete` | Row or detail button | Deletes a draft workflow only. | None | Draft workflow is removed. |
+
+Workflow Studio behavior:
+- Archived workflows remain visible in the `Archived` filter and in historical detail views, but they are excluded from due-run execution, resume, publish, and test-run actions.
+- Push workflow totals come from `runtime_summary.totals` and count live runs separately from sandbox test runs.
+- Email campaign totals reuse the campaign `result_summary`.
+
+### 5.4 Runtime Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1103,17 +1158,14 @@ Channel behavior:
 }
 ```
 
-### 5.4 Workflow List, Executions, And Deliveries
+### 5.5 Executions And Deliveries
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Refresh` | Button | Reloads workflows and detail panels. | None | Workflow list refreshes. |
-| Workflow row `View` | Row button | Loads selected workflow detail. | None | Execution, delivery, and policy panels refresh. |
-| Workflow row `Publish` | Row button | Publishes the workflow after preflight checks. | None | Workflow status becomes published. |
-| Workflow row `Pause` | Row button | Pauses a published workflow. | None | Workflow status becomes paused. |
-| Workflow row `Resume` | Row button | Resumes a paused workflow. | None | Workflow status becomes published or active again. |
-| Workflow row `Test Run` | Row button | Runs the workflow in test mode. | None | Test run output appears in runtime output panel. |
+| `Selected workflow` badge | Read-only badge | Shows which push workflow the execution and delivery panels are currently inspecting. | `daily_churn_rescue_push` | Operators can confirm the execution scope. |
+| `Executions & Policy Counters` | Detail panel | Read-only list of workflow execution records and policy aggregates for the selected workflow. | None | Execution history and policy JSON update. |
 | `Load Diagnostics` | Button | Loads delivery diagnostics for the selected workflow. | None | Diagnostics JSON appears. |
+| `Deliveries` | Detail panel | Read-only list of workflow deliveries for the selected workflow. | None | Delivery rows and diagnostics update. |
 
 Delivery detail behavior:
 - Push workflow deliveries created through Wynn PushNotifier keep the selected `provider_connection_id`.
@@ -1621,16 +1673,18 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
      }
      ```
    - Click `Create Cohort`.
-5. In `Action Orchestrator`, create a workflow:
-   - `Name`: `daily_churn_rescue`
+5. In `Action Orchestrator -> Push Notifications`, create a push workflow:
+   - `Name`: `daily_churn_rescue_push`
    - `Cohort`: select the new cohort
    - `Experiment ID`: `churn_rescue_v1`
    - `Trigger Type`: `daily_schedule`
    - `Hour`: `10`
-   - `Minute`: `0`
-   - `Content`: `Come back for a reward.`
-   - Click `Create Workflow`.
-6. In the workflow table, click `Publish`.
+   - `Minute`: `15`
+   - `Campaign Name`: `winback_push`
+   - `Title`: `Come back`
+   - `Body`: `Rewards are waiting for you.`
+   - Click `Create Push Workflow`.
+6. In `Action Orchestrator -> Workflow Studio`, find the new workflow and click `Publish`.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.
 9. Open the global `Ask AI` bubble and run:
