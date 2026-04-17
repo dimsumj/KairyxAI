@@ -22,8 +22,6 @@ def _install_fake_bigquery_module(monkeypatch, client_factory):
     bigquery_module = ModuleType("google.cloud.bigquery")
     bigquery_module.Client = client_factory
     bigquery_module.Dataset = lambda reference: SimpleNamespace(reference=reference, location=None)
-    bigquery_module.SchemaField = lambda name, field_type: SimpleNamespace(name=name, field_type=field_type)
-    bigquery_module.Table = lambda table_id, schema=None: SimpleNamespace(table_id=table_id, schema=schema or [])
     bigquery_module.QueryJobConfig = lambda **kwargs: SimpleNamespace(**kwargs)
     bigquery_module.ScalarQueryParameter = lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs)
     cloud_module.bigquery = bigquery_module
@@ -41,7 +39,6 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
         def __init__(self, project):
             self.project = project
             self.created_datasets = []
-            self.created_tables = []
             FakeClient.last_instance = self
 
         def get_dataset(self, dataset_ref):
@@ -50,13 +47,6 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
         def create_dataset(self, dataset, exists_ok=False):
             self.created_datasets.append((dataset.reference, dataset.location, exists_ok))
             return dataset
-
-        def get_table(self, table_id):
-            raise NotFoundError(f"{table_id} not found")
-
-        def create_table(self, table, exists_ok=False):
-            self.created_tables.append((table.table_id, [(field.name, field.field_type) for field in table.schema], exists_ok))
-            return table
 
     _install_fake_bigquery_module(monkeypatch, FakeClient)
     monkeypatch.setenv("DATA_BACKEND_MODE", "gcp")
@@ -72,24 +62,6 @@ def test_gcp_bigquery_service_creates_scoped_dataset_when_missing(monkeypatch):
     assert FakeClient.last_instance is not None
     assert FakeClient.last_instance.created_datasets == [
         ("demo-project.kairyx_platform_default_default", "us-central1", True)
-    ]
-    assert FakeClient.last_instance.created_tables == [
-        (
-            "demo-project.kairyx_platform_default_default.pipeline_dead_letters",
-            [
-                ("job_id", "STRING"),
-                ("job_identifier", "STRING"),
-                ("player_id", "STRING"),
-                ("canonical_user_id", "STRING"),
-                ("event_type", "STRING"),
-                ("event_time", "TIMESTAMP"),
-                ("rejection_reason", "STRING"),
-                ("ingested_at", "TIMESTAMP"),
-                ("created_at", "TIMESTAMP"),
-                ("payload_json", "STRING"),
-            ],
-            True,
-        )
     ]
 
 

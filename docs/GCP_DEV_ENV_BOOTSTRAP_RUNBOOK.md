@@ -475,7 +475,7 @@ Important behavior:
 - if `CONTROL_PLANE_SECRET_KEY_SECRET` already exists, the script reuses it instead of rotating it
 - if `WORKER_SHARED_TOKEN_SECRET` already exists, the script reuses it instead of rotating it
 - the bootstrap script seeds only the bootstrap-scoped BigQuery dataset and `pipeline_dead_letters` table; later org/project-scoped datasets are created lazily at runtime
-- for those later org/project scopes, the runtime creates the scoped dataset automatically and ensures `pipeline_dead_letters` exists before first-read health or import analysis queries hit it
+- for those later org/project scopes, the runtime creates the scoped dataset automatically, skips dead-letter reads when `pipeline_dead_letters` is still absent, and lets the table be created lazily on first dead-letter write
 
 ### 9.2 Deploy the five Cloud Run services
 Run:
@@ -668,7 +668,7 @@ python3 deploy/gcp/render_ci_env.py --check-only
 - BigQuery base dataset exists
 - bootstrap-scoped BigQuery dataset exists
 - `pipeline_dead_letters` exists in the bootstrap-scoped dataset
-- newly created org/project scopes create their BigQuery dataset lazily at runtime, and `pipeline_dead_letters` is created for that scope before first-read checks run
+- newly created org/project scopes create their BigQuery dataset lazily at runtime, and first-read health or import analysis checks skip `pipeline_dead_letters` until the first dead-letter write creates it
 - Pub/Sub topics exist
 - runtime and invoker service accounts exist
 

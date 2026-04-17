@@ -419,7 +419,7 @@ Important details:
 - Use the `/cloudsql/PROJECT:REGION:INSTANCE` host form for this repo's Cloud Run path.
 - Do not use SQLite in production.
 - If the password contains characters such as `@`, `:`, `/`, or `?`, URL-encode the password before building the URL.
-- The initial bootstrap scope may be provisioned ahead of time, but later org/project-scoped BigQuery datasets are created lazily at runtime. The runtime also ensures `pipeline_dead_letters` exists for a new scope before first-read health or import analysis queries target it.
+- The initial bootstrap scope may be provisioned ahead of time, but later org/project-scoped BigQuery datasets are created lazily at runtime. For those new scopes, the runtime skips dead-letter reads while `pipeline_dead_letters` is still absent and relies on the first dead-letter write to create the table.
 
 Store that URL in Secret Manager and reference the secret ID through `CONTROL_PLANE_DATABASE_URL_SECRET`.
 
@@ -909,7 +909,7 @@ If you set `GCP_SERVICE_PREFIX`, use the prefixed scheduler service name, for ex
 2. Create at least one tenant membership.
 3. If operators will enter connector or provider credentials through the web UI, make sure Cloud Run is injecting `CONTROL_PLANE_SECRET_KEY`; otherwise keep using API `*_ref` values backed by Secret Manager.
 4. Run the auth smoke flow with a real bearer token against an org-scoped URL such as `/{organization_id}/v1/auth/me` and include `X-Kairyx-Project` when project selection is required.
-5. For a newly created organization/project scope, verify the first health or import analysis read does not emit BigQuery `Not found` errors for `pipeline_dead_letters`; the runtime should lazily create the scoped dataset and dead-letter table before those reads.
+5. For a newly created organization/project scope, verify the first health or import analysis read does not emit BigQuery `Not found` errors for `pipeline_dead_letters`; the runtime should skip those reads until the first dead-letter write creates the table for that scope.
 
 ### 7.19 Configure Monitoring And Alerts
 Create notification channels first, then alert policies for:

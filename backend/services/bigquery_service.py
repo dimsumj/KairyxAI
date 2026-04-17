@@ -195,21 +195,6 @@ class BigQueryService:
         self._bigquery = bigquery
         self._client = bigquery.Client(project=project_id)
         self._ensure_gcp_dataset_exists()
-        self._ensure_gcp_table_exists(
-            self._dead_letter_table_id,
-            [
-                ("job_id", "STRING"),
-                ("job_identifier", "STRING"),
-                ("player_id", "STRING"),
-                ("canonical_user_id", "STRING"),
-                ("event_type", "STRING"),
-                ("event_time", "TIMESTAMP"),
-                ("rejection_reason", "STRING"),
-                ("ingested_at", "TIMESTAMP"),
-                ("created_at", "TIMESTAMP"),
-                ("payload_json", "STRING"),
-            ],
-        )
 
     @staticmethod
     def _is_missing_gcp_resource_error(exc: Exception) -> bool:
@@ -248,27 +233,6 @@ class BigQueryService:
             if dataset_location:
                 dataset.location = dataset_location
             self._client.create_dataset(dataset, exists_ok=True)
-        except Exception:
-            return
-
-    def _ensure_gcp_table_exists(self, table_id: str, schema_spec: List[tuple[str, str]]) -> None:
-        if not table_id:
-            return
-        try:
-            if self._gcp_table_exists(table_id):
-                return
-        except Exception:
-            return
-
-        try:
-            table = self._bigquery.Table(
-                table_id,
-                schema=[
-                    self._bigquery.SchemaField(field_name, field_type)
-                    for field_name, field_type in schema_spec
-                ],
-            )
-            self._client.create_table(table, exists_ok=True)
         except Exception:
             return
 
