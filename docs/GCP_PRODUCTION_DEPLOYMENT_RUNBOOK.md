@@ -132,6 +132,7 @@ The following runtime settings are required by the current code in production:
 | `OIDC_ISSUER` | Real production issuer |
 | `OIDC_AUDIENCE` | Real production audience |
 | `OIDC_JWKS_URL` | Real JWKS URL unless you intentionally use local signing secret mode |
+| `OIDC_JWKS_TIMEOUT_SECONDS` | Optional fail-fast timeout for JWKS retrieval; keep it low to avoid long auth hangs |
 | `OIDC_CLIENT_ID` | Real console client ID |
 | `GOOGLE_OIDC_CLIENT_ID` | Optional alias for `OIDC_CLIENT_ID` if you prefer Google-named env templates |
 | `OIDC_AUTHORIZE_URL` | Real IdP authorize URL |
@@ -607,6 +608,7 @@ Required deploy-script variables:
 | `OIDC_ISSUER` | Production OIDC issuer |
 | `OIDC_AUDIENCE` | Production OIDC audience |
 | `OIDC_JWKS_URL` | Production JWKS URL |
+| `OIDC_JWKS_TIMEOUT_SECONDS` | Optional JWKS fetch timeout in seconds |
 | `OIDC_CLIENT_ID` | Browser/client OIDC client ID |
 | `OIDC_AUTHORIZE_URL` | Authorize URL for the IdP |
 | `OIDC_TOKEN_URL` | Token URL for the IdP |
@@ -670,6 +672,7 @@ CORS_ALLOWED_ORIGINS=https://console.example.com
 OIDC_ISSUER=https://accounts.google.com
 OIDC_AUDIENCE=your-google-client-id.apps.googleusercontent.com
 OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs
+OIDC_JWKS_TIMEOUT_SECONDS=5
 OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_OIDC_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 OIDC_AUTHORIZE_URL=https://accounts.google.com/o/oauth2/v2/auth
@@ -992,6 +995,94 @@ Enable all of the following:
 
 Recommended operational rule:
 - if Cloud SQL performs repeated restarts because of memory exhaustion or connection saturation, scale the instance vertically before raising Cloud Run max scale further
+- if startup logs show duplicate PK failures on `control_plane_resource_events_v1`, follow Section `8.5.1`
+
+#### 8.5.1 Repair duplicate PK errors on `control_plane_resource_events_v1`
+
+Use this procedure if Cloud Run or Cloud SQL logs show errors such as:
+
+- `duplicate key value violates unique constraint "control_plane_resource_events_v1_pkey"`
+- startup health warm-up fails while inserting into `control_plane_resource_events_v1`
+- org-scoped requests such as `GET /{organization_id}/v1/auth/me` stall or fail because the API revision is unhealthy during startup
+
+Cause:
+- the Postgres sequence for `control_plane_resource_events_v1.id` has drifted behind the highest existing row ID, so the next insert tries to reuse an existing primary key
+
+Safety rules:
+- run this only during a quiet window or while application write traffic is drained
+- do not run it while multiple API revisions or workers are actively writing control-plane events
+- run the read-only inspection first, then run the repair only if the sequence next value is behind the table maximum
+
+Connect with `psql` from Cloud Shell or another approved admin workstation:
+
+```bash
+gcloud sql connect "${GCP_SQL_INSTANCE}" \
+  --user="${GCP_SQL_USER}" \
+  --database="${GCP_SQL_DATABASE}" \
+  --project="${GCP_PROJECT_ID}"
+```
+
+Read-only inspection:
+
+```sql
+SELECT pg_get_serial_sequence('control_plane_resource_events_v1', 'id') AS sequence_name;
+SELECT COALESCE(MAX(id), 0) AS max_id FROM control_plane_resource_events_v1;
+```
+
+Repair procedure:
+
+```sql
+BEGIN;
+
+LOCK TABLE control_plane_resource_events_v1 IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+DECLARE
+  seq_name text;
+  max_id bigint;
+  last_value bigint;
+  is_called boolean;
+  next_identifier bigint;
+BEGIN
+  SELECT pg_get_serial_sequence('control_plane_resource_events_v1', 'id')
+  INTO seq_name;
+
+  IF seq_name IS NULL THEN
+    RAISE EXCEPTION 'Could not locate the sequence for control_plane_resource_events_v1.id';
+  END IF;
+
+  SELECT COALESCE(MAX(id), 0)
+  INTO max_id
+  FROM control_plane_resource_events_v1;
+
+  EXECUTE format('SELECT last_value, is_called FROM %s', seq_name)
+  INTO last_value, is_called;
+
+  next_identifier := GREATEST(
+    max_id + 1,
+    CASE
+      WHEN is_called THEN last_value + 1
+      ELSE last_value
+    END
+  );
+
+  EXECUTE format('SELECT setval(%L, %s, false)', seq_name, next_identifier);
+END $$;
+
+COMMIT;
+```
+
+Post-repair validation:
+
+```sql
+SELECT COALESCE(MAX(id), 0) AS max_id FROM control_plane_resource_events_v1;
+```
+
+Then restart or redeploy the affected Cloud Run revision and repeat the normal smoke checks:
+
+1. `GET /health/live`
+2. `GET /api/v1/health`
+3. `GET /{organization_id}/v1/auth/me`
 
 ---
 

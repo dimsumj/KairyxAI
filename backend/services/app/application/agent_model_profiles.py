@@ -4,6 +4,7 @@ import os
 import uuid
 from typing import Any, Dict, List
 
+from app.application.ai_runtime_network import normalize_and_validate_runtime_base_url
 from app.application.secret_refs import (
     SENSITIVE_FIELDS,
     contains_inline_secret,
@@ -93,7 +94,7 @@ class AgentModelProfileService:
         normalized_provider = str(provider or "").strip().lower()
         normalized_name = str(name or "").strip()
         normalized_model_name = str(model_name or "").strip() or None
-        normalized_config = dict(config or {})
+        normalized_config = self._normalize_profile_config(normalized_provider, dict(config or {}))
         self._validate_profile(
             provider=normalized_provider,
             model_name=normalized_model_name,
@@ -147,7 +148,8 @@ class AgentModelProfileService:
         if patch.get("config") is not None:
             merged_config = dict(payload.get("config") or {})
             merged_config.update(dict(patch.get("config") or {}))
-            payload["config"] = self._persist_inline_secrets(merged_config)
+            normalized_config = self._normalize_profile_config(str(payload.get("provider") or ""), merged_config)
+            payload["config"] = self._persist_inline_secrets(normalized_config)
         if patch.get("status") is not None:
             payload["status"] = str(patch.get("status") or "active").strip().lower() or "active"
         if patch.get("is_default") is not None:
@@ -272,18 +274,42 @@ class AgentModelProfileService:
             raise ValueError(f"Unsupported agent model provider '{provider}'.")
         name = str(model_name or "").strip()
         payload = dict(config or {})
-        if not AgentModelProfileService._has_secret_reference(payload, "api_key"):
-            raise ValueError("Agent model profiles require api_key.")
+        has_api_key = AgentModelProfileService._has_secret_reference(payload, "api_key")
+        base_url = str(payload.get("base_url") or "").strip()
+        if normalized_provider in {"gemini", "anthropic"} and not has_api_key:
+            raise ValueError(f"{normalized_provider.title()} agent model profiles require api_key.")
+        if normalized_provider == "openai" and not has_api_key and not base_url:
+            raise ValueError("OpenAI agent model profiles require api_key or base_url.")
         if normalized_provider in {"openai", "anthropic"} and not name:
             raise ValueError(f"{normalized_provider.title()} agent model profiles require model_name.")
-        base_url = str(payload.get("base_url") or "").strip()
         if base_url and not base_url.startswith(("https://", "http://")):
             raise ValueError("base_url must start with https:// or http://.")
+        if normalized_provider == "openai" and base_url:
+            normalize_and_validate_runtime_base_url(
+                base_url,
+                allow_private_network_hosts=get_settings().app_env != "prod",
+            )
         settings = get_settings()
         if settings.app_env == "prod" and contains_inline_secret(payload, secret_fields=SENSITIVE_FIELDS):
             raise ValueError(
                 "Inline agent model secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
             )
+
+    @staticmethod
+    def _normalize_profile_config(provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(config or {})
+        if str(provider or "").strip().lower() == "openai":
+            normalized.setdefault("api_key", None)
+            runtime_preset = str(normalized.get("runtime_preset") or "").strip().lower()
+            if runtime_preset:
+                normalized["runtime_preset"] = runtime_preset
+            base_url = str(normalized.get("base_url") or "").strip()
+            if base_url:
+                normalized["base_url"] = normalize_and_validate_runtime_base_url(
+                    base_url,
+                    allow_private_network_hosts=get_settings().app_env != "prod",
+                )
+        return normalized
 
     @staticmethod
     def _has_secret_reference(config: Dict[str, Any] | None, field: str) -> bool:
@@ -301,15 +327,20 @@ class AgentModelProfileService:
         if record is None:
             return None
         payload = dict(record.get("payload") or {})
+        provider = str(payload.get("provider") or "")
+        config = redact_secret_values(dict(payload.get("config") or {}))
+        if provider in SUPPORTED_AGENT_MODEL_PROVIDERS and "api_key_configured" not in config:
+            config["api_key"] = None
+            config["api_key_configured"] = False
         return {
             "model_profile_id": payload.get("model_profile_id") or record.get("resource_id"),
             "name": payload.get("name") or record.get("name") or "",
-            "provider": payload.get("provider") or "",
+            "provider": provider,
             "model_name": payload.get("model_name"),
             "status": record.get("status") or payload.get("status") or "active",
             "is_default": bool(payload.get("is_default")),
             "system_managed": bool(payload.get("system_managed")),
-            "config": redact_secret_values(dict(payload.get("config") or {})),
+            "config": config,
             "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
             "project_id": record.get("project_id") or payload.get("project_id"),
             "created_by": record.get("created_by") or payload.get("created_by") or "system",

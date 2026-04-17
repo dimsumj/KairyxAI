@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 import pytest
 import requests
@@ -1125,6 +1127,161 @@ def test_workflow_lifecycle_guards_return_locked(client):
     assert "Experiment 'missing_exp'" in publish_missing.json()["detail"]
 
 
+def test_workflow_runtime_summary_archive_and_delete(client):
+    cohort = client.post(
+        "/api/v1/cohorts",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "workflow_studio_cohort",
+            "type": "list",
+            "definition": {
+                "members": [
+                    {"canonical_user_id": "u_100", "email": "u100@example.com"},
+                    {"canonical_user_id": "u_101", "email": "u101@example.com"},
+                ]
+            },
+            "refresh_mode": "manual",
+            "activate": True,
+        },
+    )
+    assert cohort.status_code == 201
+    cohort_id = cohort.json()["cohort_id"]
+
+    experiment = client.post(
+        "/api/v1/experiments/config?experiment_id=workflow_studio_exp",
+        headers={"x-actor-role": "operator"},
+        json={
+            "enabled": True,
+            "status": "active",
+            "primary_metric": "return_rate",
+            "guardrail_metrics": ["engagement_rate", "policy_block_rate"],
+            "min_sample_size": 1,
+            "min_runtime_hours": 0,
+            "cohort_id": cohort_id,
+            "holdout_pct": 0.0,
+            "b_variant_pct": 0.5,
+        },
+    )
+    assert experiment.status_code == 200
+
+    draft_workflow = client.post(
+        "/api/v1/workflows",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "draft_delete_workflow",
+            "cohort_id": cohort_id,
+            "trigger": {"type": "daily_schedule", "hour": 9, "minute": 30},
+            "action": {"channel": "email", "content": "Draft delete workflow"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 1},
+            "experiment_id": "workflow_studio_exp",
+        },
+    )
+    assert draft_workflow.status_code == 201
+    draft_workflow_id = draft_workflow.json()["workflow_id"]
+
+    draft_delete = client.delete(
+        f"/api/v1/workflows/{draft_workflow_id}",
+        headers={"x-actor-role": "operator"},
+    )
+    assert draft_delete.status_code == 204
+    assert client.get(f"/api/v1/workflows/{draft_workflow_id}").status_code == 404
+
+    workflow = client.post(
+        "/api/v1/workflows",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "workflow_studio_push",
+            "cohort_id": cohort_id,
+            "trigger": {"type": "daily_schedule", "hour": 10, "minute": 15},
+            "action": {"channel": "email", "content": "Workflow studio live run"},
+            "policy": {"global_daily_limit": 5, "channel_daily_limit": 5, "cooldown_hours": 0},
+            "experiment_id": "workflow_studio_exp",
+        },
+    )
+    assert workflow.status_code == 201
+    workflow_id = workflow.json()["workflow_id"]
+
+    publish = client.post(f"/api/v1/workflows/{workflow_id}/publish", headers={"x-actor-role": "operator"})
+    assert publish.status_code == 200
+
+    sandbox_run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        headers={"x-actor-role": "operator"},
+        json={"limit": 10, "confirm": True, "sandbox": True, "reference_time": "2026-03-10T09:45:00"},
+    )
+    assert sandbox_run.status_code == 200
+    assert sandbox_run.json()["success"] == 2
+
+    live_run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-10T10:15:00", "limit_per_workflow": 10},
+    )
+    assert live_run.status_code == 200
+    assert len(live_run.json()["items"]) == 1
+    assert live_run.json()["items"][0]["success"] == 2
+
+    workflow_detail = client.get(f"/api/v1/workflows/{workflow_id}")
+    assert workflow_detail.status_code == 200
+    runtime_summary = workflow_detail.json()["runtime_summary"]
+    assert runtime_summary["last_run_at"] == "2026-03-10T10:15:00"
+    assert runtime_summary["last_test_run_at"] == "2026-03-10T09:45:00"
+    next_run_at = datetime.fromisoformat(runtime_summary["next_run_at"])
+    assert (next_run_at.hour, next_run_at.minute) == (10, 15)
+    assert next_run_at > datetime.utcnow()
+    assert runtime_summary["last_result"]["success"] == 2
+    assert runtime_summary["last_result"]["trigger_type"] == "daily_schedule"
+    assert runtime_summary["totals"]["runs"] == 1
+    assert runtime_summary["totals"]["test_runs"] == 1
+    assert runtime_summary["totals"]["success"] == 2
+    assert runtime_summary["totals"]["triggered"] == 2
+
+    listed = client.get("/api/v1/workflows")
+    assert listed.status_code == 200
+    listed_item = next(item for item in listed.json()["items"] if item["workflow_id"] == workflow_id)
+    listed_next_run_at = datetime.fromisoformat(listed_item["runtime_summary"]["next_run_at"])
+    assert (listed_next_run_at.hour, listed_next_run_at.minute) == (10, 15)
+    assert listed_next_run_at > datetime.utcnow()
+
+    non_draft_delete = client.delete(
+        f"/api/v1/workflows/{workflow_id}",
+        headers={"x-actor-role": "operator"},
+    )
+    assert non_draft_delete.status_code == 409
+    assert "draft workflows" in non_draft_delete.json()["detail"].lower()
+
+    archive = client.post(
+        f"/api/v1/workflows/{workflow_id}/archive",
+        headers={"x-actor-role": "operator"},
+    )
+    assert archive.status_code == 200
+    assert archive.json()["status"] == "archived"
+    assert archive.json()["archived_at"] is not None
+
+    archived_pause = client.post(
+        f"/api/v1/workflows/{workflow_id}/pause",
+        headers={"x-actor-role": "operator"},
+    )
+    assert archived_pause.status_code == 409
+    assert "archived" in archived_pause.json()["detail"].lower()
+
+    archived_test_run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        headers={"x-actor-role": "operator"},
+        json={"limit": 10, "confirm": True, "sandbox": True},
+    )
+    assert archived_test_run.status_code == 409
+    assert "archived" in archived_test_run.json()["detail"].lower()
+
+    skipped_due = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2026-03-11T10:15:00", "limit_per_workflow": 10},
+    )
+    assert skipped_due.status_code == 200
+    assert skipped_due.json()["items"] == []
+
+
 def test_audience_copilot_weekly_report_and_permanent_delete(client):
     _seed_mock_warehouse()
     _seed_prediction_job()
@@ -1435,7 +1592,7 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
         def __init__(self, *args, **kwargs):
             pass
 
-        def generate_content(self, prompt):
+        def get_ai_response(self, prompt):
             return """
             {
               "suggestions": [
@@ -1450,7 +1607,7 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
             """
 
     monkeypatch.setenv("GOOGLE_API_KEY", "mock-key")
-    monkeypatch.setattr("app.application.mappings.GeminiClient", FakeGeminiClient)
+    monkeypatch.setattr("app.application.text_model_runtime.GeminiClient", FakeGeminiClient)
 
     client.post(
         "/api/v1/connectors",
@@ -1509,7 +1666,81 @@ def test_scheduler_tick_persistent_alerts_and_ai_mapping_suggestions(client, mon
     assert suggestions.status_code == 200
     assert suggestions.json()["engine"] == "ai_assisted"
     assert suggestions.json()["model_name"] == "gemini-test"
-    assert suggestions.json()["suggestions"][0]["suggested_path"] == "event_properties.campaign"
+    campaign_suggestion = next(item for item in suggestions.json()["suggestions"] if item["field"] == "campaign")
+    assert campaign_suggestion["suggested_path"] == "event_properties.campaign"
+
+
+def test_mapping_suggestions_use_default_openai_model_profile(client, monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            {
+                              "suggestions": [
+                                {
+                                  "field": "campaign",
+                                  "suggested_path": "event_properties.openai_campaign",
+                                  "confidence": 0.91,
+                                  "rationale": "OpenAI-compatible model selected the nested field."
+                                }
+                              ]
+                            }
+                            """,
+                        }
+                    }
+                ]
+            }
+
+    captured = {}
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+        captured["json"] = json or {}
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.application.text_model_runtime.requests.post", _fake_post)
+
+    headers = {"x-actor-role": "operator"}
+    profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Ollama Mapping",
+            "provider": "openai",
+            "model_name": "llama3.1",
+            "config": {
+                "base_url": "http://127.0.0.1:11434/v1",
+                "runtime_preset": "ollama",
+            },
+            "is_default": True,
+        },
+    )
+    assert profile.status_code == 201, profile.text
+
+    client.post(
+        "/api/v1/connectors",
+        json={"name": "Adjust Source", "type": "adjust", "config": {"api_token": "adjust-token"}},
+    )
+    client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={"mapping": {"canonical_user_id": "player_id"}},
+    )
+
+    suggestions = client.get("/api/v1/mappings/Adjust%20Source/suggestions")
+    assert suggestions.status_code == 200
+    assert suggestions.json()["engine"] == "ai_assisted"
+    assert suggestions.json()["model_name"] == "llama3.1"
+    campaign_suggestion = next(item for item in suggestions.json()["suggestions"] if item["field"] == "campaign")
+    assert campaign_suggestion["suggested_path"] == "event_properties.openai_campaign"
+    assert captured["url"] == "http://127.0.0.1:11434/v1/chat/completions"
+    assert "Authorization" not in captured["headers"]
 
 
 def test_copilot_comparison_and_experiment_statistics(client):

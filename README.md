@@ -6,7 +6,7 @@ The product is organized around five operator areas:
 
 - `Data Core` for connectors, mappings, imports, predictions, data quality, and governance
 - `Audience Engine` for cohort creation, refresh, comparison, and activation readiness
-- `Action Orchestrator` for provider-aware lifecycle email campaigns, workflows, delivery, callbacks, and guardrails
+- `Action Orchestrator` for provider-aware lifecycle email campaigns, dedicated push workflow drafting, shared Workflow Studio scheduling and management, delivery, callbacks, and guardrails
 - `Experiment Hub` for assignment, exposure, outcomes, integrity, and decision support
 - `Insight Copilot` for grounded operator help, summaries, recommendations, and evidence-backed reporting
 
@@ -88,13 +88,13 @@ This repository already contains a working v1 control plane with:
 - SQLAlchemy and Alembic control-plane persistence
 - mock-first local development
 - organization- and project-aware operator flows
-- connector-first Data Core onboarding, including a `Connect Data Source` entry point from the main workbench
+- connector-first Data Core onboarding, including a `Connect Data Source` entry point from the main workbench plus an `AI Agents & Models` section in `Data Core -> Connectors` for Ask AI runtime setup
 - BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery that defaults unresolved counts to `unknown rows`, on-demand exact row counts for a selected table with query-based fallback when table metadata access is blocked, and browser-based table imports for external prediction scores and churn lists
 - step-level import status tooltips for queued, staging, processing, stopping, and BigQuery table-read phases, with completed jobs no longer retaining stale timeout/failure badges after reruns, failure tooltips layering above adjacent controls, and failed imports excluded from downstream import-job selectors such as `Import Operations`
 - a guided `Data Core -> Mappings` workflow for paused `Awaiting Mapping` imports that discovers raw field paths from the import manifests, lets operators bind `canonical_user_id`, `event_name`, `event_time`, and common attribution fields from dropdown selectors, saves the selection as a job override by default, and resumes the paused import through `Process After Mapping`
 - encrypted-at-rest storage for browser-entered connector and provider secrets when `CONTROL_PLANE_SECRET_KEY` is configured, while `*_ref` secret-manager references remain supported
-- provider-aware lifecycle email campaigns in `Action Orchestrator`, including tenant-scoped provider connections managed in `Data Core -> Connectors` through a `Connect Campaign Provider` action, row-level provider deletion guarded against active campaign references, SendGrid dynamic template browsing, Braze API campaign selection, prediction-or-cohort audience targeting, human-readable audience labels, sampled JSON-key recipient field selectors, optional prediction risk filters, deeplink merge-field injection, and separate upcoming versus past campaign views
-- a prompt-driven `Insight Copilot` operator agent that can use backend-managed Gemini, OpenAI, or Anthropic model profiles, draft SQL from prediction context, reuse or start prediction jobs, and create draft cohorts, email campaigns, and workflows from one chat flow while keeping publish, send, and other live actions confirmation-gated or manual
+- provider-aware lifecycle delivery in `Action Orchestrator`, including tenant-scoped provider connections managed in `Data Core -> Connectors` through a `Connect Campaign Provider` action, row-level provider deletion guarded against active campaign references, SendGrid dynamic template browsing, Braze API campaign selection, provider-backed push workflow delivery, prediction-or-cohort audience targeting, human-readable audience labels, sampled JSON-key recipient field selectors, optional prediction risk filters, deeplink merge-field injection, push payload fields for `campaign_name`, `title`, `body`, `deep_link`, `deep_link_token`, JSON `data`, optional schedule override, simulator fallback when no push provider connection is selected, and separate upcoming versus past email campaign views
+- a prompt-driven `Insight Copilot` operator agent that can use backend-managed Gemini, OpenAI, or Anthropic model profiles, with Gemini, LM Studio, Ollama, and custom OpenAI-compatible presets managed from `Data Core -> Connectors -> AI Agents & Models`; OpenAI-compatible endpoints must be reachable from the backend runtime, so localhost-style presets are for self-hosted or local deployments; the agent can draft SQL from prediction context, reuse or start prediction jobs, and create draft cohorts, email campaigns, and workflows from one chat flow while keeping publish, send, and other live actions confirmation-gated or manual
 
 The remaining work is mostly production hardening, deeper provider-backed execution, and continued frontend productization rather than basic product existence.
 

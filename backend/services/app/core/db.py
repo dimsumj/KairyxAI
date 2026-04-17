@@ -241,7 +241,19 @@ def _align_postgres_identity_sequences(engine: Engine, *, tables=None) -> None:
             max_identifier = connection.execute(
                 select(func.coalesce(func.max(primary_key_column), 0)).select_from(table)
             ).scalar_one()
-            next_identifier = int(max_identifier or 0) + 1
+            current_last_value = 0
+            current_is_called = True
+            qualified_sequence_name = str(sequence_name)
+            sequence_parts = [part for part in qualified_sequence_name.split(".") if part]
+            quoted_sequence_name = ".".join(f'"{part.replace("\"", "\"\"")}"' for part in sequence_parts)
+            sequence_state = connection.execute(
+                text(f"SELECT last_value, is_called FROM {quoted_sequence_name}")
+            ).mappings().one_or_none()
+            if sequence_state:
+                current_last_value = int(sequence_state.get("last_value") or 0)
+                current_is_called = bool(sequence_state.get("is_called"))
+            current_next_identifier = current_last_value + 1 if current_is_called else current_last_value
+            next_identifier = max(int(max_identifier or 0) + 1, current_next_identifier)
             connection.execute(
                 text("SELECT setval(:sequence_name, :next_identifier, false)"),
                 {

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Dict, List
 
-from app.application.secret_refs import materialize_secret_refs
+from app.application.text_model_runtime import TextModelRuntimeResolver
 from bigquery_service import BigQueryService, get_shared_bigquery_service
-from gemini_client import GeminiClient
 from gcs_service import GcsService
 
 
@@ -15,6 +13,7 @@ class MappingService:
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
         self.gcs_service = GcsService()
+        self.model_runtime_resolver = TextModelRuntimeResolver(repository, circuit_namespace="mappings")
 
     @staticmethod
     def _mapping_key(connector_name: str, scope_type: str = "source", scope_key: str | None = None) -> str:
@@ -340,8 +339,9 @@ class MappingService:
         observed_paths: Dict[str, list[str]],
         heuristic_suggestions: list[Dict[str, Any]],
     ) -> Dict[str, Any] | None:
-        client = self._build_gemini_client()
-        if client is None or not heuristic_suggestions:
+        selection = self.model_runtime_resolver.resolve()
+        runtime = selection.runtime
+        if runtime is None or not heuristic_suggestions:
             return None
         prompt = {
             "task": "Choose the best source field path for each missing canonical mapping field in a game event connector.",
@@ -367,48 +367,15 @@ class MappingService:
             },
         }
         try:
-            raw_response = client.generate_content(json.dumps(prompt))
+            raw_response = runtime.request_text(prompt)
             parsed = self._extract_json_object(raw_response)
             items = parsed if isinstance(parsed, list) else parsed.get("suggestions") or []
             if not isinstance(items, list) or not items:
                 return None
             merged = self._merge_ai_suggestions(heuristic_suggestions, items)
-            return {"suggestions": merged, "model_name": getattr(client, "model_name", None)}
+            return {"suggestions": merged, "model_name": selection.model_name or runtime.model_name}
         except Exception:
             return None
-
-    def _build_gemini_client(self) -> GeminiClient | None:
-        connector = self._select_google_connector()
-        if connector is not None:
-            config = connector.get("config") or {}
-            api_key = str(config.get("api_key") or "").strip()
-            model_name = str(config.get("model_name") or "").strip() or None
-            if api_key:
-                try:
-                    return GeminiClient(api_key=api_key, model_name=model_name, circuit_namespace="mappings")
-                except Exception:
-                    return None
-        if str(os.getenv("GOOGLE_API_KEY") or "").strip():
-            try:
-                return GeminiClient(circuit_namespace="mappings")
-            except Exception:
-                return None
-        return None
-
-    def _select_google_connector(self) -> Dict[str, Any] | None:
-        google_connectors = [
-            {**connector, "config": materialize_secret_refs(dict(connector.get("config") or {}))}
-            for connector in self.repository.list_connectors()
-            if str(connector.get("type") or "").lower() == "google"
-        ]
-        google_connectors = [
-            connector
-            for connector in google_connectors
-            if str((connector.get("config") or {}).get("api_key") or "").strip()
-        ]
-        if not google_connectors:
-            return None
-        return max(google_connectors, key=lambda connector: str(connector.get("updated_at") or connector.get("created_at") or ""))
 
     @staticmethod
     def _extract_json_object(raw_response: Any) -> Any:

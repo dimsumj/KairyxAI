@@ -234,7 +234,7 @@ export function initializeOperatorConsole() {
                 },
                 'action-orchestrator': {
                     title: 'Action Orchestrator',
-                    subtitle: 'Build lifecycle email campaigns across SendGrid and Braze, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
+                    subtitle: 'Build lifecycle email and push campaigns, operate workflow runtime, publish and test journeys, inspect deliveries, and reconcile provider callbacks into durable execution logs.',
                     icon: `
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M5 7h14M5 12h9M5 17h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"></path>
@@ -243,10 +243,10 @@ export function initializeOperatorConsole() {
                     `,
                     items: [
                         { id: 'action-orchestrator-email-campaigns', label: 'Email Campaigns', pageId: 'action-orchestrator', targetId: 'email-campaigns-section' },
-                        { id: 'action-orchestrator-create', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-create-section' },
-                        { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-section' },
-                        { id: 'action-orchestrator-workflows', label: 'Workflows', pageId: 'action-orchestrator', targetId: 'workflow-list-section' },
-                        { id: 'action-orchestrator-deliveries', label: 'Deliveries', pageId: 'action-orchestrator', targetId: 'workflow-deliveries-section' },
+                        { id: 'action-orchestrator-push', label: 'Push Notifications', pageId: 'action-orchestrator', targetId: 'push-notifications-section' },
+                        { id: 'action-orchestrator-studio', label: 'Workflow Studio', pageId: 'action-orchestrator', targetId: 'workflow-studio-section' },
+                        { id: 'action-orchestrator-runtime', label: 'Runtime Controls', pageId: 'action-orchestrator', targetId: 'workflow-runtime-controls-section' },
+                        { id: 'action-orchestrator-deliveries', label: 'Deliveries', pageId: 'action-orchestrator', targetId: 'workflow-deliveries-audit-section' },
                     ],
                 },
                 'experiment-hub': {
@@ -2355,6 +2355,7 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'connectors') {
                     loadSavedConnectors();
+                    loadAiModelProfileWorkspace({ preserveSelection: true });
                     loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
                 if (pageId === 'data-sandbox') {
@@ -3011,7 +3012,6 @@ export function initializeOperatorConsole() {
             const operatorHubConnectorsBtn = document.getElementById('operator-hub-connectors-btn');
             const operatorHubConnectorsSummary = document.getElementById('operator-hub-connectors-summary');
             const addConnectorBtn = document.getElementById('add-connector-btn');
-            const addConnectorCard = document.getElementById('add-connector-card');
             const addConnectorFormContainer = document.getElementById('add-connector-form-container');
             const cancelBtn = document.getElementById('cancel-add-connector-btn');
             const connectorDisplayNameInput = document.getElementById('connector-display-name');
@@ -3020,6 +3020,18 @@ export function initializeOperatorConsole() {
             const saveConnectorBtn = document.getElementById('save-connector-btn');
             const connectorListDiv = document.getElementById('connector-list');
             const connectorsPageSummary = document.getElementById('connectors-page-summary');
+            const addAiModelProfileBtn = document.getElementById('add-ai-model-profile-btn');
+            const aiModelProfileRefreshBtn = document.getElementById('ai-model-profile-refresh-btn');
+            const aiModelProfileStatus = document.getElementById('ai-model-profile-status');
+            const aiModelProfileLegacyNote = document.getElementById('ai-model-profile-legacy-note');
+            const aiModelProfileFormContainer = document.getElementById('ai-model-profile-form-container');
+            const aiModelProfileRuntimeSelect = document.getElementById('ai-model-profile-runtime-select');
+            const aiModelProfileNameInput = document.getElementById('ai-model-profile-name-input');
+            const aiModelProfileFields = document.getElementById('ai-model-profile-fields');
+            const aiModelProfileDefaultCheckbox = document.getElementById('ai-model-profile-default-checkbox');
+            const aiModelProfileSaveBtn = document.getElementById('ai-model-profile-save-btn');
+            const aiModelProfileCancelBtn = document.getElementById('ai-model-profile-cancel-btn');
+            const aiModelProfileList = document.getElementById('ai-model-profile-list');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -3040,14 +3052,26 @@ export function initializeOperatorConsole() {
                 bigquery: 'BigQuery',
                 sendgrid: 'SendGrid',
                 braze: 'Braze',
+                wynn_push_notifier: 'Push Provider',
+            };
+            const pushProviderTypes = new Set(['wynn_push_notifier']);
+            const aiRuntimePresetLabels = {
+                gemini: 'Gemini',
+                lmstudio: 'LM Studio',
+                ollama: 'Ollama',
+                openai_compatible: 'Custom OpenAI-compatible',
+                anthropic: 'Anthropic',
             };
             let backendMode = 'unknown';
             let cachedConnectors = [];
             let connectorListRenderRequestId = 0;
             let cachedProviderConnections = [];
+            let cachedAgentModelProfiles = [];
+            let selectedAiModelProfileId = null;
             let cachedImports = [];
             let cachedPredictionJobs = [];
             let cachedCohorts = [];
+            let cachedWorkflows = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
@@ -3062,29 +3086,43 @@ export function initializeOperatorConsole() {
             const emailCampaignAssetCache = new Map();
             const emailCampaignAudienceFieldCache = new Map();
 
+            function getVisibleSourceConnectors(connectors = cachedConnectors) {
+                return (Array.isArray(connectors) ? connectors : []).filter((connector) => (
+                    String(connector.type || '').toLowerCase() !== 'google'
+                ));
+            }
+
+            function getPersistedAiModelProfiles(items = cachedAgentModelProfiles) {
+                return (Array.isArray(items) ? items : []).filter((item) => !Boolean(item.system_managed));
+            }
+
             function renderConnectorEntrySummary(message = '') {
-                const configuredCount = cachedConnectors.length;
-                const providerConnectionCount = getCampaignCapableProviderConnections().length;
-                const hasBigQuery = cachedConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
-                const hasIngestionSource = cachedConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
+                const visibleConnectors = getVisibleSourceConnectors();
+                const configuredCount = visibleConnectors.length;
+                const providerConnectionCount = getProviderConnections().length;
+                const aiRuntimeCount = getPersistedAiModelProfiles().length;
+                const hasBigQuery = visibleConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
+                const hasIngestionSource = visibleConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
                 const summaryText = message || (
-                    configuredCount === 0 && providerConnectionCount === 0
+                    configuredCount === 0 && providerConnectionCount === 0 && aiRuntimeCount === 0
                         ? 'No connectors configured yet. Start with BigQuery, an ingestion source, or a campaign provider.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${aiRuntimeCount ? ` · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
                 );
                 if (operatorHubConnectorsSummary) {
                     operatorHubConnectorsSummary.textContent = summaryText;
                 }
                 if (connectorsPageSummary && !message) {
-                    const totalConfigured = configuredCount + providerConnectionCount;
+                    const totalConfigured = configuredCount + providerConnectionCount + aiRuntimeCount;
                     connectorsPageSummary.textContent = totalConfigured === 0
-                        ? 'Connect your first source or campaign provider to unlock imports, BigQuery access, predictions, exports, and lifecycle messaging.'
-                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} and ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} configured. Add another source or provider whenever you are ready.`;
+                        ? 'Connect your first source, campaign provider, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.'
+                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'} configured.`;
                 }
             }
 
             function setConnectorFormVisible(isVisible, { connectorType = '' } = {}) {
-                addConnectorCard.style.display = isVisible ? 'none' : 'block';
+                if (addConnectorBtn) {
+                    addConnectorBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
                 addConnectorFormContainer.style.display = isVisible ? 'block' : 'none';
                 if (!isVisible) {
                     connectorTypeSelect.value = '';
@@ -5479,9 +5517,27 @@ export function initializeOperatorConsole() {
                 }
                 const connectors = await apiRequest('/connectors');
                 cachedConnectors = Array.isArray(connectors) ? connectors.map(normalizeConnector) : [];
+                syncLegacyAiRuntimeNotice();
                 importBigQueryTableCache.clear();
                 renderConnectorEntrySummary();
                 return cachedConnectors;
+            }
+
+            function syncLegacyAiRuntimeNotice() {
+                if (!aiModelProfileLegacyNote) {
+                    return;
+                }
+                const legacyGoogleConnectors = (cachedConnectors || []).filter(
+                    (connector) => String(connector.type || '').trim().toLowerCase() === 'google'
+                );
+                if (!legacyGoogleConnectors.length) {
+                    aiModelProfileLegacyNote.textContent = '';
+                    aiModelProfileLegacyNote.style.display = 'none';
+                    return;
+                }
+                const connectorLabel = legacyGoogleConnectors.length === 1 ? 'connector' : 'connectors';
+                aiModelProfileLegacyNote.textContent = `${legacyGoogleConnectors.length} legacy Google AI ${connectorLabel} still exist and remain an Ask AI fallback until migrated into AI Agents & Models.`;
+                aiModelProfileLegacyNote.style.display = 'block';
             }
 
             async function refreshImportsState() {
@@ -6488,15 +6544,16 @@ export function initializeOperatorConsole() {
                 if (!connectorListDiv) {
                     return;
                 }
-                if (!connectors.length) {
+                const visibleConnectors = getVisibleSourceConnectors(connectors);
+                if (!visibleConnectors.length) {
                     const emptyState = document.createElement('div');
                     emptyState.className = 'card connector-empty-state';
-                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No connectors configured yet. Use Connect Data Source to add your first source or provider.</p>';
+                    emptyState.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No data source connectors configured yet. Use Connect Data Source to add your first ingestion source, BigQuery dataset, or legacy provider record.</p>';
                     connectorListDiv.replaceChildren(emptyState);
                     return;
                 }
                 const fragment = document.createDocumentFragment();
-                connectors.forEach((connector) => {
+                visibleConnectors.forEach((connector) => {
                     fragment.appendChild(buildConnectorCard(connector));
                 });
                 connectorListDiv.replaceChildren(fragment);
@@ -6522,6 +6579,481 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
+            function getAiRuntimeProfileDescriptor(profile = {}) {
+                const provider = String(profile.provider || '').trim().toLowerCase();
+                const config = profile.config || {};
+                const preset = String(config.runtime_preset || '').trim().toLowerCase();
+                if (provider === 'gemini') {
+                    return {
+                        preset: 'gemini',
+                        label: 'Gemini',
+                        provider: 'gemini',
+                        providerLabel: 'Gemini',
+                        endpointLabel: 'Google-hosted',
+                        supportsEditing: !Boolean(profile.system_managed),
+                    };
+                }
+                if (provider === 'openai') {
+                    const normalizedPreset = preset === 'lmstudio' || preset === 'ollama' ? preset : 'openai_compatible';
+                    return {
+                        preset: normalizedPreset,
+                        label: aiRuntimePresetLabels[normalizedPreset] || 'Custom OpenAI-compatible',
+                        provider: 'openai',
+                        providerLabel: 'OpenAI-compatible',
+                        endpointLabel: String(config.base_url || '').trim() || 'Default OpenAI endpoint',
+                        supportsEditing: true,
+                    };
+                }
+                if (provider === 'anthropic') {
+                    return {
+                        preset: 'anthropic',
+                        label: 'Anthropic',
+                        provider: 'anthropic',
+                        providerLabel: 'Anthropic',
+                        endpointLabel: String(config.base_url || '').trim() || 'Anthropic-hosted',
+                        supportsEditing: false,
+                    };
+                }
+                return {
+                    preset: provider || 'model',
+                    label: profile.name || 'Model Profile',
+                    provider,
+                    providerLabel: provider || 'model',
+                    endpointLabel: String(config.base_url || '').trim() || 'Managed endpoint',
+                    supportsEditing: false,
+                };
+            }
+
+            function nextAiModelProfileName(runtimePreset = 'gemini') {
+                const preset = String(runtimePreset || 'gemini').trim().toLowerCase() || 'gemini';
+                const baseLabel = aiRuntimePresetLabels[preset] || 'Ask AI Runtime';
+                const existingNames = new Set(
+                    (cachedAgentModelProfiles || []).map((item) => String(item.name || '').trim().toLowerCase()).filter(Boolean)
+                );
+                if (!existingNames.has(baseLabel.toLowerCase())) {
+                    return baseLabel;
+                }
+                let suffix = 2;
+                while (existingNames.has(`${baseLabel} ${suffix}`.toLowerCase())) {
+                    suffix += 1;
+                }
+                return `${baseLabel} ${suffix}`;
+            }
+
+            function setAiModelProfileFormVisible(isVisible, { runtimePreset = '', preserveValues = false } = {}) {
+                if (addAiModelProfileBtn) {
+                    addAiModelProfileBtn.style.display = isVisible ? 'none' : 'inline-block';
+                }
+                if (aiModelProfileFormContainer) {
+                    aiModelProfileFormContainer.style.display = isVisible ? 'block' : 'none';
+                }
+                if (!isVisible) {
+                    selectedAiModelProfileId = null;
+                    if (aiModelProfileRuntimeSelect) {
+                        aiModelProfileRuntimeSelect.value = 'gemini';
+                    }
+                    if (aiModelProfileNameInput) {
+                        aiModelProfileNameInput.value = '';
+                    }
+                    if (aiModelProfileDefaultCheckbox) {
+                        aiModelProfileDefaultCheckbox.checked = false;
+                    }
+                    syncAiModelProfileFormFields();
+                    setInlineStatus(aiModelProfileStatus, '');
+                    return;
+                }
+                if (runtimePreset && aiModelProfileRuntimeSelect) {
+                    aiModelProfileRuntimeSelect.value = runtimePreset;
+                }
+                syncAiModelProfileFormFields();
+                if (!preserveValues) {
+                    selectedAiModelProfileId = null;
+                    if (aiModelProfileNameInput) {
+                        aiModelProfileNameInput.value = nextAiModelProfileName(aiModelProfileRuntimeSelect?.value || runtimePreset || 'gemini');
+                        aiModelProfileNameInput.focus();
+                    }
+                    if (aiModelProfileDefaultCheckbox) {
+                        aiModelProfileDefaultCheckbox.checked = false;
+                    }
+                }
+                syncAiModelProfileFormState();
+            }
+
+            function syncAiModelProfileFormFields() {
+                if (!aiModelProfileFields) {
+                    return;
+                }
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase();
+                if (runtimePreset === 'gemini') {
+                    aiModelProfileFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ai-model-profile-gemini-model-input">Gemini Model</label>
+                                <select id="ai-model-profile-gemini-model-input">
+                                    <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+                                    <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                                    <option value="gemini-flash-latest">gemini-flash-latest</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-gemini-api-key-input">Google API Key</label>
+                                <input type="password" id="ai-model-profile-gemini-api-key-input" placeholder="AIza...">
+                            </div>
+                        </div>
+                        <p class="subtle">Gemini profiles run through the backend. API keys are encrypted before storage and are never returned in plaintext after save.</p>
+                    `;
+                } else {
+                    const presetLabel = aiRuntimePresetLabels[runtimePreset] || 'Custom OpenAI-compatible';
+                    const defaultBaseUrl = runtimePreset === 'lmstudio'
+                        ? 'http://127.0.0.1:1234/v1'
+                        : runtimePreset === 'ollama'
+                            ? 'http://127.0.0.1:11434/v1'
+                            : 'https://api.openai.com/v1';
+                    const defaultApiKey = '';
+                    const defaultModelName = runtimePreset === 'lmstudio'
+                        ? 'local-model'
+                        : runtimePreset === 'ollama'
+                            ? 'llama3.1'
+                            : 'gpt-4.1-mini';
+                    aiModelProfileFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ai-model-profile-openai-model-input">Model Name</label>
+                                <input type="text" id="ai-model-profile-openai-model-input" value="${escapeHtml(defaultModelName)}" placeholder="e.g. gpt-4.1-mini">
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-openai-api-key-input">${presetLabel} API Key / Token</label>
+                                <input type="password" id="ai-model-profile-openai-api-key-input" value="${escapeHtml(defaultApiKey)}" placeholder="${runtimePreset === 'openai_compatible' ? 'Optional bearer token' : 'Optional when the local server ignores auth'}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ai-model-profile-openai-base-url-input">Base URL</label>
+                            <input type="text" id="ai-model-profile-openai-base-url-input" value="${escapeHtml(defaultBaseUrl)}" placeholder="https://api.openai.com/v1">
+                        </div>
+                        <p class="subtle">Use an OpenAI-compatible endpoint. Base URLs with or without a trailing <code>/v1</code> both work. The configured endpoint must be reachable from the backend runtime. Local presets such as LM Studio and Ollama are intended for self-hosted or local deployments, and they usually leave the API key blank because the local server ignores bearer auth by default.</p>
+                    `;
+                }
+            }
+
+            function syncAiModelProfileFormState() {
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase() || 'gemini';
+                const editingProfile = selectedAiModelProfileId
+                    ? (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === selectedAiModelProfileId) || null
+                    : null;
+                const isEditing = Boolean(editingProfile);
+                if (aiModelProfileSaveBtn) {
+                    aiModelProfileSaveBtn.textContent = isEditing ? 'Update Runtime' : 'Save Runtime';
+                }
+                if (aiModelProfileNameInput && !String(aiModelProfileNameInput.value || '').trim() && !isEditing) {
+                    aiModelProfileNameInput.value = nextAiModelProfileName(runtimePreset);
+                }
+                const apiKeyInput = document.getElementById(
+                    runtimePreset === 'gemini'
+                        ? 'ai-model-profile-gemini-api-key-input'
+                        : 'ai-model-profile-openai-api-key-input'
+                );
+                if (isEditing && apiKeyInput && !String(apiKeyInput.value || '').trim()) {
+                    apiKeyInput.placeholder = 'Stored securely. Enter a new token only if you want to rotate it.';
+                }
+            }
+
+            function renderAiModelProfileList(items = cachedAgentModelProfiles) {
+                const profiles = Array.isArray(items) ? items : [];
+                renderSimpleTable(
+                    aiModelProfileList,
+                    [
+                        {
+                            label: 'Runtime',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const badges = [
+                                    `<span class="pill">${escapeHtml(descriptor.label)}</span>`,
+                                    item.is_default ? '<span class="pill">Default</span>' : '',
+                                    item.system_managed ? '<span class="pill">System</span>' : '',
+                                ].filter(Boolean).join(' ');
+                                return `<strong>${escapeHtml(item.name || descriptor.label)}</strong><div class="subtle">${escapeHtml(item.model_profile_id || '-')}</div><div class="table-badge-row">${badges}</div>`;
+                            },
+                        },
+                        {
+                            label: 'Model',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const endpoint = descriptor.provider === 'gemini' ? descriptor.endpointLabel : (descriptor.endpointLabel || 'Managed endpoint');
+                                return `<span>${escapeHtml(item.model_name || '-')}</span><div class="subtle">${escapeHtml(endpoint)}</div>`;
+                            },
+                        },
+                        {
+                            label: 'Provider',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const config = item.config || {};
+                                const secretConfigured = Boolean(config.api_key_configured);
+                                return `<span>${escapeHtml(descriptor.providerLabel)}</span><div class="subtle">${secretConfigured ? 'Secret stored' : 'Secret missing'}</div>`;
+                            },
+                        },
+                        { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at || item.created_at)) },
+                        {
+                            label: 'Actions',
+                            render: (item) => {
+                                const descriptor = getAiRuntimeProfileDescriptor(item);
+                                const editButton = descriptor.supportsEditing && !item.system_managed
+                                    ? `<button type="button" data-ai-model-profile-action="edit" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}">Edit</button>`
+                                    : '';
+                                const defaultButton = item.is_default
+                                    ? `<button type="button" disabled>Default</button>`
+                                    : (!item.system_managed
+                                        ? `<button type="button" data-ai-model-profile-action="default" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}">Set Default</button>`
+                                        : '');
+                                const deleteButton = item.system_managed
+                                    ? ''
+                                    : `<button type="button" data-ai-model-profile-action="delete" data-ai-model-profile-id="${escapeHtml(item.model_profile_id)}" style="background-color: var(--subtle-text);">Delete</button>`;
+                                return `<div class="table-actions">${[editButton, defaultButton, deleteButton].filter(Boolean).join('')}</div>`;
+                            },
+                        },
+                    ],
+                    profiles,
+                    'No Ask AI runtimes saved yet. Use Connect Ask AI Runtime to add Gemini, LM Studio, Ollama, or a custom OpenAI-compatible endpoint that the backend can reach.',
+                );
+                aiModelProfileList?.querySelectorAll('[data-ai-model-profile-action]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const modelProfileId = String(button.dataset.aiModelProfileId || '').trim();
+                        const action = String(button.dataset.aiModelProfileAction || '').trim();
+                        if (!modelProfileId || !action) {
+                            return;
+                        }
+                        if (action === 'edit') {
+                            loadAiModelProfileIntoForm(modelProfileId);
+                            return;
+                        }
+                        if (action === 'default') {
+                            try {
+                                await setAiModelProfileDefault(modelProfileId);
+                            } catch (error) {
+                                setInlineStatus(aiModelProfileStatus, error.message || 'Failed to set the default Ask AI runtime.', true);
+                            }
+                            return;
+                        }
+                        if (action === 'delete') {
+                            try {
+                                await deleteAiModelProfile(modelProfileId);
+                            } catch (error) {
+                                setInlineStatus(aiModelProfileStatus, error.message || 'Failed to delete the Ask AI runtime.', true);
+                            }
+                        }
+                    });
+                });
+            }
+
+            async function refreshAgentModelProfilesState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedAgentModelProfiles;
+                }
+                const payload = await apiRequest('/copilot/agent/model-profiles');
+                cachedAgentModelProfiles = Array.isArray(payload.items) ? payload.items : [];
+                renderConnectorEntrySummary();
+                return cachedAgentModelProfiles;
+            }
+
+            function loadAiModelProfileIntoForm(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile || profile.system_managed) {
+                    return;
+                }
+                const descriptor = getAiRuntimeProfileDescriptor(profile);
+                selectedAiModelProfileId = profile.model_profile_id;
+                setAiModelProfileFormVisible(true, {
+                    runtimePreset: descriptor.preset === 'anthropic' ? 'openai_compatible' : descriptor.preset,
+                    preserveValues: true,
+                });
+                if (aiModelProfileRuntimeSelect && descriptor.preset !== 'anthropic') {
+                    aiModelProfileRuntimeSelect.value = descriptor.preset;
+                }
+                syncAiModelProfileFormFields();
+                if (aiModelProfileNameInput) {
+                    aiModelProfileNameInput.value = profile.name || '';
+                }
+                if (aiModelProfileDefaultCheckbox) {
+                    aiModelProfileDefaultCheckbox.checked = Boolean(profile.is_default);
+                }
+                if (profile.provider === 'gemini') {
+                    const modelInput = document.getElementById('ai-model-profile-gemini-model-input');
+                    const apiKeyInput = document.getElementById('ai-model-profile-gemini-api-key-input');
+                    if (modelInput) {
+                        ensureSelectOption(modelInput, String(profile.model_name || '').trim(), String(profile.model_name || '').trim());
+                        modelInput.value = String(profile.model_name || '').trim();
+                    }
+                    if (apiKeyInput) {
+                        apiKeyInput.value = '';
+                    }
+                } else if (profile.provider === 'openai') {
+                    const modelInput = document.getElementById('ai-model-profile-openai-model-input');
+                    const apiKeyInput = document.getElementById('ai-model-profile-openai-api-key-input');
+                    const baseUrlInput = document.getElementById('ai-model-profile-openai-base-url-input');
+                    if (modelInput) {
+                        modelInput.value = String(profile.model_name || '').trim();
+                    }
+                    if (apiKeyInput) {
+                        apiKeyInput.value = '';
+                    }
+                    if (baseUrlInput) {
+                        baseUrlInput.value = String((profile.config || {}).base_url || '').trim();
+                    }
+                }
+                syncAiModelProfileFormState();
+                setInlineStatus(
+                    aiModelProfileStatus,
+                    Boolean((profile.config || {}).api_key_configured)
+                        ? `Editing ${profile.name}. Leave the API key blank to keep the stored secret.`
+                        : `Editing ${profile.name}.`,
+                );
+            }
+
+            function buildAiModelProfileRequestBody() {
+                const runtimePreset = String(aiModelProfileRuntimeSelect?.value || 'gemini').trim().toLowerCase() || 'gemini';
+                const name = String(aiModelProfileNameInput?.value || '').trim();
+                if (!name) {
+                    throw new Error('Profile name is required.');
+                }
+                if (runtimePreset === 'gemini') {
+                    const modelName = String(document.getElementById('ai-model-profile-gemini-model-input')?.value || '').trim();
+                    const apiKey = String(document.getElementById('ai-model-profile-gemini-api-key-input')?.value || '').trim();
+                    if (!selectedAiModelProfileId && !apiKey) {
+                        throw new Error('Google API Key is required for a new Gemini runtime.');
+                    }
+                    return {
+                        name,
+                        provider: 'gemini',
+                        model_name: modelName || null,
+                        is_default: Boolean(aiModelProfileDefaultCheckbox?.checked),
+                        config: {
+                            ...(apiKey ? { api_key: apiKey } : {}),
+                        },
+                    };
+                }
+                const modelName = String(document.getElementById('ai-model-profile-openai-model-input')?.value || '').trim();
+                const apiKey = String(document.getElementById('ai-model-profile-openai-api-key-input')?.value || '').trim();
+                const baseUrl = String(document.getElementById('ai-model-profile-openai-base-url-input')?.value || '').trim();
+                if (!modelName) {
+                    throw new Error('Model name is required for OpenAI-compatible runtimes.');
+                }
+                if (!baseUrl) {
+                    throw new Error('Base URL is required for OpenAI-compatible runtimes.');
+                }
+                return {
+                    name,
+                    provider: 'openai',
+                    model_name: modelName,
+                    is_default: Boolean(aiModelProfileDefaultCheckbox?.checked),
+                    config: {
+                        base_url: baseUrl,
+                        runtime_preset: runtimePreset,
+                        ...(apiKey ? { api_key: apiKey } : {}),
+                    },
+                };
+            }
+
+            async function syncAiModelProfileConsumers(preferredModelProfileId = '') {
+                renderCopilotAgentModelProfiles(cachedAgentModelProfiles);
+                const preferred = String(preferredModelProfileId || '').trim();
+                if (preferred && copilotAgentModelSelect) {
+                    ensureSelectOption(copilotAgentModelSelect, preferred, preferred);
+                    copilotAgentModelSelect.value = preferred;
+                    copilotAgentSelectedModelProfileId = preferred;
+                }
+                renderConnectorEntrySummary();
+            }
+
+            async function saveAiModelProfile() {
+                const body = buildAiModelProfileRequestBody();
+                setInlineStatus(
+                    aiModelProfileStatus,
+                    selectedAiModelProfileId ? 'Updating Ask AI runtime...' : 'Saving Ask AI runtime...',
+                );
+                const response = selectedAiModelProfileId
+                    ? await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(selectedAiModelProfileId)}`, {
+                        method: 'PATCH',
+                        body,
+                    })
+                    : await apiRequest('/copilot/agent/model-profiles', {
+                        method: 'POST',
+                        body,
+                    });
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers(response.model_profile_id);
+                loadAiModelProfileIntoForm(response.model_profile_id);
+                setInlineStatus(aiModelProfileStatus, `Saved Ask AI runtime ${response.name}.`);
+                return response;
+            }
+
+            async function setAiModelProfileDefault(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile) {
+                    throw new Error(`Agent model profile '${modelProfileId}' not found.`);
+                }
+                setInlineStatus(aiModelProfileStatus, `Setting ${profile.name} as the Ask AI default...`);
+                await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(modelProfileId)}`, {
+                    method: 'PATCH',
+                    body: { is_default: true },
+                });
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers(modelProfileId);
+                setInlineStatus(aiModelProfileStatus, `${profile.name} is now the Ask AI default.`);
+            }
+
+            async function deleteAiModelProfile(modelProfileId) {
+                const profile = (cachedAgentModelProfiles || []).find((item) => String(item.model_profile_id || '') === String(modelProfileId || '')) || null;
+                if (!profile) {
+                    throw new Error(`Agent model profile '${modelProfileId}' not found.`);
+                }
+                if (!confirm(`Delete ${profile.name}? This removes the saved Ask AI runtime.`)) {
+                    return null;
+                }
+                setInlineStatus(aiModelProfileStatus, `Deleting ${profile.name}...`);
+                await apiRequest(`/copilot/agent/model-profiles/${encodeURIComponent(modelProfileId)}`, { method: 'DELETE' });
+                if (selectedAiModelProfileId === modelProfileId) {
+                    setAiModelProfileFormVisible(false);
+                }
+                if (copilotAgentSelectedModelProfileId === modelProfileId) {
+                    copilotAgentSelectedModelProfileId = '';
+                }
+                await refreshAgentModelProfilesState();
+                renderAiModelProfileList();
+                await syncAiModelProfileConsumers();
+                setInlineStatus(aiModelProfileStatus, `Deleted ${profile.name}.`);
+                return profile;
+            }
+
+            async function loadAiModelProfileWorkspace({ preserveSelection = true } = {}) {
+                try {
+                    const profiles = await refreshAgentModelProfilesState();
+                    if (!preserveSelection) {
+                        setAiModelProfileFormVisible(false);
+                    } else if (selectedAiModelProfileId && profiles.some((item) => item.model_profile_id === selectedAiModelProfileId)) {
+                        loadAiModelProfileIntoForm(selectedAiModelProfileId);
+                    } else if (aiModelProfileFormContainer?.style.display !== 'none') {
+                        syncAiModelProfileFormState();
+                    }
+                    renderAiModelProfileList(profiles);
+                    await syncAiModelProfileConsumers();
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        cachedAgentModelProfiles = [];
+                        renderAiModelProfileList([]);
+                        if (aiModelProfileLegacyNote) {
+                            aiModelProfileLegacyNote.textContent = '';
+                            aiModelProfileLegacyNote.style.display = 'none';
+                        }
+                        setAiModelProfileFormVisible(false);
+                        setInlineStatus(aiModelProfileStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
+                        await syncAiModelProfileConsumers();
+                        return;
+                    }
+                    setInlineStatus(aiModelProfileStatus, error.message || 'Failed to load Ask AI runtimes.', true);
                 }
             }
 
@@ -6556,18 +7088,6 @@ export function initializeOperatorConsole() {
                     <div class="form-group">
                         <label for="appsflyer_pull_api_url">AppsFlyer Pull API URL (optional)</label>
                         <input type="text" id="appsflyer_pull_api_url" placeholder="https://...">
-                    </div>`,
-                google: `
-                    <div class="form-group">
-                        <label for="google_api_key">Google API Key</label>
-                        <input type="password" id="google_api_key" placeholder="Enter your Google API Key">
-                    </div>
-                    <div class="form-group">
-                        <label for="model_name">Gemini Model Version</label>
-                        <select id="model_name" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px;">
-                            <option value="gemini-flash-latest" selected>gemini-flash-latest (Default)</option>
-                            <option value="gemini-pro-latest">gemini-pro-latest</option>
-                        </select>
                     </div>`,
                 bigquery: `
                     <div class="form-group">
@@ -6630,6 +7150,36 @@ export function initializeOperatorConsole() {
                 setConnectorFormVisible(false);
             });
 
+            addAiModelProfileBtn?.addEventListener('click', () => {
+                setAiModelProfileFormVisible(true);
+            });
+
+            aiModelProfileCancelBtn?.addEventListener('click', () => {
+                setAiModelProfileFormVisible(false);
+            });
+
+            aiModelProfileRefreshBtn?.addEventListener('click', () => {
+                loadAiModelProfileWorkspace({ preserveSelection: true });
+            });
+
+            aiModelProfileRuntimeSelect?.addEventListener('change', () => {
+                const previousSuggestedName = nextAiModelProfileName(aiModelProfileRuntimeSelect.value);
+                syncAiModelProfileFormFields();
+                if (!selectedAiModelProfileId) {
+                    aiModelProfileNameInput.value = previousSuggestedName;
+                }
+                syncAiModelProfileFormState();
+            });
+
+            aiModelProfileSaveBtn?.addEventListener('click', async () => {
+                try {
+                    await saveAiModelProfile();
+                } catch (error) {
+                    console.error('Error saving Ask AI runtime:', error);
+                    setInlineStatus(aiModelProfileStatus, error.message || 'Failed to save the Ask AI runtime.', true);
+                }
+            });
+
             connectorTypeSelect.addEventListener('change', (e) => {
                 const type = e.target.value;
                 if (type && connectorFields[type]) {
@@ -6667,11 +7217,6 @@ export function initializeOperatorConsole() {
                         api_token: document.getElementById('appsflyer_api_token').value,
                         app_id: document.getElementById('appsflyer_app_id').value,
                         pull_api_url: document.getElementById('appsflyer_pull_api_url').value || undefined
-                    };
-                } else if (type === 'google') {
-                    payload = {
-                        api_key: document.getElementById('google_api_key').value,
-                        model_name: document.getElementById('model_name').value || null
                     };
                 } else if (type === 'bigquery') {
                     const credentialMode = String(document.getElementById('bigquery_credentials_entry_mode')?.value || 'upload').toLowerCase();
@@ -9448,7 +9993,28 @@ export function initializeOperatorConsole() {
             const sqlPreviewOutput = document.getElementById('sql-preview-output');
             const sqlSavedQueryList = document.getElementById('sql-saved-query-list');
             const workflowCreateStatus = document.getElementById('workflow-create-status');
-            const workflowList = document.getElementById('workflow-list');
+            const workflowBuilderSelectedLabel = document.getElementById('workflow-builder-selected-label');
+            const workflowChannelSelect = document.getElementById('workflow-channel-select');
+            const workflowEmailFields = document.getElementById('workflow-email-fields');
+            const workflowPushFields = document.getElementById('workflow-push-fields');
+            const workflowContentInput = document.getElementById('workflow-content-input');
+            const workflowPushProviderConnectionSelect = document.getElementById('workflow-push-provider-connection-select');
+            const workflowPushCampaignNameInput = document.getElementById('workflow-push-campaign-name-input');
+            const workflowPushTitleInput = document.getElementById('workflow-push-title-input');
+            const workflowPushBodyInput = document.getElementById('workflow-push-body-input');
+            const workflowPushDeepLinkInput = document.getElementById('workflow-push-deep-link-input');
+            const workflowPushDeepLinkTokenInput = document.getElementById('workflow-push-deep-link-token-input');
+            const workflowPushScheduledAtInput = document.getElementById('workflow-push-scheduled-at-input');
+            const workflowPushDataInput = document.getElementById('workflow-push-data-input');
+            const workflowPushProviderOptionsInput = document.getElementById('workflow-push-provider-options-input');
+            const workflowClearSelectionBtn = document.getElementById('workflow-clear-selection-btn');
+            const workflowStudioList = document.getElementById('workflow-studio-list');
+            const workflowStudioStatus = document.getElementById('workflow-studio-status');
+            const workflowStudioSelectedLabel = document.getElementById('workflow-studio-selected-label');
+            const workflowStudioEmailScheduleGroup = document.getElementById('workflow-studio-email-schedule-group');
+            const workflowStudioEmailScheduleInput = document.getElementById('workflow-studio-email-schedule-input');
+            const workflowStudioActions = document.getElementById('workflow-studio-actions');
+            const workflowStudioDetailOutput = document.getElementById('workflow-studio-detail-output');
             const workflowSelectedLabel = document.getElementById('workflow-selected-label');
             const workflowExecutionsList = document.getElementById('workflow-executions-list');
             const workflowDeliveriesList = document.getElementById('workflow-deliveries-list');
@@ -9537,6 +10103,10 @@ export function initializeOperatorConsole() {
             const templatesSelectedLabel = document.getElementById('templates-selected-label');
             let selectedAudienceCohortId = null;
             let selectedWorkflowId = null;
+            let selectedWorkflowBuilderId = null;
+            let selectedWorkflowStudioType = 'all';
+            let selectedWorkflowStudioResourceType = null;
+            let selectedWorkflowStudioResourceId = null;
             let selectedTemplateId = null;
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
@@ -9665,6 +10235,175 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function populateWorkflowPushProviderSelect({ preferredValue = '' } = {}) {
+                if (!workflowPushProviderConnectionSelect) {
+                    return;
+                }
+                const previousValue = String(preferredValue || workflowPushProviderConnectionSelect.value || '').trim();
+                const providers = getPushWorkflowProviderConnections();
+                workflowPushProviderConnectionSelect.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Simulator only (no provider connection)';
+                workflowPushProviderConnectionSelect.appendChild(placeholder);
+                providers.forEach((provider) => {
+                    const option = document.createElement('option');
+                    option.value = provider.provider_connection_id;
+                    option.textContent = `${provider.name} (${(provider.config || {}).base_url || 'configured'})`;
+                    workflowPushProviderConnectionSelect.appendChild(option);
+                });
+                if (previousValue && providers.some((item) => item.provider_connection_id === previousValue)) {
+                    workflowPushProviderConnectionSelect.value = previousValue;
+                } else {
+                    workflowPushProviderConnectionSelect.value = '';
+                }
+            }
+
+            function syncWorkflowChannelFields() {
+                const channel = String(workflowChannelSelect?.value || 'push_notification').trim().toLowerCase() || 'push_notification';
+                if (workflowPushFields) {
+                    workflowPushFields.style.display = channel === 'push_notification' ? 'block' : 'none';
+                }
+                if (workflowEmailFields) {
+                    workflowEmailFields.style.display = channel === 'email' ? 'block' : 'none';
+                }
+            }
+
+            function syncWorkflowBuilderState(workflow = null) {
+                const selected = workflow && workflow.workflow_id ? workflow : null;
+                selectedWorkflowBuilderId = selected ? selected.workflow_id : null;
+                if (workflowBuilderSelectedLabel) {
+                    workflowBuilderSelectedLabel.textContent = selected
+                        ? `${selected.name || selected.workflow_id} · ${String(selected.status || 'draft').replace(/[_-]+/g, ' ')}`
+                        : 'No push workflow selected';
+                }
+                const createButton = document.getElementById('workflow-create-btn');
+                if (createButton) {
+                    createButton.textContent = selected ? 'Update Push Workflow' : 'Create Push Workflow';
+                }
+            }
+
+            function resetWorkflowBuilderForm() {
+                selectedWorkflowBuilderId = null;
+                document.getElementById('workflow-name-input').value = '';
+                document.getElementById('workflow-cohort-select').value = '';
+                document.getElementById('workflow-experiment-id-input').value = 'churn_rescue_v1';
+                document.getElementById('workflow-trigger-type-select').value = 'daily_schedule';
+                document.getElementById('workflow-trigger-hour-input').value = 10;
+                document.getElementById('workflow-trigger-minute-input').value = 0;
+                if (workflowChannelSelect) {
+                    workflowChannelSelect.value = 'push_notification';
+                }
+                document.getElementById('workflow-global-limit-input').value = 5;
+                document.getElementById('workflow-channel-limit-input').value = 5;
+                document.getElementById('workflow-cooldown-hours-input').value = 24;
+                document.getElementById('workflow-quiet-start-input').value = 22;
+                document.getElementById('workflow-quiet-end-input').value = 7;
+                document.getElementById('workflow-budget-limit-input').value = 25;
+                document.getElementById('workflow-blacklist-input').value = '';
+                if (workflowContentInput) {
+                    workflowContentInput.value = 'Come back for a reward.';
+                }
+                if (workflowPushProviderConnectionSelect) {
+                    workflowPushProviderConnectionSelect.value = '';
+                }
+                if (workflowPushCampaignNameInput) {
+                    workflowPushCampaignNameInput.value = 'winback_push';
+                }
+                if (workflowPushTitleInput) {
+                    workflowPushTitleInput.value = 'Come back';
+                }
+                if (workflowPushScheduledAtInput) {
+                    workflowPushScheduledAtInput.value = '';
+                }
+                if (workflowPushBodyInput) {
+                    workflowPushBodyInput.value = 'Rewards are waiting for you.';
+                }
+                if (workflowPushDeepLinkInput) {
+                    workflowPushDeepLinkInput.value = '';
+                }
+                if (workflowPushDeepLinkTokenInput) {
+                    workflowPushDeepLinkTokenInput.value = '';
+                }
+                if (workflowPushDataInput) {
+                    workflowPushDataInput.value = '{}';
+                }
+                if (workflowPushProviderOptionsInput) {
+                    workflowPushProviderOptionsInput.value = '{}';
+                }
+                document.getElementById('workflow-requires-confirmation-checkbox').checked = false;
+                syncWorkflowChannelFields();
+                syncWorkflowBuilderState(null);
+                setInlineStatus(workflowCreateStatus, 'Creating a new push workflow.');
+            }
+
+            function loadWorkflowIntoBuilder(workflow) {
+                if (!workflow) {
+                    resetWorkflowBuilderForm();
+                    return;
+                }
+                const trigger = workflow.trigger || {};
+                const policy = workflow.policy || {};
+                const budgetPolicy = workflow.budget_policy || {};
+                const channelConfig = workflow.channel_config || {};
+                document.getElementById('workflow-name-input').value = workflow.name || '';
+                document.getElementById('workflow-cohort-select').value = workflow.definition?.cohort_id || '';
+                document.getElementById('workflow-experiment-id-input').value = workflow.experiment_id || '';
+                document.getElementById('workflow-trigger-type-select').value = trigger.type || 'daily_schedule';
+                document.getElementById('workflow-trigger-hour-input').value = trigger.hour ?? 10;
+                document.getElementById('workflow-trigger-minute-input').value = trigger.minute ?? 0;
+                if (workflowChannelSelect) {
+                    workflowChannelSelect.value = String(channelConfig.channel || 'push_notification').trim().toLowerCase() || 'push_notification';
+                }
+                document.getElementById('workflow-global-limit-input').value = policy.global_daily_limit ?? 5;
+                document.getElementById('workflow-channel-limit-input').value = policy.channel_daily_limit ?? 5;
+                document.getElementById('workflow-cooldown-hours-input').value = policy.cooldown_hours ?? 24;
+                document.getElementById('workflow-quiet-start-input').value = (policy.quiet_hours || {}).start ?? 22;
+                document.getElementById('workflow-quiet-end-input').value = (policy.quiet_hours || {}).end ?? 7;
+                document.getElementById('workflow-budget-limit-input').value = budgetPolicy.daily_budget_limit ?? 25;
+                document.getElementById('workflow-blacklist-input').value = Array.isArray(policy.blacklist_ids) ? policy.blacklist_ids.join(',') : '';
+                if (workflowContentInput) {
+                    workflowContentInput.value = channelConfig.content || 'Come back for a reward.';
+                }
+                populateWorkflowPushProviderSelect({ preferredValue: channelConfig.provider_connection_id || '' });
+                if (workflowPushProviderConnectionSelect) {
+                    workflowPushProviderConnectionSelect.value = channelConfig.provider_connection_id || '';
+                }
+                if (workflowPushCampaignNameInput) {
+                    workflowPushCampaignNameInput.value = channelConfig.campaign_name || '';
+                }
+                if (workflowPushTitleInput) {
+                    workflowPushTitleInput.value = channelConfig.title || '';
+                }
+                if (workflowPushScheduledAtInput) {
+                    workflowPushScheduledAtInput.value = fromIsoToLocalDateTimeInput(channelConfig.scheduled_at);
+                }
+                if (workflowPushBodyInput) {
+                    workflowPushBodyInput.value = channelConfig.body || channelConfig.content || '';
+                }
+                if (workflowPushDeepLinkInput) {
+                    workflowPushDeepLinkInput.value = channelConfig.deep_link || '';
+                }
+                if (workflowPushDeepLinkTokenInput) {
+                    workflowPushDeepLinkTokenInput.value = channelConfig.deep_link_token || '';
+                }
+                if (workflowPushDataInput) {
+                    workflowPushDataInput.value = JSON.stringify(channelConfig.data || {}, null, 2);
+                }
+                if (workflowPushProviderOptionsInput) {
+                    workflowPushProviderOptionsInput.value = JSON.stringify(channelConfig.provider_options || {}, null, 2);
+                }
+                document.getElementById('workflow-requires-confirmation-checkbox').checked = Boolean(workflow.definition?.requires_confirmation);
+                syncWorkflowChannelFields();
+                syncWorkflowBuilderState(workflow);
+                setInlineStatus(
+                    workflowCreateStatus,
+                    String(workflow.status || '').toLowerCase() === 'published'
+                        ? 'Editing this workflow will create a new draft version.'
+                        : `Editing ${workflow.name || workflow.workflow_id}.`,
+                );
+            }
+
             function findCohort(cohortId) {
                 return (cachedCohorts || []).find((item) => item.cohort_id === cohortId) || null;
             }
@@ -9786,10 +10525,25 @@ export function initializeOperatorConsole() {
 
             function getCampaignProviderConfig(providerType = 'sendgrid') {
                 const normalizedProvider = String(providerType || 'sendgrid').trim().toLowerCase();
+                if (pushProviderTypes.has(normalizedProvider)) {
+                    return {
+                        provider: 'wynn_push_notifier',
+                        label: 'Push Provider',
+                        credentialLabel: 'API token',
+                        assetLabel: 'Push Delivery API',
+                        assetOptionLabel: 'Select a push provider connection',
+                        selectProviderMessage: 'Select a push provider connection first.',
+                        emptyAssetMessage: 'Push provider connections do not browse messaging assets.',
+                        loadingAssetsMessage: 'Loading push provider connection...',
+                        loadedAssetNoun: 'connection',
+                        namePlaceholder: 'e.g. Push Provider Production',
+                    };
+                }
                 if (normalizedProvider === 'braze') {
                     return {
                         provider: 'braze',
                         label: 'Braze',
+                        credentialLabel: 'API key',
                         assetLabel: 'Braze API Campaign',
                         assetOptionLabel: 'Select a Braze API campaign',
                         selectProviderMessage: 'Select a Braze provider connection first.',
@@ -9802,6 +10556,7 @@ export function initializeOperatorConsole() {
                 return {
                     provider: 'sendgrid',
                     label: 'SendGrid',
+                    credentialLabel: 'API key',
                     assetLabel: 'Dynamic Template',
                     assetOptionLabel: 'Select a dynamic template',
                     selectProviderMessage: 'Select a SendGrid provider connection first.',
@@ -9812,12 +10567,35 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function getCampaignCapableProviderConnections(providerType = '') {
+            function isPushProviderType(providerType = '') {
+                return pushProviderTypes.has(String(providerType || '').trim().toLowerCase());
+            }
+
+            function getProviderConnections(providerType = '') {
                 const normalizedProvider = String(providerType || '').trim().toLowerCase();
                 const items = Array.isArray(cachedProviderConnections) ? cachedProviderConnections : [];
                 return items.filter((item) => {
                     const provider = String(item.provider || '').trim().toLowerCase();
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
+            }
+
+            function getCampaignCapableProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                return getProviderConnections().filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
                     if (!['sendgrid', 'braze'].includes(provider)) {
+                        return false;
+                    }
+                    return !normalizedProvider || provider === normalizedProvider;
+                });
+            }
+
+            function getPushWorkflowProviderConnections(providerType = '') {
+                const normalizedProvider = String(providerType || '').trim().toLowerCase();
+                return getProviderConnections().filter((item) => {
+                    const provider = String(item.provider || '').trim().toLowerCase();
+                    if (!isPushProviderType(provider)) {
                         return false;
                     }
                     return !normalizedProvider || provider === normalizedProvider;
@@ -9832,15 +10610,19 @@ export function initializeOperatorConsole() {
                 return (cachedEmailCampaigns || []).find((item) => item.email_campaign_id === emailCampaignId) || null;
             }
 
+            function findWorkflow(workflowId) {
+                return (cachedWorkflows || []).find((item) => item.workflow_id === workflowId) || null;
+            }
+
             async function refreshProviderConnectionsState() {
                 if (shouldBlockProtectedAppData()) {
-                    return getCampaignCapableProviderConnections();
+                    return getProviderConnections();
                 }
                 const payload = await apiRequest('/provider-connections');
                 const items = Array.isArray(payload.items) ? payload.items : [];
                 cachedProviderConnections = latestByCreatedAt(items);
                 renderConnectorEntrySummary();
-                return getCampaignCapableProviderConnections();
+                return getProviderConnections();
             }
 
             async function refreshEmailCampaignsState() {
@@ -9850,6 +10632,15 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest('/email-campaigns');
                 cachedEmailCampaigns = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedEmailCampaigns;
+            }
+
+            async function refreshWorkflowsState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedWorkflows;
+                }
+                const payload = await apiRequest('/workflows');
+                cachedWorkflows = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedWorkflows;
             }
 
             function ensureSelectOption(select, value, label) {
@@ -9912,6 +10703,9 @@ export function initializeOperatorConsole() {
                 if (normalizedProvider === 'braze') {
                     return document.getElementById('provider-connection-braze-api-key-input');
                 }
+                if (isPushProviderType(normalizedProvider)) {
+                    return document.getElementById('provider-connection-wynn-api-token-input');
+                }
                 return document.getElementById('provider-connection-sendgrid-api-key-input');
             }
 
@@ -9964,6 +10758,30 @@ export function initializeOperatorConsole() {
                         </div>
                         <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
                     `;
+                } else if (isPushProviderType(providerType)) {
+                    providerConnectionConfigFields.innerHTML = `
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-api-token-input">Push API Token</label>
+                                <input type="password" id="provider-connection-wynn-api-token-input" placeholder="Enter the push provider bearer token">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-base-url-input">Push Provider Base URL</label>
+                                <input type="text" id="provider-connection-wynn-base-url-input" placeholder="https://push.example.com">
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-default-deep-link-token-input">Default Deep Link Token (optional)</label>
+                                <input type="text" id="provider-connection-wynn-default-deep-link-token-input" placeholder="campaign-default-token">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-callback-signing-secret-input">Callback Signing Secret (optional)</label>
+                                <input type="password" id="provider-connection-wynn-callback-signing-secret-input" placeholder="Optional future callback secret">
+                            </div>
+                        </div>
+                        <p class="subtle">Use this connection when Kairyx should route live push delivery through your selected provider instead of using the simulator.</p>
+                    `;
                 } else {
                     providerConnectionConfigFields.innerHTML = `
                         <div class="grid-2">
@@ -10009,7 +10827,15 @@ export function initializeOperatorConsole() {
                     apiKeyInput.placeholder = 'Stored securely. Enter a new key to rotate it.';
                     return;
                 }
-                apiKeyInput.placeholder = providerType === 'braze' ? 'Enter your Braze REST API key' : 'SG....';
+                if (providerType === 'braze') {
+                    apiKeyInput.placeholder = 'Enter your Braze REST API key';
+                    return;
+                }
+                if (isPushProviderType(providerType)) {
+                    apiKeyInput.placeholder = 'Enter the push provider bearer token';
+                    return;
+                }
+                apiKeyInput.placeholder = 'SG....';
             }
 
             function loadProviderConnectionIntoForm(providerConnectionId) {
@@ -10030,6 +10856,19 @@ export function initializeOperatorConsole() {
                     const restEndpointInput = document.getElementById('provider-connection-braze-rest-endpoint-input');
                     if (restEndpointInput) {
                         restEndpointInput.value = (provider.config || {}).rest_endpoint || '';
+                    }
+                } else if (isPushProviderType(provider.provider)) {
+                    const baseUrlInput = document.getElementById('provider-connection-wynn-base-url-input');
+                    const defaultDeepLinkTokenInput = document.getElementById('provider-connection-wynn-default-deep-link-token-input');
+                    const callbackSigningSecretInput = document.getElementById('provider-connection-wynn-callback-signing-secret-input');
+                    if (baseUrlInput) {
+                        baseUrlInput.value = (provider.config || {}).base_url || '';
+                    }
+                    if (defaultDeepLinkTokenInput) {
+                        defaultDeepLinkTokenInput.value = (provider.config || {}).default_deep_link_token || '';
+                    }
+                    if (callbackSigningSecretInput) {
+                        callbackSigningSecretInput.value = '';
                     }
                 } else {
                     const fromEmailInput = document.getElementById('provider-connection-sendgrid-from-email-input');
@@ -10052,8 +10891,8 @@ export function initializeOperatorConsole() {
                 syncProviderConnectionFormState();
                 setInlineStatus(
                     providerConnectionStatus,
-                    (provider.config || {}).api_key_configured
-                        ? `Editing ${provider.name}. Leave API key blank to keep the stored secret.`
+                    ((provider.config || {}).api_key_configured || (provider.config || {}).api_token_configured)
+                        ? `Editing ${provider.name}. Leave the ${String(getCampaignProviderConfig(provider.provider).credentialLabel || 'secret').toLowerCase()} blank to keep the stored secret.`
                         : `Editing ${provider.name}.`,
                 );
             }
@@ -10108,6 +10947,19 @@ export function initializeOperatorConsole() {
                         rest_endpoint: restEndpoint,
                         ...(apiKey ? { api_key: apiKey } : {}),
                     };
+                } else if (isPushProviderType(providerType)) {
+                    const baseUrl = String(document.getElementById('provider-connection-wynn-base-url-input')?.value || '').trim();
+                    const defaultDeepLinkToken = String(document.getElementById('provider-connection-wynn-default-deep-link-token-input')?.value || '').trim();
+                    const callbackSigningSecret = String(document.getElementById('provider-connection-wynn-callback-signing-secret-input')?.value || '').trim();
+                    if (!baseUrl) {
+                        throw new Error('Push provider base URL is required.');
+                    }
+                    config = {
+                        base_url: baseUrl,
+                        ...(defaultDeepLinkToken ? { default_deep_link_token: defaultDeepLinkToken } : {}),
+                        ...(callbackSigningSecret ? { callback_signing_secret: callbackSigningSecret } : {}),
+                        ...(apiKey ? { api_token: apiKey } : {}),
+                    };
                 } else {
                     const fromEmail = String(document.getElementById('provider-connection-sendgrid-from-email-input')?.value || '').trim();
                     const fromName = String(document.getElementById('provider-connection-sendgrid-from-name-input')?.value || '').trim();
@@ -10123,7 +10975,7 @@ export function initializeOperatorConsole() {
                     };
                 }
                 if (!selectedProviderConnectionId && !apiKey) {
-                    throw new Error(`${descriptor.label} API key is required for a new provider connection.`);
+                    throw new Error(`${descriptor.label} ${descriptor.credentialLabel || 'secret'} is required for a new provider connection.`);
                 }
                 setInlineStatus(
                     providerConnectionStatus,
@@ -10163,13 +11015,19 @@ export function initializeOperatorConsole() {
                         hint: 'API-triggered campaigns',
                     };
                 }
+                if (isPushProviderType(normalizedProvider)) {
+                    return {
+                        detail: (provider?.config || {}).base_url || '-',
+                        hint: 'Workflow push delivery',
+                    };
+                }
                 return {
                     detail: (provider?.config || {}).from_email || '-',
                     hint: (provider?.config || {}).from_name || '',
                 };
             }
 
-            function renderProviderConnectionList(items = getCampaignCapableProviderConnections()) {
+            function renderProviderConnectionList(items = getProviderConnections()) {
                 renderSimpleTable(
                     providerConnectionList,
                     [
@@ -10182,21 +11040,21 @@ export function initializeOperatorConsole() {
                                 return `<span>${escapeHtml(summary.detail)}</span><div class="subtle">${escapeHtml(summary.hint || '')}</div>`;
                             },
                         },
-                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured) ? 'Stored' : 'Missing'}</span>` },
+                        { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured || (item.config || {}).api_token_configured) ? 'Stored' : 'Missing'}</span>` },
                         { label: 'Updated', render: (item) => escapeHtml(formatDateTime(item.updated_at)) },
                         {
                             label: 'Actions',
                             render: (item) => `
                                 <div class="table-actions">
                                     <button type="button" data-provider-connection-action="edit" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Edit</button>
-                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">Use in Campaign</button>
+                                    <button type="button" data-provider-connection-action="use" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}">${isPushProviderType(item.provider) ? 'Use in Push' : 'Use in Campaign'}</button>
                                     <button type="button" data-provider-connection-action="delete" data-provider-connection-id="${escapeHtml(item.provider_connection_id)}" style="background-color: var(--subtle-text);">Delete</button>
                                 </div>
                             `,
                         },
                     ],
                     items,
-                    'No SendGrid or Braze provider connections yet. Use Connect Campaign Provider to add one.',
+                    'No provider connections yet. Use Connect Campaign Provider to add one.',
                 );
                 providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -10216,6 +11074,23 @@ export function initializeOperatorConsole() {
                             } catch (error) {
                                 setInlineStatus(providerConnectionStatus, error.message || 'Failed to delete provider connection.', true);
                             }
+                            return;
+                        }
+                        if (isPushProviderType(provider.provider)) {
+                            activateModule('action-orchestrator', 'action-orchestrator-push', {
+                                targetId: 'push-notifications-section',
+                                closeSidebar: true,
+                                scrollBehavior: 'smooth',
+                            });
+                            if (workflowChannelSelect) {
+                                workflowChannelSelect.value = 'push_notification';
+                            }
+                            populateWorkflowPushProviderSelect({ preferredValue: providerConnectionId });
+                            if (workflowPushProviderConnectionSelect) {
+                                workflowPushProviderConnectionSelect.value = providerConnectionId;
+                            }
+                            syncWorkflowChannelFields();
+                            setInlineStatus(workflowCreateStatus, `${provider.name} selected for live push workflow delivery.`);
                             return;
                         }
                         emailCampaignProviderTypeSelect.value = String(provider.provider || 'sendgrid').toLowerCase() || 'sendgrid';
@@ -10250,6 +11125,7 @@ export function initializeOperatorConsole() {
                         syncProviderConnectionFormState();
                     }
                     renderProviderConnectionList(providers);
+                    populateWorkflowPushProviderSelect();
                     populateEmailCampaignProviderSelect();
                     updateEmailCampaignSummary();
                 } catch (error) {
@@ -10257,6 +11133,7 @@ export function initializeOperatorConsole() {
                         cachedProviderConnections = [];
                         setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
+                        populateWorkflowPushProviderSelect();
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         updateEmailCampaignSummary();
                         return;
@@ -10509,6 +11386,13 @@ export function initializeOperatorConsole() {
                 const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
                 renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
                 syncEmailCampaignBuilderState(campaign);
+                if (selectedWorkflowStudioResourceType === 'email_campaign' && selectedWorkflowStudioResourceId === selectedEmailCampaignId) {
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('email_campaign', campaign);
+                }
                 const providerType = String(
                     campaign.provider
                     || (findProviderConnection(campaign.provider_connection_id) || {}).provider
@@ -10783,6 +11667,7 @@ export function initializeOperatorConsole() {
                     syncEmailCampaignAudienceSourceFields();
                     syncEmailCampaignProviderFields();
                     renderEmailCampaignLists(campaigns);
+                    renderWorkflowStudioList();
                     const hasSelectedCampaign = preserveSelection && selectedEmailCampaignId && campaigns.some((item) => item.email_campaign_id === selectedEmailCampaignId);
                     if (hasSelectedCampaign) {
                         await loadEmailCampaignDetail(selectedEmailCampaignId);
@@ -10812,9 +11697,11 @@ export function initializeOperatorConsole() {
                     if (isWorkspaceContextError(error)) {
                         cachedProviderConnections = [];
                         cachedCohorts = [];
+                        cachedEmailCampaigns = [];
                         setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
                         renderEmailCampaignLists([]);
+                        renderWorkflowStudioList();
                         resetEmailCampaignTemplateSelect('Finish workspace setup to load campaign messaging assets.');
                         resetEmailCampaignAudienceFieldSelects('Finish workspace setup to inspect audience fields.');
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
@@ -11138,60 +12025,310 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function renderWorkflowList(items = []) {
+            function getWorkflowStudioItems() {
+                const emailItems = (cachedEmailCampaigns || []).map((item) => ({
+                    studio_type: 'email_campaign',
+                    studio_id: item.email_campaign_id,
+                    name: item.name || item.email_campaign_id,
+                    provider: item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'sendgrid',
+                    status: item.status || 'draft',
+                    last_run_at: item.last_send_completed_at || item.last_send_started_at || null,
+                    next_run_at: ['draft', 'scheduled'].includes(String(item.status || '').toLowerCase()) ? item.schedule_at : null,
+                    last_results: item.result_summary || {},
+                    total_results: item.result_summary || {},
+                    resource: item,
+                }));
+                const workflowItems = (cachedWorkflows || []).map((item) => ({
+                    studio_type: 'workflow',
+                    studio_id: item.workflow_id,
+                    name: item.name || item.workflow_id,
+                    provider: (item.channel_config || {}).provider || (findProviderConnection((item.channel_config || {}).provider_connection_id) || {}).provider || ((item.channel_config || {}).channel || 'workflow'),
+                    status: item.status || 'draft',
+                    last_run_at: (item.runtime_summary || {}).last_run_at || null,
+                    next_run_at: (item.runtime_summary || {}).next_run_at || null,
+                    last_results: (item.runtime_summary || {}).last_result || {},
+                    total_results: (item.runtime_summary || {}).totals || {},
+                    resource: item,
+                }));
+                return [...emailItems, ...workflowItems].sort((left, right) => {
+                    const leftTime = parseIsoDate(left.last_run_at || left.next_run_at || left.resource.updated_at || left.resource.created_at).getTime();
+                    const rightTime = parseIsoDate(right.last_run_at || right.next_run_at || right.resource.updated_at || right.resource.created_at).getTime();
+                    return rightTime - leftTime;
+                });
+            }
+
+            function getFilteredWorkflowStudioItems() {
+                const filter = String(selectedWorkflowStudioType || 'all').trim().toLowerCase() || 'all';
+                const items = getWorkflowStudioItems();
+                if (filter === 'email_campaign') {
+                    return items.filter((item) => item.studio_type === 'email_campaign');
+                }
+                if (filter === 'workflow') {
+                    return items.filter((item) => item.studio_type === 'workflow');
+                }
+                if (filter === 'scheduled') {
+                    return items.filter((item) => ['scheduled', 'published'].includes(String(item.status || '').toLowerCase()));
+                }
+                if (filter === 'archived') {
+                    return items.filter((item) => String(item.status || '').toLowerCase() === 'archived');
+                }
+                return items;
+            }
+
+            function syncWorkflowStudioFilterButtons() {
+                document.querySelectorAll('[data-workflow-studio-filter]').forEach((button) => {
+                    const active = String(button.dataset.workflowStudioFilter || '').trim().toLowerCase() === selectedWorkflowStudioType;
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                });
+            }
+
+            function formatWorkflowStudioType(item) {
+                if (item.studio_type === 'email_campaign') {
+                    return 'Email Campaign';
+                }
+                const channel = String(((item.resource || {}).channel_config || {}).channel || '').trim().toLowerCase();
+                if (channel === 'email') {
+                    return 'Email Workflow';
+                }
+                return 'Push Workflow';
+            }
+
+            function formatWorkflowStudioLastResults(item) {
+                if (item.studio_type === 'email_campaign') {
+                    const summary = item.last_results || {};
+                    return `sent ${summary.sent_count || 0} · failed ${summary.failed_count || 0}`;
+                }
+                const summary = item.last_results || {};
+                return `ok ${summary.success || 0} · fail ${summary.failures || 0}`;
+            }
+
+            function formatWorkflowStudioTotalResults(item) {
+                if (item.studio_type === 'email_campaign') {
+                    const summary = item.total_results || {};
+                    return `sent ${summary.sent_count || 0}`;
+                }
+                const totals = item.total_results || {};
+                return `runs ${totals.runs || 0} · success ${totals.success || 0}`;
+            }
+
+            function renderWorkflowStudioActions(item) {
+                const status = String(item.status || '').toLowerCase();
+                if (item.studio_type === 'email_campaign') {
+                    return `
+                        <div class="table-actions">
+                            <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
+                            <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
+                            ${status !== 'scheduled' ? `<button type="button" data-workflow-studio-action="schedule" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Schedule</button>` : ''}
+                            ${['draft', 'scheduled'].includes(status) ? `<button type="button" data-workflow-studio-action="send-now" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Send Now</button>` : ''}
+                            ${status === 'scheduled'
+                                ? `<button type="button" data-workflow-studio-action="cancel" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Cancel</button>`
+                                : status === 'draft'
+                                    ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
+                                    : ''}
+                        </div>
+                    `;
+                }
+                return `
+                    <div class="table-actions">
+                        <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
+                        <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
+                        ${status === 'draft' ? `<button type="button" data-workflow-studio-action="publish" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Publish</button>` : ''}
+                        ${status === 'published' ? `<button type="button" data-workflow-studio-action="pause" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Pause</button>` : ''}
+                        ${status === 'paused' ? `<button type="button" data-workflow-studio-action="resume" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Resume</button>` : ''}
+                        ${status !== 'archived' ? `<button type="button" data-workflow-studio-action="test-run" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Test Run</button>` : ''}
+                        ${status === 'draft'
+                            ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
+                            : status !== 'archived'
+                                ? `<button type="button" data-workflow-studio-action="archive" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Archive</button>`
+                                : ''}
+                    </div>
+                `;
+            }
+
+            function renderWorkflowStudioList() {
+                const items = getFilteredWorkflowStudioItems();
+                syncWorkflowStudioFilterButtons();
                 renderSimpleTable(
-                    workflowList,
+                    workflowStudioList,
                     [
-                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.workflow_id || '-')}</div>` },
-                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(item.status || '-')}</span>` },
-                        { label: 'Trigger', render: (item) => escapeHtml((item.trigger || {}).type || '-') },
-                        { label: 'Experiment', render: (item) => escapeHtml(item.experiment_id || '-') },
-                        {
-                            label: 'Actions',
-                            render: (item) => `
-                                <div class="table-actions">
-                                    <button type="button" data-workflow-action="view" data-workflow-id="${escapeHtml(item.workflow_id)}">View</button>
-                                    <button type="button" data-workflow-action="publish" data-workflow-id="${escapeHtml(item.workflow_id)}">Publish</button>
-                                    <button type="button" data-workflow-action="pause" data-workflow-id="${escapeHtml(item.workflow_id)}">Pause</button>
-                                    <button type="button" data-workflow-action="resume" data-workflow-id="${escapeHtml(item.workflow_id)}">Resume</button>
-                                    <button type="button" data-workflow-action="test-run" data-workflow-id="${escapeHtml(item.workflow_id)}">Test Run</button>
-                                </div>
-                            `,
-                        },
+                        { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.studio_id || '-')}</div>` },
+                        { label: 'Type', render: (item) => `<span class="pill">${escapeHtml(formatWorkflowStudioType(item))}</span>` },
+                        { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || '-'))}</span>` },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(String(item.status || '-').replace(/[_-]+/g, ' '))}</span>` },
+                        { label: 'Last Run', render: (item) => escapeHtml(formatDateTime(item.last_run_at)) },
+                        { label: 'Next Run', render: (item) => escapeHtml(formatDateTime(item.next_run_at)) },
+                        { label: 'Last Results', render: (item) => escapeHtml(formatWorkflowStudioLastResults(item)) },
+                        { label: 'Total Results', render: (item) => escapeHtml(formatWorkflowStudioTotalResults(item)) },
+                        { label: 'Actions', render: (item) => renderWorkflowStudioActions(item) },
                     ],
                     items,
-                    'No workflows yet.',
+                    'No scheduled email campaigns or push workflows yet.',
                 );
-                workflowList.querySelectorAll('[data-workflow-action]').forEach((button) => {
+                bindWorkflowStudioActionButtons(workflowStudioList);
+            }
+
+            function renderWorkflowStudioDetailActions(resourceType, resource) {
+                if (!workflowStudioActions) return;
+                if (!resourceType || !resource) {
+                    workflowStudioActions.innerHTML = '';
+                    if (workflowStudioEmailScheduleGroup) {
+                        workflowStudioEmailScheduleGroup.style.display = 'none';
+                    }
+                    return;
+                }
+                if (workflowStudioEmailScheduleGroup) {
+                    workflowStudioEmailScheduleGroup.style.display = resourceType === 'email_campaign' ? 'block' : 'none';
+                }
+                if (resourceType === 'email_campaign' && workflowStudioEmailScheduleInput) {
+                    workflowStudioEmailScheduleInput.value = fromIsoToLocalDateTimeInput(resource.schedule_at);
+                }
+                workflowStudioActions.innerHTML = renderWorkflowStudioActions({
+                    studio_type: resourceType,
+                    studio_id: resourceType === 'workflow' ? resource.workflow_id : resource.email_campaign_id,
+                    status: resource.status,
+                    resource,
+                });
+                bindWorkflowStudioActionButtons(workflowStudioActions);
+            }
+
+            async function loadWorkflowStudioSelection(resourceType, resourceId) {
+                selectedWorkflowStudioResourceType = resourceType || null;
+                selectedWorkflowStudioResourceId = resourceId || null;
+                if (!resourceType || !resourceId) {
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = 'No item selected';
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, null, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions(null, null);
+                    await loadWorkflowDetail(null);
+                    return;
+                }
+                if (resourceType === 'workflow') {
+                    const workflow = await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`);
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('workflow', workflow);
+                    await loadWorkflowDetail(resourceId);
+                    return;
+                }
+                const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`);
+                if (workflowStudioSelectedLabel) {
+                    workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
+                }
+                renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                renderWorkflowStudioDetailActions('email_campaign', campaign);
+                await loadWorkflowDetail(null);
+            }
+
+            async function handleWorkflowStudioAction(resourceType, resourceId, action) {
+                if (!resourceType || !resourceId || !action) return;
+                if (action === 'view') {
+                    await loadWorkflowStudioSelection(resourceType, resourceId);
+                    return;
+                }
+                if (resourceType === 'workflow') {
+                    if (action === 'edit') {
+                        const workflow = findWorkflow(resourceId) || await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`);
+                        loadWorkflowIntoBuilder(workflow);
+                        activateModule('action-orchestrator', 'action-orchestrator-push', {
+                            targetId: 'push-notifications-section',
+                            closeSidebar: true,
+                            scrollBehavior: 'smooth',
+                        });
+                        return;
+                    }
+                    if (action === 'publish') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/publish`, { method: 'POST' });
+                    }
+                    if (action === 'pause') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/pause`, { method: 'POST' });
+                    }
+                    if (action === 'resume') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/resume`, { method: 'POST' });
+                    }
+                    if (action === 'archive') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/archive`, { method: 'POST' });
+                    }
+                    if (action === 'delete') {
+                        await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`, { method: 'DELETE' });
+                        if (selectedWorkflowBuilderId === resourceId) {
+                            resetWorkflowBuilderForm();
+                        }
+                    }
+                    if (action === 'test-run') {
+                        const payload = await apiRequest(`/workflows/${encodeURIComponent(resourceId)}/test-run`, {
+                            method: 'POST',
+                            body: { limit: 10, confirm: true, sandbox: true, reference_time: getCurrentWorkflowReferenceTime() },
+                        });
+                        renderJsonOutput(orchestratorRunOutput, payload, 'No workflow run output.');
+                        setInlineStatus(orchestratorRunStatus, `Workflow ${resourceId} test-run completed.`);
+                    }
+                    await loadActionOrchestrator();
+                    if (action === 'delete') {
+                        await loadWorkflowStudioSelection(null, null);
+                    } else {
+                        await loadWorkflowStudioSelection('workflow', resourceId);
+                    }
+                    return;
+                }
+                if (action === 'edit') {
+                    await loadEmailCampaignDetail(resourceId);
+                    activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                        targetId: 'email-campaigns-section',
+                        closeSidebar: true,
+                        scrollBehavior: 'smooth',
+                    });
+                    return;
+                }
+                if (action === 'schedule') {
+                    if (selectedWorkflowStudioResourceType !== 'email_campaign' || selectedWorkflowStudioResourceId !== resourceId) {
+                        await loadWorkflowStudioSelection('email_campaign', resourceId);
+                    }
+                    const scheduleAt = toIsoFromLocalDateTimeInput(workflowStudioEmailScheduleInput?.value || '');
+                    if (!scheduleAt) {
+                        throw new Error('Choose a schedule time in Workflow Studio before scheduling the campaign.');
+                    }
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`, {
+                        method: 'PATCH',
+                        body: { schedule_at: scheduleAt },
+                    });
+                }
+                if (action === 'send-now') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}/send-now`, { method: 'POST' });
+                }
+                if (action === 'cancel') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}/cancel`, { method: 'POST' });
+                }
+                if (action === 'delete') {
+                    await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`, { method: 'DELETE' });
+                    if (selectedEmailCampaignId === resourceId) {
+                        resetEmailCampaignForm();
+                    }
+                }
+                await loadActionOrchestrator();
+                if (action === 'delete') {
+                    await loadWorkflowStudioSelection(null, null);
+                } else {
+                    await loadWorkflowStudioSelection('email_campaign', resourceId);
+                }
+            }
+
+            function bindWorkflowStudioActionButtons(container) {
+                if (!container) return;
+                container.querySelectorAll('[data-workflow-studio-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
-                        const workflowId = button.dataset.workflowId;
-                        const action = button.dataset.workflowAction;
                         try {
-                            if (action === 'view') {
-                                await loadWorkflowDetail(workflowId);
-                                return;
-                            }
-                            if (action === 'publish') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/publish`, { method: 'POST' });
-                            }
-                            if (action === 'pause') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/pause`, { method: 'POST' });
-                            }
-                            if (action === 'resume') {
-                                await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/resume`, { method: 'POST' });
-                            }
-                            if (action === 'test-run') {
-                                const payload = await apiRequest(`/workflows/${encodeURIComponent(workflowId)}/test-run`, {
-                                    method: 'POST',
-                                    body: { limit: 10, confirm: true, sandbox: true, reference_time: getCurrentWorkflowReferenceTime() },
-                                });
-                                renderJsonOutput(orchestratorRunOutput, payload, 'No workflow run output.');
-                                setInlineStatus(orchestratorRunStatus, `Workflow ${workflowId} test-run completed.`);
-                            }
-                            await loadActionOrchestrator();
-                            await loadWorkflowDetail(workflowId);
+                            await handleWorkflowStudioAction(
+                                button.dataset.workflowStudioType,
+                                button.dataset.workflowStudioId,
+                                button.dataset.workflowStudioAction,
+                            );
+                            setInlineStatus(workflowStudioStatus, '');
                         } catch (error) {
-                            setInlineStatus(workflowCreateStatus, error.message || `Failed to ${action} workflow.`, true);
+                            setInlineStatus(workflowStudioStatus, error.message || 'Failed to update Workflow Studio item.', true);
                         }
                     });
                 });
@@ -11213,6 +12350,14 @@ export function initializeOperatorConsole() {
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/policy-counters`),
                     apiRequest(`/workflows/${encodeURIComponent(workflowId)}/delivery-diagnostics`),
                 ]);
+                if (selectedWorkflowStudioResourceType === 'workflow' && selectedWorkflowStudioResourceId === workflowId) {
+                    const workflow = findWorkflow(workflowId) || await apiRequest(`/workflows/${encodeURIComponent(workflowId)}`);
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderWorkflowStudioDetailActions('workflow', workflow);
+                }
                 renderSimpleTable(
                     workflowExecutionsList,
                     [
@@ -11241,48 +12386,66 @@ export function initializeOperatorConsole() {
 
             async function createWorkflow() {
                 try {
-                    setInlineStatus(workflowCreateStatus, 'Creating workflow...');
-                    const channel = document.getElementById('workflow-channel-select').value || 'push_notification';
-                    const payload = await apiRequest('/workflows', {
-                        method: 'POST',
-                        body: {
-                            name: document.getElementById('workflow-name-input').value || `workflow_${Date.now()}`,
-                            cohort_id: document.getElementById('workflow-cohort-select').value,
-                            experiment_id: document.getElementById('workflow-experiment-id-input').value || null,
-                            requires_confirmation: document.getElementById('workflow-requires-confirmation-checkbox').checked,
-                            schedule: { type: 'daily' },
-                            trigger: {
-                                type: document.getElementById('workflow-trigger-type-select').value || 'daily_schedule',
-                                hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
-                                minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
-                            },
-                            action: {
-                                channel,
-                                content: document.getElementById('workflow-content-input').value || '',
-                            },
-                            channel_config: {
-                                channel,
-                                content: document.getElementById('workflow-content-input').value || '',
-                            },
-                            policy: {
-                                global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
-                                channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
-                                cooldown_hours: Number(document.getElementById('workflow-cooldown-hours-input').value || 24),
-                                blacklist_ids: splitCsv(document.getElementById('workflow-blacklist-input').value),
-                                quiet_hours: {
-                                    start: Number(document.getElementById('workflow-quiet-start-input').value || 22),
-                                    end: Number(document.getElementById('workflow-quiet-end-input').value || 7),
-                                },
-                            },
-                            budget_policy: {
-                                daily_budget_limit: Number(document.getElementById('workflow-budget-limit-input').value || 25),
+                    const editingWorkflowId = selectedWorkflowBuilderId;
+                    setInlineStatus(workflowCreateStatus, editingWorkflowId ? 'Updating workflow...' : 'Creating workflow...');
+                    const channel = String(workflowChannelSelect?.value || 'push_notification').trim().toLowerCase() || 'push_notification';
+                    const pushChannelConfig = channel === 'push_notification'
+                        ? {
+                            channel,
+                            campaign_name: String(workflowPushCampaignNameInput?.value || '').trim() || `push_campaign_${Date.now()}`,
+                            title: String(workflowPushTitleInput?.value || '').trim(),
+                            body: String(workflowPushBodyInput?.value || '').trim(),
+                            content: String(workflowPushBodyInput?.value || '').trim(),
+                            deep_link: String(workflowPushDeepLinkInput?.value || '').trim(),
+                            deep_link_token: String(workflowPushDeepLinkTokenInput?.value || '').trim(),
+                            scheduled_at: toIsoFromLocalDateTimeInput(workflowPushScheduledAtInput?.value || ''),
+                            data: parseJsonText(workflowPushDataInput?.value, {}),
+                            provider_connection_id: String(workflowPushProviderConnectionSelect?.value || '').trim() || null,
+                            provider_options: parseJsonText(workflowPushProviderOptionsInput?.value, {}),
+                        }
+                        : null;
+                    const emailChannelConfig = channel === 'email'
+                        ? {
+                            channel,
+                            content: String(workflowContentInput?.value || '').trim(),
+                        }
+                        : null;
+                    const actionConfig = pushChannelConfig || emailChannelConfig || {channel, content: ''};
+                    const requestBody = {
+                        name: document.getElementById('workflow-name-input').value || `workflow_${Date.now()}`,
+                        cohort_id: document.getElementById('workflow-cohort-select').value,
+                        experiment_id: document.getElementById('workflow-experiment-id-input').value || null,
+                        requires_confirmation: document.getElementById('workflow-requires-confirmation-checkbox').checked,
+                        schedule: { type: 'daily' },
+                        trigger: {
+                            type: document.getElementById('workflow-trigger-type-select').value || 'daily_schedule',
+                            hour: Number(document.getElementById('workflow-trigger-hour-input').value || 0),
+                            minute: Number(document.getElementById('workflow-trigger-minute-input').value || 0),
+                        },
+                        action: actionConfig,
+                        channel_config: actionConfig,
+                        policy: {
+                            global_daily_limit: Number(document.getElementById('workflow-global-limit-input').value || 5),
+                            channel_daily_limit: Number(document.getElementById('workflow-channel-limit-input').value || 5),
+                            cooldown_hours: Number(document.getElementById('workflow-cooldown-hours-input').value || 24),
+                            blacklist_ids: splitCsv(document.getElementById('workflow-blacklist-input').value),
+                            quiet_hours: {
+                                start: Number(document.getElementById('workflow-quiet-start-input').value || 22),
+                                end: Number(document.getElementById('workflow-quiet-end-input').value || 7),
                             },
                         },
+                        budget_policy: {
+                            daily_budget_limit: Number(document.getElementById('workflow-budget-limit-input').value || 25),
+                        },
+                    };
+                    const payload = await apiRequest(editingWorkflowId ? `/workflows/${encodeURIComponent(editingWorkflowId)}` : '/workflows', {
+                        method: editingWorkflowId ? 'PUT' : 'POST',
+                        body: requestBody,
                     });
                     selectedWorkflowId = payload.workflow_id;
-                    setInlineStatus(workflowCreateStatus, `Created workflow ${payload.name}.`);
+                    setInlineStatus(workflowCreateStatus, `${editingWorkflowId ? 'Updated' : 'Created'} workflow ${payload.name}.`);
                     await loadActionOrchestrator();
-                    await loadWorkflowDetail(payload.workflow_id);
+                    await loadWorkflowStudioSelection('workflow', payload.workflow_id);
                 } catch (error) {
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to create workflow.', true);
                 }
@@ -11349,9 +12512,7 @@ export function initializeOperatorConsole() {
                     });
                     renderJsonOutput(orchestratorRunOutput, payload, 'No due workflows were executed.');
                     setInlineStatus(orchestratorRunStatus, `Executed ${Array.isArray(payload.items) ? payload.items.length : 0} workflow run(s).`);
-                    if (selectedWorkflowId) {
-                        await loadWorkflowDetail(selectedWorkflowId);
-                    }
+                    await loadActionOrchestrator();
                 } catch (error) {
                     setInlineStatus(orchestratorRunStatus, error.message || 'Failed to run due workflows.', true);
                 }
@@ -11370,31 +12531,64 @@ export function initializeOperatorConsole() {
 
             async function loadActionOrchestrator() {
                 try {
-                    const [workflowPayload, cohortPayload] = await Promise.all([
-                        apiRequest('/workflows'),
-                        apiRequest('/cohorts'),
+                    const [workflows, cohorts] = await Promise.all([
+                        refreshWorkflowsState(),
+                        refreshCohortsState(),
+                        refreshProviderConnectionsState(),
                         refreshExportJobsState(),
                     ]);
-                    const workflows = Array.isArray(workflowPayload.items) ? workflowPayload.items : [];
-                    renderWorkflowList(workflows);
-                    populateWorkflowCohortSelect(cohortPayload.items || []);
+                    populateWorkflowCohortSelect(cohorts || []);
+                    populateWorkflowPushProviderSelect();
+                    syncWorkflowChannelFields();
                     populateExportJobSelect(cachedExportJobs);
+                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
+                    if (selectedWorkflowBuilderId) {
+                        const selectedWorkflow = findWorkflow(selectedWorkflowBuilderId);
+                        if (selectedWorkflow) {
+                            loadWorkflowIntoBuilder(selectedWorkflow);
+                        } else {
+                            resetWorkflowBuilderForm();
+                        }
+                    } else {
+                        syncWorkflowBuilderState(null);
+                    }
+                    if (
+                        selectedWorkflowStudioResourceType === 'workflow'
+                        && selectedWorkflowStudioResourceId
+                        && workflows.some((item) => item.workflow_id === selectedWorkflowStudioResourceId)
+                    ) {
+                        await loadWorkflowStudioSelection('workflow', selectedWorkflowStudioResourceId);
+                        return;
+                    }
+                    if (
+                        selectedWorkflowStudioResourceType === 'email_campaign'
+                        && selectedWorkflowStudioResourceId
+                        && cachedEmailCampaigns.some((item) => item.email_campaign_id === selectedWorkflowStudioResourceId)
+                    ) {
+                        await loadWorkflowStudioSelection('email_campaign', selectedWorkflowStudioResourceId);
+                        return;
+                    }
+                    if (selectedWorkflowStudioResourceType || selectedWorkflowStudioResourceId) {
+                        await loadWorkflowStudioSelection(null, null);
+                        return;
+                    }
                     if (selectedWorkflowId && workflows.some((item) => item.workflow_id === selectedWorkflowId)) {
                         await loadWorkflowDetail(selectedWorkflowId);
-                    } else if (!selectedWorkflowId && workflows[0]) {
-                        await loadWorkflowDetail(workflows[0].workflow_id);
-                    } else if (!workflows.length) {
+                    } else {
                         await loadWorkflowDetail(null);
                     }
-                    await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
-                        renderWorkflowList([]);
+                        cachedWorkflows = [];
                         populateWorkflowCohortSelect([]);
+                        populateWorkflowPushProviderSelect();
+                        syncWorkflowChannelFields();
                         populateExportJobSelect([]);
                         await loadWorkflowDetail(null);
                         await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
+                        renderWorkflowStudioList();
+                        await loadWorkflowStudioSelection(null, null);
                         return;
                     }
                     setInlineStatus(workflowCreateStatus, error.message || 'Failed to load action orchestrator.', true);
@@ -11568,6 +12762,7 @@ export function initializeOperatorConsole() {
 
             function renderCopilotAgentModelProfiles(items = []) {
                 copilotAgentModelProfiles = Array.isArray(items) ? items : [];
+                cachedAgentModelProfiles = copilotAgentModelProfiles;
                 if (!copilotAgentModelSelect) return;
                 const options = [];
                 if (!copilotAgentModelProfiles.length) {
@@ -11605,10 +12800,11 @@ export function initializeOperatorConsole() {
                 copilotAgentModelSelect.disabled = true;
                 setInlineStatus(copilotAgentModelStatus, 'Loading agent model profiles...');
                 try {
-                    const payload = await apiRequest('/copilot/agent/model-profiles');
-                    renderCopilotAgentModelProfiles(payload.items || []);
+                    const items = await refreshAgentModelProfilesState();
+                    renderCopilotAgentModelProfiles(items);
                 } catch (error) {
                     copilotAgentModelProfiles = [];
+                    cachedAgentModelProfiles = [];
                     copilotAgentModelSelect.innerHTML = '<option value="">Deterministic fallback</option>';
                     copilotAgentModelSelect.disabled = true;
                     copilotAgentSelectedModelProfileId = '';
@@ -11949,13 +13145,13 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (resourceType === 'workflow') {
-                    activateModule('action-orchestrator', 'action-orchestrator-workflows', {
-                        targetId: 'workflow-list-section',
+                    activateModule('action-orchestrator', 'action-orchestrator-studio', {
+                        targetId: 'workflow-studio-section',
                     });
                     await loadActionOrchestrator();
                     const workflowId = artifact.focus?.workflow_id || artifact.resource_id;
                     if (workflowId) {
-                        await loadWorkflowDetail(workflowId);
+                        await loadWorkflowStudioSelection('workflow', workflowId);
                     }
                     return;
                 }
@@ -12482,8 +13678,18 @@ export function initializeOperatorConsole() {
                     setInlineStatus(emailCampaignStatus, error.message || 'Failed to send email campaign.', true);
                 }
             });
+            workflowChannelSelect?.addEventListener('change', syncWorkflowChannelFields);
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);
-            document.getElementById('workflow-refresh-list-btn').addEventListener('click', loadActionOrchestrator);
+            workflowClearSelectionBtn?.addEventListener('click', () => {
+                resetWorkflowBuilderForm();
+            });
+            document.getElementById('workflow-studio-refresh-btn')?.addEventListener('click', loadActionOrchestrator);
+            document.querySelectorAll('[data-workflow-studio-filter]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    selectedWorkflowStudioType = String(button.dataset.workflowStudioFilter || 'all').trim().toLowerCase() || 'all';
+                    renderWorkflowStudioList();
+                });
+            });
             document.getElementById('orchestrator-run-due-btn').addEventListener('click', runDueWorkflows);
             document.getElementById('orchestrator-kill-on-btn').addEventListener('click', () => setKillSwitch(true));
             document.getElementById('orchestrator-kill-off-btn').addEventListener('click', () => setKillSwitch(false));
@@ -12586,6 +13792,9 @@ export function initializeOperatorConsole() {
             copilotAgentDrawerBackdrop?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(false);
             });
+
+            populateWorkflowPushProviderSelect();
+            syncWorkflowChannelFields();
             copilotOpenGlobalAgentBtn?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(true);
             });

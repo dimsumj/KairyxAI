@@ -40,10 +40,10 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
    - if you belong to `1` organization with multiple active projects, continue to project selection for that org
    - if you belong to `2+` organizations, choose the organization you want to enter first
 3. In the project step, either choose an existing project or create a new project if your org role allows it.
-4. Go to `Data Core -> Connectors` and create at least one connector.
+4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid or Braze provider connection, then go to `Action Orchestrator` to either create a workflow or draft an email campaign against a prediction audience or a cohort.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, draft or update a push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -424,54 +424,92 @@ BigQuery table import behavior:
 - Completed churn-list imports can create and activate a linked list cohort.
 
 ### 3.3 Connectors
-Use this page to register upstream ingestion sources and downstream service credentials.
+Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
 
-#### Shared controls
+#### AI Agents & Models
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Connect Data Source` | Button | Opens the connector creation form. | None | The connector type form becomes visible. |
+| `Connect Ask AI Runtime` | Button | Opens the model-profile form used by Ask AI. | None | The runtime setup form becomes visible. |
+| `Runtime Type` | Select | Chooses which Ask AI preset to configure. | `LM Studio` | The preset-specific model and endpoint fields appear. |
+| `Profile Name` | Text box | Sets the label shown in the AI runtime table and Ask AI model selector. | `LM Studio Local` | The runtime is saved under this name. |
+| `Gemini Model` | Select | Appears when `Runtime Type` is `Gemini`. | `gemini-2.5-flash` | The saved runtime targets the selected Gemini model. |
+| `Google API Key` | Password box | Appears when `Runtime Type` is `Gemini`. | `AIza...` | The backend-managed Gemini profile stores the key securely. |
+| `Model Name` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. | `llama3.1` | Ask AI sends requests to that OpenAI-compatible model name. |
+| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Leave it blank when the local or hosted OpenAI-compatible endpoint does not require bearer auth. | `sk-live-key` | The saved profile sends bearer auth only when a token is configured. |
+| `Base URL` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Base URLs with or without a trailing `/v1` both work, but the endpoint must be reachable from the backend runtime. | `http://127.0.0.1:11434/v1` | Kairyx targets the OpenAI-compatible chat-completions path correctly for that endpoint. |
+| `Use this runtime as the Ask AI default` | Checkbox | Makes the saved runtime the default model profile for new Ask AI sessions. | Checked | Ask AI uses this runtime unless the operator selects another profile for the session. |
+| `Save Runtime` / `Update Runtime` | Button | Saves the runtime. Leave the API key blank while editing if you want to keep the existing secret. | None | The runtime appears in the `AI Agents & Models` table. |
+| `Refresh` | Button | Reloads the current runtime list. | None | The runtime table refreshes from the control plane. |
+| Runtime row `Edit` | Row button | Loads the saved runtime back into the form. | None | The form switches to update mode. |
+| Runtime row `Set Default` | Row button | Makes a non-default runtime the Ask AI default. | None | New Ask AI sessions use that runtime by default. |
+| Runtime row `Delete` | Row button | Deletes a saved non-system runtime after confirmation. | None | The runtime disappears from the list. |
+
+Credential storage behavior:
+- Browser-entered runtime secrets are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
+- Runtime reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
+- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
+
+Runtime presets shipped in the current frontend:
+
+| Runtime preset | Backend provider | Fields / behavior | Sample input |
+| --- | --- | --- | --- |
+| `Gemini` | `gemini` | `Google API Key`, `Gemini Model` | `api_key=google_key_123`, `model_name=gemini-2.5-flash` |
+| `LM Studio` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:1234/v1` | `model_name=local-model`, `base_url=http://127.0.0.1:1234/v1` |
+| `Ollama` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:11434/v1` | `model_name=llama3.1`, `base_url=http://127.0.0.1:11434/v1` |
+| `Custom OpenAI-compatible` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com/v1` |
+
+Existing Anthropic profiles still render in the AI runtime list and Ask AI model selector when they were created through the API, but the current Connectors form does not create new Anthropic profiles.
+
+Deployment note:
+- `LM Studio` and `Ollama` presets use localhost-style defaults for self-hosted or local deployments where the backend can reach that machine or network.
+- Hosted production deployments reject localhost and other private-network runtime URLs. Use a publicly reachable HTTPS endpoint or a self-hosted deployment in that case.
+
+#### Data Source Connectors
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Connect Data Source` | Button | Opens the source-connector creation form. | None | The connector type form becomes visible. |
 | `Display Name` | Text box | Sets the connector name shown in the saved connector list and used by downstream flows. | `Warehouse Scores` | The connector is saved under this name. |
 | `Select Connector Source` | Select | Chooses which connector form to render. | `Amplitude` | Connector-specific fields appear. |
 | `Save Connector` | Button | Saves the connector after the required fields are filled. | None | Connector is created and shown in the saved connector list. |
-| `Cancel` | Button | Resets the form and returns to the empty state. | None | Dynamic fields disappear and the add card returns. |
+| `Cancel` | Button | Resets the form and returns to the source-connector list. | None | Dynamic fields disappear and the form hides. |
 | Saved connector `Delete` | Row button | Deletes the connector after confirmation. | None | Connector is removed from the saved list. |
 
-Credential storage behavior:
-- Browser-entered secret fields are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
-- Connector reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
-- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
-
-#### Connector-specific fields
+#### Data-source connector fields
 
 | Connector type | Fields / API payload | Sample input |
 | --- | --- | --- |
 | `Amplitude` | `Amplitude API Key`, `Amplitude Secret Key` | `api_key=amp_public_123`, `secret_key=amp_secret_456` |
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
-| `Google Gemini` | `Google API Key`, `Gemini Model Version` | `api_key=google_key_123`, `model_name=gemini-flash-latest` |
 | `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
-For lifecycle email campaigns, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid or Braze accounts, then use `Action Orchestrator -> Email Campaigns` to choose the provider connection and messaging asset. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
+
+Legacy `Google Gemini` connector records are no longer created from this generic connector form. Ask AI runtimes are managed through `AI Agents & Models` instead.
+
+For lifecycle email campaigns and provider-backed push workflows, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Push Provider accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Push Provider connections are used by `Action Orchestrator -> Push Notifications` when a `push_notification` workflow should route live push delivery through the configured provider instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
 
 #### Campaign Provider Connections
 
-Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns. Browser-entered API keys are encrypted before storage and later reads expose only `api_key_configured`. The credential form stays hidden until you click `Connect Campaign Provider`.
+Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns and provider-backed push workflows. Browser-entered API keys and bearer tokens are encrypted before storage and later reads expose only the matching `*_configured` flag. The credential form stays hidden until you click `Connect Campaign Provider`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid or Braze account. | None | The provider selector and credential fields appear. |
-| `Provider` | Select | Switches the form between SendGrid and Braze account setup. | `Braze` | The provider-specific credential fields change immediately. |
-| `Connection Name` | Text box | Sets the label that appears later in the email campaign builder. | `Lifecycle Braze` | The provider connection is listed under that name. |
+| `Connect Campaign Provider` | Button | Opens the provider-connection form when you want to add a new SendGrid, Braze, or Push Provider account. | None | The provider selector and credential fields appear. |
+| `Provider` | Select | Switches the form between SendGrid, Braze, and Push Provider account setup. | `Push Provider` | The provider-specific credential fields change immediately. |
+| `Connection Name` | Text box | Sets the label that appears later in the email campaign builder or workflow composer. | `Push Provider Production` | The provider connection is listed under that name. |
 | SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
 | Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
-| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder. |
+| Push Provider fields | Text box, password boxes | When `Provider` is `Push Provider`, fill `Push Provider Base URL`, `Push API Token`, optional `Default Deep Link Token`, and optional `Callback Signing Secret`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token` | The connection becomes selectable for push workflows and Kairyx can route live push delivery for explicit player IDs. |
+| `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key or API token blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder or workflow composer. |
 | `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
 | Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
-| Provider row `Use in Campaign` | Row button | Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Use in Campaign` | Row button | Visible for SendGrid and Braze rows. Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
+| Provider row `Use in Push` | Row button | Visible for Push Provider rows. Jumps to `Action Orchestrator -> Push Notifications` and preselects that provider connection in the push workflow composer. | None | The push workflow builder is preloaded for provider-backed `push_notification` delivery. |
 | Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
@@ -935,40 +973,158 @@ State rules:
 - Only `draft` campaigns can be deleted.
 - `sent`, `sent_with_errors`, `failed`, and `cancelled` campaigns stay read-only in the browser list and detail view.
 
-### 5.2 Create Workflow
+### 5.2 Push Notifications
+
+Use this section to create or update provider-backed push workflows. The push builder reuses the existing workflow backend, keeps the simulator fallback when no provider connection is selected, and writes draft workflow versions that later move through `Workflow Studio`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Name` | Text box | Workflow name. | `daily_churn_rescue` | Stored as workflow name. |
+| `Name` | Text box | Workflow name. | `daily_churn_rescue` | Stored as the workflow name. |
 | `Cohort` | Select | Choose the source cohort. | `cohort_20260322_1200` | Workflow binds to that cohort. |
 | `Experiment ID` | Text box | Link the workflow to an experiment id. | `churn_rescue_v1` | Publish and measurement use this experiment id. |
 | `Trigger Type` | Select | Choose `daily_schedule` or `manual_test`. | `daily_schedule` | Trigger config uses the selected type. |
 | `Hour` | Number box | Scheduled run hour. | `10` | Daily run executes at 10:00. |
-| `Minute` | Number box | Scheduled run minute. | `0` | Daily run executes at `:00`. |
-| `Channel` | Select | Choose message channel. | `push_notification` | Action uses the selected channel. |
+| `Minute` | Number box | Scheduled run minute. | `15` | Daily run executes at `:15`. |
+| `Channel` | Select | Fixed to `Push Notification` for this builder. | `Push Notification` | Workflow action stays on the push path. |
 | `Global Daily Limit` | Number box | Max sends per day across workflow. | `5` | Policy blocks sends beyond five. |
-| `Channel Daily Limit` | Number box | Max sends per channel per day. | `5` | Policy applies per channel. |
+| `Channel Daily Limit` | Number box | Max push sends per day. | `5` | Policy applies at the push-channel level. |
 | `Cooldown Hours` | Number box | Cooldown per user. | `24` | Same user is skipped for 24 hours. |
 | `Quiet Hours Start` | Number box | Start of no-send window. | `22` | Sends are blocked after 22:00. |
 | `Quiet Hours End` | Number box | End of no-send window. | `7` | Sends resume at 07:00. |
 | `Daily Budget Limit` | Number box | Workflow budget cap. | `25` | Policy blocks sends beyond budget. |
 | `Blacklist IDs (comma separated)` | Text box | Users who should never receive this workflow. | `user_1,user_2` | Those users are always skipped. |
-| `Content` | Text area | Message body. | `Come back for a reward.` | Used as workflow content. |
+| `Provider Connection` | Select | Leave blank to keep simulator delivery, or choose a Push Provider connection for live push delivery. | `Push Provider Production` | Execution uses the selected provider connection. |
+| `Campaign Name` | Text box | Sets the campaign label created for the workflow send. | `winback_push` | The outbound payload includes `campaign_name`. |
+| `Title` | Text box | Required for live push delivery. | `Come back` | The outbound payload includes `title`. |
+| `Schedule Override (optional)` | Date/time picker | Converts the local date and time into an ISO timestamp for the selected push provider. | `2026-04-16 11:30` | The outbound payload includes `scheduled_at`. |
+| `Body` | Text area | Required for live push delivery and also used as simulator content when no provider connection is selected. | `Rewards are waiting for you.` | The outbound payload includes `body`. |
+| `Deep Link (optional)` | Text box | Sets the deep link metadata stored on the push request. | `app://promotions/welcome-back` | The outbound payload includes `deep_link`. |
+| `Deep Link Token (optional)` | Text box | Overrides the provider connection's default deep link token for this workflow. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
+| `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"reward_pack"}` | The outbound payload includes `data`. |
+| `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for push workflows. | None | The advanced JSON field becomes visible. |
+| `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
 | `Requires manual confirmation` | Checkbox | Require manual confirmation before high-risk execution. | Checked | Workflow is marked confirmation-required. |
-| `Create Workflow` | Button | Creates the workflow draft. | None | Workflow appears in the workflow list. |
+| `Create Push Workflow` / `Update Push Workflow` | Button | Creates a new draft workflow or updates the selected workflow back into a draft version. | None | The workflow is saved and becomes manageable in `Workflow Studio`. |
+| `Clear` | Button | Clears the selected workflow and resets the builder to a new draft. | None | The form is ready for a new push workflow. |
 
-#### Sample workflow output
+Push builder behavior:
+- Leaving `Provider Connection` blank keeps the legacy simulator path for push workflows.
+- Selecting a Push Provider connection switches the workflow to live push delivery. Kairyx sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
+- Live push workflows require both `Title` and `Body`.
+- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
+- Editing a published or paused workflow creates a new draft version on that same workflow record.
+
+#### Sample push workflow request
 ```json
 {
-  "workflow_id": "wf_20260322_1215",
-  "name": "daily_churn_rescue",
-  "status": "draft",
+  "name": "daily_churn_rescue_push",
   "cohort_id": "cohort_20260322_1200",
-  "experiment_id": "churn_rescue_v1"
+  "experiment_id": "churn_rescue_v1",
+  "schedule": { "type": "daily" },
+  "trigger": {
+    "type": "daily_schedule",
+    "hour": 10,
+    "minute": 15
+  },
+  "action": {
+    "channel": "push_notification",
+    "provider_connection_id": "pc_push_1234567890",
+    "campaign_name": "winback_push",
+    "title": "Come back",
+    "body": "Rewards are waiting for you.",
+    "deep_link": "app://promotions/welcome-back",
+    "deep_link_token": "campaign-default-token",
+    "scheduled_at": "2026-04-16T18:30:00Z",
+    "data": {
+      "reward_id": "reward_pack"
+    },
+    "provider_options": {
+      "priority": "high"
+    }
+  },
+  "channel_config": {
+    "channel": "push_notification",
+    "provider_connection_id": "pc_push_1234567890",
+    "campaign_name": "winback_push",
+    "title": "Come back",
+    "body": "Rewards are waiting for you.",
+    "deep_link": "app://promotions/welcome-back",
+    "deep_link_token": "campaign-default-token",
+    "scheduled_at": "2026-04-16T18:30:00Z",
+    "data": {
+      "reward_id": "reward_pack"
+    },
+    "provider_options": {
+      "priority": "high"
+    }
+  }
 }
 ```
 
-### 5.3 Runtime Controls
+#### Sample workflow response
+```json
+{
+  "workflow_id": "wf_20260322_1215",
+  "name": "daily_churn_rescue_push",
+  "status": "draft",
+  "archived_at": null,
+  "experiment_id": "churn_rescue_v1",
+  "runtime_summary": {
+    "last_run_at": null,
+    "last_test_run_at": null,
+    "next_run_at": null,
+    "last_result": {},
+    "totals": {
+      "runs": 0,
+      "test_runs": 0,
+      "triggered": 0,
+      "executed": 0,
+      "success": 0,
+      "failures": 0
+    }
+  }
+}
+```
+
+### 5.3 Workflow Studio
+
+Use this section to schedule email campaigns, manage push workflows, and review a unified operational summary. The table merges both resource types and adds a selected-item panel so operators can edit, schedule, archive, or inspect the current record without switching pages.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Refresh` | Button | Reloads email campaigns, push workflows, and the selected detail panel. | None | The studio list and detail state refresh. |
+| `All` / `Email Campaigns` / `Push Workflows` / `Scheduled` / `Archived` | Filter buttons | Narrow the studio table to the relevant resource set. | `Scheduled` | Only scheduled email campaigns and published push workflows remain visible. |
+| `Name` | Table column | Read-only. Shows the resource name plus the underlying id. | `daily_churn_rescue_push` | Operators can identify the exact campaign or workflow record. |
+| `Type` | Table column | Read-only. Distinguishes `Email Campaign` from `Push Workflow`. | `Push Workflow` | The operator can see which builder to use for edits. |
+| `Provider` | Table column | Read-only. Shows SendGrid, Braze, Push Provider, simulator, or workflow channel fallback. | `Push Provider` | The delivery target is visible from the list. |
+| `Status` | Table column | Read-only. Shows draft, scheduled, published, paused, sent, failed, cancelled, or archived state. | `archived` | The lifecycle state is visible from the list. |
+| `Last Run` | Table column | Read-only. Uses workflow `runtime_summary.last_run_at` or campaign send timestamps. | `2026-03-10 10:15` | Operators can see the last live execution time. |
+| `Next Run` | Table column | Read-only. Uses workflow `runtime_summary.next_run_at` or campaign `schedule_at`. | `2026-03-11 10:15` | Operators can see the next due time. |
+| `Last Results` | Table column | Read-only. Shows compact counts from the latest execution or send. | `ok 42 · fail 3` | The most recent outcome is summarized without opening raw JSON. |
+| `Total Results` | Table column | Read-only. Shows aggregate run or send counts. | `runs 7 · success 255` | Operators can gauge cumulative performance quickly. |
+| `Selected Item` | Detail panel | Shows the current campaign or workflow JSON plus resource-specific actions. | None | Detail JSON and action buttons appear for the selected item. |
+| `Schedule Email Campaign` | Date/time picker | Visible only when an email campaign is selected. Sets the campaign schedule directly from Workflow Studio. | `2026-04-20 09:30` | The selected email campaign moves to `scheduled`. |
+| Email item `View` | Row or detail button | Loads the selected email campaign into the detail panel. | None | Campaign detail JSON appears. |
+| Email item `Edit` | Row or detail button | Opens the campaign in `Email Campaigns`. | None | The email builder loads the selected campaign. |
+| Email item `Schedule` | Row or detail button | Uses the detail-panel schedule picker to create or update `schedule_at`. | None | The email campaign becomes scheduled. |
+| Email item `Send Now` | Row or detail button | Executes the selected draft or scheduled campaign immediately. | None | Campaign runs and records result counts. |
+| Email item `Cancel` | Row or detail button | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
+| Email item `Delete` | Row or detail button | Deletes a draft campaign. | None | Draft campaign is removed. |
+| Push item `View` | Row or detail button | Loads the selected workflow into the detail panel. | None | Workflow detail JSON appears. |
+| Push item `Edit` | Row or detail button | Opens the workflow in `Push Notifications`. | None | The push builder loads the selected workflow. |
+| Push item `Publish` | Row or detail button | Publishes a draft workflow after preflight checks. | None | Workflow status becomes `published`. |
+| Push item `Pause` | Row or detail button | Pauses a published workflow. | None | Workflow status becomes `paused`. |
+| Push item `Resume` | Row or detail button | Resumes a paused workflow. | None | Workflow status becomes `published`. |
+| Push item `Test Run` | Row or detail button | Runs the workflow in sandbox mode. | None | Test-run output appears in the runtime output panel and `last_test_run_at` updates after refresh. |
+| Push item `Archive` | Row or detail button | Archives a non-draft workflow so it remains visible but cannot run again. | None | Workflow status becomes `archived`. |
+| Push item `Delete` | Row or detail button | Deletes a draft workflow only. | None | Draft workflow is removed. |
+
+Workflow Studio behavior:
+- Archived workflows remain visible in the `Archived` filter and in historical detail views, but they are excluded from due-run execution, resume, publish, and test-run actions.
+- Push workflow totals come from `runtime_summary.totals` and count live runs separately from sandbox test runs.
+- Email campaign totals reuse the campaign `result_summary`.
+
+### 5.4 Runtime Controls
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1014,17 +1170,20 @@ State rules:
 }
 ```
 
-### 5.4 Workflow List, Executions, And Deliveries
+### 5.5 Executions And Deliveries
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Refresh` | Button | Reloads workflows and detail panels. | None | Workflow list refreshes. |
-| Workflow row `View` | Row button | Loads selected workflow detail. | None | Execution, delivery, and policy panels refresh. |
-| Workflow row `Publish` | Row button | Publishes the workflow after preflight checks. | None | Workflow status becomes published. |
-| Workflow row `Pause` | Row button | Pauses a published workflow. | None | Workflow status becomes paused. |
-| Workflow row `Resume` | Row button | Resumes a paused workflow. | None | Workflow status becomes published or active again. |
-| Workflow row `Test Run` | Row button | Runs the workflow in test mode. | None | Test run output appears in runtime output panel. |
+| `Selected workflow` badge | Read-only badge | Shows which push workflow the execution and delivery panels are currently inspecting. | `daily_churn_rescue_push` | Operators can confirm the execution scope. |
+| `Executions & Policy Counters` | Detail panel | Read-only list of workflow execution records and policy aggregates for the selected workflow. | None | Execution history and policy JSON update. |
 | `Load Diagnostics` | Button | Loads delivery diagnostics for the selected workflow. | None | Diagnostics JSON appears. |
+| `Deliveries` | Detail panel | Read-only list of workflow deliveries for the selected workflow. | None | Delivery rows and diagnostics update. |
+
+Delivery detail behavior:
+- Push workflow deliveries created through a Push Provider keep the selected `provider_connection_id`.
+- The delivery record stores `provider_campaign_id` and `provider_accepted` when the provider accepts the request.
+- Delivery detail JSON also records the normalized `provider_request` and `provider_response` payloads for operator inspection.
+- In v1, push delivery success means the campaign request was accepted by the configured provider. It does not mean the device-level notification has already been delivered.
 
 #### Sample workflow diagnostics output
 ```json
@@ -1160,7 +1319,7 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Ask AI` | Floating launcher | Opens the global assistant drawer from any app page after workspace resolution. | None | The assistant drawer opens without leaving the current page. |
-| `Agent Model` | Select | Choose which backend-managed model profile the agent should use for the next session. Gemini is the default when a default Gemini profile or system Gemini configuration exists. | `Gemini Drafts` | The next session runs with the selected provider and model metadata. |
+| `Agent Model` | Select | Choose which backend-managed model profile the agent should use for the next session. Configure these profiles in `Data Core -> Connectors -> AI Agents & Models`. Gemini stays the default when a default Gemini profile or system Gemini configuration exists. | `LM Studio Local` | The next session runs with the selected provider and model metadata. |
 | `Model status` | Status line | Read-only. Shows the effective provider, model name, and whether the choice came from a saved profile, system default, or deterministic fallback. | `Gemini - gemini-2.5-flash` | Confirms which model the agent is using. |
 | `Session status` | Status line | Read-only. Shows the current session id, intent, status, and async continuation state when a prediction-backed flow is waiting. | `Session cpa_... - waiting_for_prediction` | Confirms the active agent session and whether a follow-up `Continue` is possible. |
 | `New Session` | Button | Starts a fresh operator-agent session. | None | Prior conversation is left behind and a new empty session is created. |
@@ -1526,16 +1685,18 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
      }
      ```
    - Click `Create Cohort`.
-5. In `Action Orchestrator`, create a workflow:
-   - `Name`: `daily_churn_rescue`
+5. In `Action Orchestrator -> Push Notifications`, create a push workflow:
+   - `Name`: `daily_churn_rescue_push`
    - `Cohort`: select the new cohort
    - `Experiment ID`: `churn_rescue_v1`
    - `Trigger Type`: `daily_schedule`
    - `Hour`: `10`
-   - `Minute`: `0`
-   - `Content`: `Come back for a reward.`
-   - Click `Create Workflow`.
-6. In the workflow table, click `Publish`.
+   - `Minute`: `15`
+   - `Campaign Name`: `winback_push`
+   - `Title`: `Come back`
+   - `Body`: `Rewards are waiting for you.`
+   - Click `Create Push Workflow`.
+6. In `Action Orchestrator -> Workflow Studio`, find the new workflow and click `Publish`.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.
 9. Open the global `Ask AI` bubble and run:

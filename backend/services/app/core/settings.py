@@ -45,6 +45,7 @@ class Settings:
     oidc_jwt_signing_secret: str = ""
     oidc_provider: str = ""
     oidc_google_hosted_domain: str = ""
+    oidc_jwks_timeout_seconds: float = 5.0
     max_sql_preview_rows_per_tenant: int = 1000
     max_import_jobs_per_tenant: int = 10
     max_export_jobs_per_tenant: int = 20
@@ -149,6 +150,7 @@ def get_settings() -> Settings:
         oidc_jwt_signing_secret=normalize_env_text(os.getenv("OIDC_JWT_SIGNING_SECRET")),
         oidc_provider=oidc_provider,
         oidc_google_hosted_domain=google_hosted_domain,
+        oidc_jwks_timeout_seconds=max(0.5, float(normalize_env_text(os.getenv("OIDC_JWKS_TIMEOUT_SECONDS", "5")))),
         max_sql_preview_rows_per_tenant=max(1, int(normalize_env_text(os.getenv("MAX_SQL_PREVIEW_ROWS_PER_TENANT", "1000")))),
         max_import_jobs_per_tenant=max(1, int(normalize_env_text(os.getenv("MAX_IMPORT_JOBS_PER_TENANT", "10")))),
         max_export_jobs_per_tenant=max(1, int(normalize_env_text(os.getenv("MAX_EXPORT_JOBS_PER_TENANT", "20")))),

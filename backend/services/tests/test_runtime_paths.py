@@ -231,6 +231,12 @@ def test_align_postgres_identity_sequences_repairs_next_identifier():
         def scalar_one(self):
             return self._value
 
+        def mappings(self):
+            return self
+
+        def one_or_none(self):
+            return self._value
+
     class _FakeConnection:
         def __init__(self):
             self.calls = []
@@ -241,6 +247,9 @@ def test_align_postgres_identity_sequences_repairs_next_identifier():
                 if "pg_get_serial_sequence" in sql:
                     self.calls.append(("sequence", params))
                     return _ScalarResult("public.control_plane_resource_events_v1_id_seq")
+                if "SELECT last_value, is_called FROM" in sql:
+                    self.calls.append(("sequence_state", sql))
+                    return _ScalarResult({"last_value": 149, "is_called": True})
                 if "setval" in sql:
                     self.calls.append(("setval", params))
                     return _ScalarResult(None)
@@ -280,11 +289,89 @@ def test_align_postgres_identity_sequences_repairs_next_identifier():
         },
     )
     assert fake_connection.calls[1][0] == "max"
-    assert fake_connection.calls[2] == (
+    assert fake_connection.calls[2][0] == "sequence_state"
+    assert fake_connection.calls[3] == (
         "setval",
         {
             "sequence_name": "public.control_plane_resource_events_v1_id_seq",
             "next_identifier": 150,
+        },
+    )
+
+
+def test_align_postgres_identity_sequences_does_not_rewind_sequence_when_sequence_is_ahead():
+    metadata = MetaData()
+    target_table = Table(
+        "control_plane_resource_events_v1",
+        metadata,
+        Column("id", Integer, primary_key=True),
+    )
+
+    class _ScalarResult:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+        def scalar_one(self):
+            return self._value
+
+        def mappings(self):
+            return self
+
+        def one_or_none(self):
+            return self._value
+
+    class _FakeConnection:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, statement, params=None):
+            if isinstance(statement, TextClause):
+                sql = str(statement)
+                if "pg_get_serial_sequence" in sql:
+                    self.calls.append(("sequence", params))
+                    return _ScalarResult("public.control_plane_resource_events_v1_id_seq")
+                if "SELECT last_value, is_called FROM" in sql:
+                    self.calls.append(("sequence_state", sql))
+                    return _ScalarResult({"last_value": 300, "is_called": True})
+                if "setval" in sql:
+                    self.calls.append(("setval", params))
+                    return _ScalarResult(None)
+            if isinstance(statement, Select):
+                self.calls.append(("max", statement))
+                return _ScalarResult(149)
+            raise AssertionError(f"Unexpected statement: {statement!r}")
+
+    class _FakeBegin:
+        def __init__(self, connection):
+            self._connection = connection
+
+        def __enter__(self):
+            return self._connection
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeEngine:
+        def __init__(self, connection):
+            self.dialect = SimpleNamespace(name="postgresql")
+            self._connection = connection
+
+        def begin(self):
+            return _FakeBegin(self._connection)
+
+    fake_connection = _FakeConnection()
+    fake_engine = _FakeEngine(fake_connection)
+
+    db_module._align_postgres_identity_sequences(fake_engine, tables=[target_table])
+
+    assert fake_connection.calls[-1] == (
+        "setval",
+        {
+            "sequence_name": "public.control_plane_resource_events_v1_id_seq",
+            "next_identifier": 301,
         },
     )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from engagement_executor import EngagementExecutor
@@ -43,7 +43,7 @@ class WorkflowService:
             raise KeyError(cohort_id)
         workflow_id = f"wf_{uuid.uuid4().hex[:20]}"
         normalized_trigger = self._normalize_trigger(trigger or schedule or {"type": "daily"})
-        normalized_channel = dict(channel_config or action or {})
+        normalized_channel = self._normalize_channel_config(channel_config or action or {}, workflow_name=name)
         normalized_policy = self._normalize_policy(policy)
         resolved_budget_policy = dict(budget_policy or normalized_policy.pop("budget_policy", {}) or {})
         payload = {
@@ -82,6 +82,8 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be edited.")
         definition = dict(payload.get("definition") or {})
         if patch.get("cohort_id") and self.cohorts.get_cohort(str(patch["cohort_id"])) is None:
             raise KeyError(str(patch["cohort_id"]))
@@ -102,7 +104,7 @@ class WorkflowService:
             definition["schedule"] = payload["trigger"]
         channel_source = patch.get("channel_config") if patch.get("channel_config") is not None else patch.get("action")
         if channel_source is not None:
-            payload["channel_config"] = dict(channel_source or {})
+            payload["channel_config"] = self._normalize_channel_config(channel_source or {}, workflow_name=str(payload.get("name") or ""))
             definition["channel_config"] = payload["channel_config"]
             definition["action"] = payload["channel_config"]
         if patch.get("experiment_id") is not None:
@@ -122,7 +124,7 @@ class WorkflowService:
         return self._to_response(saved)
 
     def list_versions(self, workflow_id: str) -> Dict[str, Any]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         return {"workflow_id": workflow_id, "items": self.repository.list_resource_versions("workflow", workflow_id)}
 
@@ -142,18 +144,20 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_confirmed", payload=payload)
         return payload
 
-    def get_workflow(self, workflow_id: str) -> Dict[str, Any] | None:
+    def get_workflow(self, workflow_id: str, *, include_runtime_summary: bool = True) -> Dict[str, Any] | None:
         record = self.repository.get_resource("workflow", workflow_id)
-        return self._to_response(record) if record else None
+        return self._to_response(record, include_runtime_summary=include_runtime_summary) if record else None
 
-    def list_workflows(self) -> List[Dict[str, Any]]:
-        return [self._to_response(item) for item in self.repository.list_resources("workflow")]
+    def list_workflows(self, *, include_runtime_summary: bool = True) -> List[Dict[str, Any]]:
+        return [self._to_response(item, include_runtime_summary=include_runtime_summary) for item in self.repository.list_resources("workflow")]
 
     def publish_workflow(self, workflow_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource("workflow", workflow_id)
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be published.")
         self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
@@ -171,6 +175,45 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow_id, event_type="workflow_published", payload={"version": version, "preflight": preflight})
         return self._to_response(saved)
 
+    def archive_workflow(self, workflow_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            raise KeyError(workflow_id)
+        payload = dict(record.get("payload") or {})
+        status = str(payload.get("status") or "").lower()
+        if status == "draft":
+            raise ValueError("Draft workflows should be deleted instead of archived.")
+        if status == "archived":
+            raise ValueError("Workflow is already archived.")
+        payload["status"] = "archived"
+        payload["archived_at"] = datetime.utcnow().isoformat()
+        saved = self.repository.upsert_resource("workflow", workflow_id, status="archived", name=payload.get("name"), payload=payload)
+        self.repository.record_resource_event(
+            "workflow",
+            workflow_id,
+            event_type="workflow_archived",
+            payload={"status": "archived", "archived_at": payload["archived_at"]},
+        )
+        self.repository.record_action(
+            "workflow_archived",
+            "workflow",
+            workflow_id,
+            {"workflow_id": workflow_id, "archived_at": payload["archived_at"]},
+        )
+        return self._to_response(saved)
+
+    def delete_workflow(self, workflow_id: str) -> bool:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            return False
+        payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() != "draft":
+            raise ValueError("Only draft workflows can be deleted.")
+        deleted = self.repository.delete_resource("workflow", workflow_id)
+        if deleted:
+            self.repository.record_action("workflow_deleted", "workflow", workflow_id, {"workflow_id": workflow_id})
+        return deleted
+
     def pause_workflow(self, workflow_id: str) -> Dict[str, Any]:
         return self._set_status(workflow_id, "paused", "workflow_paused")
 
@@ -179,6 +222,8 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot be resumed.")
         self._assert_publishable_provider_config(payload)
         self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
         experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
@@ -208,19 +253,17 @@ class WorkflowService:
         return record.get("payload") or {"enabled": False}
 
     def list_executions(self, workflow_id: str) -> List[Dict[str, Any]]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         return [item.get("payload") or {} for item in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500)]
 
     def list_deliveries(self, workflow_id: str) -> List[Dict[str, Any]]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
-        items = []
-        for record in self.repository.list_resources("workflow_delivery"):
-            payload = record.get("payload") or {}
-            if str(payload.get("workflow_id") or "") == workflow_id:
-                items.append(payload)
-        return items
+        return [
+            record.get("payload") or {}
+            for record in self.repository.list_resources("workflow_delivery", name=workflow_id)
+        ]
 
     def get_delivery_diagnostics(self, workflow_id: str) -> Dict[str, Any]:
         deliveries = self.list_deliveries(workflow_id)
@@ -272,7 +315,7 @@ class WorkflowService:
         }
 
     def get_policy_counters(self, workflow_id: str) -> Dict[str, Any]:
-        if self.get_workflow(workflow_id) is None:
+        if self.repository.get_resource("workflow", workflow_id) is None:
             raise KeyError(workflow_id)
         policy_items = [
             item.get("payload") or {}
@@ -436,6 +479,8 @@ class WorkflowService:
         workflow = self.get_workflow(workflow_id)
         if workflow is None:
             raise KeyError(workflow_id)
+        if workflow["status"] == "archived":
+            raise ValueError("Archived workflows cannot be executed.")
         if workflow["status"] not in {"published", "draft"}:
             raise ValueError("Only draft or published workflows can be executed.")
         return self._execute_workflow(
@@ -461,7 +506,7 @@ class WorkflowService:
         action_date = resolved_time.date().isoformat()
         tokens = dict(confirmation_tokens or {})
         runs = []
-        for workflow in self.list_workflows():
+        for workflow in self.list_workflows(include_runtime_summary=False):
             if workflow.get("status") != "published":
                 continue
             trigger = workflow.get("trigger") or {}
@@ -575,12 +620,14 @@ class WorkflowService:
         if record is None:
             raise KeyError(workflow_id)
         payload = dict(record.get("payload") or {})
+        if str(payload.get("status") or "").lower() == "archived":
+            raise ValueError("Archived workflows cannot change status.")
         payload["status"] = status
         saved = self.repository.upsert_resource("workflow", workflow_id, status=status, name=payload.get("name"), payload=payload)
         self.repository.record_resource_event("workflow", workflow_id, event_type=event_type, payload={"status": status})
         return self._to_response(saved)
 
-    def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _to_response(self, record: Dict[str, Any], *, include_runtime_summary: bool = True) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
         definition = payload.get("definition") or {}
         payload.setdefault("trigger", definition.get("trigger") or definition.get("schedule") or {"type": "daily_schedule"})
@@ -588,6 +635,7 @@ class WorkflowService:
         payload.setdefault("budget_policy", definition.get("budget_policy") or {})
         payload.setdefault("experiment_id", definition.get("experiment_id"))
         payload.setdefault("channel_config", definition.get("channel_config") or definition.get("action") or {})
+        payload.setdefault("archived_at", payload.get("archived_at"))
         payload.setdefault("created_at", record["created_at"])
         payload.setdefault("updated_at", record["updated_at"])
         payload.setdefault("tenant_id", record.get("tenant_id"))
@@ -595,7 +643,140 @@ class WorkflowService:
         payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
         payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
+        if include_runtime_summary:
+            payload["runtime_summary"] = self._build_runtime_summary(payload)
         return redact_secret_values(payload)
+
+    def _build_runtime_summary(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
+        workflow_id = str(workflow.get("workflow_id") or "").strip()
+        default_summary = {
+            "last_run_at": None,
+            "last_test_run_at": None,
+            "next_run_at": None,
+            "last_result": {},
+            "totals": {
+                "runs": 0,
+                "test_runs": 0,
+                "triggered": 0,
+                "executed": 0,
+                "success": 0,
+                "failures": 0,
+                "holdout": 0,
+                "filtered_out": 0,
+                "policy_blocked": 0,
+                "duplicate_suppressed": 0,
+                "budget_exhausted": 0,
+                "invalid_target": 0,
+            },
+        }
+        if not workflow_id:
+            return default_summary
+
+        events = [
+            item.get("payload") or {}
+            for item in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500)
+        ]
+        if not events:
+            if self._workflow_has_next_run(workflow):
+                default_summary["next_run_at"] = self._compute_next_run_at(workflow, None)
+            return default_summary
+
+        live_runs = [event for event in events if not self._is_test_execution(event)]
+        test_runs = [event for event in events if self._is_test_execution(event)]
+        latest_live = self._latest_execution_event(live_runs)
+        latest_test = self._latest_execution_event(test_runs)
+
+        totals = dict(default_summary["totals"])
+        for event in live_runs:
+            totals["runs"] += 1
+            for key in ("triggered", "executed", "success", "failures", "holdout", "filtered_out", "policy_blocked", "duplicate_suppressed", "budget_exhausted", "invalid_target"):
+                totals[key] += int(event.get(key) or 0)
+        totals["test_runs"] = len(test_runs)
+
+        return {
+            "last_run_at": latest_live.get("recorded_at") if latest_live else None,
+            "last_test_run_at": latest_test.get("recorded_at") if latest_test else None,
+            "next_run_at": self._compute_next_run_at(workflow, latest_live),
+            "last_result": self._compact_execution_summary(latest_live),
+            "totals": totals,
+        }
+
+    @staticmethod
+    def _latest_execution_event(events: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+        if not events:
+            return None
+        return max(
+            events,
+            key=lambda item: WorkflowService._parse_execution_sort_key(
+                str(item.get("recorded_at") or item.get("reference_time") or "")
+            ),
+        )
+
+    @staticmethod
+    def _is_test_execution(event: Dict[str, Any]) -> bool:
+        return bool(event.get("sandbox")) or str(event.get("trigger_type") or "").lower() == "manual_test"
+
+    @staticmethod
+    def _parse_execution_sort_key(value: str) -> datetime:
+        raw = str(value or "").strip()
+        if not raw:
+            return datetime.min
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return datetime.min
+
+    @staticmethod
+    def _workflow_has_next_run(workflow: Dict[str, Any]) -> bool:
+        return (
+            str(workflow.get("status") or "").lower() == "published"
+            and str((workflow.get("trigger") or {}).get("type") or "").lower() == "daily_schedule"
+        )
+
+    def _compute_next_run_at(self, workflow: Dict[str, Any], latest_live: Dict[str, Any] | None) -> str | None:
+        if not self._workflow_has_next_run(workflow):
+            return None
+        if str(workflow.get("status") or "").lower() == "archived":
+            return None
+        trigger = dict(workflow.get("trigger") or {})
+        hour = int(trigger.get("hour") or 0)
+        minute = int(trigger.get("minute") or 0)
+        now = datetime.utcnow()
+        if latest_live:
+            base = self._parse_execution_sort_key(str(latest_live.get("recorded_at") or latest_live.get("reference_time") or ""))
+            if base != datetime.min:
+                anchor = max(base, now)
+                candidate = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate <= anchor:
+                    candidate += timedelta(days=1)
+                return candidate.isoformat()
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.isoformat()
+
+    @staticmethod
+    def _compact_execution_summary(event: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not event:
+            return {}
+        return {
+            "trigger_type": event.get("trigger_type"),
+            "recorded_at": event.get("recorded_at"),
+            "triggered": int(event.get("triggered") or 0),
+            "executed": int(event.get("executed") or 0),
+            "success": int(event.get("success") or 0),
+            "failures": int(event.get("failures") or 0),
+            "holdout": int(event.get("holdout") or 0),
+            "filtered_out": int(event.get("filtered_out") or 0),
+            "policy_blocked": int(event.get("policy_blocked") or 0),
+            "duplicate_suppressed": int(event.get("duplicate_suppressed") or 0),
+            "budget_exhausted": int(event.get("budget_exhausted") or 0),
+            "invalid_target": int(event.get("invalid_target") or 0),
+        }
 
     def _normalize_trigger(self, trigger: Dict[str, Any]) -> Dict[str, Any]:
         raw_type = str((trigger or {}).get("type") or "daily").lower()
@@ -624,6 +805,46 @@ class WorkflowService:
         payload.setdefault("blacklist_ids", [])
         payload.setdefault("quiet_hours", {"start": 22, "end": 7})
         return payload
+
+    def _normalize_channel_config(self, channel_config: Dict[str, Any], *, workflow_name: str = "") -> Dict[str, Any]:
+        payload = dict(channel_config or {})
+        channel = str(payload.get("channel") or "push_notification").strip().lower() or "push_notification"
+        payload["channel"] = channel
+        if channel != "push_notification":
+            return payload
+        content = str(payload.get("content") or "").strip()
+        body = str(payload.get("body") or "").strip()
+        if body and not content:
+            payload["content"] = body
+        elif content and not body:
+            payload["body"] = content
+        campaign_name = str(payload.get("campaign_name") or "").strip()
+        if not campaign_name and workflow_name:
+            payload["campaign_name"] = workflow_name
+        if payload.get("scheduled_at") not in (None, ""):
+            payload["scheduled_at"] = self._parse_iso_timestamp(str(payload.get("scheduled_at")))
+        data = payload.get("data")
+        if data in (None, ""):
+            payload["data"] = {}
+        elif not isinstance(data, dict):
+            raise ValueError("Push notification data must be an object.")
+        provider_options = payload.get("provider_options")
+        if provider_options in (None, ""):
+            payload["provider_options"] = {}
+        elif not isinstance(provider_options, dict):
+            raise ValueError("Push notification provider_options must be an object.")
+        return payload
+
+    @staticmethod
+    def _parse_iso_timestamp(value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized).isoformat()
+        except ValueError as exc:
+            raise ValueError("scheduled_at must be a valid ISO timestamp.") from exc
 
     def _normalize_steps(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not steps:
@@ -723,17 +944,70 @@ class WorkflowService:
                 if branch_payload.get("end") is True:
                     return {"status": "ended", "channel_config": resolved, "trace": trace}
                 if isinstance(branch_payload.get("action"), dict):
-                    resolved.update(branch_payload["action"])
+                    resolved = self._merge_channel_config_override(resolved, branch_payload["action"])
                 continue
             if step_type == "action":
                 action_payload = dict(step.get("action") or {})
-                resolved.update(action_payload)
+                resolved = self._merge_channel_config_override(resolved, action_payload)
                 trace.append({"step": index, "type": step_type, "action": action_payload})
                 continue
             if step_type == "end":
                 trace.append({"step": index, "type": step_type, "ended": True})
                 return {"status": "ended", "channel_config": resolved, "trace": trace}
         return {"status": "ok", "channel_config": resolved, "trace": trace}
+
+    def _merge_channel_config_override(self, base_config: Dict[str, Any], override_config: Dict[str, Any]) -> Dict[str, Any]:
+        resolved = dict(base_config or {})
+        override = dict(override_config or {})
+        channel = str(override.get("channel") or resolved.get("channel") or "").strip().lower()
+        if channel == "push_notification":
+            override_content = str(override.get("content") or "").strip()
+            override_body = str(override.get("body") or "").strip()
+            if override_content and "body" not in override:
+                override["body"] = override_content
+            elif override_body and "content" not in override:
+                override["content"] = override_body
+        resolved.update(override)
+        return resolved
+
+    @staticmethod
+    def _action_message_content(action: Dict[str, Any]) -> str:
+        return str(action.get("body") or action.get("content") or "").strip()
+
+    def _resolve_provider_name(self, action: Dict[str, Any]) -> str:
+        direct_provider = str(action.get("provider") or "").strip().lower()
+        if direct_provider:
+            return direct_provider
+        provider_connection_id = str(action.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            return ""
+        record = self.repository.get_resource("provider_connection", provider_connection_id)
+        if record is None:
+            raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
+        return str((record.get("payload") or {}).get("provider") or "").strip().lower()
+
+    def _is_live_provider_push_action(self, action: Dict[str, Any]) -> bool:
+        if str(action.get("channel") or "").strip().lower() != "push_notification":
+            return False
+        provider_name = self._resolve_provider_name(action)
+        return provider_name == "wynn_push_notifier"
+
+    def _validate_action_for_execution(self, action: Dict[str, Any], *, workflow_name: str) -> Dict[str, Any]:
+        resolved = self._normalize_channel_config(action, workflow_name=workflow_name)
+        channel = str(resolved.get("channel") or "").strip().lower()
+        if channel != "push_notification":
+            return resolved
+        body = self._action_message_content(resolved)
+        if not body:
+            raise ValueError("Push notification workflows require body or content.")
+        resolved["body"] = body
+        resolved["content"] = body
+        if self._is_live_provider_push_action(resolved):
+            if not str(resolved.get("title") or "").strip():
+                raise ValueError("Live push workflows require title.")
+            if not body:
+                raise ValueError("Live push workflows require body.")
+        return resolved
 
     def _build_publish_preflight(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         reasons: List[str] = []
@@ -757,9 +1031,17 @@ class WorkflowService:
         has_step_channel = any(str(item.get("channel") or "").strip() for item in step_actions + branch_actions)
         if not channel_config.get("channel") and not has_step_channel:
             reasons.append("channel_missing")
-        has_step_content = any(str(item.get("content") or "").strip() for item in step_actions + branch_actions)
-        if not str(channel_config.get("content") or "").strip() and not has_step_content:
+        has_step_content = any(self._action_message_content(item) for item in step_actions + branch_actions)
+        if not self._action_message_content(channel_config) and not has_step_content:
             reasons.append("content_missing")
+        for action in [channel_config, *step_actions, *branch_actions]:
+            if not isinstance(action, dict):
+                continue
+            if self._is_live_provider_push_action(action):
+                if not str(action.get("title") or "").strip() and "push_title_missing" not in reasons:
+                    reasons.append("push_title_missing")
+                if not self._action_message_content(action) and "push_body_missing" not in reasons:
+                    reasons.append("push_body_missing")
         trigger = workflow.get("trigger") or definition.get("trigger") or definition.get("schedule") or {}
         trigger_type = str(trigger.get("type") or "")
         if trigger_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger"}:
@@ -969,6 +1251,10 @@ class WorkflowService:
         digest = hashlib.sha256(f"{workflow_id}:{snapshot_id}:{user_id}:{action_date}".encode("utf-8")).hexdigest()
         return f"{workflow_id}:{digest[:24]}"
 
+    def _provider_request_id(self, workflow_id: str, execution_id: str, user_id: str, channel: str) -> str:
+        digest = hashlib.sha256(f"{workflow_id}:{execution_id}:{user_id}:{channel}".encode("utf-8")).hexdigest()
+        return f"pr_{digest[:24]}"
+
     def _idempotency_exists(self, key: str) -> bool:
         return self.repository.get_resource("workflow_idempotency", key) is not None
 
@@ -1010,6 +1296,8 @@ class WorkflowService:
             "provider_mode": provider_result.get("provider_mode") or "live",
             "provider_backend": provider_result.get("provider_backend") or provider_result.get("provider") or execution_payload.get("channel"),
             "provider_connection_id": channel_config.get("provider_connection_id"),
+            "provider_campaign_id": provider_result.get("provider_campaign_id"),
+            "provider_accepted": provider_result.get("accepted"),
             "fallback_reason": provider_result.get("fallback_reason"),
             "simulated": bool(provider_result.get("simulated")),
             "delivery_status": "delivered" if provider_result.get("ok") else "failed",
@@ -1018,6 +1306,15 @@ class WorkflowService:
                 "channel": channel_config.get("channel"),
                 "subject": channel_config.get("subject"),
                 "content": channel_config.get("content"),
+                "title": channel_config.get("title"),
+                "body": channel_config.get("body") or channel_config.get("content"),
+                "campaign_name": channel_config.get("campaign_name"),
+                "data": channel_config.get("data"),
+                "deep_link": channel_config.get("deep_link"),
+                "deep_link_token": channel_config.get("deep_link_token"),
+                "scheduled_at": channel_config.get("scheduled_at"),
+                "provider_request_id": channel_config.get("provider_request_id"),
+                "provider_options": channel_config.get("provider_options"),
                 "template_id": channel_config.get("template_id"),
                 "provider_connection_id": channel_config.get("provider_connection_id"),
                 "provider_mode": provider_result.get("provider_mode") or "live",
@@ -1027,6 +1324,11 @@ class WorkflowService:
                 "error": provider_result.get("error"),
                 "provider_backend": provider_result.get("provider_backend"),
                 "fallback_reason": provider_result.get("fallback_reason"),
+                "accepted": provider_result.get("accepted"),
+                "campaign_id": provider_result.get("provider_campaign_id"),
+                "duplicate": provider_result.get("duplicate"),
+                "scheduled_at": provider_result.get("scheduled_at"),
+                "response": provider_result.get("provider_response_body"),
             },
             "delivery_diagnostics": {
                 "attempt_count": provider_result.get("attempt_count", 1),
@@ -1109,6 +1411,7 @@ class WorkflowService:
             raise ValueError(f"Provider connection '{provider_connection_id}' was not found.")
         provider_payload = dict((record.get("payload") or {}).get("config") or {})
         provider_payload = materialize_secret_refs(provider_payload)
+        provider_payload["provider"] = str((record.get("payload") or {}).get("provider") or "").strip().lower()
         provider_payload["provider_connection_id"] = provider_connection_id
         return {**provider_payload, **resolved_action}
 
@@ -1189,14 +1492,14 @@ class WorkflowService:
     def _classify_provider_failure(provider_result: Dict[str, Any]) -> str:
         error = str(provider_result.get("error") or "").lower()
         status_code = int(provider_result.get("status_code") or 0)
-        if "unsupported_channel" in error:
+        if "unsupported_channel" in error or "unsupported_provider_connection" in error or "provider_config_missing" in error:
             return "internal_error"
         if "invalid_target" in error or "invalid email" in error or status_code == 422:
             return "invalid_target"
         if "timeout" in error:
             return "provider_error"
         if status_code in {401, 403}:
-            return "provider_error"
+            return "internal_error"
         return "provider_error"
 
     def _execute_action_with_retry(self, action_payload: Dict[str, Any], channel_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -1503,22 +1806,52 @@ class WorkflowService:
 
             action = dict(resolved_channel_config)
             action = self._resolve_provider_connection_config(action)
+            action = self._validate_action_for_execution(action, workflow_name=str(workflow.get("name") or workflow["workflow_id"]))
             execution_payload["channel"] = action.get("channel", execution_payload["channel"])
             execution_payload["tenant_id"] = workflow.get("tenant_id")
             execution_payload["project_id"] = workflow.get("project_id")
             recipient = member.get("email") if str(action.get("channel") or "") == "email" else member.get("canonical_user_id")
+            provider_request_id = self._provider_request_id(
+                workflow["workflow_id"],
+                execution_id,
+                str(execution_payload.get("user_id") or ""),
+                str(action.get("channel") or execution_payload["channel"]),
+            )
+            action["provider_request_id"] = provider_request_id
             action_payload = {
                 "decision": "ACT",
                 "channel": action.get("channel", "push_notification"),
                 "content": action.get("content", ""),
+                "title": action.get("title"),
+                "body": action.get("body") or action.get("content", ""),
+                "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
+                "data": dict(action.get("data") or {}),
+                "deep_link": action.get("deep_link"),
+                "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
+                "scheduled_at": action.get("scheduled_at"),
+                "provider_options": dict(action.get("provider_options") or {}),
                 "subject": action.get("subject", "KairyxAI"),
                 "player_id": recipient or member.get("canonical_user_id"),
                 "api_key": action.get("api_key"),
+                "api_token": action.get("api_token"),
+                "base_url": action.get("base_url"),
+                "provider": action.get("provider"),
                 "from_email": action.get("from_email"),
                 "rest_endpoint": action.get("rest_endpoint"),
                 "webhook_url": action.get("webhook_url"),
                 "webhook_token": action.get("webhook_token"),
                 "provider_connection_id": action.get("provider_connection_id"),
+                "provider_request_id": provider_request_id,
+                "workflow_id": workflow["workflow_id"],
+                "execution_id": execution_id,
+                "tenant_id": workflow.get("tenant_id"),
+                "project_id": workflow.get("project_id"),
+                "context": {
+                    "workflow_id": workflow["workflow_id"],
+                    "execution_id": execution_id,
+                    "tenant_id": workflow.get("tenant_id"),
+                    "project_id": workflow.get("project_id"),
+                },
                 "metadata": dict(action.get("metadata") or {}),
             }
             provider_result = self._execute_action_with_retry(action_payload, action)
