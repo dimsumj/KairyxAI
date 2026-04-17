@@ -545,22 +545,33 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Connector` | Select | Choose which connector mapping to load or edit. | `Amplitude 1` | The mapping actions target this connector. |
-| `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | `Process After Mapping` targets this job. |
-| `Load Mapping` | Button | Loads the current saved field mapping. | None | Mapping JSON fills the editor. |
-| `Save Mapping` | Button | Persists the current mapping JSON. | None | Mapping is saved for the selected connector. |
+| `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Process After Mapping` targets this job. |
+| `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
+| `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the editor loads the effective job mapping so the guided controls and JSON editor stay in sync. | None | Mapping JSON fills the editor. |
+| `Save Mapping` | Button | Persists the current mapping JSON. With a paused import selected, the save becomes a `Job Override`; otherwise it updates the connector's source mapping. | None | Mapping is saved for the selected job override or source mapping scope. |
 | `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
 | `Coverage` | Button | Calculates mapping coverage against the selected connector. | None | Coverage summary appears. |
-| `Process After Mapping` | Button | Resumes the selected waiting job after mapping is ready. | None | Import processing continues. |
+| `Process After Mapping` | Button | Saves the current mapping and resumes the selected waiting job. | None | Import processing continues using the saved job override. |
 | `Mapping JSON` | Text area | The canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
-| `Sample Raw Event` | Text area | A raw source event used for local preview. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
+| `Sample Raw Event` | Text area | A raw source event used for local preview. When a paused import is selected, the first sampled raw event from that import is loaded automatically. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
+
+#### Operator flow
+1. Open `Data Core -> Mappings`.
+2. Select the paused job from `Awaiting Mapping Job`.
+3. Confirm the connector matches the paused import source.
+4. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`.
+5. Review or refine the generated `Mapping JSON`.
+6. Click `Coverage` or `Preview Mapping` if needed.
+7. Click `Process After Mapping` to save the job override and resume the import.
 
 #### Sample mapping input
 ```json
 {
-  "event_name": "event",
+  "canonical_user_id": "event_properties.PID",
+  "event_name": "eventName",
   "event_time": "timestamp",
-  "user_id": "user_id",
-  "email": "email"
+  "campaign": "event_properties.campaign_name",
+  "media_source": "event_properties.network"
 }
 ```
 
@@ -569,8 +580,9 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 {
   "canonical_user_id": "u_1001",
   "event_name": "purchase",
-  "occurred_at": "2026-03-22T09:31:00Z",
-  "email": "u1001@example.com"
+  "event_time": "2026-03-22T09:31:00Z",
+  "campaign": "Spring Launch",
+  "media_source": "tiktok"
 }
 ```
 

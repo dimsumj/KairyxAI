@@ -688,6 +688,13 @@
                  <p style="font-size: 0.85rem; color: var(--text-secondary);">
                     Example mapping keys: <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, <code>source_event_id</code>, <code>campaign</code>, <code>adset</code>, <code>media_source</code>. Values are raw JSON paths like <code>event_properties.PID</code>.
                  </p>
+                 <div class="mapping-guided-shell">
+                     <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                         <h3 style="margin: 0;">Guided Field Mapping</h3>
+                         <div id="data-sandbox-guided-hint" style="font-size: 0.85rem; color: var(--text-secondary);"></div>
+                     </div>
+                     <div id="data-sandbox-guided-mapping" class="mapping-guided-grid"></div>
+                 </div>
                  <details style="margin-bottom: 1rem;">
                      <summary style="cursor: pointer; font-weight: 600;">Example mapping JSON</summary>
                      <pre style="margin-top: 0.75rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"><code>{

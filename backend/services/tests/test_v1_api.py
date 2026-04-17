@@ -113,6 +113,92 @@ def test_v1_connectors_and_mappings_persist(client):
     assert len(listed.json()) == 1
 
 
+def test_mapping_candidates_are_discovered_from_import_manifests(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    import_resp = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert import_resp.status_code == 201
+    job = import_resp.json()
+    job_id = job["id"]
+
+    gcs_service = GcsService()
+    gcs_uri = gcs_service.upload_raw_events(
+        [
+            {
+                "eventName": "session_start",
+                "timestamp": "2026-03-01T08:00:00",
+                "event_properties": {
+                    "PID": "player-123",
+                    "campaign_name": "Spring Launch",
+                    "network": "TikTok",
+                },
+                "user_properties": {
+                    "profile_id": "profile-abc",
+                },
+            }
+        ],
+        f"raw/source=adjust/job={job_id}/part-00001.jsonl",
+    )
+
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        repo.upsert_resource(
+            "import_manifest",
+            f"{job_id}:1",
+            status="published",
+            name=job_id,
+            payload={
+                "manifest_id": f"{job_id}:1",
+                "job_id": job_id,
+                "source_name": "Adjust Source",
+                "event_count": 1,
+                "schema_version": "v1",
+                "shard_index": 1,
+                "gcs_uri": gcs_uri,
+                "manifest": {
+                    "job_id": job_id,
+                    "source": "adjust",
+                    "gcs_uri": gcs_uri,
+                    "event_count": 1,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                },
+            },
+        )
+        session.commit()
+
+    resp = client.get(f"/api/v1/mappings/Adjust%20Source/candidates?job_id={job_id}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["job_id"] == job_id
+    paths = {item["path"] for item in payload["fields"]}
+    assert "eventName" in paths
+    assert "event_properties.PID" in paths
+    assert "event_properties.campaign_name" in paths
+    assert "event_properties.network" in paths
+
+    suggestions = {item["field"]: item["suggested_path"] for item in payload["suggestions"]}
+    assert suggestions["canonical_user_id"] == "event_properties.PID"
+    assert suggestions["event_name"] == "eventName"
+    assert suggestions["event_time"] == "timestamp"
+
+
 def test_root_serves_frontend_shell(client):
     resp = client.get("/")
     assert resp.status_code == 200

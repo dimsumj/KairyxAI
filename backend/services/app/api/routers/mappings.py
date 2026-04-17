@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.schemas.mappings import MappingResponse, MappingUpdateRequest, MappingVersionListResponse
+from app.api.schemas.mappings import (
+    MappingCandidateResponse,
+    MappingResponse,
+    MappingUpdateRequest,
+    MappingVersionListResponse,
+)
 from app.application.mappings import MappingService
 from app.core.governance import ensure_permission, get_governance_context
 from app.core.deps import get_mapping_service
@@ -97,3 +102,12 @@ def get_mapping_suggestions(
     service: MappingService = Depends(get_mapping_service),
 ):
     return service.suggestions(connector_name, scope_type=scope_type, scope_key=scope_key)
+
+
+@router.get("/{connector_name}/candidates", response_model=MappingCandidateResponse)
+def get_mapping_candidates(
+    connector_name: str,
+    job_id: str | None = Query(None),
+    service: MappingService = Depends(get_mapping_service),
+):
+    return service.field_candidates(connector_name, job_id=job_id)

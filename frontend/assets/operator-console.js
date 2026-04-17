@@ -8837,6 +8837,8 @@ export function initializeOperatorConsole() {
             const dataSandboxMappingStatusDiv = document.getElementById('data-sandbox-mapping-status');
             const dataSandboxMappingConnectorSelect = document.getElementById('data-sandbox-mapping-connector');
             const dataSandboxAwaitingJobSelect = document.getElementById('data-sandbox-awaiting-job');
+            const dataSandboxGuidedHint = document.getElementById('data-sandbox-guided-hint');
+            const dataSandboxGuidedMapping = document.getElementById('data-sandbox-guided-mapping');
             const dataSandboxMappingJson = document.getElementById('data-sandbox-mapping-json');
             const dataSandboxSampleJson = document.getElementById('data-sandbox-sample-json');
             const dataSandboxPreviewResult = document.getElementById('data-sandbox-preview-result');
@@ -8846,13 +8848,158 @@ export function initializeOperatorConsole() {
             const dataSandboxPreviewMappingBtn = document.getElementById('data-sandbox-preview-mapping-btn');
             const dataSandboxCoverageBtn = document.getElementById('data-sandbox-coverage-btn');
             const dataSandboxProcessMappingBtn = document.getElementById('data-sandbox-process-mapping-btn');
+            const DATA_SANDBOX_MAPPING_FIELDS = [
+                { key: 'canonical_user_id', label: 'Canonical User ID', required: true },
+                { key: 'event_name', label: 'Event Name', required: true },
+                { key: 'event_time', label: 'Event Time', required: true },
+                { key: 'source_event_id', label: 'Source Event ID' },
+                { key: 'campaign', label: 'Campaign' },
+                { key: 'adset', label: 'Adset' },
+                { key: 'media_source', label: 'Media Source' },
+            ];
             let eventChart = null;
             let dataSandboxAwaitingJobs = [];
+            let dataSandboxFieldCandidates = [];
+            let dataSandboxFieldSuggestions = [];
 
             function setDataSandboxMappingStatus(message = '', isError = false) {
                 if (!dataSandboxMappingStatusDiv) return;
                 dataSandboxMappingStatusDiv.textContent = message;
                 dataSandboxMappingStatusDiv.style.color = isError ? 'var(--red)' : 'var(--green)';
+            }
+
+            function getSelectedAwaitingJobForConnector(connectorName = dataSandboxMappingConnectorSelect.value) {
+                const selectedJob = getSelectedAwaitingJob();
+                const selectedJobSource = String(selectedJob?.source_stats?.[0]?.source || '');
+                if (!selectedJob || !connectorName || selectedJobSource !== connectorName) {
+                    return null;
+                }
+                return selectedJob;
+            }
+
+            function getDataSandboxMappingScope() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                if (selectedJob) {
+                    return {
+                        scopeType: 'job',
+                        scopeKey: selectedJob.id,
+                        scopeLabel: `job override for ${selectedJob.name}`,
+                    };
+                }
+                return {
+                    scopeType: 'source',
+                    scopeKey: null,
+                    scopeLabel: connectorName ? `source mapping for ${connectorName}` : 'source mapping',
+                };
+            }
+
+            function setDataSandboxMappingJsonValue(mapping = {}) {
+                if (!dataSandboxMappingJson) return;
+                dataSandboxMappingJson.value = JSON.stringify(mapping || {}, null, 2);
+            }
+
+            function getDataSandboxCurrentMapping(options = {}) {
+                const { silent = false } = options;
+                try {
+                    return JSON.parse(dataSandboxMappingJson.value || '{}');
+                } catch (error) {
+                    if (!silent) {
+                        throw error;
+                    }
+                    return {};
+                }
+            }
+
+            function renderDataSandboxGuidedMapping() {
+                if (!dataSandboxGuidedMapping) return;
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                const scope = getDataSandboxMappingScope();
+                const currentMapping = getDataSandboxCurrentMapping({ silent: true });
+                const suggestionsByField = new Map(
+                    (dataSandboxFieldSuggestions || []).map((item) => [String(item.field || ''), item])
+                );
+                const fieldsByPath = new Map(
+                    (dataSandboxFieldCandidates || []).map((item) => [String(item.path || ''), item])
+                );
+                if (dataSandboxGuidedHint) {
+                    if (selectedJob) {
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Click Process After Mapping to resume the paused import.`;
+                    } else if (connectorName) {
+                        dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}.`;
+                    } else {
+                        dataSandboxGuidedHint.textContent = '';
+                    }
+                }
+                if (!connectorName) {
+                    dataSandboxGuidedMapping.innerHTML = '<div class="mapping-guided-meta">Select a connector to load raw field candidates.</div>';
+                    return;
+                }
+                if (!dataSandboxFieldCandidates.length) {
+                    dataSandboxGuidedMapping.innerHTML = '<div class="mapping-guided-meta">No raw field candidates available yet. Load a paused import job or provide a sample event below.</div>';
+                    return;
+                }
+
+                dataSandboxGuidedMapping.innerHTML = DATA_SANDBOX_MAPPING_FIELDS.map((fieldConfig) => {
+                    const fieldKey = fieldConfig.key;
+                    const suggestion = suggestionsByField.get(fieldKey) || null;
+                    const currentPath = String(currentMapping[fieldKey] || '');
+                    const options = [];
+                    const seen = new Set();
+                    const pushOption = (path) => {
+                        const normalizedPath = String(path || '');
+                        if (!normalizedPath || seen.has(normalizedPath)) {
+                            return;
+                        }
+                        seen.add(normalizedPath);
+                        options.push({
+                            path: normalizedPath,
+                            samples: fieldsByPath.get(normalizedPath)?.sample_values || [],
+                        });
+                    };
+                    pushOption(currentPath);
+                    pushOption(suggestion?.suggested_path);
+                    (suggestion?.alternatives || []).forEach((item) => pushOption(item.path));
+                    dataSandboxFieldCandidates.forEach((item) => pushOption(item.path));
+                    const optionMarkup = ['<option value="">Select raw field path</option>']
+                        .concat(options.map((item) => `<option value="${escapeHtml(item.path)}"${item.path === currentPath ? ' selected' : ''}>${escapeHtml(item.path)}</option>`))
+                        .join('');
+                    const samplePreview = (fieldsByPath.get(currentPath)?.sample_values || suggestion?.sample_values || []).slice(0, 2);
+                    const suggestionText = suggestion?.suggested_path
+                        ? `<div><strong>Suggested:</strong> ${escapeHtml(String(suggestion.suggested_path))}</div>`
+                        : '<div><strong>Suggested:</strong> pick the best matching raw property path</div>';
+                    const sampleText = samplePreview.length
+                        ? `<div><strong>Samples:</strong> ${escapeHtml(samplePreview.join(', '))}</div>`
+                        : '<div><strong>Samples:</strong> no sample values yet</div>';
+                    return `
+                        <div class="mapping-guided-card">
+                            <label for="data-sandbox-guided-${escapeHtml(fieldKey)}">${escapeHtml(fieldConfig.label)}${fieldConfig.required ? ' *' : ''}</label>
+                            <select id="data-sandbox-guided-${escapeHtml(fieldKey)}" data-field="${escapeHtml(fieldKey)}">
+                                ${optionMarkup}
+                            </select>
+                            <div class="mapping-guided-meta">
+                                ${suggestionText}
+                                ${sampleText}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                dataSandboxGuidedMapping.querySelectorAll('select[data-field]').forEach((select) => {
+                    select.addEventListener('change', (event) => {
+                        const field = String(event.target.dataset.field || '');
+                        const nextMapping = getDataSandboxCurrentMapping({ silent: true });
+                        const value = String(event.target.value || '').trim();
+                        if (value) {
+                            nextMapping[field] = value;
+                        } else {
+                            delete nextMapping[field];
+                        }
+                        setDataSandboxMappingJsonValue(nextMapping);
+                        renderDataSandboxGuidedMapping();
+                    });
+                });
             }
 
             function setDataSandboxAutoSample(sampleRecord) {
@@ -8905,10 +9052,36 @@ export function initializeOperatorConsole() {
                 return dataSandboxAwaitingJobs.find((job) => job.id === selectedJobId) || null;
             }
 
+            async function loadDataSandboxMappingCandidates() {
+                const connectorName = dataSandboxMappingConnectorSelect.value;
+                if (!connectorName) {
+                    dataSandboxFieldCandidates = [];
+                    dataSandboxFieldSuggestions = [];
+                    renderDataSandboxGuidedMapping();
+                    return;
+                }
+                const selectedJob = getSelectedAwaitingJobForConnector(connectorName);
+                const query = new URLSearchParams();
+                if (selectedJob?.id) {
+                    query.set('job_id', selectedJob.id);
+                }
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                const payload = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}/candidates${suffix}`);
+                dataSandboxFieldCandidates = Array.isArray(payload.fields) ? payload.fields : [];
+                dataSandboxFieldSuggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+                if (Array.isArray(payload.sample_events) && payload.sample_events.length > 0) {
+                    setDataSandboxAutoSample(payload.sample_events[0]);
+                }
+                renderDataSandboxGuidedMapping();
+            }
+
             async function loadDataSandboxMappingControls() {
                 if (shouldBlockProtectedAppData()) {
                     dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
                     dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                    dataSandboxFieldCandidates = [];
+                    dataSandboxFieldSuggestions = [];
+                    renderDataSandboxGuidedMapping();
                     dataSandboxLoadMappingBtn.disabled = true;
                     dataSandboxSaveMappingBtn.disabled = true;
                     dataSandboxPreviewMappingBtn.disabled = true;
@@ -8991,11 +9164,15 @@ export function initializeOperatorConsole() {
                         setDataSandboxMappingStatus(`Paused import job detected: ${dataSandboxAwaitingJobs[0].name}. Review the mapping, then click "Process After Mapping".`);
                     } else {
                         setDataSandboxMappingStatus('No paused import jobs. You can still edit and preview connector mappings locally.');
+                        await loadDataSandboxMappingCandidates();
                     }
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         dataSandboxMappingConnectorSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
                         dataSandboxAwaitingJobSelect.innerHTML = '<option value="">Finish workspace setup first</option>';
+                        dataSandboxFieldCandidates = [];
+                        dataSandboxFieldSuggestions = [];
+                        renderDataSandboxGuidedMapping();
                         dataSandboxLoadMappingBtn.disabled = true;
                         dataSandboxSaveMappingBtn.disabled = true;
                         dataSandboxPreviewMappingBtn.disabled = true;
@@ -9004,6 +9181,9 @@ export function initializeOperatorConsole() {
                         setDataSandboxMappingStatus(getWorkspaceResolutionMessage(error.payload || authSessionState));
                         return;
                     }
+                    dataSandboxFieldCandidates = [];
+                    dataSandboxFieldSuggestions = [];
+                    renderDataSandboxGuidedMapping();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping controls.', true);
                 }
             }
@@ -9016,17 +9196,34 @@ export function initializeOperatorConsole() {
                 }
 
                 try {
-                    const data = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}`);
-                    dataSandboxMappingJson.value = JSON.stringify(data.mapping || {}, null, 2);
+                    const scope = getDataSandboxMappingScope();
+                    const query = new URLSearchParams();
+                    if (scope.scopeType !== 'source') {
+                        query.set('scope_type', scope.scopeType);
+                    }
+                    if (scope.scopeKey) {
+                        query.set('scope_key', scope.scopeKey);
+                    }
+                    const suffix = query.toString() ? `?${query.toString()}` : '';
+                    const data = await apiRequest(`/mappings/${encodeURIComponent(connectorName)}${suffix}`);
+                    const nextMapping = scope.scopeType === 'job'
+                        ? (data.effective_mapping || data.mapping || {})
+                        : (data.mapping || {});
+                    setDataSandboxMappingJsonValue(nextMapping);
+                    await loadDataSandboxMappingCandidates();
                     if (!silent) {
-                        setDataSandboxMappingStatus(`Loaded field mapping for ${connectorName}.`);
+                        setDataSandboxMappingStatus(`Loaded ${scope.scopeLabel}.`);
                     }
                 } catch (error) {
+                    dataSandboxFieldCandidates = [];
+                    dataSandboxFieldSuggestions = [];
+                    renderDataSandboxGuidedMapping();
                     setDataSandboxMappingStatus(error.message || 'Failed to load field mapping.', true);
                 }
             }
 
-            async function saveDataSandboxFieldMapping() {
+            async function saveDataSandboxFieldMapping(options = {}) {
+                const { silent = false, reload = true, rethrow = false } = options;
                 const connectorName = dataSandboxMappingConnectorSelect.value;
                 if (!connectorName) {
                     setDataSandboxMappingStatus('Select a connector first.', true);
@@ -9034,14 +9231,27 @@ export function initializeOperatorConsole() {
                 }
 
                 try {
-                    const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
+                    const mapping = getDataSandboxCurrentMapping();
+                    const scope = getDataSandboxMappingScope();
                     await apiRequest(`/mappings/${encodeURIComponent(connectorName)}`, {
                         method: 'PUT',
-                        body: { mapping },
+                        body: {
+                            mapping,
+                            scope_type: scope.scopeType,
+                            scope_key: scope.scopeKey,
+                        },
                     });
-                    setDataSandboxMappingStatus(`Saved field mapping for ${connectorName}.`);
+                    if (reload) {
+                        await loadDataSandboxFieldMapping(true);
+                    }
+                    if (!silent) {
+                        setDataSandboxMappingStatus(`Saved ${scope.scopeLabel}.`);
+                    }
                 } catch (error) {
                     setDataSandboxMappingStatus(error.message || 'Failed to save field mapping.', true);
+                    if (rethrow) {
+                        throw error;
+                    }
                 }
             }
 
@@ -9089,8 +9299,18 @@ export function initializeOperatorConsole() {
                     setDataSandboxMappingStatus('Import pause/resume is not available on /api/v1.', true);
                     return;
                 }
-
-                setDataSandboxMappingStatus(`Manual mapping is saved, but processing paused jobs is not available on /api/v1 yet.`, true);
+                try {
+                    await saveDataSandboxFieldMapping({ silent: true, reload: false, rethrow: true });
+                    const resumed = await apiRequest(`/imports/${encodeURIComponent(selectedJob.id)}/resume`, {
+                        method: 'POST',
+                    });
+                    await refreshImportsState();
+                    await loadImportedDataList();
+                    await loadDataSandboxMappingControls();
+                    setDataSandboxMappingStatus(`Resumed ${selectedJob.name}. New status: ${resumed.status || 'running'}.`);
+                } catch (error) {
+                    setDataSandboxMappingStatus(error.message || 'Failed to process the paused import after saving mapping.', true);
+                }
             }
 
             async function loadDataSandboxGlance() {
@@ -9194,15 +9414,25 @@ export function initializeOperatorConsole() {
                 ) {
                     dataSandboxMappingConnectorSelect.value = selectedJobSource;
                     await loadDataSandboxFieldMapping(true);
+                } else {
+                    await loadDataSandboxMappingCandidates();
                 }
                 renderDataSandboxCoverage(null);
             });
 
             dataSandboxLoadMappingBtn.addEventListener('click', () => loadDataSandboxFieldMapping(false));
-            dataSandboxSaveMappingBtn.addEventListener('click', saveDataSandboxFieldMapping);
+            dataSandboxSaveMappingBtn.addEventListener('click', () => saveDataSandboxFieldMapping());
             dataSandboxPreviewMappingBtn.addEventListener('click', previewDataSandboxFieldMapping);
             dataSandboxCoverageBtn.addEventListener('click', loadDataSandboxMappingCoverage);
             dataSandboxProcessMappingBtn.addEventListener('click', processDataSandboxAwaitingJob);
+            dataSandboxMappingJson.addEventListener('input', () => {
+                try {
+                    getDataSandboxCurrentMapping();
+                    renderDataSandboxGuidedMapping();
+                } catch (error) {
+                    // Leave the existing guided controls in place until the JSON becomes valid again.
+                }
+            });
 
             // Audience / Workflow / Experiment / Copilot Shared Helpers
             const audienceCreateCohortBtn = document.getElementById('audience-create-cohort-btn');

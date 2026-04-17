@@ -441,6 +441,13 @@ Support one-click rollback to a previous version.
 - Generate suggested mappings from field-name similarity and sample-value patterns
 - Suggestions remain recommendation-only until the user confirms them
 
+#### 4.2.7.5a Operator-Guided Field Binding
+- When a job enters `Awaiting Mapping`, the operator UI must expose discovered raw field paths from that job's staged import manifests
+- Required semantic targets such as `canonical_user_id`, `event_name`, and `event_time` must be selectable from dropdowns instead of requiring JSON-path typing only
+- Optional attribution targets such as `campaign`, `adset`, and `media_source` should use the same guided picker
+- If the operator is editing a paused job, save as `Job Override` by default; if no paused job is selected, save as `Source Mapping`
+- The mapping JSON editor may remain available as an advanced override surface, but it must stay in sync with the guided controls
+
 #### 4.2.7.6 Replay After Mapping Fix
 - After a mapping fix, support reprocessing from `standardized -> unified`
 - Do not re-fetch source data, so reruns stay cheaper and faster

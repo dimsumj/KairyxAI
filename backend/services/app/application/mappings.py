@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.application.secret_refs import materialize_secret_refs
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from gemini_client import GeminiClient
+from gcs_service import GcsService
 
 
 class MappingService:
     def __init__(self, repository, bigquery_service: BigQueryService | None = None):
         self.repository = repository
         self.bigquery_service = bigquery_service or get_shared_bigquery_service()
+        self.gcs_service = GcsService()
 
     @staticmethod
     def _mapping_key(connector_name: str, scope_type: str = "source", scope_key: str | None = None) -> str:
@@ -177,9 +179,36 @@ class MappingService:
             "effective_mapping": current,
         }
 
+    def field_candidates(
+        self,
+        connector_name: str,
+        *,
+        job_id: str | None = None,
+    ) -> Dict[str, Any]:
+        effective_mapping = self.get_effective_mapping(connector_name, job_id=job_id)
+        sample_events = self._load_job_sample_events(job_id) if job_id else []
+        observed_paths = self._observed_paths(sample_events or None)
+        suggestions = self._heuristic_suggestions(effective_mapping, observed_paths)
+        fields = [
+            {
+                "path": path,
+                "sample_values": values[:3],
+            }
+            for path, values in sorted(observed_paths.items(), key=lambda item: item[0])
+            if path
+        ]
+        return {
+            "connector_name": connector_name,
+            "job_id": job_id,
+            "effective_mapping": effective_mapping,
+            "fields": fields,
+            "suggestions": suggestions,
+            "sample_events": sample_events[:3],
+        }
+
     def _heuristic_suggestions(self, current: Dict[str, Any], observed_paths: Dict[str, list[str]]) -> list[Dict[str, Any]]:
         suggestions = []
-        candidates = {
+        fallback_candidates = {
             "canonical_user_id": [
                 ("player_id", 0.92, "player_id is the most common canonical candidate in v1"),
                 ("event_properties.player_id", 0.84, "Found common nested player_id pattern"),
@@ -194,25 +223,36 @@ class MappingService:
                 ("event_time", 0.89, "event_time already matches canonical naming"),
                 ("created_at", 0.71, "created_at is a common fallback timestamp"),
             ],
+            "source_event_id": [
+                ("event_id", 0.9, "event_id is the most common event identifier"),
+                ("insert_id", 0.86, "insert_id is a common analytics dedupe key"),
+                ("uuid", 0.75, "uuid is a common fallback identifier"),
+            ],
             "campaign": [
                 ("event_properties.campaign", 0.81, "campaign usually arrives inside event_properties"),
                 ("campaign", 0.74, "campaign is also common as a top-level field"),
+            ],
+            "adset": [
+                ("event_properties.adset", 0.8, "adset commonly lives in attribution payloads"),
+                ("event_properties.adgroup_name", 0.76, "adgroup_name is a common paid attribution alias"),
             ],
             "media_source": [
                 ("event_properties.media_source", 0.8, "media_source typically lives in attribution payloads"),
                 ("media_source", 0.7, "media_source as a flat field is a common fallback"),
             ],
         }
-        for field, options in candidates.items():
+        for field, options in fallback_candidates.items():
             if str(current.get(field) or "").strip():
                 continue
-            ranked_options = []
-            for path, confidence, rationale in options:
-                sample_values = observed_paths.get(path) or []
-                if sample_values:
-                    ranked_options.append((path, min(0.99, confidence + 0.03), f"{rationale}; backed by observed samples", sample_values))
-                else:
-                    ranked_options.append((path, confidence, rationale, []))
+            ranked_options = self._match_observed_paths(field, observed_paths)
+            if not ranked_options:
+                ranked_options = []
+                for path, confidence, rationale in options:
+                    sample_values = observed_paths.get(path) or []
+                    if sample_values:
+                        ranked_options.append((path, min(0.99, confidence + 0.03), f"{rationale}; backed by observed samples", sample_values))
+                    else:
+                        ranked_options.append((path, confidence, rationale, []))
             ranked_options.sort(key=lambda item: (item[1], len(item[3])), reverse=True)
             path, confidence, rationale, sample_values = ranked_options[0]
             suggestions.append(
@@ -234,6 +274,75 @@ class MappingService:
                 }
             )
         return suggestions
+
+    def _match_observed_paths(
+        self,
+        field: str,
+        observed_paths: Dict[str, list[str]],
+    ) -> list[tuple[str, float, str, list[str]]]:
+        aliases = {
+            "canonical_user_id": [
+                "canonical_user_id",
+                "player_id",
+                "playerid",
+                "user_id",
+                "userid",
+                "uid",
+                "pid",
+                "customer_user_id",
+                "customeruserid",
+                "external_user_id",
+                "externaluserid",
+                "distinct_id",
+                "distinctid",
+                "appsflyer_id",
+                "appsflyerid",
+            ],
+            "event_name": ["event_name", "eventname", "event_type", "eventtype", "name"],
+            "event_time": ["event_time", "eventtime", "timestamp", "time", "created_at", "client_event_time", "server_upload_time"],
+            "source_event_id": ["source_event_id", "sourceeventid", "event_id", "eventid", "insert_id", "insertid", "uuid", "message_id"],
+            "campaign": ["campaign", "campaign_name", "campaignname", "utm_campaign"],
+            "adset": ["adset", "adset_name", "adsetname", "adgroup", "adgroup_name", "adgroupname"],
+            "media_source": ["media_source", "mediasource", "network", "channel", "source", "publisher"],
+        }
+        ranked: list[tuple[str, float, str, list[str]]] = []
+        normalized_aliases = aliases.get(field, [])
+        for path, sample_values in observed_paths.items():
+            tokens = [self._normalize_token(token) for token in path.split(".") if token]
+            if not tokens:
+                continue
+            path_score = self._score_path_tokens(tokens, normalized_aliases)
+            if path_score <= 0:
+                continue
+            confidence = min(0.99, 0.6 + path_score)
+            rationale = f"Observed raw field path resembles {field}"
+            if sample_values:
+                rationale += " and includes sample values"
+            ranked.append((path, confidence, rationale, sample_values[:3]))
+        return ranked
+
+    @staticmethod
+    def _normalize_token(value: str) -> str:
+        return "".join(char for char in str(value or "").lower() if char.isalnum())
+
+    def _score_path_tokens(self, tokens: List[str], aliases: List[str]) -> float:
+        if not aliases:
+            return 0.0
+        score = 0.0
+        last_token = tokens[-1]
+        for alias in aliases:
+            normalized_alias = self._normalize_token(alias)
+            if not normalized_alias:
+                continue
+            if last_token == normalized_alias:
+                score = max(score, 0.34)
+            elif last_token.endswith(normalized_alias) or normalized_alias.endswith(last_token):
+                score = max(score, 0.28)
+            elif normalized_alias in tokens:
+                score = max(score, 0.22)
+            elif any(normalized_alias in token or token in normalized_alias for token in tokens):
+                score = max(score, 0.15)
+        return score
 
     def _ai_suggestions(
         self,
@@ -346,12 +455,59 @@ class MappingService:
             by_field[field] = merged
         return list(by_field.values())
 
-    def _observed_paths(self) -> Dict[str, list[str]]:
-        rows = self.bigquery_service.get_rows_for_alias("standardized")[:100]
+    def _observed_paths(self, rows: List[Dict[str, Any]] | None = None) -> Dict[str, list[str]]:
+        rows = rows if rows is not None else self.bigquery_service.get_rows_for_alias("standardized")[:100]
         observed: Dict[str, list[str]] = {}
         for row in rows:
             self._collect_paths("", row, observed)
         return observed
+
+    def _load_job_sample_events(self, job_id: str | None, max_records: int = 50) -> List[Dict[str, Any]]:
+        if not job_id:
+            return []
+        records: List[Dict[str, Any]] = []
+        manifests = self._list_job_manifests(job_id)
+        for manifest in manifests:
+            blob_name = str(manifest.get("gcs_uri") or "").strip()
+            if not blob_name:
+                continue
+            try:
+                events = self.gcs_service.download_raw_events(blob_name)
+            except FileNotFoundError:
+                continue
+            for event in events:
+                if isinstance(event, dict):
+                    records.append(event)
+                if len(records) >= max_records:
+                    return records
+        return records
+
+    def _list_job_manifests(self, job_id: str) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for record in self.repository.list_resources("import_manifest"):
+            payload = dict(record.get("payload") or {})
+            if str(payload.get("job_id") or "") != job_id:
+                continue
+            items.append(payload)
+        if items:
+            items.sort(key=lambda item: int(item.get("shard_index") or 0))
+            return items
+        checkpoints = []
+        try:
+            checkpoints = self.repository.list_checkpoints(job_id)
+        except Exception:
+            checkpoints = []
+        for checkpoint in checkpoints:
+            manifest = dict(checkpoint.get("manifest") or {})
+            if not manifest:
+                manifest = {
+                    "job_id": job_id,
+                    "gcs_uri": checkpoint.get("gcs_uri"),
+                    "shard_index": checkpoint.get("shard_index"),
+                }
+            items.append(manifest)
+        items.sort(key=lambda item: int(item.get("shard_index") or 0))
+        return items
 
     def _collect_paths(self, prefix: str, value: Any, observed: Dict[str, list[str]]) -> None:
         if isinstance(value, dict):
