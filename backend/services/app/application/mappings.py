@@ -223,18 +223,9 @@ class MappingService:
                 ("event_time", 0.89, "event_time already matches canonical naming"),
                 ("created_at", 0.71, "created_at is a common fallback timestamp"),
             ],
-            "source_event_id": [
-                ("event_id", 0.9, "event_id is the most common event identifier"),
-                ("insert_id", 0.86, "insert_id is a common analytics dedupe key"),
-                ("uuid", 0.75, "uuid is a common fallback identifier"),
-            ],
             "campaign": [
                 ("event_properties.campaign", 0.81, "campaign usually arrives inside event_properties"),
                 ("campaign", 0.74, "campaign is also common as a top-level field"),
-            ],
-            "adset": [
-                ("event_properties.adset", 0.8, "adset commonly lives in attribution payloads"),
-                ("event_properties.adgroup_name", 0.76, "adgroup_name is a common paid attribution alias"),
             ],
             "media_source": [
                 ("event_properties.media_source", 0.8, "media_source typically lives in attribution payloads"),
@@ -300,9 +291,7 @@ class MappingService:
             ],
             "event_name": ["event_name", "eventname", "event_type", "eventtype", "name"],
             "event_time": ["event_time", "eventtime", "timestamp", "time", "created_at", "client_event_time", "server_upload_time"],
-            "source_event_id": ["source_event_id", "sourceeventid", "event_id", "eventid", "insert_id", "insertid", "uuid", "message_id"],
             "campaign": ["campaign", "campaign_name", "campaignname", "utm_campaign"],
-            "adset": ["adset", "adset_name", "adsetname", "adgroup", "adgroup_name", "adgroupname"],
             "media_source": ["media_source", "mediasource", "network", "channel", "source", "publisher"],
         }
         ranked: list[tuple[str, float, str, list[str]]] = []
