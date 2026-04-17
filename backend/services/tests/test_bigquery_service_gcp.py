@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from bigquery_service import BigQueryService
+from bigquery_service import BigQueryService, _sanitize_storage_field_name
 
 
 class NotFoundError(Exception):
@@ -198,3 +199,57 @@ def test_delete_data_for_job_skips_missing_bigquery_tables():
     assert len(queried_sql) == 1
     assert "pipeline_dead_letters" in queried_sql[0]
     assert "processed_events" not in queried_sql[0]
+
+
+def test_write_events_staging_sanitizes_invalid_bigquery_field_names_before_load():
+    captured: dict[str, object] = {}
+
+    class FakeLoadJob:
+        def result(self):
+            return None
+
+    class FakeClient:
+        def load_table_from_json(self, rows, table_id, job_config=None):
+            captured["rows"] = rows
+            captured["table_id"] = table_id
+            captured["job_config"] = job_config
+            return FakeLoadJob()
+
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._lock = threading.Lock()
+    service._table_id = "demo.scope.events_staging"
+    service._bigquery = SimpleNamespace(
+        LoadJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+        SourceFormat=SimpleNamespace(NEWLINE_DELIMITED_JSON="NEWLINE_DELIMITED_JSON"),
+        WriteDisposition=SimpleNamespace(WRITE_APPEND="WRITE_APPEND"),
+        CreateDisposition=SimpleNamespace(CREATE_IF_NEEDED="CREATE_IF_NEEDED"),
+    )
+    service._client = FakeClient()
+
+    service.write_events_staging(
+        [
+            {
+                "$schema": "https://example.com/schema.json",
+                "1party": "publisher",
+                "event_type": "install",
+                "event_properties": {
+                    "campaign-name": "launch",
+                },
+            }
+        ],
+        job_id="job-1",
+    )
+
+    assert captured["table_id"] == "demo.scope.events_staging"
+    rows = captured["rows"]
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["job_id"] == "job-1"
+    assert row["job_identifier"] == "job-1"
+    assert row[_sanitize_storage_field_name("$schema")] == "https://example.com/schema.json"
+    assert row[_sanitize_storage_field_name("1party")] == "publisher"
+    assert "$schema" not in row
+    assert "1party" not in row
+    assert row["event_properties"][_sanitize_storage_field_name("campaign-name")] == "launch"

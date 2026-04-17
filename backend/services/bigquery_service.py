@@ -2,6 +2,7 @@
 
 from collections import Counter
 from functools import lru_cache
+import hashlib
 import os
 import json
 import re
@@ -20,6 +21,9 @@ from runtime_paths import normalize_env_text, resolve_runtime_file_path
 
 INT64_MAX = 2**63 - 1
 INT64_MIN = -(2**63)
+_INVALID_STORAGE_FIELD_CHARS_RE = re.compile(r"[^A-Za-z0-9_]")
+_VALID_STORAGE_FIELD_START_RE = re.compile(r"^[A-Za-z_]")
+_MAX_STORAGE_FIELD_NAME_LENGTH = 300
 
 
 def _is_int_like_scalar(value: Any) -> bool:
@@ -34,16 +38,31 @@ def _is_oversized_int(value: Any) -> bool:
     return value > INT64_MAX or value < INT64_MIN
 
 
+def _sanitize_storage_field_name(name: Any) -> str:
+    original = str(name or "").strip()
+    sanitized = _INVALID_STORAGE_FIELD_CHARS_RE.sub("_", original)
+    if not sanitized:
+        sanitized = "field"
+    if not _VALID_STORAGE_FIELD_START_RE.match(sanitized):
+        sanitized = f"field_{sanitized}"
+    if sanitized == original and len(sanitized) <= _MAX_STORAGE_FIELD_NAME_LENGTH:
+        return sanitized
+    digest = hashlib.sha1(original.encode("utf-8")).hexdigest()[:8]
+    max_base_length = max(1, _MAX_STORAGE_FIELD_NAME_LENGTH - len(digest) - 2)
+    return f"{sanitized[:max_base_length]}__{digest}"
+
+
 def _sanitize_for_storage(data: Any) -> Any:
     """
     Recursively traverses nested structures and normalizes values for storage:
     - empty dictionaries -> None
+    - invalid warehouse field names -> deterministic, warehouse-safe aliases
     - oversized integers (outside int64 range) -> str
     """
     if isinstance(data, dict):
         if not data:
             return None
-        return {k: _sanitize_for_storage(v) for k, v in data.items()}
+        return {_sanitize_storage_field_name(k): _sanitize_for_storage(v) for k, v in data.items()}
     if isinstance(data, list):
         return [_sanitize_for_storage(item) for item in data]
     if _is_oversized_int(data):
