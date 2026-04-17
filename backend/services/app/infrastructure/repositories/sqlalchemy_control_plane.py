@@ -1178,6 +1178,7 @@ class SqlAlchemyControlPlaneRepository:
         self,
         resource_type: str,
         *,
+        name: str | None = None,
         tenant_id: str | None = None,
         project_id: str | None = None,
         include_all_tenants: bool = False,
@@ -1189,6 +1190,8 @@ class SqlAlchemyControlPlaneRepository:
             query = query.where(ControlPlaneResourceModel.tenant_id == resolved_tenant_id)
         if resolved_project_id:
             query = query.where(ControlPlaneResourceModel.project_id == resolved_project_id)
+        if name is not None:
+            query = query.where(ControlPlaneResourceModel.name == name)
         rows = self.session.execute(
             query.order_by(ControlPlaneResourceModel.updated_at.desc())
         ).scalars().all()

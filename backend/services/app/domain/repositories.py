@@ -95,7 +95,7 @@ class ControlPlaneResourceRepository(Protocol):
     def get_resource(self, resource_type: str, resource_id: str) -> Optional[Dict[str, Any]]:
         ...
 
-    def list_resources(self, resource_type: str) -> List[Dict[str, Any]]:
+    def list_resources(self, resource_type: str, *, name: str | None = None) -> List[Dict[str, Any]]:
         ...
 
     def upsert_resource(

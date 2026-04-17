@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 import pytest
 import requests
@@ -1224,7 +1226,9 @@ def test_workflow_runtime_summary_archive_and_delete(client):
     runtime_summary = workflow_detail.json()["runtime_summary"]
     assert runtime_summary["last_run_at"] == "2026-03-10T10:15:00"
     assert runtime_summary["last_test_run_at"] == "2026-03-10T09:45:00"
-    assert runtime_summary["next_run_at"] == "2026-03-11T10:15:00"
+    next_run_at = datetime.fromisoformat(runtime_summary["next_run_at"])
+    assert (next_run_at.hour, next_run_at.minute) == (10, 15)
+    assert next_run_at > datetime.utcnow()
     assert runtime_summary["last_result"]["success"] == 2
     assert runtime_summary["last_result"]["trigger_type"] == "daily_schedule"
     assert runtime_summary["totals"]["runs"] == 1
@@ -1235,7 +1239,9 @@ def test_workflow_runtime_summary_archive_and_delete(client):
     listed = client.get("/api/v1/workflows")
     assert listed.status_code == 200
     listed_item = next(item for item in listed.json()["items"] if item["workflow_id"] == workflow_id)
-    assert listed_item["runtime_summary"]["next_run_at"] == "2026-03-11T10:15:00"
+    listed_next_run_at = datetime.fromisoformat(listed_item["runtime_summary"]["next_run_at"])
+    assert (listed_next_run_at.hour, listed_next_run_at.minute) == (10, 15)
+    assert listed_next_run_at > datetime.utcnow()
 
     non_draft_delete = client.delete(
         f"/api/v1/workflows/{workflow_id}",
