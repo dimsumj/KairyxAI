@@ -476,6 +476,68 @@ def test_mapping_suggestions_do_not_borrow_unrelated_standardized_rows_without_s
     assert suggestions["event_time"] == "timestamp"
 
 
+def test_job_scoped_mapping_candidates_and_suggestions_do_not_borrow_unrelated_rows_without_samples(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Fresh Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    import_resp = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Fresh Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert import_resp.status_code == 201
+    job_id = import_resp.json()["id"]
+
+    service = get_shared_bigquery_service()
+    service.write_events_staging(
+        [
+            {
+                "job_id": "other_job",
+                "source": "other_source",
+                "player_id": "other-player",
+                "canonical_user_id": "uid:other-player",
+                "event_type": "install",
+                "event_time": "2026-03-01T08:00:00",
+                "event_properties": {
+                    "external_user_id": "external-123",
+                },
+            }
+        ],
+        job_id="other_job",
+    )
+
+    candidates_resp = client.get(f"/api/v1/mappings/Fresh%20Source/candidates?job_id={job_id}")
+    assert candidates_resp.status_code == 200
+    candidates_payload = candidates_resp.json()
+    assert candidates_payload["job_id"] == job_id
+    assert candidates_payload["fields"] == []
+    assert candidates_payload["sample_events"] == []
+    candidate_suggestions = {item["field"]: item["suggested_path"] for item in candidates_payload["suggestions"]}
+    assert candidate_suggestions["canonical_user_id"] == "player_id"
+    assert candidate_suggestions["event_name"] == "event_name"
+    assert candidate_suggestions["event_time"] == "timestamp"
+
+    suggestions_resp = client.get(f"/api/v1/mappings/Fresh%20Source/suggestions?scope_type=job&scope_key={job_id}")
+    assert suggestions_resp.status_code == 200
+    suggestions_payload = suggestions_resp.json()
+    assert suggestions_payload["scope_type"] == "job"
+    assert suggestions_payload["scope_key"] == job_id
+    job_suggestions = {item["field"]: item["suggested_path"] for item in suggestions_payload["suggestions"]}
+    assert job_suggestions["canonical_user_id"] == "player_id"
+    assert job_suggestions["event_name"] == "event_name"
+    assert job_suggestions["event_time"] == "timestamp"
+
+
 def test_mapping_candidates_learn_from_successful_and_confirmed_mappings(client):
     connector_resp = client.post(
         "/api/v1/connectors",
