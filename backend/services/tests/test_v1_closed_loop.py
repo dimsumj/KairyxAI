@@ -1258,6 +1258,13 @@ def test_workflow_runtime_summary_archive_and_delete(client):
     assert archive.json()["status"] == "archived"
     assert archive.json()["archived_at"] is not None
 
+    archived_pause = client.post(
+        f"/api/v1/workflows/{workflow_id}/pause",
+        headers={"x-actor-role": "operator"},
+    )
+    assert archived_pause.status_code == 409
+    assert "archived" in archived_pause.json()["detail"].lower()
+
     archived_test_run = client.post(
         f"/api/v1/workflows/{workflow_id}/test-run",
         headers={"x-actor-role": "operator"},

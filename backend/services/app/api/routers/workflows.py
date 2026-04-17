@@ -105,6 +105,8 @@ def pause_workflow(workflow_id: str, http_request: Request, service: WorkflowSer
         return service.pause_workflow(workflow_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @workflow_router.post("/{workflow_id}/resume", response_model=WorkflowResponse)
