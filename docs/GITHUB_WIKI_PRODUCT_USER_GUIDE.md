@@ -291,7 +291,7 @@ Import failure help tooltips now render above nearby controls so the failure rea
 | `Activate Cohort` | Checkbox | For `churn_list`, immediately make the imported churn roster available as a cohort. | Checked | Backend activates the generated cohort after import completion. |
 | `Cohort Name` | Text | Optional display name for an activated churn-list cohort. | `High Risk APAC` | Activated cohort uses that name instead of the default. |
 | `Import Data` / `Import BigQuery Table` | Button | Creates a new import job. In mock-mode deployed environments, the run is kicked off in the background immediately after creation. | None | Import job appears in the imported data list and the page polls for status updates instead of waiting on one long request. |
-| Import row disclosure arrow | Row toggle | Expands an import in place to inspect summary metrics without leaving the list. | Click the arrow beside `Amplitude 1 - 2026-03-22 10:15:00` | A detail panel opens below the row with events, profiles, curated events, duplicates removed, rejected rows, coverage percentages, source, date range, and any failure reason. |
+| Import row disclosure arrow | Row toggle | Expands an import in place to inspect summary metrics without leaving the list. | Click the arrow beside `Amplitude 1 - 2026-03-22 10:15:00` | A detail panel opens below the row with current progress, events, profiles, curated events, duplicates removed, rejected rows, coverage percentages, source, date range, and any failure reason. |
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose a non-failed import job for detail views. Failed imports remain visible in the imported-data table, but they are excluded from downstream selectors such as `Import Operations`. | `import_20260322_101500` | Detail actions apply to the selected non-failed import. |
@@ -305,7 +305,7 @@ Import failure help tooltips now render above nearby controls so the failure rea
 #### Operator flow
 1. Create or wait for an import to appear in `Imported Data`.
 2. Click the disclosure arrow at the start of a row to expand the import summary in place.
-3. Review the inline metrics for total events, estimated profiles, curated events, duplicates removed, rejected rows, mapping coverage, and canonical coverage.
+3. Review the inline metrics for current progress, total events, estimated profiles, curated events, duplicates removed, rejected rows, mapping coverage, and canonical coverage.
 4. If the import failed, use the expanded row to see the failure reason and phase before opening the deeper `Import Operations` views.
 5. Use `Load Operations`, `Load Quality`, or `Load Manifests` when you need the full JSON diagnostics after the inline summary.
 
@@ -591,14 +591,14 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Connector` | Select | Choose which connector mapping to load or edit. | `Amplitude 1` | The mapping actions target this connector. |
-| `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Save and Reprocess Import` targets this job. |
+| `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Save and Reprocess Import` targets this job for a background rerun. |
 | `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
 | `Saved Mapping Memory` | Read-only cards | Review which raw path has stayed stable across confirmed saves and successful imports, and whether the current suggestion matches that memory. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by learned mapping memory or only by the current raw-sample heuristics. |
 | `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the editor loads the effective job mapping so the guided controls and JSON editor stay in sync. | None | Mapping JSON fills the editor. |
 | `Save Mapping Memory` | Button | Persists the current mapping JSON as the connector's source mapping so future imports from the same connector can reuse it. | None | Mapping memory is updated for future imports without rerunning the paused import. |
 | `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
 | `Coverage` | Button | Calculates mapping coverage against the selected connector. | None | Coverage summary appears. |
-| `Save and Reprocess Import` | Button | Persists the corrected connector mapping, applies the same mapping as a job override for the selected paused import, and resumes that import. | None | Import processing reruns normalization and dedupe for the paused job using the corrected mapping. |
+| `Save and Reprocess Import` | Button | Persists the corrected connector mapping, applies the same mapping as a job override for the selected paused import, and resumes that import in the background. | None | Import processing reruns normalization and dedupe for the paused job using the corrected mapping, while the Mapping Sandbox status and the expanded import row keep updating with live progress. |
 | `Mapping JSON` | Text area | The canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
 | `Sample Raw Event` | Text area | A raw source event used for local preview. When a paused import is selected, the Mapping Sandbox now loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
 | `Raw Sample Picker` | Select | Switch between returned raw sample events from the selected paused import. | `Sample 2 · purchase · player-123` | The textarea updates to the selected true raw event, and `Preview Mapping` / `Coverage` run against that sample. |
@@ -614,7 +614,8 @@ Use the mapping sandbox when an import is waiting on field mapping or when you w
 8. Review or refine the generated `Mapping JSON`.
 9. Click `Coverage` or `Preview Mapping` if needed.
 10. Click `Save Mapping Memory` if you only want to update the connector default for future imports.
-11. Click `Save and Reprocess Import` to apply the corrected mapping to the paused job and rerun normalization and dedupe immediately.
+11. Click `Save and Reprocess Import` to apply the corrected mapping to the paused job and start the rerun in the background.
+12. Watch the Mapping Sandbox status line or expand the same import in `Imported Data` to follow live staging and processing progress until the rerun completes.
 
 #### Sample mapping input
 ```json

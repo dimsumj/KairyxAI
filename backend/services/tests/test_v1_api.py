@@ -2545,6 +2545,55 @@ def test_import_staging_upload_delay_does_not_consume_network_timeout_budget(cli
     assert run_import.json()["progress"]["details"]["events_staged"] == 1
 
 
+def test_gcp_mode_import_materializes_curated_events_and_profiles(client, monkeypatch):
+    settings = replace(
+        get_settings(),
+        data_backend_mode="gcp",
+    )
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    def single_page(self, start_date, end_date, page_size=None):
+        yield [
+            {
+                "player_id": "u_1",
+                "event_name": "session_start",
+                "timestamp": "2026-02-01T00:00:00",
+                "event_properties": {"platform": "ios"},
+            }
+        ]
+
+    monkeypatch.setattr("ingestion_service.IngestionService._iter_event_pages", single_page)
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    payload = run_import.json()
+    assert payload["status"] == "completed"
+    assert payload["progress"]["details"]["processing"]["warehouse_stats"]["curation"]["curated_rows"] == 1
+    assert payload["progress"]["details"]["identity_summary"]["profiles"] == 1
+    assert payload["quality_report"]["canonical_user_id_coverage"] == 100.0
+
+
 def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
@@ -3043,6 +3092,83 @@ def test_run_import_background_returns_accepted_without_waiting_for_completion(c
     payload = run_import.json()
     assert payload["accepted"] is True
     assert payload["background"] is True
+    assert payload["id"] == import_job["id"]
+    assert started.wait(timeout=2)
+
+    release.set()
+
+    completed = None
+    for _ in range(50):
+        completed = client.get(import_job["links"]["self"])
+        assert completed.status_code == 200
+        if completed.json()["status"] == "completed":
+            break
+        time.sleep(0.05)
+    assert completed is not None
+    assert completed.json()["status"] == "completed"
+
+
+def test_remap_and_resume_background_returns_accepted_without_waiting_for_completion(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Remap Async",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    partial_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Remap%20Async",
+        json={"mapping": {"canonical_user_id": "player_id", "event_time": "timestamp"}},
+    )
+    assert partial_mapping.status_code == 200
+    assert partial_mapping.json()["required_coverage"] < 95.0
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Remap Async",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    blocked = client.post(import_job["links"]["self"] + "/run")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "awaiting_mapping"
+
+    started = threading.Event()
+    release = threading.Event()
+
+    original_resume_job = ImportService.resume_job
+
+    def fake_resume_job(self, job_id):
+        started.set()
+        release.wait(timeout=5)
+        return original_resume_job(self, job_id)
+
+    monkeypatch.setattr("app.application.imports.ImportService.resume_job", fake_resume_job)
+
+    remapped = client.post(
+        import_job["links"]["self"] + "/remap-and-resume?background=true",
+        headers={"x-actor-role": "operator"},
+        json={
+            "mapping": {
+                "canonical_user_id": "player_id",
+                "event_name": "event_name",
+                "event_time": "timestamp",
+            }
+        },
+    )
+    assert remapped.status_code == 202
+    payload = remapped.json()
+    assert payload["accepted"] is True
+    assert payload["background"] is True
+    assert payload["started"] is True
     assert payload["id"] == import_job["id"]
     assert started.wait(timeout=2)
 

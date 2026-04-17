@@ -140,6 +140,69 @@ class ImportService:
         refreshed_job = self.repository.get_import_job(job_id) or job
         return {"job": refreshed_job, "started": True}
 
+    def start_remap_and_resume_background(
+        self,
+        job_id: str,
+        mapping: Dict[str, Any],
+        *,
+        changed_by: str = "system",
+        persist_source_mapping: bool = True,
+        request_scope: RequestContext | None = None,
+    ) -> Dict[str, Any]:
+        job = self.repository.get_import_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+
+        active_thread = self._get_import_run_thread(job_id)
+        if active_thread is not None:
+            return {"job": job, "started": False}
+
+        self._persist_remap_mappings(
+            job_id,
+            mapping,
+            changed_by=changed_by,
+            persist_source_mapping=persist_source_mapping,
+        )
+        queued = self._set_job_status(
+            job_id,
+            JobStatus.QUEUED.value,
+            reason="Reprocessing import with updated mapping in the background.",
+            details_patch={
+                "resume_requested_at": datetime.utcnow().isoformat(),
+                "resume_mode": "remap_background",
+                "remap_requested_at": datetime.utcnow().isoformat(),
+                "failure_reason": None,
+                "failure_stage": None,
+            },
+        )
+        self._commit_session()
+
+        captured_context = request_scope or get_request_context()
+
+        def _worker(captured_job_id: str, captured_request_scope: RequestContext | None) -> None:
+            current_thread = threading.current_thread()
+            try:
+                with request_context(captured_request_scope):
+                    with session_scope() as session:
+                        repository = SqlAlchemyControlPlaneRepository(session)
+                        service = ImportService(repository, self.settings, get_shared_bigquery_service())
+                        service.resume_job(captured_job_id)
+            except Exception:
+                logger.exception("Background remap/resume execution failed for job %s.", captured_job_id)
+            finally:
+                self._clear_import_run_thread(captured_job_id, current_thread)
+
+        worker = threading.Thread(
+            target=_worker,
+            args=(job_id, captured_context),
+            name=f"import-remap-{job_id}",
+            daemon=True,
+        )
+        self._set_import_run_thread(job_id, worker)
+        worker.start()
+        refreshed_job = self.repository.get_import_job(job_id) or queued
+        return {"job": refreshed_job, "started": True}
+
     @staticmethod
     def _canonical_aliases() -> Dict[str, str]:
         return {
@@ -667,7 +730,7 @@ class ImportService:
         mode: str,
     ) -> Dict[str, Any]:
         processing_stats: Dict[str, Any] = {}
-        if notifications and self.settings.data_backend_mode == "mock":
+        if notifications:
             runner = DataflowNormalizationRunner(gcs_service=GcsService(), bigquery_service=self.bigquery_service)
             processing_stats = runner.process_notifications(
                 notifications,
@@ -1427,7 +1490,12 @@ class ImportService:
         if job is None:
             raise KeyError(job_id)
         status = str(job.get("status") or "").lower()
-        if status not in {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}:
+        details = dict(((job.get("progress") or {}).get("details") or {}))
+        resume_mode = str(details.get("resume_mode") or "").lower()
+        allowed_statuses = {JobStatus.AWAITING_MAPPING.value, JobStatus.STOPPED.value, JobStatus.FAILED.value}
+        if status == JobStatus.QUEUED.value and resume_mode == "remap_background":
+            allowed_statuses.add(JobStatus.QUEUED.value)
+        if status not in allowed_statuses:
             raise ValueError("Only awaiting_mapping, stopped, or failed jobs can be resumed.")
 
         connector_record = self.repository.get_connector(
@@ -1493,6 +1561,22 @@ class ImportService:
         changed_by: str = "system",
         persist_source_mapping: bool = True,
     ) -> Dict[str, Any]:
+        self._persist_remap_mappings(
+            job_id,
+            mapping,
+            changed_by=changed_by,
+            persist_source_mapping=persist_source_mapping,
+        )
+        return self.resume_job(job_id)
+
+    def _persist_remap_mappings(
+        self,
+        job_id: str,
+        mapping: Dict[str, Any],
+        *,
+        changed_by: str = "system",
+        persist_source_mapping: bool = True,
+    ) -> None:
         job = self.repository.get_import_job(job_id)
         if job is None:
             raise KeyError(job_id)
@@ -1533,7 +1617,6 @@ class ImportService:
             changed_by=changed_by,
         )
         self._commit_session()
-        return self.resume_job(job_id)
 
     def replay_job(self, job_id: str) -> Dict[str, Any]:
         job = self.repository.get_import_job(job_id)
