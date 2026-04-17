@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.application.churn_models import LocalChurnModelService
 from app.application.imports import ImportService
+from app.application.mappings import MappingService
 from app.core import db as db_module
 from app.core.deps import get_settings_dependency
 from app.core.runtime import clear_shutdown_requested, mark_shutdown_requested
@@ -170,6 +171,20 @@ def test_mapping_candidates_are_discovered_from_import_manifests(client):
                 "schema_version": "v1",
                 "shard_index": 1,
                 "gcs_uri": gcs_uri,
+                "sample_raw_events": [
+                    {
+                        "eventName": "session_start",
+                        "timestamp": "2026-03-01T08:00:00",
+                        "event_properties": {
+                            "PID": "player-123",
+                            "campaign_name": "Spring Launch",
+                            "network": "TikTok",
+                        },
+                        "user_properties": {
+                            "profile_id": "profile-abc",
+                        },
+                    }
+                ],
                 "manifest": {
                     "job_id": job_id,
                     "source": "adjust",
@@ -197,6 +212,334 @@ def test_mapping_candidates_are_discovered_from_import_manifests(client):
     assert suggestions["canonical_user_id"] == "event_properties.PID"
     assert suggestions["event_name"] == "eventName"
     assert suggestions["event_time"] == "timestamp"
+    assert payload["sample_events"][0]["eventName"] == "session_start"
+    assert "event_type" not in payload["sample_events"][0]
+
+
+def test_mapping_candidates_learn_from_corrected_mapping_and_successful_imports(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    first_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={
+            "mapping": {
+                "canonical_user_id": "device.install_id",
+                "event_name": "eventName",
+                "event_time": "timestamp",
+            }
+        },
+    )
+    assert first_mapping.status_code == 200
+
+    corrected_mapping = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={
+            "mapping": {
+                "canonical_user_id": "event_properties.account_id",
+                "event_name": "eventName",
+                "event_time": "timestamp",
+            }
+        },
+    )
+    assert corrected_mapping.status_code == 200
+
+    learning_job = _create_completed_import_job("imp_mapping_memory_1", source_name="Adjust Source")
+    sample_events = [
+        {
+            "eventName": "session_start",
+            "timestamp": "2026-03-01T08:00:00",
+            "device": {"install_id": "install-1"},
+            "event_properties": {"account_id": "acct-1", "platform": "ios"},
+        },
+        {
+            "eventName": "purchase",
+            "timestamp": "2026-03-01T08:05:00",
+            "device": {"install_id": "install-2"},
+            "event_properties": {"account_id": "acct-2", "platform": "ios"},
+        },
+        {
+            "eventName": "level_up",
+            "timestamp": "2026-03-01T08:10:00",
+            "device": {"install_id": "install-3"},
+            "event_properties": {"account_id": "acct-3", "platform": "ios"},
+        },
+    ]
+
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        service = MappingService(repo)
+        service.learn_from_mapping(
+            "Adjust Source",
+            {
+                "canonical_user_id": "event_properties.account_id",
+                "event_name": "eventName",
+                "event_time": "timestamp",
+            },
+            reason="successful_import",
+            job_id=learning_job["id"],
+        )
+        repo.upsert_resource(
+            "import_manifest",
+            f"{learning_job['id']}:1",
+            status="published",
+            name=learning_job["id"],
+            payload={
+                "manifest_id": f"{learning_job['id']}:1",
+                "job_id": learning_job["id"],
+                "source_name": "Adjust Source",
+                "event_count": len(sample_events),
+                "schema_version": "v1",
+                "shard_index": 1,
+                "gcs_uri": "gs://kairyx_ai_raw_data_bucket/tenants/default/projects/default/raw/source=adjust/job=missing/part-00001.jsonl",
+                "sample_raw_events": sample_events,
+                "manifest": {
+                    "job_id": learning_job["id"],
+                    "source": "adjust",
+                    "gcs_uri": "gs://kairyx_ai_raw_data_bucket/tenants/default/projects/default/raw/source=adjust/job=missing/part-00001.jsonl",
+                    "event_count": len(sample_events),
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                    "sample_raw_events": sample_events,
+                },
+            },
+        )
+        session.commit()
+
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        repo.save_field_mapping("Adjust Source", {})
+        session.commit()
+
+    next_job = _create_completed_import_job("imp_mapping_memory_2", source_name="Adjust Source")
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        repo.upsert_resource(
+            "import_manifest",
+            f"{next_job['id']}:1",
+            status="published",
+            name=next_job["id"],
+            payload={
+                "manifest_id": f"{next_job['id']}:1",
+                "job_id": next_job["id"],
+                "source_name": "Adjust Source",
+                "event_count": len(sample_events),
+                "schema_version": "v1",
+                "shard_index": 1,
+                "gcs_uri": "gs://kairyx_ai_raw_data_bucket/tenants/default/projects/default/raw/source=adjust/job=missing-2/part-00001.jsonl",
+                "sample_raw_events": sample_events,
+                "manifest": {
+                    "job_id": next_job["id"],
+                    "source": "adjust",
+                    "gcs_uri": "gs://kairyx_ai_raw_data_bucket/tenants/default/projects/default/raw/source=adjust/job=missing-2/part-00001.jsonl",
+                    "event_count": len(sample_events),
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                    "sample_raw_events": sample_events,
+                },
+            },
+        )
+        session.commit()
+
+    resp = client.get(f"/api/v1/mappings/Adjust%20Source/candidates?job_id={next_job['id']}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    suggestions = {item["field"]: item for item in payload["suggestions"]}
+    assert suggestions["canonical_user_id"]["suggested_path"] == "event_properties.account_id"
+    assert "successful import" in suggestions["canonical_user_id"]["rationale"].lower()
+    assert payload["sample_events"][0]["event_properties"]["account_id"] == "acct-1"
+
+
+def test_mapping_candidates_unwrap_actual_raw_events_from_canonical_wrappers(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    import_resp = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert import_resp.status_code == 201
+    job_id = import_resp.json()["id"]
+
+    gcs_service = GcsService()
+    gcs_uri = gcs_service.upload_raw_events(
+        [
+            {
+                "player_id": "wrapped-user",
+                "event_type": "session_start",
+                "event_time": "2026-03-01T08:00:00",
+                "event_properties": {
+                    "raw": {
+                        "eventName": "session_start",
+                        "timestamp": "2026-03-01T08:00:00",
+                        "event_properties": {"profile_pid": "player-789"},
+                    }
+                },
+            }
+        ],
+        f"raw/source=adjust/job={job_id}/part-00001.jsonl",
+    )
+
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        repo.upsert_resource(
+            "import_manifest",
+            f"{job_id}:1",
+            status="published",
+            name=job_id,
+            payload={
+                "manifest_id": f"{job_id}:1",
+                "job_id": job_id,
+                "source_name": "Adjust Source",
+                "event_count": 1,
+                "schema_version": "v1",
+                "shard_index": 1,
+                "gcs_uri": gcs_uri,
+                "manifest": {
+                    "job_id": job_id,
+                    "source": "adjust",
+                    "gcs_uri": gcs_uri,
+                    "event_count": 1,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                },
+            },
+        )
+        session.commit()
+
+    resp = client.get(f"/api/v1/mappings/Adjust%20Source/candidates?job_id={job_id}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["sample_events"][0]["eventName"] == "session_start"
+    assert "event_type" not in payload["sample_events"][0]
+    paths = {item["path"] for item in payload["fields"]}
+    assert "event_properties.profile_pid" in paths
+    assert "player_id" not in paths
+
+
+def test_mapping_candidates_learn_from_successful_and_confirmed_mappings(client):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Adjust Source",
+            "type": "adjust",
+            "config": {"api_token": "adjust-token"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    import_resp = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Adjust Source",
+            "start_date": "20260301",
+            "end_date": "20260302",
+        },
+    )
+    assert import_resp.status_code == 201
+    job_id = import_resp.json()["id"]
+
+    gcs_service = GcsService()
+    gcs_uri = gcs_service.upload_raw_events(
+        [
+            {
+                "eventName": "session_start",
+                "timestamp": "2026-03-01T08:00:00",
+                "event_properties": {
+                    "PID": "player-123",
+                    "profile_pid": "player-123",
+                },
+            }
+        ],
+        f"raw/source=adjust/job={job_id}/part-00001.jsonl",
+    )
+
+    with db_module.session_scope() as session:
+        repo = SqlAlchemyControlPlaneRepository(session)
+        repo.upsert_resource(
+            "import_manifest",
+            f"{job_id}:1",
+            status="published",
+            name=job_id,
+            payload={
+                "manifest_id": f"{job_id}:1",
+                "job_id": job_id,
+                "source_name": "Adjust Source",
+                "event_count": 1,
+                "schema_version": "v1",
+                "shard_index": 1,
+                "gcs_uri": gcs_uri,
+                "manifest": {
+                    "job_id": job_id,
+                    "source": "adjust",
+                    "gcs_uri": gcs_uri,
+                    "event_count": 1,
+                    "schema_version": "v1",
+                    "shard_index": 1,
+                    "source_config_id": "Adjust Source",
+                },
+            },
+        )
+        MappingService(repo).learn_from_mapping(
+            "Adjust Source",
+            {
+                "canonical_user_id": "event_properties.profile_pid",
+                "event_name": "eventName",
+                "event_time": "timestamp",
+            },
+            reason="successful_import",
+            job_id=job_id,
+        )
+        session.commit()
+
+    learned_resp = client.get(f"/api/v1/mappings/Adjust%20Source/candidates?job_id={job_id}")
+    assert learned_resp.status_code == 200
+    learned_payload = learned_resp.json()
+    learned_suggestions = {item["field"]: item for item in learned_payload["suggestions"]}
+    assert learned_suggestions["canonical_user_id"]["suggested_path"] == "event_properties.profile_pid"
+    assert learned_suggestions["canonical_user_id"]["successful_import_count"] >= 1
+
+    save_resp = client.put(
+        "/api/v1/mappings/Adjust%20Source",
+        json={
+            "mapping": {
+                "canonical_user_id": "event_properties.profile_pid",
+                "event_name": "eventName",
+                "event_time": "timestamp",
+            },
+            "scope_type": "job",
+            "scope_key": job_id,
+        },
+    )
+    assert save_resp.status_code == 200
+
+    confirmed_resp = client.get("/api/v1/mappings/Adjust%20Source/candidates")
+    assert confirmed_resp.status_code == 200
+    confirmed_payload = confirmed_resp.json()
+    confirmed_suggestions = {item["field"]: item for item in confirmed_payload["suggestions"]}
+    assert confirmed_suggestions["canonical_user_id"]["suggested_path"] == "event_properties.profile_pid"
+    assert confirmed_suggestions["canonical_user_id"]["manual_confirmation_count"] >= 1
 
 
 def test_root_serves_frontend_shell(client):

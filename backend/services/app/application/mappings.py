@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List
 
 from app.application.text_model_runtime import TextModelRuntimeResolver
 from bigquery_service import BigQueryService, get_shared_bigquery_service
 from gcs_service import GcsService
+
+MAPPING_MEMORY_RESOURCE_TYPE = "mapping_memory"
+MAPPING_METADATA_KEYS = {"tenant_id", "project_id", "created_by", "updated_by", "correlation_id"}
 
 
 class MappingService:
@@ -60,6 +64,15 @@ class MappingService:
             effective.update(self.repository.get_field_mapping(f"job:{job_id}"))
         return effective
 
+    def get_mapping_memory(self, connector_name: str) -> Dict[str, Any]:
+        resource = self.repository.get_resource(MAPPING_MEMORY_RESOURCE_TYPE, connector_name)
+        payload = dict(resource.get("payload") or {}) if resource else {}
+        fields = payload.get("fields")
+        return {
+            "connector_name": connector_name,
+            "fields": dict(fields or {}) if isinstance(fields, dict) else {},
+        }
+
     def list_versions(
         self,
         connector_name: str,
@@ -85,6 +98,7 @@ class MappingService:
         changed_by: str = "system",
     ) -> Dict[str, Any]:
         key = self._mapping_key(connector_name, scope_type=scope_type, scope_key=scope_key)
+        previous_mapping = self.repository.get_field_mapping(key)
         saved = self.repository.save_field_mapping(key, mapping)
         latest_versions = self.repository.list_resource_versions("mapping", key)
         next_version = 1 + max((int(item.get("version") or 0) for item in latest_versions), default=0)
@@ -111,6 +125,13 @@ class MappingService:
             payload={"version": next_version, **version_payload},
         )
         self.repository.record_action("mapping_updated", "mapping", key, version_payload)
+        self.learn_from_mapping(
+            connector_name,
+            mapping,
+            reason="manual_save",
+            job_id=scope_key if scope_type == "job" else None,
+            previous_mapping=previous_mapping,
+        )
         return {
             "connector_name": connector_name,
             "scope_type": scope_type,
@@ -159,8 +180,14 @@ class MappingService:
         scope_key: str | None = None,
     ) -> Dict[str, Any]:
         current = self.get_effective_mapping(connector_name, job_id=scope_key if scope_type == "job" else None)
-        observed_paths = self._observed_paths()
-        suggestions = self._heuristic_suggestions(current, observed_paths)
+        sample_events = self._load_job_sample_events(scope_key) if scope_type == "job" else self._load_source_sample_events(connector_name)
+        observed_paths = self._observed_paths(sample_events)
+        suggestions = self._heuristic_suggestions(
+            current,
+            observed_paths,
+            path_profiles=self._build_path_profiles(sample_events),
+            memory=self.get_mapping_memory(connector_name),
+        )
         engine = "heuristic"
         ai_model = None
         ai_suggestions = self._ai_suggestions(connector_name, current, observed_paths, suggestions)
@@ -185,9 +212,15 @@ class MappingService:
         job_id: str | None = None,
     ) -> Dict[str, Any]:
         effective_mapping = self.get_effective_mapping(connector_name, job_id=job_id)
-        sample_events = self._load_job_sample_events(job_id) if job_id else []
-        observed_paths = self._observed_paths(sample_events or None)
-        suggestions = self._heuristic_suggestions(effective_mapping, observed_paths)
+        sample_events = self._load_job_sample_events(job_id) if job_id else self._load_source_sample_events(connector_name)
+        observed_paths = self._observed_paths(sample_events)
+        path_profiles = self._build_path_profiles(sample_events)
+        suggestions = self._heuristic_suggestions(
+            effective_mapping,
+            observed_paths,
+            path_profiles=path_profiles,
+            memory=self.get_mapping_memory(connector_name),
+        )
         fields = [
             {
                 "path": path,
@@ -205,7 +238,116 @@ class MappingService:
             "sample_events": sample_events[:3],
         }
 
-    def _heuristic_suggestions(self, current: Dict[str, Any], observed_paths: Dict[str, list[str]]) -> list[Dict[str, Any]]:
+    def learn_from_mapping(
+        self,
+        connector_name: str,
+        mapping: Dict[str, Any],
+        *,
+        reason: str,
+        job_id: str | None = None,
+        previous_mapping: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_mapping = {
+            str(field): str(path).strip()
+            for field, path in dict(mapping or {}).items()
+            if str(path or "").strip() and str(field or "").strip() not in MAPPING_METADATA_KEYS
+        }
+        prior_mapping = {
+            str(field): str(path).strip()
+            for field, path in dict(previous_mapping or {}).items()
+            if str(path or "").strip() and str(field or "").strip() not in MAPPING_METADATA_KEYS
+        }
+        if not normalized_mapping and not prior_mapping:
+            return self.get_mapping_memory(connector_name)
+        sample_events = self._load_job_sample_events(job_id) if job_id else self._load_source_sample_events(connector_name, max_records=25)
+        path_profiles = self._build_path_profiles(sample_events)
+        current_memory = self.get_mapping_memory(connector_name)
+        fields = {
+            str(field): {
+                "paths": {
+                    str(path): dict(stats)
+                    for path, stats in dict((field_payload or {}).get("paths") or {}).items()
+                }
+            }
+            for field, field_payload in dict(current_memory.get("fields") or {}).items()
+        }
+        learned_at = datetime.utcnow().isoformat()
+        changed_fields = sorted(set(normalized_mapping) | set(prior_mapping))
+        correction_weight = 2 if reason == "manual_save" else 1
+        for field in changed_fields:
+            field_bucket = fields.setdefault(field, {"paths": {}})
+            current_path = normalized_mapping.get(field)
+            prior_path = prior_mapping.get(field)
+            if prior_path and prior_path != current_path:
+                prior_stats = dict(field_bucket["paths"].get(prior_path) or {})
+                prior_stats["manual_confirmation_count"] = int(prior_stats.get("manual_confirmation_count") or 0)
+                prior_stats["successful_import_count"] = int(prior_stats.get("successful_import_count") or 0)
+                prior_stats["correction_count"] = int(prior_stats.get("correction_count") or 0) + correction_weight
+                prior_stats["last_corrected_at"] = learned_at
+                field_bucket["paths"][prior_path] = prior_stats
+            if not current_path:
+                fields[field] = field_bucket
+                continue
+            stats = dict(field_bucket["paths"].get(current_path) or {})
+            profile = dict(path_profiles.get(current_path) or {})
+            prior_observations = int(stats.get("observations") or 0)
+            stats["manual_confirmation_count"] = int(stats.get("manual_confirmation_count") or 0) + (1 if reason == "manual_save" else 0)
+            stats["successful_import_count"] = int(stats.get("successful_import_count") or 0) + (1 if reason == "successful_import" else 0)
+            stats["correction_count"] = int(stats.get("correction_count") or 0)
+            stats["observations"] = prior_observations + 1
+            stats["last_seen_at"] = learned_at
+            if job_id:
+                stats["last_job_id"] = job_id
+            for metric in ("row_coverage", "event_type_coverage", "distinct_ratio"):
+                metric_value = profile.get(metric)
+                if metric_value is None:
+                    continue
+                prior_average = float(stats.get(metric) or 0.0)
+                stats[metric] = round(
+                    ((prior_average * prior_observations) + float(metric_value)) / max(1, prior_observations + 1),
+                    4,
+                )
+            stats["sample_values"] = self._merge_sample_values(stats.get("sample_values"), profile.get("sample_values") or [])
+            field_bucket["paths"][current_path] = stats
+            field_bucket["last_selected_path"] = current_path
+            fields[field] = field_bucket
+        payload = {
+            "connector_name": connector_name,
+            "fields": fields,
+            "updated_at": learned_at,
+        }
+        self.repository.upsert_resource(
+            MAPPING_MEMORY_RESOURCE_TYPE,
+            connector_name,
+            status="active",
+            name=connector_name,
+            payload=payload,
+        )
+        self.repository.record_resource_event(
+            MAPPING_MEMORY_RESOURCE_TYPE,
+            connector_name,
+            event_type="mapping_memory_updated",
+            payload={
+                "connector_name": connector_name,
+                "job_id": job_id,
+                "reason": reason,
+                "mapping": normalized_mapping,
+                "previous_mapping": prior_mapping,
+                "updated_at": learned_at,
+            },
+        )
+        return payload
+
+    def _heuristic_suggestions(
+        self,
+        current: Dict[str, Any],
+        observed_paths: Dict[str, list[str]],
+        *,
+        path_profiles: Dict[str, Dict[str, Any]] | None = None,
+        memory: Dict[str, Any] | None = None,
+    ) -> list[Dict[str, Any]]:
+        path_profiles = path_profiles or {}
+        memory = memory or {"fields": {}}
         suggestions = []
         fallback_candidates = {
             "canonical_user_id": [
@@ -234,32 +376,51 @@ class MappingService:
         for field, options in fallback_candidates.items():
             if str(current.get(field) or "").strip():
                 continue
-            ranked_options = self._match_observed_paths(field, observed_paths)
+            ranked_options = self._merge_ranked_candidates(
+                self._rank_memory_candidates(field, observed_paths, path_profiles, memory),
+                self._match_observed_paths(field, observed_paths, path_profiles),
+            )
             if not ranked_options:
                 ranked_options = []
                 for path, confidence, rationale in options:
                     sample_values = observed_paths.get(path) or []
-                    if sample_values:
-                        ranked_options.append((path, min(0.99, confidence + 0.03), f"{rationale}; backed by observed samples", sample_values))
-                    else:
-                        ranked_options.append((path, confidence, rationale, []))
-            ranked_options.sort(key=lambda item: (item[1], len(item[3])), reverse=True)
-            path, confidence, rationale, sample_values = ranked_options[0]
+                    ranked_options.append(
+                        self._candidate_option(
+                            path=path,
+                            confidence=min(0.99, confidence + (0.03 if sample_values else 0.0)),
+                            rationale=f"{rationale}; backed by observed samples" if sample_values else rationale,
+                            sample_values=sample_values[:3],
+                            profile=path_profiles.get(path) or {},
+                        )
+                    )
+            ranked_options.sort(
+                key=lambda item: (
+                    float(item.get("confidence") or 0.0),
+                    int(item.get("manual_confirmation_count") or 0),
+                    int(item.get("successful_import_count") or 0),
+                    len(item.get("sample_values") or []),
+                ),
+                reverse=True,
+            )
+            top_option = ranked_options[0]
             suggestions.append(
                 {
                     "field": field,
-                    "suggested_path": path,
-                    "confidence": confidence,
-                    "rationale": rationale,
-                    "sample_values": sample_values[:3],
+                    "suggested_path": top_option["path"],
+                    "confidence": top_option["confidence"],
+                    "rationale": top_option["rationale"],
+                    "sample_values": top_option["sample_values"][:3],
+                    "manual_confirmation_count": int(top_option.get("manual_confirmation_count") or 0),
+                    "successful_import_count": int(top_option.get("successful_import_count") or 0),
+                    "profile": dict(top_option.get("profile") or {}),
                     "alternatives": [
                         {
-                            "path": alt_path,
-                            "confidence": alt_confidence,
-                            "rationale": alt_rationale,
-                            "sample_values": alt_samples[:3],
+                            "path": alt_option["path"],
+                            "confidence": alt_option["confidence"],
+                            "rationale": alt_option["rationale"],
+                            "sample_values": alt_option["sample_values"][:3],
                         }
-                        for alt_path, alt_confidence, alt_rationale, alt_samples in ranked_options[1:]
+                        for alt_option in ranked_options[1:]
                     ],
                 }
             )
@@ -269,7 +430,9 @@ class MappingService:
         self,
         field: str,
         observed_paths: Dict[str, list[str]],
-    ) -> list[tuple[str, float, str, list[str]]]:
+        path_profiles: Dict[str, Dict[str, Any]] | None = None,
+    ) -> list[Dict[str, Any]]:
+        path_profiles = path_profiles or {}
         aliases = {
             "canonical_user_id": [
                 "canonical_user_id",
@@ -293,7 +456,7 @@ class MappingService:
             "campaign": ["campaign", "campaign_name", "campaignname", "utm_campaign"],
             "media_source": ["media_source", "mediasource", "network", "channel", "source", "publisher"],
         }
-        ranked: list[tuple[str, float, str, list[str]]] = []
+        ranked: list[Dict[str, Any]] = []
         normalized_aliases = aliases.get(field, [])
         for path, sample_values in observed_paths.items():
             tokens = [self._normalize_token(token) for token in path.split(".") if token]
@@ -302,12 +465,159 @@ class MappingService:
             path_score = self._score_path_tokens(tokens, normalized_aliases)
             if path_score <= 0:
                 continue
-            confidence = min(0.99, 0.6 + path_score)
+            profile = dict(path_profiles.get(path) or {})
+            confidence = min(0.99, 0.6 + path_score + self._profile_confidence_boost(field, profile))
             rationale = f"Observed raw field path resembles {field}"
             if sample_values:
                 rationale += " and includes sample values"
-            ranked.append((path, confidence, rationale, sample_values[:3]))
+            if field == "canonical_user_id" and profile:
+                if float(profile.get("row_coverage") or 0.0) >= 0.8:
+                    rationale += "; present in most sampled rows"
+                if float(profile.get("event_type_coverage") or 0.0) >= 0.6:
+                    rationale += "; stable across multiple event types"
+            ranked.append(
+                self._candidate_option(
+                    path=path,
+                    confidence=confidence,
+                    rationale=rationale,
+                    sample_values=sample_values[:3],
+                    profile=profile,
+                )
+            )
         return ranked
+
+    def _rank_memory_candidates(
+        self,
+        field: str,
+        observed_paths: Dict[str, list[str]],
+        path_profiles: Dict[str, Dict[str, Any]],
+        memory: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        ranked: List[Dict[str, Any]] = []
+        field_memory = dict((((memory or {}).get("fields") or {}).get(field) or {}).get("paths") or {})
+        for path, stats in field_memory.items():
+            if observed_paths and path not in observed_paths:
+                continue
+            path_profile = dict(path_profiles.get(path) or {})
+            manual_confirmation_count = int((stats or {}).get("manual_confirmation_count") or 0)
+            successful_import_count = int((stats or {}).get("successful_import_count") or 0)
+            correction_count = int((stats or {}).get("correction_count") or 0)
+            confidence = 0.58 + min(0.2, manual_confirmation_count * 0.07) + min(0.12, successful_import_count * 0.04) - min(0.18, correction_count * 0.06)
+            confidence += self._profile_confidence_boost(field, path_profile or dict(stats or {}))
+            rationale_bits = []
+            if manual_confirmation_count:
+                rationale_bits.append(f"confirmed manually {manual_confirmation_count} time{'s' if manual_confirmation_count != 1 else ''}")
+            if successful_import_count:
+                rationale_bits.append(f"seen in {successful_import_count} successful import{'s' if successful_import_count != 1 else ''}")
+            if correction_count:
+                rationale_bits.append(f"corrected away {correction_count} time{'s' if correction_count != 1 else ''}")
+            if float((path_profile or stats).get("event_type_coverage") or 0.0) >= 0.6:
+                rationale_bits.append("stable across event types")
+            rationale = "Learned from prior successful mappings"
+            if rationale_bits:
+                rationale += f": {', '.join(rationale_bits)}"
+            ranked.append(
+                self._candidate_option(
+                    path=path,
+                    confidence=min(0.99, confidence),
+                    rationale=rationale,
+                    sample_values=(observed_paths.get(path) or (stats or {}).get("sample_values") or [])[:3],
+                    manual_confirmation_count=manual_confirmation_count,
+                    successful_import_count=successful_import_count,
+                    profile=path_profile or {
+                        "row_coverage": float((stats or {}).get("row_coverage") or 0.0),
+                        "event_type_coverage": float((stats or {}).get("event_type_coverage") or 0.0),
+                        "distinct_ratio": float((stats or {}).get("distinct_ratio") or 0.0),
+                    },
+                )
+            )
+        return ranked
+
+    @staticmethod
+    def _candidate_option(
+        *,
+        path: str,
+        confidence: float,
+        rationale: str,
+        sample_values: List[str] | None = None,
+        manual_confirmation_count: int = 0,
+        successful_import_count: int = 0,
+        profile: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        return {
+            "path": str(path or ""),
+            "confidence": max(0.0, min(0.99, float(confidence or 0.0))),
+            "rationale": str(rationale or "").strip(),
+            "sample_values": [str(value) for value in list(sample_values or [])[:3]],
+            "manual_confirmation_count": int(manual_confirmation_count or 0),
+            "successful_import_count": int(successful_import_count or 0),
+            "profile": dict(profile or {}),
+        }
+
+    def _merge_ranked_candidates(self, *candidate_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: Dict[str, Dict[str, Any]] = {}
+        for group in candidate_groups:
+            for item in group or []:
+                path = str(item.get("path") or "").strip()
+                if not path:
+                    continue
+                current = merged.get(path)
+                if current is None:
+                    merged[path] = dict(item)
+                    continue
+                current["confidence"] = max(float(current.get("confidence") or 0.0), float(item.get("confidence") or 0.0))
+                current["manual_confirmation_count"] = max(
+                    int(current.get("manual_confirmation_count") or 0),
+                    int(item.get("manual_confirmation_count") or 0),
+                )
+                current["successful_import_count"] = max(
+                    int(current.get("successful_import_count") or 0),
+                    int(item.get("successful_import_count") or 0),
+                )
+                current["sample_values"] = self._merge_sample_values(current.get("sample_values"), item.get("sample_values"))
+                current["profile"] = {**dict(current.get("profile") or {}), **dict(item.get("profile") or {})}
+                rationale_bits = [str(current.get("rationale") or "").strip(), str(item.get("rationale") or "").strip()]
+                current["rationale"] = "; ".join(bit for bit in rationale_bits if bit)
+        return list(merged.values())
+
+    @staticmethod
+    def _merge_sample_values(existing: Any, incoming: Any, *, limit: int = 5) -> List[str]:
+        values: List[str] = []
+        seen = set()
+        for candidate in list(existing or []) + list(incoming or []):
+            text = str(candidate or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            values.append(text)
+            if len(values) >= limit:
+                break
+        return values
+
+    @staticmethod
+    def _profile_confidence_boost(field: str, profile: Dict[str, Any]) -> float:
+        if not profile:
+            return 0.0
+        row_coverage = float(profile.get("row_coverage") or 0.0)
+        event_type_coverage = float(profile.get("event_type_coverage") or 0.0)
+        distinct_ratio = float(profile.get("distinct_ratio") or 0.0)
+        boost = 0.0
+        if row_coverage >= 0.8:
+            boost += 0.07
+        elif row_coverage >= 0.5:
+            boost += 0.03
+        if field == "canonical_user_id":
+            if event_type_coverage >= 0.6:
+                boost += 0.08
+            if row_coverage >= 0.9 and event_type_coverage >= 0.9:
+                boost += 0.05
+            if distinct_ratio >= 0.2:
+                boost += 0.04
+        elif field == "event_time" and row_coverage >= 0.9:
+            boost += 0.03
+        elif field == "event_name" and event_type_coverage >= 0.6:
+            boost += 0.02
+        return boost
 
     @staticmethod
     def _normalize_token(value: str) -> str:
@@ -418,12 +728,15 @@ class MappingService:
             self._collect_paths("", row, observed)
         return observed
 
-    def _load_job_sample_events(self, job_id: str | None, max_records: int = 50) -> List[Dict[str, Any]]:
-        if not job_id:
-            return []
+    def _load_source_sample_events(self, connector_name: str, max_records: int = 50) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
-        manifests = self._list_job_manifests(job_id)
-        for manifest in manifests:
+        for manifest in self._list_connector_manifests(connector_name):
+            for sample_event in self._manifest_sample_events(manifest):
+                raw_event = self._extract_original_raw_event(sample_event)
+                if isinstance(raw_event, dict):
+                    records.append(raw_event)
+                if len(records) >= max_records:
+                    return records
             blob_name = str(manifest.get("gcs_uri") or "").strip()
             if not blob_name:
                 continue
@@ -432,11 +745,51 @@ class MappingService:
             except FileNotFoundError:
                 continue
             for event in events:
-                if isinstance(event, dict):
-                    records.append(event)
+                raw_event = self._extract_original_raw_event(event)
+                if isinstance(raw_event, dict):
+                    records.append(raw_event)
                 if len(records) >= max_records:
                     return records
         return records
+
+    def _load_job_sample_events(self, job_id: str | None, max_records: int = 50) -> List[Dict[str, Any]]:
+        if not job_id:
+            return []
+        records: List[Dict[str, Any]] = []
+        manifests = self._list_job_manifests(job_id)
+        for manifest in manifests:
+            for sample_event in self._manifest_sample_events(manifest):
+                raw_event = self._extract_original_raw_event(sample_event)
+                if isinstance(raw_event, dict):
+                    records.append(raw_event)
+                if len(records) >= max_records:
+                    return records
+            blob_name = str(manifest.get("gcs_uri") or "").strip()
+            if not blob_name:
+                continue
+            try:
+                events = self.gcs_service.download_raw_events(blob_name)
+            except FileNotFoundError:
+                continue
+            for event in events:
+                raw_event = self._extract_original_raw_event(event)
+                if isinstance(raw_event, dict):
+                    records.append(raw_event)
+                if len(records) >= max_records:
+                    return records
+        return records
+
+    def _list_connector_manifests(self, connector_name: str) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for record in self.repository.list_resources("import_manifest"):
+            payload = dict(record.get("payload") or {})
+            source_name = str(payload.get("source_name") or payload.get("source") or "").strip()
+            manifest = dict(payload.get("manifest") or {})
+            source_config_id = str(manifest.get("source_config_id") or "").strip()
+            if connector_name not in {source_name, source_config_id}:
+                continue
+            items.append(payload)
+        return items
 
     def _list_job_manifests(self, job_id: str) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
@@ -464,6 +817,88 @@ class MappingService:
             items.append(manifest)
         items.sort(key=lambda item: int(item.get("shard_index") or 0))
         return items
+
+    def _extract_original_raw_event(self, event: Any) -> Dict[str, Any] | None:
+        if not isinstance(event, dict):
+            return None
+        event_properties = event.get("event_properties")
+        if isinstance(event_properties, dict):
+            nested_raw = event_properties.get("raw")
+            if isinstance(nested_raw, dict):
+                return nested_raw
+        direct_raw = event.get("raw")
+        if isinstance(direct_raw, dict):
+            return direct_raw
+        return event
+
+    def _manifest_sample_events(self, manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
+        candidates: List[Dict[str, Any]] = []
+        for key in ("sample_raw_events", "sample_events"):
+            values = manifest.get(key)
+            if isinstance(values, list):
+                candidates.extend(item for item in values if isinstance(item, dict))
+            nested_values = dict(manifest.get("manifest") or {}).get(key)
+            if isinstance(nested_values, list):
+                candidates.extend(item for item in nested_values if isinstance(item, dict))
+        return candidates
+
+    def _build_path_profiles(self, rows: List[Dict[str, Any]] | None) -> Dict[str, Dict[str, Any]]:
+        normalized_rows = [row for row in list(rows or []) if isinstance(row, dict)]
+        if not normalized_rows:
+            return {}
+        total_rows = len(normalized_rows)
+        total_event_types = {
+            self._event_type_from_raw(row)
+            for row in normalized_rows
+            if self._event_type_from_raw(row)
+        }
+        profiles: Dict[str, Dict[str, Any]] = {}
+        for row in normalized_rows:
+            event_type = self._event_type_from_raw(row)
+            row_paths: Dict[str, list[str]] = {}
+            self._collect_paths("", row, row_paths)
+            for path, sample_values in row_paths.items():
+                profile = profiles.setdefault(
+                    path,
+                    {
+                        "rows_with_value": 0,
+                        "event_types": set(),
+                        "distinct_values": set(),
+                        "sample_values": [],
+                    },
+                )
+                profile["rows_with_value"] += 1
+                if event_type:
+                    profile["event_types"].add(event_type)
+                for sample_value in sample_values[:3]:
+                    if len(profile["sample_values"]) < 5 and sample_value not in profile["sample_values"]:
+                        profile["sample_values"].append(sample_value)
+                    if len(profile["distinct_values"]) < 50:
+                        profile["distinct_values"].add(str(sample_value))
+        finalized: Dict[str, Dict[str, Any]] = {}
+        total_event_type_count = max(1, len(total_event_types))
+        for path, profile in profiles.items():
+            rows_with_value = int(profile.get("rows_with_value") or 0)
+            distinct_values = profile.get("distinct_values") or set()
+            event_types = profile.get("event_types") or set()
+            finalized[path] = {
+                "rows_evaluated": total_rows,
+                "rows_with_value": rows_with_value,
+                "row_coverage": round(rows_with_value / total_rows, 4) if total_rows else 0.0,
+                "event_type_coverage": round(len(event_types) / total_event_type_count, 4) if total_event_type_count else 0.0,
+                "event_type_count": len(event_types),
+                "distinct_ratio": round(len(distinct_values) / rows_with_value, 4) if rows_with_value else 0.0,
+                "sample_values": list(profile.get("sample_values") or [])[:3],
+            }
+        return finalized
+
+    @staticmethod
+    def _event_type_from_raw(row: Dict[str, Any]) -> str:
+        for key in ("event_type", "event_name", "eventName", "name"):
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""
 
     def _collect_paths(self, prefix: str, value: Any, observed: Dict[str, list[str]]) -> None:
         if isinstance(value, dict):

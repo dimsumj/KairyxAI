@@ -729,6 +729,13 @@ class ImportService:
             reason="Import processing completed.",
             metadata={"quality_report": quality_report, "resume_mode": mode},
         )
+        if final_status == JobStatus.COMPLETED.value:
+            MappingService(self.repository).learn_from_mapping(
+                connector_record["name"],
+                MappingService(self.repository).get_effective_mapping(connector_record["name"], job_id=job_id),
+                reason="successful_import",
+                job_id=job_id,
+            )
         self.repository.record_action("import_job_completed", "import_job", job_id, completed)
         self._commit_session()
         return completed

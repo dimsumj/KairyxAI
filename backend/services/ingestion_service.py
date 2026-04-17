@@ -139,6 +139,17 @@ class IngestionService:
             checkpoint,
         )
 
+    @staticmethod
+    def _sample_raw_events(events: List[Dict[str, Any]], *, limit: int = 3) -> List[Dict[str, Any]]:
+        samples: List[Dict[str, Any]] = []
+        for event in list(events or []):
+            if not isinstance(event, dict):
+                continue
+            samples.append(dict(event))
+            if len(samples) >= limit:
+                break
+        return samples
+
     def fetch_and_stage_events(
         self,
         start_date: str,
@@ -217,6 +228,7 @@ class IngestionService:
                 source_config_id=self.source_config_id,
             )
             manifest_dict = manifest.to_dict()
+            manifest_dict["sample_raw_events"] = self._sample_raw_events(shard_events)
             self.staged_shards.append(manifest_dict)
             shard_manifests.append(manifest_dict)
             self._save_checkpoint(manifest_dict, publish_status="staged")

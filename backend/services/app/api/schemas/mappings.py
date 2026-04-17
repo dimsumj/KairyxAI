@@ -54,6 +54,9 @@ class MappingSuggestionItem(BaseModel):
     sample_values: List[str] = Field(default_factory=list)
     alternatives: List[MappingSuggestionAlternativeItem] = Field(default_factory=list)
     engine: str | None = None
+    manual_confirmation_count: int = 0
+    successful_import_count: int = 0
+    profile: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MappingCandidateResponse(BaseModel):
