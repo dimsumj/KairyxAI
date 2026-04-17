@@ -141,11 +141,13 @@
             <h1>Churn Rescue Workbench</h1>
             <div class="card" id="operator-hub-connectors-entry">
                 <div>
-                    <p class="card-eyebrow">Start Here</p>
-                    <h2 style="margin-bottom: 0.5rem;">Connect your data sources first</h2>
-                    <p style="margin: 0; color: var(--text-secondary);">
-                        Connectors unlock imports, BigQuery table access, predictions, and downstream activation. BigQuery setup now uses tenant-provided credentials instead of shared backend credentials.
-                    </p>
+                    <h2 class="section-title-with-help" style="margin-bottom: 0.5rem;">
+                        <span>Connect Data Sources</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show data source setup help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Connectors unlock imports, BigQuery access, predictions, and downstream activation. Use Connectors to save ingestion sources, warehouse sources, and campaign-provider connections.</span>
+                        </span>
+                    </h2>
                 </div>
                 <div class="inline-actions" style="margin-top: 1rem;">
                     <button id="operator-hub-connectors-btn" type="button">Connect Data Source</button>
@@ -153,7 +155,15 @@
                 </div>
             </div>
             <div class="card" id="operator-hub-controls">
-                <p>Select a source or a completed import and run churn prediction on that audience. Source mode resolves to the latest completed import when the job starts.</p>
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Prediction Controls</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show prediction control help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Run churn prediction against a saved source or a completed import. Source mode resolves to the latest completed import when the job starts.</span>
+                        </span>
+                    </h2>
+                </div>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
                     <div class="form-group">
                         <label for="prediction-audience-scope-select">Prediction Target</label>
@@ -192,8 +202,13 @@
                 </div>
                 <div id="prediction-local-warning" style="font-size: 0.82rem; color: var(--yellow); margin-top: 0.6rem;"></div>
                 <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
-                    <h2 style="font-size: 1rem; margin: 0 0 0.75rem 0;">Push Audience to Campaign Provider</h2>
-                    <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0;">Exports a clean audience payload with normalized identifiers like <code>user_id</code> and <code>email</code>.</p>
+                    <h2 class="section-title-with-help" style="font-size: 1rem; margin: 0 0 0.75rem 0;">
+                        <span>Push Audience to Campaign Provider</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show campaign push help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Export a normalized audience payload to a saved provider or a direct webhook. Email and push workflows have dedicated sections under Action Orchestrator.</span>
+                        </span>
+                    </h2>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="campaign-provider-select">Provider</label>
@@ -284,9 +299,16 @@
         <section id="player-cohorts" class="page">
             <h1>Import Control Plane</h1>
             <div class="card">
-                <p>Import and process data from a connected source. Event connectors use a date window, and BigQuery connectors can import one table directly into predictions or churn cohorts.</p>
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Start Import</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show import setup help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Import event data from saved connectors or materialize one BigQuery table directly into predictions or churn cohorts.</span>
+                        </span>
+                    </h2>
+                </div>
                 <span id="import-source-status" class="subtle"></span>
-                <p id="import-form-help" class="subtle">Choose a configured source to start an import.</p>
                 <div class="form-group">
                     <label for="cohort-source-select">Import Source</label>
                     <select id="cohort-source-select">
@@ -428,8 +450,13 @@
                 <button id="import-data-btn">Import Data</button>
             </div>
             <div class="card">
-                <h2>Imported Data</h2>
-                <p>List of imported and processed datasets available for analysis.</p>
+                <h2 class="section-title-with-help">
+                    <span>Imported Data</span>
+                    <span class="inline-help">
+                        <button type="button" class="inline-help-button" aria-label="Show imported data help">?</button>
+                        <span class="inline-help-source" aria-hidden="true">Review imported datasets, inspect processing state, and load downstream diagnostics on demand.</span>
+                    </span>
+                </h2>
                 <span id="import-list-status" class="subtle"></span>
                 <div id="import-list-container">
                     <!-- Import jobs will be listed here -->
@@ -455,7 +482,7 @@
                         </div>
                     </div>
                     <span id="import-detail-status" class="subtle"></span>
-                    <pre id="import-detail-output" class="json-output">Import operations and quality detail will appear here.</pre>
+                    <pre id="import-detail-output" class="json-output"></pre>
                     <div id="import-manifests-list"></div>
                 </div>
                 <div id="import-schema-contracts-section" class="card split-card">
@@ -480,7 +507,7 @@
                         </div>
                     </div>
                     <span id="import-schema-status" class="subtle"></span>
-                    <pre id="import-schema-output" class="json-output">Schema contract details will appear here.</pre>
+                    <pre id="import-schema-output" class="json-output"></pre>
                 </div>
             </div>
         </section>
@@ -488,7 +515,15 @@
         <section id="action-history" class="page">
             <h1>Audit Trail</h1>
             <div id="audience-list-section" class="card">
-                <p>Read the persisted audit log across imports, cohorts, workflows, experiments, copilot reports, and governance actions.</p>
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Audit Log</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show audit log help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Filter persisted audit records across imports, cohorts, workflows, experiments, Copilot reports, and governance actions.</span>
+                        </span>
+                    </h2>
+                </div>
                 <div class="grid-3">
                     <div class="form-group">
                         <label for="action-history-resource-type-filter">Resource Type</label>
@@ -555,7 +590,7 @@
                         <h2>Template Detail</h2>
                         <span id="templates-selected-label" class="pill">No template selected</span>
                     </div>
-                    <pre id="template-detail-output" class="json-output">Template details will appear here.</pre>
+                    <pre id="template-detail-output" class="json-output"></pre>
                     <div class="grid-2">
                         <div class="form-group">
                             <label for="template-owner-input">Owner</label>
@@ -580,7 +615,7 @@
                         <button id="template-instantiate-btn">Instantiate Template</button>
                         <span id="template-instantiate-status" class="subtle"></span>
                     </div>
-                    <pre id="template-instance-output" class="json-output">Instantiation results will appear here.</pre>
+                    <pre id="template-instance-output" class="json-output"></pre>
                 </div>
             </div>
         </section>
@@ -776,22 +811,16 @@
                      </div>
                      <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
                  </div>
-                 <details style="margin-bottom: 1rem;">
-                     <summary style="cursor: pointer; font-weight: 600;">Example mapping JSON</summary>
-                     <pre style="margin-top: 0.75rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"><code>{
-  "canonical_user_id": "event_properties.PID",
-  "event_name": "event_type",
-  "event_time": "event_time",
-  "source_event_id": "event_properties.insert_id",
-  "campaign": "event_properties.campaign_name",
-  "adset": "event_properties.adgroup_name",
-  "media_source": "event_properties.network"
-}</code></pre>
-                 </details>
-                 <div class="form-group">
-                     <label for="data-sandbox-mapping-json">Mapping JSON</label>
-                     <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
-                 </div>
+                <div class="form-group">
+                    <div class="field-label-with-help">
+                        <label for="data-sandbox-mapping-json">Mapping JSON</label>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show mapping JSON help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as raw JSON paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
+                        </span>
+                    </div>
+                    <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
+                </div>
                  <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
                      <div class="form-group" style="margin-bottom: 0;">
                          <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
@@ -810,17 +839,25 @@
                      </div>
                      <div class="form-group" style="margin-bottom: 0;">
                          <label for="data-sandbox-preview-result">Preview Result</label>
-                         <pre id="data-sandbox-preview-result" style="margin: 0; min-height: 10rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;">Preview result will appear here.</pre>
-                     </div>
-                 </div>
-                 <div id="data-sandbox-coverage-result" style="margin-top: 1rem;"></div>
+                        <pre id="data-sandbox-preview-result" style="margin: 0; min-height: 10rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"></pre>
+                    </div>
+                </div>
+                <div id="data-sandbox-coverage-result" style="margin-top: 1rem;"></div>
             </div>
         </section>
 
         <section id="safety-rails" class="page">
             <h1>Governance & Safety</h1>
             <div class="card">
-                <p>Set limits on AI token usage and budget to control costs, and use the actor context in the sidebar to test role-scoped API behavior.</p>
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Spend & Access Limits</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show governance help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Set monthly AI token and budget limits. Use actor context and auth/session controls to verify role-scoped behavior separately.</span>
+                        </span>
+                    </h2>
+                </div>
                 <div class="form-group">
                     <label for="token-limit">AI Token Limit (per month)</label>
                     <input type="number" id="token-limit" placeholder="e.g., 1000000">
@@ -865,9 +902,8 @@
             <div class="card split-card">
                 <div class="module-section-header">
                     <h2>Raw Health Payload</h2>
-                    <span class="pill">Diagnostics</span>
                 </div>
-                <pre id="service-health-output" class="json-output">Health payload will appear here.</pre>
+                <pre id="service-health-output" class="json-output"></pre>
             </div>
         </section>
 
@@ -876,7 +912,6 @@
             <div id="audience-create-section" class="card split-card">
                 <div class="module-section-header">
                     <h2>Guided Cohort Builder</h2>
-                    <span class="pill">Marketer First</span>
                 </div>
                 <div class="grid-3">
                     <div class="form-group">
@@ -930,14 +965,24 @@
 
                 <div class="grid-2">
                     <div id="audience-builder-source-group" class="form-group">
-                        <label for="audience-builder-source-select">Prediction Sources</label>
+                        <div class="field-label-with-help">
+                            <label for="audience-builder-source-select">Prediction Sources</label>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show prediction source help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Choose one or more sources. The latest completed prediction run per selected source is used automatically.</span>
+                            </span>
+                        </div>
                         <select id="audience-builder-source-select" multiple size="4"></select>
-                        <div class="subtle">Latest completed prediction run per selected source is used automatically.</div>
                     </div>
                     <div id="audience-builder-job-group" class="form-group hidden">
-                        <label for="audience-builder-job-select">Prediction Runs</label>
+                        <div class="field-label-with-help">
+                            <label for="audience-builder-job-select">Prediction Runs</label>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show prediction run help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Choose explicit prediction runs when you do not want latest-by-source resolution.</span>
+                            </span>
+                        </div>
                         <select id="audience-builder-job-select" multiple size="4"></select>
-                        <div class="subtle">Use explicit prediction runs when you do not want latest-by-source resolution.</div>
                     </div>
                 </div>
 
@@ -959,7 +1004,6 @@
                 <div class="card builder-ai-card">
                     <div class="module-section-header">
                         <h3>Ask AI To Draft The Cohort</h3>
-                        <span class="pill">Uses Insight Copilot</span>
                     </div>
                     <div class="form-group">
                         <label for="audience-builder-ai-prompt">Prompt</label>
@@ -970,7 +1014,7 @@
                         <button id="audience-builder-ai-create-btn" type="button">Create From Prompt</button>
                         <span id="audience-builder-ai-status" class="subtle"></span>
                     </div>
-                    <pre id="audience-builder-ai-output" class="json-output">AI-assisted builder output will appear here.</pre>
+                    <pre id="audience-builder-ai-output" class="json-output"></pre>
                 </div>
 
                 <div class="module-section-header">
@@ -982,7 +1026,7 @@
                     </div>
                 </div>
                 <div id="audience-builder-preview-summary" class="builder-preview-summary">
-                    <div class="list-empty">Preview the cohort to inspect member count, sample members, and source contribution.</div>
+                    <div class="list-empty">No preview yet.</div>
                 </div>
                 <div class="grid-2">
                     <div class="card builder-preview-card">
@@ -1036,7 +1080,7 @@ WHERE predicted_churn_risk = 'high'
                         <button id="sql-create-cohort-btn" type="button">Query To Cohort</button>
                     </div>
                     <span id="sql-workspace-status" class="subtle"></span>
-                    <pre id="sql-preview-output" class="json-output">SQL preview results will appear here.</pre>
+                    <pre id="sql-preview-output" class="json-output"></pre>
                     <div id="sql-saved-query-list"></div>
                 </details>
             </div>
@@ -1066,7 +1110,6 @@ WHERE predicted_churn_risk = 'high'
                 <div id="audience-versions-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Versions & Comparison</h2>
-                        <span class="pill">Rollback Safe</span>
                     </div>
                     <div id="audience-versions-list"></div>
                     <div class="grid-2">
@@ -1083,8 +1126,8 @@ WHERE predicted_churn_risk = 'high'
                         <button id="audience-compare-btn">Compare Versions</button>
                         <button id="audience-rollback-btn">Rollback to Base</button>
                     </div>
-                    <pre id="audience-metrics-output" class="json-output">Cohort metrics will appear here.</pre>
-                    <pre id="audience-compare-output" class="json-output">Version comparison will appear here.</pre>
+                    <pre id="audience-metrics-output" class="json-output"></pre>
+                    <pre id="audience-compare-output" class="json-output"></pre>
                 </div>
             </div>
         </section>
@@ -1096,7 +1139,7 @@ WHERE predicted_churn_risk = 'high'
                     <h2>Email Campaigns</h2>
                     <div class="inline-actions">
                         <button id="email-campaign-refresh-btn" type="button">Refresh</button>
-                        <span id="email-campaigns-summary" class="subtle">Load provider connections and campaigns to begin.</span>
+                        <span id="email-campaigns-summary" class="subtle"></span>
                     </div>
                 </div>
                 <div class="card split-card">
@@ -1232,14 +1275,19 @@ WHERE predicted_churn_risk = 'high'
                         <div id="email-campaign-past-list"></div>
                     </div>
                 </div>
-                <pre id="email-campaign-detail-output" class="json-output">Selected email campaign details will appear here.</pre>
+                <pre id="email-campaign-detail-output" class="json-output"></pre>
             </div>
             <div id="push-notifications-section" class="card split-card" style="margin-top: 1rem;">
                 <div class="module-section-header">
-                    <h2>Push Notifications</h2>
+                    <h2 class="section-title-with-help">
+                        <span>Push Notifications</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show push workflow help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Build reusable push workflows with scheduling, guardrails, and optional live-provider routing. Leave Provider Connection blank to keep simulator delivery.</span>
+                        </span>
+                    </h2>
                     <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
                 </div>
-                <p class="subtle">Build reusable push workflows with scheduling, guardrails, and live-provider routing while keeping simulator fallback available.</p>
                 <div class="grid-3">
                     <div class="form-group">
                         <label for="workflow-name-input">Name</label>
@@ -1367,7 +1415,6 @@ WHERE predicted_churn_risk = 'high'
                             <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
                     </details>
-                    <p class="subtle">Leave Provider Connection blank to keep legacy simulator delivery. Select a push provider connection when this workflow should route live push delivery for explicit player IDs.</p>
                 </div>
                 <label style="display: inline-flex; gap: 0.5rem; align-items: center;">
                     <input type="checkbox" id="workflow-requires-confirmation-checkbox">
@@ -1380,15 +1427,18 @@ WHERE predicted_churn_risk = 'high'
                 </div>
             </div>
 
-            <div id="workflow-studio-section" class="card" style="margin-top: 1rem;">
-                <div class="module-section-header">
-                    <div>
-                        <h2>Workflow Studio</h2>
-                        <div class="subtle">Schedule email campaigns, manage push workflows, and inspect the latest runtime state from one surface.</div>
-                    </div>
-                    <div class="inline-actions">
-                        <button id="workflow-studio-refresh-btn" type="button">Refresh</button>
-                        <span id="workflow-studio-status" class="subtle"></span>
+                <div id="workflow-studio-section" class="card" style="margin-top: 1rem;">
+                    <div class="module-section-header">
+                        <h2 class="section-title-with-help">
+                            <span>Workflow Studio</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show workflow studio help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Inspect scheduled email campaigns and push workflows, then archive, schedule, or edit the latest runtime state from one surface.</span>
+                            </span>
+                        </h2>
+                        <div class="inline-actions">
+                            <button id="workflow-studio-refresh-btn" type="button">Refresh</button>
+                            <span id="workflow-studio-status" class="subtle"></span>
                     </div>
                 </div>
                 <div class="inline-actions" id="workflow-studio-filters" style="margin-bottom: 1rem;">
@@ -1412,7 +1462,7 @@ WHERE predicted_churn_risk = 'high'
                         <input type="datetime-local" id="workflow-studio-email-schedule-input">
                     </div>
                     <div id="workflow-studio-actions" class="inline-actions"></div>
-                    <pre id="workflow-studio-detail-output" class="json-output">Selected workflow or email campaign details will appear here.</pre>
+                    <pre id="workflow-studio-detail-output" class="json-output"></pre>
                 </div>
 
                 <div id="workflow-runtime-controls-section" class="card split-card">
@@ -1438,7 +1488,7 @@ WHERE predicted_churn_risk = 'high'
                         <button id="orchestrator-run-due-btn">Run Due Workflows</button>
                         <span id="orchestrator-run-status" class="subtle"></span>
                     </div>
-                    <pre id="orchestrator-run-output" class="json-output">Scheduled workflow runs will appear here.</pre>
+                    <pre id="orchestrator-run-output" class="json-output"></pre>
                     <div class="form-group">
                         <label for="activation-provider-select">Callback Provider</label>
                         <select id="activation-provider-select">
@@ -1470,7 +1520,7 @@ WHERE predicted_churn_risk = 'high'
                             <button id="export-retry-btn">Retry Export</button>
                         </div>
                     </div>
-                    <pre id="export-diagnostics-output" class="json-output">Export diagnostics will appear here.</pre>
+                    <pre id="export-diagnostics-output" class="json-output"></pre>
                 </div>
             </div>
 
@@ -1481,7 +1531,7 @@ WHERE predicted_churn_risk = 'high'
                         <span id="workflow-selected-label" class="pill">No workflow selected</span>
                     </div>
                     <div id="workflow-executions-list"></div>
-                    <pre id="workflow-policy-output" class="json-output">Policy counters will appear here.</pre>
+                    <pre id="workflow-policy-output" class="json-output"></pre>
                 </div>
                 <div id="workflow-deliveries-audit-section" class="card split-card">
                     <div class="module-section-header">
@@ -1492,7 +1542,7 @@ WHERE predicted_churn_risk = 'high'
                         <button id="workflow-load-delivery-diagnostics-btn">Load Diagnostics</button>
                     </div>
                     <div id="workflow-deliveries-list"></div>
-                    <pre id="workflow-delivery-diagnostics-output" class="json-output">Workflow delivery diagnostics will appear here.</pre>
+                    <pre id="workflow-delivery-diagnostics-output" class="json-output"></pre>
                 </div>
             </div>
         </section>
@@ -1568,8 +1618,8 @@ WHERE predicted_churn_risk = 'high'
                             <button id="experiment-load-integrity-btn">Load Integrity</button>
                         </div>
                     </div>
-                    <pre id="experiment-summary-output" class="json-output">Experiment summary will appear here.</pre>
-                    <pre id="experiment-integrity-output" class="json-output">Experiment integrity will appear here.</pre>
+                    <pre id="experiment-summary-output" class="json-output"></pre>
+                    <pre id="experiment-integrity-output" class="json-output"></pre>
                 </div>
             </div>
             <div class="grid-2">
@@ -1610,15 +1660,17 @@ WHERE predicted_churn_risk = 'high'
             <h1>Insight Copilot</h1>
             <div class="card split-card copilot-page-banner">
                 <div class="module-section-header">
-                    <div>
-                        <h2>Manual Copilot Tools</h2>
-                        <div class="subtle">The global AI assistant bubble is now the primary AI surface. Use it from any page for grounded help, samples, summaries, and safe setup execution.</div>
-                    </div>
+                    <h2 class="section-title-with-help">
+                        <span>Manual Copilot Tools</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show copilot tool help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">The global AI assistant bubble is the primary AI surface. This page remains the manual fallback for direct Query, Explain, Recommend, Report, and Evidence &amp; Logs workflows.</span>
+                        </span>
+                    </h2>
                     <div class="inline-actions">
                         <button id="copilot-open-global-agent-btn">Open Assistant</button>
                     </div>
                 </div>
-                <p class="subtle">This page remains the advanced/manual fallback for direct Query, Explain, Recommend, Report, and Evidence &amp; Logs workflows.</p>
             </div>
             <div class="module-section-header copilot-manual-header">
                 <h2>Manual Tools</h2>
@@ -1715,12 +1767,12 @@ WHERE predicted_churn_risk = 'high'
                         <h2>Latest Response & Query Log</h2>
                         <span class="pill">Evidence Envelope</span>
                     </div>
-                    <pre id="copilot-response-output" class="json-output">Copilot responses will appear here.</pre>
+                    <pre id="copilot-response-output" class="json-output"></pre>
                     <div class="inline-actions">
                         <input type="text" id="copilot-query-log-id-input" placeholder="Query log ID">
                         <button id="copilot-load-query-log-btn">Load Query Log</button>
                     </div>
-                    <pre id="copilot-query-log-output" class="json-output">Query log details will appear here.</pre>
+                    <pre id="copilot-query-log-output" class="json-output"></pre>
                 </div>
                 <div class="card split-card">
                     <div class="module-section-header">
@@ -1735,7 +1787,6 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="settings" class="page">
             <h1>Settings</h1>
-            <p class="settings-page-subtitle">Manage your account and workspace preferences</p>
 
             <div class="settings-tab-strip" role="tablist" aria-label="Settings sections">
                 <button type="button" class="settings-tab-button active" role="tab" aria-selected="true" aria-controls="settings-tab-panel-profile" data-settings-item="settings-profile">Profile</button>
@@ -1750,7 +1801,6 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Profile Information</h2>
-                        <p>Update your personal information</p>
                     </div>
                     <div class="settings-profile-hero">
                         <div class="settings-avatar-art" aria-hidden="true">
@@ -1760,7 +1810,6 @@ WHERE predicted_churn_risk = 'high'
                         </div>
                         <div class="settings-profile-hero-copy">
                             <button type="button" class="settings-dark-button">Change Avatar</button>
-                            <p>JPG, PNG or GIF. Max size 2MB.</p>
                         </div>
                     </div>
                     <div class="settings-form-divider"></div>
@@ -1794,7 +1843,6 @@ WHERE predicted_churn_risk = 'high'
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Change Password</h2>
-                        <p>Update your password to keep your account secure</p>
                     </div>
                     <div class="form-group">
                         <label for="settings-current-password">Current Password</label>
@@ -1819,8 +1867,13 @@ WHERE predicted_churn_risk = 'high'
             <div id="settings-tab-panel-organization" class="settings-tab-panel hidden" data-settings-panel="settings-organization" role="tabpanel" aria-hidden="true">
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Organization Workspace</h2>
-                        <p>Use the live shell tools to move between organization spaces and projects.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Organization Workspace</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show organization workspace help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Use Switcher to move between organization spaces and projects. The selected workspace scopes connectors, imports, workflows, cohorts, predictions, and Ask AI context.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="settings-stats">
                         <div class="stat-card">
@@ -1840,8 +1893,13 @@ WHERE predicted_churn_risk = 'high'
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Access & Session</h2>
-                        <p>Live controls for sign-in state, legacy access, and startup health.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Access &amp; Session</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show access and session help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Manage Google sign-in, local demo fallback, legacy API key access, and startup health from one place.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="settings-stats">
                         <div class="stat-card">
@@ -1853,7 +1911,7 @@ WHERE predicted_churn_risk = 'high'
                             <div class="value">Organization-aware access</div>
                         </div>
                     </div>
-                    <p id="settings-auth-copy" class="subtle" style="margin-top: 1rem;">Sign in with Google for organization-aware access, or keep using local demo mode where configured.</p>
+                    <div id="settings-auth-copy" class="subtle" style="margin-top: 1rem;"></div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="oidc-login-btn">Continue with Google</button>
                         <button type="button" id="oidc-logout-btn" class="secondary-action">Logout</button>
@@ -1872,22 +1930,23 @@ WHERE predicted_churn_risk = 'high'
             <div id="settings-tab-panel-projects" class="settings-tab-panel hidden" data-settings-panel="settings-projects" role="tabpanel" aria-hidden="true">
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Projects</h2>
-                        <p>Projects are isolated from each other. Connectors, imports, workflows, cohorts, predictions, and AI tooling stay inside the selected project.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Projects</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show project help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Projects are isolated from each other. Connectors, imports, workflows, cohorts, predictions, and AI tooling stay inside the selected project.</span>
+                            </span>
+                        </h2>
                     </div>
-                    <div class="settings-inline-note">
-                        <strong>Default project:</strong> the first project created in the organization.
-                    </div>
-                    <div id="settings-projects-status" class="settings-status-message subtle">Sign in with Google and select an organization to manage projects.</div>
+                    <div id="settings-projects-status" class="settings-status-message subtle">Sign in to manage projects.</div>
                     <div id="settings-project-list" class="settings-entity-list">
-                        <div class="list-empty">No projects loaded yet.</div>
+                        <div class="list-empty">No projects.</div>
                     </div>
                 </div>
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
                         <h2>Create Project</h2>
-                        <p>Create a new isolated workspace inside the current organization.</p>
                     </div>
                     <div class="form-group">
                         <label for="settings-project-create-name">Project Name</label>
@@ -1903,8 +1962,8 @@ WHERE predicted_churn_risk = 'high'
                     <div class="settings-dialog-card" role="dialog" aria-modal="true" aria-labelledby="settings-project-delete-title">
                         <div class="settings-section-heading">
                             <h2 id="settings-project-delete-title">Delete Project</h2>
-                            <p id="settings-project-delete-copy">Deleting a project is permanent. All project data will be removed and cannot be recovered.</p>
                         </div>
+                        <div id="settings-project-delete-copy" class="subtle"></div>
                         <div class="form-group">
                             <label for="settings-project-delete-confirm-input">Type <code>delete</code> to confirm</label>
                             <input id="settings-project-delete-confirm-input" type="text" autocomplete="off" placeholder="delete">
@@ -1921,29 +1980,35 @@ WHERE predicted_churn_risk = 'high'
             <div id="settings-tab-panel-teams" class="settings-tab-panel hidden" data-settings-panel="settings-teams" role="tabpanel" aria-hidden="true">
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Teams</h2>
-                        <p>Team membership is shared across the organization. Every member can enter every project in the organization.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Teams</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show team management help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Team membership is organization-wide. Members can access every project in the organization, and owners or admins can manage membership and roles.</span>
+                            </span>
+                        </h2>
                     </div>
-                    <div id="settings-team-role-summary" class="settings-inline-note">Organization owners and administrators can add members, promote admins, and share invite links.</div>
-                    <div id="settings-team-status" class="settings-status-message subtle">Sign in with Google and select an organization to manage team access.</div>
+                    <div id="settings-team-status" class="settings-status-message subtle">Sign in to manage team access.</div>
                     <div id="settings-team-member-list" class="settings-entity-list">
-                        <div class="list-empty">No team members loaded yet.</div>
+                        <div class="list-empty">No team members.</div>
                     </div>
                 </div>
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Invite Team Members</h2>
-                        <p>Add a Google account by email or generate an invite link from this shared section. New organization members always join as members, and owners or administrators can promote them later.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Invite Team Members</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show team invite help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Invite teammates by Google email or generate a shareable invite link. New members join as Member by default and can be promoted later.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="settings-form-grid">
                         <div class="form-group">
                             <label for="settings-team-member-email">Google Email</label>
                             <input id="settings-team-member-email" type="email" placeholder="teammate@example.com">
                         </div>
-                    </div>
-                    <div class="settings-inline-note">
-                        New team members join as <strong>Member</strong> by default. Promote them later from the roster if needed.
                     </div>
                     <div class="settings-form-actions settings-form-actions-left">
                         <button type="button" id="settings-team-add-member-btn">Add Team Member</button>
@@ -1953,8 +2018,13 @@ WHERE predicted_churn_risk = 'high'
 
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Invite Link</h2>
-                        <p>Create an organization-level invite link for the email entered above, then share it with the teammate if needed.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Invite Link</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show invite link help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Generate an organization-level invite link for the entered email, then copy and share it if needed.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="form-group">
                         <label for="settings-team-invite-link">Latest Invite Link</label>
@@ -1970,8 +2040,8 @@ WHERE predicted_churn_risk = 'high'
                     <div class="settings-dialog-card" role="dialog" aria-modal="true" aria-labelledby="settings-team-action-title">
                         <div class="settings-section-heading">
                             <h2 id="settings-team-action-title">Confirm Team Change</h2>
-                            <p id="settings-team-action-copy">Review this organization team change before continuing.</p>
                         </div>
+                        <div id="settings-team-action-copy" class="subtle"></div>
                         <div id="settings-team-action-status" class="settings-status-message subtle"></div>
                         <div class="settings-form-actions">
                             <button type="button" id="settings-team-action-cancel-btn" class="secondary-action">Cancel</button>
@@ -1984,21 +2054,23 @@ WHERE predicted_churn_risk = 'high'
             <div id="settings-tab-panel-notifications" class="settings-tab-panel hidden" data-settings-panel="settings-notifications" role="tabpanel" aria-hidden="true">
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Notifications</h2>
-                        <p>Placeholder notification preferences. Theme mode now lives in the top-right header control.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Notifications</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show notifications placeholder help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Notification controls are placeholders for later wiring. Theme mode lives in the top-right header control.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="settings-placeholder-list">
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Email Digest</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Incident Alerts</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Weekly Summary</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                     </div>
                 </div>
@@ -2007,21 +2079,23 @@ WHERE predicted_churn_risk = 'high'
             <div id="settings-tab-panel-billing" class="settings-tab-panel hidden" data-settings-panel="settings-billing" role="tabpanel" aria-hidden="true">
                 <div class="card settings-form-card">
                     <div class="settings-section-heading">
-                        <h2>Billing</h2>
-                        <p>Placeholder billing and plan-management elements for later subscription wiring.</p>
+                        <h2 class="section-title-with-help">
+                            <span>Billing</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show billing placeholder help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Billing and plan-management controls are placeholders for later subscription wiring.</span>
+                            </span>
+                        </h2>
                     </div>
                     <div class="settings-placeholder-list">
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Current Plan</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Payment Method</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                         <div class="settings-placeholder-row">
                             <span class="settings-placeholder-title">Invoices</span>
-                            <span class="pill">Placeholder</span>
                         </div>
                     </div>
                 </div>
@@ -2045,8 +2119,8 @@ WHERE predicted_churn_risk = 'high'
                     <select id="copilot-agent-model-select">
                         <option value="">Deterministic fallback</option>
                     </select>
-                    <div id="copilot-agent-model-status" class="subtle">Loading agent model profiles...</div>
-                    <div id="copilot-agent-session-status" class="subtle">Preparing assistant session...</div>
+                    <div id="copilot-agent-model-status" class="subtle">Loading runtimes...</div>
+                    <div id="copilot-agent-session-status" class="subtle">Starting session...</div>
                 </div>
                 <div class="inline-actions">
                     <button id="copilot-agent-new-session-btn" type="button">New Session</button>
@@ -2055,7 +2129,7 @@ WHERE predicted_churn_risk = 'high'
             </div>
             <div class="copilot-agent-body">
                 <div id="copilot-agent-thread" class="copilot-agent-thread" role="log" aria-live="polite">
-                    <div class="list-empty">The assistant conversation will appear here.</div>
+                    <div class="list-empty">No conversation yet.</div>
                 </div>
                 <div class="copilot-agent-composer">
                     <div class="form-group">
@@ -2082,21 +2156,23 @@ WHERE predicted_churn_risk = 'high'
                 <div class="workspace-modal-header">
                     <div>
                         <div id="workspace-modal-eyebrow" class="workspace-modal-eyebrow">Workspace Gateway</div>
-                        <h2 id="workspace-modal-title">Log in to your organization</h2>
-                        <p id="workspace-modal-subtitle" class="workspace-modal-subtitle">Open the gateway at the base URL, then continue into the main app at your organization path.</p>
+                        <h2 id="workspace-modal-title" class="section-title-with-help">
+                            <span data-workspace-title-text>Log in to your organization</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show workspace gateway help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Sign in with Google, choose or create an organization URL, then continue into an existing project or create the first one for that organization.</span>
+                            </span>
+                        </h2>
+                        <div id="workspace-modal-subtitle" class="workspace-modal-subtitle"></div>
                         <div id="workspace-startup-status" class="workspace-startup-status">Starting application...</div>
                     </div>
                 </div>
 
                 <div id="workspace-login-panel" class="workspace-panel">
-                    <div class="workspace-login-copy">
-                        <p>Sign in with your Google account before opening an existing organization or creating a new one.</p>
-                    </div>
                     <div id="workspace-login-status" class="workspace-panel-status"></div>
                     <div class="workspace-modal-actions">
                         <button type="button" id="workspace-google-login-btn">Continue with Google</button>
                     </div>
-                    <div class="workspace-helper-text workspace-helper-text-center">After sign-in, Kairyx either opens your existing organization or starts onboarding for a new one.</div>
                 </div>
 
                 <div id="workspace-selection-panel" class="workspace-panel hidden">
@@ -2106,20 +2182,24 @@ WHERE predicted_churn_risk = 'high'
                             <select id="workspace-modal-org-select" class="workspace-organization-select">
                                 <option value="">Select an organization space</option>
                             </select>
-                            <div class="workspace-helper-text">Choose one of the organizations already linked to this Google account, or type another URL below.</div>
                         </div>
-                        <label class="workspace-field-label" for="workspace-org-url-input">Organization URL</label>
+                        <div class="field-label-with-help">
+                            <label class="workspace-field-label" for="workspace-org-url-input">Organization URL</label>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show organization URL help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Enter only the organization path segment that appears after the base URL.</span>
+                            </span>
+                        </div>
                         <div class="workspace-url-row">
                             <span id="workspace-selection-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
                             <input type="text" id="workspace-org-url-input" class="workspace-url-input" placeholder="your-org-url" list="workspace-org-suggestions" autocomplete="off" spellcheck="false">
                         </div>
                         <datalist id="workspace-org-suggestions"></datalist>
-                        <div class="workspace-helper-text">Use the organization URL that appears after the base URL.</div>
                     </div>
                     <div id="workspace-selection-project-stage" class="workspace-stage hidden">
                         <div id="workspace-selection-current-org" class="workspace-selected-context"></div>
                         <div class="workspace-tip-list">
-                            <div id="workspace-selection-copy">If this organization space already has a project, use it. Otherwise add a new project to it.</div>
+                            <div id="workspace-selection-copy"></div>
                         </div>
                         <div id="workspace-existing-project-group" class="form-group">
                             <label for="workspace-modal-project-select">Existing Project</label>
@@ -2150,13 +2230,18 @@ WHERE predicted_churn_risk = 'high'
                     <div id="workspace-onboarding-step-label" class="workspace-step-label">Step 1 of 2</div>
 
                     <div class="workspace-step-panel" data-step="1">
-                        <label class="workspace-field-label" for="onboarding-organization-name">Organization URL</label>
+                        <div class="field-label-with-help">
+                            <label class="workspace-field-label" for="onboarding-organization-name">Organization URL</label>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show onboarding organization URL help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">This value becomes the organization path and API slug after the base URL.</span>
+                            </span>
+                        </div>
                         <div class="workspace-url-row">
                             <span id="workspace-onboarding-url-prefix" class="workspace-url-prefix">https://app.kairyx.ai/</span>
                             <input type="text" id="onboarding-organization-name" class="workspace-url-input" placeholder="your-org-url" autocomplete="off" spellcheck="false" maxlength="16" pattern="[a-z0-9]{1,16}">
                         </div>
                         <input type="text" id="onboarding-organization-id" class="hidden" aria-hidden="true">
-                        <div class="workspace-helper-text">This becomes the organization path and API slug after the base URL.</div>
                     </div>
 
                     <div class="workspace-step-panel hidden" data-step="2">
@@ -2166,7 +2251,6 @@ WHERE predicted_churn_risk = 'high'
                         </div>
                         <input type="text" id="onboarding-project-id" class="hidden" aria-hidden="true">
                         <textarea id="onboarding-project-description" class="hidden" aria-hidden="true"></textarea>
-                        <div class="workspace-helper-text">Create the first project inside this organization space.</div>
                     </div>
 
                     <input type="email" id="onboarding-invite-email" class="hidden" aria-hidden="true">
@@ -2194,7 +2278,6 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <input type="text" id="workspace-create-project-inline-id" class="hidden" aria-hidden="true">
                     <textarea id="workspace-create-project-inline-description" class="hidden" aria-hidden="true"></textarea>
-                    <div class="workspace-helper-text">Create another project inside the selected organization space.</div>
                     <div id="workspace-create-project-status" class="workspace-panel-status"></div>
                     <div class="workspace-modal-actions">
                         <button type="button" id="workspace-create-project-cancel-btn" class="workspace-cancel-action">Cancel</button>

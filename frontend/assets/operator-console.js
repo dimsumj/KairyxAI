@@ -938,8 +938,8 @@ export function initializeOperatorConsole() {
                     workspaceSelectionStatus,
                     statusMessage || (
                         projects.length
-                            ? 'Select an existing project to continue, or create a new one.'
-                            : 'Create the first project in this organization to continue.'
+                            ? 'Choose a project or add one.'
+                            : 'Add the first project.'
                     ),
                 );
                 return projects;
@@ -1659,6 +1659,18 @@ export function initializeOperatorConsole() {
                 );
             }
 
+            function setWorkspaceModalHeading(title = '', subtitle = '') {
+                const titleText = workspaceModalTitle?.querySelector('[data-workspace-title-text]');
+                if (titleText) {
+                    titleText.textContent = title;
+                } else if (workspaceModalTitle) {
+                    workspaceModalTitle.textContent = title;
+                }
+                if (workspaceModalSubtitle) {
+                    workspaceModalSubtitle.textContent = subtitle;
+                }
+            }
+
             function setWorkspaceSelectionStage(stage = 'org') {
                 let normalizedStage = stage === 'project' ? 'project' : 'org';
                 const pathTenantId = getOrganizationIdFromPathname();
@@ -1690,32 +1702,34 @@ export function initializeOperatorConsole() {
                 if (normalizedStage === 'org') {
                     const currentOrgInput = normalizeOrganizationUrl(workspaceOrgUrlInput?.value || '');
                     workspaceModalEyebrow.textContent = isStandaloneOrgPath ? 'Workspace Setup' : 'Workspace';
-                    workspaceModalTitle.textContent = isStandaloneOrgPath ? 'Open this organization' : 'Choose your organization';
-                    workspaceModalSubtitle.textContent = accessibleOrgCount > 1 && accessToken
-                        ? 'Choose one of your organizations below, or type another organization URL to open.'
+                    setWorkspaceModalHeading(
+                        isStandaloneOrgPath ? 'Open this organization' : 'Choose your organization',
+                        accessibleOrgCount > 1 && accessToken
+                            ? 'Choose an organization or enter a URL.'
                         : (
                             isStandaloneOrgPath
                                 ? (
                                     !accessToken && isGoogleLoginConfigured()
-                                        ? 'Continue with Google to open this organization path.'
-                                        : 'Confirm the organization URL to continue into this organization path.'
+                                        ? 'Continue with Google to open this organization.'
+                                        : 'Confirm the organization URL.'
                                 )
                                 : (
                                     !accessToken && isGoogleLoginConfigured()
-                                        ? 'Type the organization URL you want to open, then continue with Google.'
-                                        : 'Type the organization URL you want to open.'
+                                        ? 'Enter an organization URL.'
+                                        : 'Enter an organization URL.'
                                 )
-                        );
+                        ),
+                    );
                     workspaceSelectionResolveBtn.textContent = !accessToken && isGoogleLoginConfigured()
                         ? 'Continue with Google'
                         : 'Continue';
                     syncWorkspaceSelectionOrgInput(currentOrgInput || selectedTenantId || '');
                 } else {
                     workspaceModalEyebrow.textContent = 'Workspace';
-                    workspaceModalTitle.textContent = hasExistingProjects ? 'Choose your project' : 'Create your first project';
-                    workspaceModalSubtitle.textContent = hasExistingProjects
-                        ? 'Select an existing project to continue, or create a new one in this organization.'
-                        : 'This organization does not have a project yet. Create the first one to continue.';
+                    setWorkspaceModalHeading(
+                        hasExistingProjects ? 'Choose your project' : 'Create your first project',
+                        hasExistingProjects ? 'Choose a project or add one.' : 'Add the first project.',
+                    );
                 }
                 syncWorkspaceSelectedOrgContext();
                 refreshWorkspaceSelectionCopy();
@@ -1741,8 +1755,8 @@ export function initializeOperatorConsole() {
                 }
                 if (workspaceSelectionCopy) {
                     workspaceSelectionCopy.textContent = hasExistingProjects
-                        ? 'This organization already has projects. Use one below, or type a new project name to add another project.'
-                        : 'This organization does not have a project yet. Type a project name to create the first one.';
+                        ? 'Choose a project or add one.'
+                        : 'Add the first project.';
                 }
                 workspaceSelectionContinueBtn.disabled = !hasExistingProjects || !workspaceModalProjectSelect.value;
                 workspaceModalProjectSelect.disabled = !hasExistingProjects;
@@ -1776,29 +1790,27 @@ export function initializeOperatorConsole() {
                 if (mode === 'login') {
                     const invitePending = Boolean(readPendingInvite());
                     workspaceModalEyebrow.textContent = 'Google Login';
-                    workspaceModalTitle.textContent = invitePending ? 'Accept your invite with Google' : 'Continue with Google';
-                    workspaceModalSubtitle.textContent = invitePending
-                        ? 'Sign in with your Google account to redeem the invite and continue into the right organization.'
-                        : 'Sign in with your Google account before opening an existing organization or creating a new one.';
+                    setWorkspaceModalHeading(
+                        invitePending ? 'Accept your invite with Google' : 'Continue with Google',
+                        invitePending ? 'Sign in to accept the invite.' : 'Sign in to continue.',
+                    );
                     setWorkspaceOverlayPanel(workspaceLoginPanel);
                     refreshWorkspaceLoginStatus();
                     ensureVisibleGoogleIdentityButtons();
                 } else if (mode === 'onboarding') {
                     workspaceModalEyebrow.textContent = 'Workspace Setup';
                     if (onboardingStep === 1 && onboardingFromWorkspaceSelection) {
-                        workspaceModalTitle.textContent = 'Create this organization?';
-                        workspaceModalSubtitle.textContent = 'Confirm the organization URL below to create it, or go back to re-enter an existing organization.';
+                        setWorkspaceModalHeading('Create this organization?', 'Confirm this organization URL.');
                     } else {
-                        workspaceModalTitle.textContent = onboardingStep === 1 ? 'Enter your organization URL' : 'Create your first project';
-                        workspaceModalSubtitle.textContent = onboardingStep === 1
-                            ? 'Type the organization URL you want to use. The first project comes next.'
-                            : 'Enter the project name you want to create inside this organization space.';
+                        setWorkspaceModalHeading(
+                            onboardingStep === 1 ? 'Enter your organization URL' : 'Create your first project',
+                            onboardingStep === 1 ? 'Enter an organization URL.' : 'Enter the first project name.',
+                        );
                     }
                     setWorkspaceOverlayPanel(workspaceOnboardingPanel);
                 } else if (mode === 'create-project') {
                     workspaceModalEyebrow.textContent = 'Project';
-                    workspaceModalTitle.textContent = 'Create a new project';
-                    workspaceModalSubtitle.textContent = 'Create a new project inside the selected organization space.';
+                    setWorkspaceModalHeading('Create a new project', 'Add a project in this organization.');
                     setWorkspaceOverlayPanel(workspaceCreateProjectPanel);
                     syncWorkspaceSelectedOrgContext();
                 } else {
@@ -2067,7 +2079,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (projects.length === 0) {
-                    settingsProjectList.innerHTML = '<div class="list-empty">No projects exist in this organization yet.</div>';
+                    settingsProjectList.innerHTML = '<div class="list-empty">No projects.</div>';
                     setWorkspaceTextStatus(
                         settingsProjectsStatus,
                         canManage
@@ -3186,11 +3198,10 @@ export function initializeOperatorConsole() {
                 const providerConnectionCount = getProviderConnections().length;
                 const aiRuntimeCount = getPersistedAiModelProfiles().length;
                 const hasBigQuery = visibleConnectors.some((connector) => String(connector.type || '').toLowerCase() === 'bigquery');
-                const hasIngestionSource = visibleConnectors.some((connector) => ingestionConnectorTypes.has(String(connector.type || '').toLowerCase()));
                 const summaryText = message || (
                     configuredCount === 0 && providerConnectionCount === 0 && aiRuntimeCount === 0
-                        ? 'No connectors configured yet. Start with BigQuery, an ingestion source, or a campaign provider.'
-                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} configured${providerConnectionCount ? ` · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'}` : ''}${aiRuntimeCount ? ` · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'}` : ''}${hasBigQuery ? ', including BigQuery' : ''}${hasIngestionSource ? '.' : '. Add an ingestion source to start imports.'}`
+                        ? 'No connections yet.'
+                        : `${configuredCount} connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} provider${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} runtime${aiRuntimeCount === 1 ? '' : 's'}${hasBigQuery ? ' · BigQuery ready' : ''}`
                 );
                 if (operatorHubConnectorsSummary) {
                     operatorHubConnectorsSummary.textContent = summaryText;
@@ -3198,8 +3209,8 @@ export function initializeOperatorConsole() {
                 if (connectorsPageSummary && !message) {
                     const totalConfigured = configuredCount + providerConnectionCount + aiRuntimeCount;
                     connectorsPageSummary.textContent = totalConfigured === 0
-                        ? 'Connect your first source, campaign provider, or Ask AI runtime to unlock imports, predictions, exports, lifecycle messaging, and model-backed assistant flows.'
-                        : `${configuredCount} source connector${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} campaign provider connection${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} Ask AI runtime${aiRuntimeCount === 1 ? '' : 's'} configured.`;
+                        ? 'No connections yet.'
+                        : `${configuredCount} source${configuredCount === 1 ? '' : 's'} · ${providerConnectionCount} provider${providerConnectionCount === 1 ? '' : 's'} · ${aiRuntimeCount} runtime${aiRuntimeCount === 1 ? '' : 's'}`;
                 }
             }
 
@@ -3754,7 +3765,7 @@ export function initializeOperatorConsole() {
                     syncWorkspaceSelectionOrgInput(readGatewayOrganizationHint() || '');
                     setWorkspaceTextStatus(
                         workspaceSelectionStatus,
-                        'Choose one of your organizations below, or type an organization URL to open.',
+                        'Choose an organization or enter a URL.',
                     );
                     return;
                 }
@@ -4970,7 +4981,7 @@ export function initializeOperatorConsole() {
                 syncWorkspaceSelectionOrgInput('');
                 syncBrowserOrganizationPath('');
                 openWorkspaceOverlay('selection', { allowClose: true, selectionStage: 'org' });
-                setWorkspaceTextStatus(workspaceSelectionStatus, 'Choose one of your organizations below, or type an organization URL to open.');
+                setWorkspaceTextStatus(workspaceSelectionStatus, 'Choose an organization or enter a URL.');
             });
             workspaceCreateProjectBtn.addEventListener('click', openCreateProjectOverlay);
             orgSpaceSelect.addEventListener('change', async () => {
@@ -6819,7 +6830,6 @@ export function initializeOperatorConsole() {
                                 <input type="password" id="ai-model-profile-gemini-api-key-input" placeholder="AIza...">
                             </div>
                         </div>
-                        <p class="subtle">Gemini profiles run through the backend. API keys are encrypted before storage and are never returned in plaintext after save.</p>
                     `;
                 } else {
                     const presetLabel = aiRuntimePresetLabels[runtimePreset] || 'Custom OpenAI-compatible';
@@ -6849,7 +6859,6 @@ export function initializeOperatorConsole() {
                             <label for="ai-model-profile-openai-base-url-input">Base URL</label>
                             <input type="text" id="ai-model-profile-openai-base-url-input" value="${escapeHtml(defaultBaseUrl)}" placeholder="https://api.openai.com/v1">
                         </div>
-                        <p class="subtle">Use an OpenAI-compatible endpoint. Base URLs with or without a trailing <code>/v1</code> both work. The configured endpoint must be reachable from the backend runtime. Local presets such as LM Studio and Ollama are intended for self-hosted or local deployments, and they usually leave the API key blank because the local server ignores bearer auth by default.</p>
                     `;
                 }
             }
@@ -9134,7 +9143,7 @@ export function initializeOperatorConsole() {
                             clearInterval(countdownInterval);
                             countdownInterval = null;
                         }
-                        importListContainer.innerHTML = '<p>No data has been imported yet.</p>';
+                        importListContainer.innerHTML = '<div class="list-empty">No imports yet.</div>';
                         populateImportDetailSelect([]);
                         setInlineStatus(importListStatus, 'No imports found.');
                         return;
@@ -9151,9 +9160,9 @@ export function initializeOperatorConsole() {
                     populateImportDetailSelect(imports);
                     syncDataSandboxReprocessState(imports);
                     if (!priorSelectedImport && selectedImportJobId) {
-                        renderJsonOutput(importDetailOutput, null, 'Select a view to load import diagnostics on demand.');
-                        renderSimpleTable(importManifestsList, [], [], 'Manifest detail loads on demand.');
-                        setInlineStatus(importDetailStatus, 'Import diagnostics now load on demand to keep page startup fast.');
+                        renderJsonOutput(importDetailOutput, null, '');
+                        renderSimpleTable(importManifestsList, [], [], '');
+                        setInlineStatus(importDetailStatus, '');
                     }
                     syncImportListPolling(imports);
                     setInlineStatus(
@@ -10540,7 +10549,7 @@ export function initializeOperatorConsole() {
                     dataSandboxPreviewResult.textContent = JSON.stringify(preview || {}, null, 2);
                     setDataSandboxMappingStatus(`Preview generated for ${connectorName}.`);
                 } catch (error) {
-                    dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
+                    dataSandboxPreviewResult.textContent = '';
                     setDataSandboxMappingStatus(error.message || 'Failed to preview field mapping.', true);
                 }
             }
@@ -10601,7 +10610,7 @@ export function initializeOperatorConsole() {
 
             dataSandboxMappingConnectorSelect.addEventListener('change', async () => {
                 renderDataSandboxCoverage(null);
-                dataSandboxPreviewResult.textContent = 'Preview result will appear here.';
+                dataSandboxPreviewResult.textContent = '';
                 syncDataSandboxMappingActions();
                 await loadDataSandboxFieldMapping(true);
             });
@@ -11455,7 +11464,6 @@ export function initializeOperatorConsole() {
                                 <input type="text" id="provider-connection-braze-rest-endpoint-input" placeholder="https://rest.iad-01.braze.com">
                             </div>
                         </div>
-                        <p class="subtle">Kairyx triggers existing Braze API campaigns in this account. Canvases and dashboard-only campaigns are out of scope for this flow.</p>
                     `;
                 } else if (isPushProviderType(providerType)) {
                     providerConnectionConfigFields.innerHTML = `
@@ -11479,7 +11487,6 @@ export function initializeOperatorConsole() {
                                 <input type="password" id="provider-connection-wynn-callback-signing-secret-input" placeholder="Optional future callback secret">
                             </div>
                         </div>
-                        <p class="subtle">Use this connection when Kairyx should route live push delivery through your selected provider instead of using the simulator.</p>
                     `;
                 } else {
                     providerConnectionConfigFields.innerHTML = `
@@ -11503,7 +11510,6 @@ export function initializeOperatorConsole() {
                                 <input type="text" id="provider-connection-sendgrid-base-url-input" placeholder="https://api.sendgrid.com">
                             </div>
                         </div>
-                        <p class="subtle">Kairyx browses dynamic transactional templates from this SendGrid account and sends templated campaigns through the SendGrid Web API.</p>
                     `;
                 }
                 syncProviderConnectionFormState();
@@ -11711,18 +11717,18 @@ export function initializeOperatorConsole() {
                 if (normalizedProvider === 'braze') {
                     return {
                         detail: (provider?.config || {}).rest_endpoint || '-',
-                        hint: 'API-triggered campaigns',
+                        hint: '',
                     };
                 }
                 if (isPushProviderType(normalizedProvider)) {
                     return {
                         detail: (provider?.config || {}).base_url || '-',
-                        hint: 'Workflow push delivery',
+                        hint: '',
                     };
                 }
                 return {
                     detail: (provider?.config || {}).from_email || '-',
-                    hint: (provider?.config || {}).from_name || '',
+                    hint: '',
                 };
             }
 
@@ -11736,7 +11742,7 @@ export function initializeOperatorConsole() {
                             label: 'Configuration',
                             render: (item) => {
                                 const summary = formatProviderConnectionSummary(item);
-                                return `<span>${escapeHtml(summary.detail)}</span><div class="subtle">${escapeHtml(summary.hint || '')}</div>`;
+                                return `<span>${escapeHtml(summary.detail)}</span>`;
                             },
                         },
                         { label: 'API Key', render: (item) => `<span class="pill">${Boolean((item.config || {}).api_key_configured || (item.config || {}).api_token_configured) ? 'Stored' : 'Missing'}</span>` },
@@ -11753,7 +11759,7 @@ export function initializeOperatorConsole() {
                         },
                     ],
                     items,
-                    'No provider connections yet.',
+                    'No connections yet.',
                 );
                 providerConnectionList.querySelectorAll('[data-provider-connection-action]').forEach((button) => {
                     button.addEventListener('click', async () => {
@@ -12079,17 +12085,17 @@ export function initializeOperatorConsole() {
                 selectedEmailCampaignId = emailCampaignId || null;
                 if (!selectedEmailCampaignId) {
                     syncEmailCampaignBuilderState(null);
-                    renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                    renderJsonOutput(emailCampaignDetailOutput, null, '');
                     return;
                 }
                 const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(selectedEmailCampaignId)}`);
-                renderJsonOutput(emailCampaignDetailOutput, campaign, 'Selected email campaign details will appear here.');
+                renderJsonOutput(emailCampaignDetailOutput, campaign, '');
                 syncEmailCampaignBuilderState(campaign);
                 if (selectedWorkflowStudioResourceType === 'email_campaign' && selectedWorkflowStudioResourceId === selectedEmailCampaignId) {
                     if (workflowStudioSelectedLabel) {
                         workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
                     }
-                    renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                    renderJsonOutput(workflowStudioDetailOutput, campaign, '');
                     renderWorkflowStudioDetailActions('email_campaign', campaign);
                 }
                 const providerType = String(
@@ -12171,7 +12177,7 @@ export function initializeOperatorConsole() {
                 emailCampaignDeeplinkTemplateInput.value = '';
                 emailCampaignMergeFieldsInput.value = getDefaultEmailCampaignMergeFieldsText();
                 emailCampaignScheduleAtInput.value = '';
-                renderJsonOutput(emailCampaignDetailOutput, null, 'Selected email campaign details will appear here.');
+                renderJsonOutput(emailCampaignDetailOutput, null, '');
                 setInlineStatus(emailCampaignStatus, 'Creating a new draft.');
                 syncEmailCampaignBuilderState(null);
             }
@@ -12493,16 +12499,16 @@ export function initializeOperatorConsole() {
                 };
             }
 
-            function resetAudienceBuilderPreview(message = 'Preview the cohort to inspect member count, sample members, and source contribution.') {
+            function resetAudienceBuilderPreview(message = 'No preview yet.') {
                 audienceBuilderPreview = null;
                 if (audienceBuilderPreviewSummary) {
                     audienceBuilderPreviewSummary.innerHTML = `<div class="list-empty">${escapeHtml(message)}</div>`;
                 }
                 if (audienceBuilderPreviewMembers) {
-                    audienceBuilderPreviewMembers.innerHTML = '<div class="list-empty">Preview members will appear here.</div>';
+                    audienceBuilderPreviewMembers.innerHTML = '<div class="list-empty">No members.</div>';
                 }
                 if (audienceBuilderPreviewBreakdown) {
-                    audienceBuilderPreviewBreakdown.innerHTML = '<div class="list-empty">Source contribution will appear here.</div>';
+                    audienceBuilderPreviewBreakdown.innerHTML = '<div class="list-empty">No breakdown.</div>';
                 }
             }
 
@@ -12537,10 +12543,10 @@ export function initializeOperatorConsole() {
                     : '';
                 const conditionsMarkup = conditions.length
                     ? conditions.map((item) => `<span class="pill">${escapeHtml(formatAudienceBuilderCondition(item))}</span>`).join('')
-                    : '<span class="subtle">No selector filters applied.</span>';
+                    : '<span class="subtle">None</span>';
                 const namesMarkup = proposedNames.length
                     ? proposedNames.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('')
-                    : '<span class="subtle">Preview names will appear here.</span>';
+                    : '<span class="subtle">None</span>';
                 audienceBuilderPreviewSummary.innerHTML = `
                     ${summaryCards.map((item) => `
                         <div class="builder-preview-stat">
@@ -12571,7 +12577,7 @@ export function initializeOperatorConsole() {
                         { label: 'Sources', render: (item) => escapeHtml((item.matched_sources || [item.source_name]).filter(Boolean).join(', ') || '-') },
                     ],
                     preview.preview_members || [],
-                    'No preview members matched the current builder state.',
+                    'No members.',
                 );
                 renderSimpleTable(
                     audienceBuilderPreviewBreakdown,
@@ -12583,18 +12589,18 @@ export function initializeOperatorConsole() {
                         { label: 'Completed', render: (item) => escapeHtml(formatDateTime(item.completed_at)) },
                     ],
                     preview.source_breakdown || [],
-                    'No per-source breakdown for this builder state.',
+                    'No breakdown.',
                 );
             }
 
             function renderAudienceBuilderSourceSummary() {
                 if (!audienceBuilderSourceSummary) return;
                 if (!audienceBuilderOptions) {
-                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Load the workspace to inspect prediction sources.</div>';
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">No sources.</div>';
                     return;
                 }
                 if (getAudienceBuilderBasis() !== 'prediction') {
-                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Prediction source selection is only used for prediction-led cohorts.</div>';
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">Not used here.</div>';
                     return;
                 }
                 const predictionScope = getAudienceBuilderPredictionScope();
@@ -12609,14 +12615,10 @@ export function initializeOperatorConsole() {
                         ? (audienceBuilderOptions.prediction_jobs || []).slice(0, 4)
                         : (audienceBuilderOptions.prediction_sources || []).slice(0, 4));
                 if (!items.length) {
-                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">No completed prediction runs are available yet.</div>';
+                    audienceBuilderSourceSummary.innerHTML = '<div class="list-empty">No runs.</div>';
                     return;
                 }
-                const helperCopy = selectedItems.length
-                    ? `Selected ${selectedItems.length} ${predictionScope === 'prediction_job' ? 'prediction run(s)' : 'source(s)'} for the cohort.`
-                    : `Select one or more ${predictionScope === 'prediction_job' ? 'prediction runs' : 'sources'} to build the cohort.`;
                 audienceBuilderSourceSummary.innerHTML = `
-                    <div class="subtle">${escapeHtml(helperCopy)}</div>
                     ${items.map((item) => `
                         <div class="builder-source-card">
                             <div class="builder-source-head">
@@ -12659,14 +12661,14 @@ export function initializeOperatorConsole() {
                 if (!supportsFilters) {
                     audienceBuilderFilters.innerHTML = `<div class="list-empty">${escapeHtml(
                         basis === 'manual_list'
-                            ? 'Manual list cohorts use the member list directly and do not need selector filters.'
-                            : 'Advanced SQL cohorts are defined in the SQL editor below. Selector filters are not applied here.',
+                            ? 'Not used here.'
+                            : 'Not used here.',
                     )}</div>`;
                     return;
                 }
                 const availableFields = getAudienceBuilderAvailableFields(basis);
                 if (!audienceBuilderConditions.length) {
-                    audienceBuilderFilters.innerHTML = '<div class="list-empty">No selector filters yet. Add a filter to narrow the cohort, or preview the entire selected audience.</div>';
+                    audienceBuilderFilters.innerHTML = '<div class="list-empty">No filters.</div>';
                     return;
                 }
                 audienceBuilderConditions = audienceBuilderConditions
@@ -12712,13 +12714,6 @@ export function initializeOperatorConsole() {
                                     <button type="button" data-builder-remove>Remove</button>
                                 </div>
                             </div>
-                            <div class="subtle">${escapeHtml(
-                                Array.isArray(fieldMeta.options) && fieldMeta.options.length
-                                    ? `Suggested values: ${fieldMeta.options.join(', ')}`
-                                    : fieldMeta.value_type === 'number'
-                                        ? 'Numeric operators support thresholds and ranges.'
-                                        : 'Use contains for substring matches or comma-separated values for IN filters.',
-                            )}</div>
                         </div>
                     `;
                 }).join('');
@@ -12734,14 +12729,14 @@ export function initializeOperatorConsole() {
                         audienceBuilderConditions = audienceBuilderConditions.map((condition) => (
                             condition.id === conditionId ? createAudienceBuilderCondition(fieldMeta) : condition
                         ));
-                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        resetAudienceBuilderPreview('Preview cleared.');
                         renderAudienceBuilderFilters();
                     });
                     operatorSelect?.addEventListener('change', () => {
                         audienceBuilderConditions = audienceBuilderConditions.map((condition) => (
                             condition.id === conditionId ? { ...condition, op: operatorSelect.value } : condition
                         ));
-                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        resetAudienceBuilderPreview('Preview cleared.');
                         renderAudienceBuilderFilters();
                     });
                     valueInput?.addEventListener('input', () => {
@@ -12750,11 +12745,11 @@ export function initializeOperatorConsole() {
                         ));
                     });
                     valueInput?.addEventListener('change', () => {
-                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        resetAudienceBuilderPreview('Preview cleared.');
                     });
                     removeButton?.addEventListener('click', () => {
                         audienceBuilderConditions = audienceBuilderConditions.filter((condition) => condition.id !== conditionId);
-                        resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                        resetAudienceBuilderPreview('Preview cleared.');
                         renderAudienceBuilderFilters();
                     });
                 });
@@ -13025,7 +13020,7 @@ export function initializeOperatorConsole() {
                     audienceBuilderPreview = preview;
                     renderAudienceBuilderPreview(preview);
                 } else {
-                    resetAudienceBuilderPreview('Builder preview cleared because the draft changed.');
+                    resetAudienceBuilderPreview('Preview cleared.');
                 }
             }
 
@@ -13037,7 +13032,7 @@ export function initializeOperatorConsole() {
                 }
                 try {
                     setInlineStatus(audienceBuilderAiStatus, create ? 'Drafting builder and creating cohorts...' : 'Drafting guided audience builder...');
-                    renderJsonOutput(audienceBuilderAiOutput, null, 'Waiting for AI-assisted builder output...');
+                    renderJsonOutput(audienceBuilderAiOutput, null, '');
                     await ensureCopilotAgentSession(false);
                     const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/messages`, {
                         method: 'POST',
@@ -13057,7 +13052,7 @@ export function initializeOperatorConsole() {
                     }
                     const builderState = builderArtifact.focus?.builder_state || {};
                     applyAudienceBuilderState(builderState, { preservePreview: true });
-                    renderJsonOutput(audienceBuilderAiOutput, builderState, 'AI-assisted builder output will appear here.');
+                    renderJsonOutput(audienceBuilderAiOutput, builderState, '');
                     setInlineStatus(
                         audienceBuilderAiStatus,
                         `Drafted builder with ${builderState.preview?.member_count || 0} matching member(s).`,
@@ -13067,7 +13062,7 @@ export function initializeOperatorConsole() {
                     }
                 } catch (error) {
                     setInlineStatus(audienceBuilderAiStatus, error.message || 'Failed to draft the audience builder.', true);
-                    renderJsonOutput(audienceBuilderAiOutput, { error: error.message || 'Failed to draft audience builder.' }, 'AI-assisted builder output will appear here.');
+                    renderJsonOutput(audienceBuilderAiOutput, { error: error.message || 'Failed to draft audience builder.' }, '');
                 }
             }
 
@@ -13110,7 +13105,7 @@ export function initializeOperatorConsole() {
                             </div>
                             <div class="builder-preview-stat" style="grid-column: 1 / -1;">
                                 <span>Filters</span>
-                                <div>${conditions.length ? conditions.map((item) => `<span class="pill">${escapeHtml(formatAudienceBuilderCondition(item))}</span>`).join('') : '<span class="subtle">No selector filters were saved.</span>'}</div>
+                                <div>${conditions.length ? conditions.map((item) => `<span class="pill">${escapeHtml(formatAudienceBuilderCondition(item))}</span>`).join('') : '<span class="subtle">None</span>'}</div>
                             </div>
                             <div class="builder-preview-stat" style="grid-column: 1 / -1;">
                                 <span>Tags</span>
@@ -13127,7 +13122,7 @@ export function initializeOperatorConsole() {
                                     <div class="subtle">${escapeHtml(item.prediction_job_id || '-')}</div>
                                     <div class="subtle">Completed ${escapeHtml(formatDateTime(item.completed_at))}</div>
                                 </div>
-                            `).join('') : '<div class="list-empty">No prediction provenance was recorded for this cohort.</div>'}
+                            `).join('') : '<div class="list-empty">No provenance.</div>'}
                         </div>
                         ${sourceBreakdown.length ? `
                             <div style="margin-top: 1rem;">
@@ -13195,8 +13190,8 @@ export function initializeOperatorConsole() {
                     audienceCohortDetail.innerHTML = renderAudienceCohortDetail(null);
                     audienceMembersList.innerHTML = '';
                     audienceVersionsList.innerHTML = '';
-                    renderJsonOutput(audienceMetricsOutput, null, 'Cohort metrics will appear here.');
-                    renderJsonOutput(audienceCompareOutput, null, 'Version comparison will appear here.');
+                    renderJsonOutput(audienceMetricsOutput, null, '');
+                    renderJsonOutput(audienceCompareOutput, null, '');
                     return;
                 }
                 const cohort = await apiRequest(`/cohorts/${encodeURIComponent(cohortId)}`);
@@ -13601,7 +13596,7 @@ export function initializeOperatorConsole() {
                     if (workflowStudioSelectedLabel) {
                         workflowStudioSelectedLabel.textContent = 'No item selected';
                     }
-                    renderJsonOutput(workflowStudioDetailOutput, null, 'Selected workflow or email campaign details will appear here.');
+                    renderJsonOutput(workflowStudioDetailOutput, null, '');
                     renderWorkflowStudioDetailActions(null, null);
                     await loadWorkflowDetail(null);
                     return;
@@ -13611,7 +13606,7 @@ export function initializeOperatorConsole() {
                     if (workflowStudioSelectedLabel) {
                         workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
                     }
-                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, '');
                     renderWorkflowStudioDetailActions('workflow', workflow);
                     await loadWorkflowDetail(resourceId);
                     return;
@@ -13620,7 +13615,7 @@ export function initializeOperatorConsole() {
                 if (workflowStudioSelectedLabel) {
                     workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
                 }
-                renderJsonOutput(workflowStudioDetailOutput, campaign, 'Selected workflow or email campaign details will appear here.');
+                renderJsonOutput(workflowStudioDetailOutput, campaign, '');
                 renderWorkflowStudioDetailActions('email_campaign', campaign);
                 await loadWorkflowDetail(null);
             }
@@ -13742,8 +13737,8 @@ export function initializeOperatorConsole() {
                 if (!workflowId) {
                     workflowExecutionsList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
                     workflowDeliveriesList.innerHTML = '<div class="list-empty">Select a workflow first.</div>';
-                    renderJsonOutput(workflowPolicyOutput, null, 'Policy counters will appear here.');
-                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, null, 'Workflow delivery diagnostics will appear here.');
+                    renderJsonOutput(workflowPolicyOutput, null, '');
+                    renderJsonOutput(workflowDeliveryDiagnosticsOutput, null, '');
                     return;
                 }
                 const [executionsPayload, deliveriesPayload, policyPayload, diagnosticsPayload] = await Promise.all([
@@ -13757,7 +13752,7 @@ export function initializeOperatorConsole() {
                     if (workflowStudioSelectedLabel) {
                         workflowStudioSelectedLabel.textContent = `${workflow.name || workflow.workflow_id} · ${String(workflow.status || 'draft').replace(/[_-]+/g, ' ')}`;
                     }
-                    renderJsonOutput(workflowStudioDetailOutput, workflow, 'Selected workflow or email campaign details will appear here.');
+                    renderJsonOutput(workflowStudioDetailOutput, workflow, '');
                     renderWorkflowStudioDetailActions('workflow', workflow);
                 }
                 renderSimpleTable(
@@ -14197,14 +14192,14 @@ export function initializeOperatorConsole() {
                     copilotAgentModelStatus,
                     activeProfile
                         ? `${activeProfile.provider || 'model'}${activeProfile.model_name ? ` · ${activeProfile.model_name}` : ''}`
-                        : 'Select a backend-managed agent model.',
+                        : 'Select a runtime.',
                 );
             }
 
             async function loadCopilotAgentModelProfiles() {
                 if (!copilotAgentModelSelect) return;
                 copilotAgentModelSelect.disabled = true;
-                setInlineStatus(copilotAgentModelStatus, 'Loading agent model profiles...');
+                setInlineStatus(copilotAgentModelStatus, 'Loading runtimes...');
                 try {
                     const items = await refreshAgentModelProfilesState();
                     renderCopilotAgentModelProfiles(items);
@@ -14504,7 +14499,7 @@ export function initializeOperatorConsole() {
                     rows.push(inlineCards);
                 }
                 if (!rows.length) {
-                    copilotAgentThread.innerHTML = '<div class="list-empty">The assistant conversation will appear here.</div>';
+                    copilotAgentThread.innerHTML = '<div class="list-empty">No conversation yet.</div>';
                     return;
                 }
                 copilotAgentThread.innerHTML = rows.join('');
@@ -14519,7 +14514,7 @@ export function initializeOperatorConsole() {
                     activateModule('audience-engine', 'audience-engine-build');
                     await loadAudienceEngine();
                     applyAudienceBuilderState(artifact.focus?.builder_state || {}, { preservePreview: true });
-                    renderJsonOutput(audienceBuilderAiOutput, artifact.focus?.builder_state || {}, 'AI-assisted builder output will appear here.');
+                    renderJsonOutput(audienceBuilderAiOutput, artifact.focus?.builder_state || {}, '');
                     setInlineStatus(
                         audienceBuilderAiStatus,
                         artifact.status_detail || `Drafted builder with ${artifact.focus?.member_count || 0} matching member(s).`,
@@ -14960,7 +14955,7 @@ export function initializeOperatorConsole() {
             });
             audienceBuilderAddConditionBtn?.addEventListener('click', () => {
                 audienceBuilderConditions = [...audienceBuilderConditions, createAudienceBuilderCondition()];
-                resetAudienceBuilderPreview('Builder preview cleared because the filter set changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
                 renderAudienceBuilderFilters();
             });
             audienceBuilderBasisSelect?.addEventListener('change', () => {
@@ -14970,48 +14965,48 @@ export function initializeOperatorConsole() {
                     audienceBuilderConditions = [];
                 }
                 syncAudienceBuilderVisibility();
-                resetAudienceBuilderPreview('Builder preview cleared because the audience basis changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderPredictionScopeSelect?.addEventListener('change', () => {
                 syncAudienceBuilderVisibility();
-                resetAudienceBuilderPreview('Builder preview cleared because the prediction selection mode changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderOutputModeSelect?.addEventListener('change', () => {
                 renderAudienceBuilderSourceSummary();
-                resetAudienceBuilderPreview('Builder preview cleared because the output mode changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderLogicSelect?.addEventListener('change', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the filter logic changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderSourceSelect?.addEventListener('change', () => {
                 renderAudienceBuilderSourceSummary();
-                resetAudienceBuilderPreview('Builder preview cleared because the selected sources changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderJobSelect?.addEventListener('change', () => {
                 renderAudienceBuilderSourceSummary();
-                resetAudienceBuilderPreview('Builder preview cleared because the selected prediction runs changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             audienceBuilderMembersInput?.addEventListener('input', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the manual member list changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('audience-name-input')?.addEventListener('input', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the cohort name changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('audience-refresh-mode-select')?.addEventListener('change', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the refresh mode changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('audience-owner-input')?.addEventListener('input', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the owner changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('audience-tags-input')?.addEventListener('input', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the tags changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('audience-description-input')?.addEventListener('input', () => {
-                resetAudienceBuilderPreview('Builder preview cleared because the description changed.');
+                resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('sql-workspace-textarea')?.addEventListener('input', () => {
                 if (getAudienceBuilderBasis() === 'advanced_sql') {
-                    resetAudienceBuilderPreview('Builder preview cleared because the SQL changed.');
+                    resetAudienceBuilderPreview('Preview cleared.');
                 }
             });
             actionHistoryRefreshBtn.addEventListener('click', loadActionHistory);

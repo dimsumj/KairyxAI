@@ -22,6 +22,13 @@ These instructions apply to the entire repository.
 - Keep critical warnings, validation errors, and live status messages inline only when the user must act on them immediately.
 - Use the `skills/ui-clean-minimal/SKILL.md` guidance for UI-heavy changes when you add or revise screens, forms, cards, or control groups.
 
+## Temp Artifact Cleanup
+
+- Remove safe untracked temp artifacts created during debugging, validation, or smoke runs before final handoff.
+- Never delete tracked files or ambiguous untracked files without explicit confirmation.
+- If temp artifacts remain after local validation or after creating the commit, clean them up before the final push or handoff summary.
+- Use the `skills/temp-artifact-cleanup/SKILL.md` guidance when local QA, previews, or one-off scripts create files such as `.audit.log.jsonl`, temporary screenshots, or debug traces.
+
 ## Main-Agent Workflow
 
 - For every repo-changing bug fix, feature implementation, refactor, or production code change, the main agent must use a main-agent -> sub-agent workflow. The main agent remains accountable for the final result and must not skip delegation.

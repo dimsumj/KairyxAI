@@ -9,6 +9,7 @@ It is written against the current backend-served React operator shell and covers
 - every primary module in the sidebar
 - every wired button and text box in the console
 - representative sample input and output for the main workflows
+- the current minimal UI pattern, where optional explanation is usually moved behind a nearby `?` tooltip and empty states stay intentionally short
 - current placeholder controls that exist in the UI but are not yet wired
 
 Unless otherwise stated, example payloads are representative. IDs, timestamps, counts, and exact status text will vary in real environments.
@@ -32,6 +33,8 @@ Current v1 resource and job responses include both `tenant_id` and `project_id`.
 | Sidebar module links | Navigation buttons | Hover or focus a module to expand its section list downward in the full sidebar. Click the module button to open that module's first section by default. Click the same already-open module again in the expanded sidebar to collapse its section list while keeping the current page active. In collapsed mode, hovering or focusing an icon opens that section list in a right-side popout, and clicking the icon routes to the first section then dismisses the popout. The `Settings` module is the exception: it opens directly into the Settings page without a sidebar submenu. | `Audience Engine` | The first section under that module becomes active and the matching page content loads, and a repeated click on that same open module collapses the inline section list. |
 | Sidebar section list | Inline submenu or collapsed popout | Click any section button in the expanded list under a module, or in the collapsed right-side popout, to jump directly to that section. In collapsed mode, the popout closes after the navigation fires. | `Versions & Comparison` | The matching section becomes active and its content scrolls into view. |
 | Workspace startup status | Status line | Read-only. Visible in the full-screen onboarding or workspace gate even when the sidebar is hidden. | `Application start completed (mock)` | Confirms that the application finished startup and the backend health check passed. |
+
+Across the console, the default presentation is now intentionally minimal: the main page flow favors headings, controls, badges, and live status, while optional explanation lives behind the nearest `?` helper instead of staying visible as a paragraph.
 
 ### 2.2 Recommended First-Time Path
 1. Use `Continue with Google`.
@@ -438,7 +441,7 @@ BigQuery table import behavior:
 ### 3.3 Connectors
 Use this page to register upstream ingestion sources, campaign-provider credentials, and the backend-managed runtimes that Ask AI uses. OpenAI-compatible runtime URLs are called by the backend, so the saved endpoint must be reachable from the backend runtime. `LM Studio` and `Ollama` localhost presets are intended for self-hosted or local deployments.
 
-The Connectors page now keeps the main cards visually minimal. Section-specific explanation moved behind small `?` help triggers beside the card titles, and empty states are intentionally short.
+This page follows the console-wide minimal UI pattern. Section-specific explanation moved behind small `?` help triggers beside the card titles and labels, and the always-visible helper paragraphs were removed.
 
 #### AI Agents & Models
 
@@ -1563,6 +1566,8 @@ saved_query_name: april_high_risk_query
 
 ## 8) Settings
 The `Settings` module is now a tabbed page. The left sidebar opens `Settings` directly, and the in-page tab strip controls the visible placeholder or live settings surface.
+
+Settings now follows the same minimal pattern as the rest of the console: cards keep the main action path visible, while optional explanation for organization, projects, teams, notifications, and billing lives behind the nearby `?` helpers.
 
 ### 8.1 Settings Tab Strip
 
