@@ -276,7 +276,7 @@ The import source form and imported-data list now wait for a resolved organizati
 
 Import failure help tooltips now render above nearby controls so the failure reason stays readable even when the imported-data table sits above other cards and form fields.
 
-When BigQuery append failures are caused by nested property type drift during event processing, Kairyx now retries the manifest after coercing values that still match the existing BigQuery type and nulling only the incompatible value. The import continues instead of failing the whole job on that schema mismatch alone.
+When BigQuery append failures are caused by nested property type drift during event processing, Kairyx now aligns incoming nested values to the live BigQuery table schema before load, then retries with per-field coercion or `null` only for the incompatible property value. If one manifest still hits an unrecoverable schema-load 400, only that manifest checkpoint is marked failed and the rest of the import can continue.
 
 #### Controls
 
@@ -358,6 +358,7 @@ When BigQuery append failures are caused by nested property type drift during ev
 - Active import rows now expose a status `?` tooltip with the current step, such as connecting to the source, staging events, processing manifests, or reading rows from a BigQuery table.
 - Completed imports clear old failure and timeout metadata when a rerun succeeds, so `Ready to Use` rows no longer keep stale timeout tooltips after refresh.
 - In mock-mode deployed environments, clicking `Import Data` starts the run in the background so the browser does not sit on a long import request until completion.
+- Checkpoint summaries now treat `failed` manifests separately from `pending`, so a schema-load failure no longer leaves the same checkpoint counted in both buckets.
 - Right after backend restart, a transient control-plane busy response may appear; retry the detail load if prompted.
 
 #### BigQuery table import browser flow
@@ -434,7 +435,7 @@ BigQuery table import behavior:
 - `resource_kind="churn_list"` requires `canonical_user_id` and can materialize a list cohort directly.
 - `score_timestamp` or `as_of_timestamp` only becomes required when `start_date` and `end_date` are supplied.
 - Duplicate rows are suppressed by `canonical_user_id`; later rows win and duplicate counts are recorded in the import detail.
-- For event-processing imports that append into the warehouse event tables, nested-property schema drift now retries once with per-field coercion. Values that cannot match the existing BigQuery type are stored as `null` for that property and the row gets a schema-tolerance quality flag instead of failing the full import.
+- For event-processing imports that append into the warehouse event tables, nested-property schema drift now aligns rows to the current BigQuery schema before load and still retries with per-field coercion when needed. Values that cannot match the existing BigQuery type are stored as `null` for that property, the row gets a schema-tolerance quality flag, and only the affected manifest is failed if a schema-load 400 still cannot be recovered.
 - Completed prediction imports create a linked external prediction job and native prediction results.
 - Completed churn-list imports can create and activate a linked list cohort.
 

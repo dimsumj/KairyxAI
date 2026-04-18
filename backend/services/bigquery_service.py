@@ -593,20 +593,31 @@ class BigQueryService:
                 autodetect=True,
                 ignore_unknown_values=True,
             )
+            load_rows, prealigned_summary = self._align_rows_to_existing_gcp_schema(rows, table_id)
             try:
-                load_job = self._client.load_table_from_json(rows, table_id, job_config=job_config)
+                load_job = self._client.load_table_from_json(load_rows, table_id, job_config=job_config)
                 load_job.result()
             except Exception as exc:
-                tolerated_rows, tolerance_summary = self._build_schema_tolerant_retry_rows(rows, exc)
-                if not tolerated_rows:
-                    raise
-                retry_job = self._client.load_table_from_json(tolerated_rows, table_id, job_config=job_config)
-                retry_job.result()
-                logger.warning(
-                    "Applied BigQuery schema-drift tolerance for table %s. adjustments=%s",
-                    table_id,
-                    tolerance_summary,
-                )
+                current_rows = load_rows
+                adjustment_summary = list(prealigned_summary)
+                for _ in range(3):
+                    tolerated_rows, tolerance_summary = self._build_schema_tolerant_retry_rows(current_rows, exc)
+                    if not tolerated_rows:
+                        raise
+                    adjustment_summary.extend(tolerance_summary)
+                    current_rows = tolerated_rows
+                    try:
+                        retry_job = self._client.load_table_from_json(current_rows, table_id, job_config=job_config)
+                        retry_job.result()
+                        logger.warning(
+                            "Applied BigQuery schema-drift tolerance for table %s. adjustments=%s",
+                            table_id,
+                            adjustment_summary,
+                        )
+                        return
+                    except Exception as retry_exc:
+                        exc = retry_exc
+                raise
             return
 
         try:
@@ -639,9 +650,46 @@ class BigQueryService:
         return changes
 
     @staticmethod
+    def _value_matches_bigquery_type(value: Any, expected_type: str) -> bool:
+        normalized_type = str(expected_type or "").strip().upper()
+        if value in (None, ""):
+            return True
+        if normalized_type in {"FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"}:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if normalized_type in {"INTEGER", "INT64"}:
+            return _is_int_like_scalar(value)
+        if normalized_type in {"BOOLEAN", "BOOL"}:
+            return isinstance(value, bool)
+        if normalized_type == "STRING":
+            return isinstance(value, str)
+        if normalized_type in {"TIMESTAMP", "DATETIME"}:
+            if isinstance(value, datetime):
+                return True
+            try:
+                datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                return True
+            except ValueError:
+                return False
+        if normalized_type == "DATE":
+            try:
+                datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+                return True
+            except ValueError:
+                return False
+        if normalized_type == "TIME":
+            try:
+                datetime.fromisoformat(str(value).replace("Z", "+00:00")).time()
+                return True
+            except ValueError:
+                return False
+        return False
+
+    @staticmethod
     def _coerce_schema_drift_value(value: Any, expected_type: str) -> tuple[Any, str | None]:
         normalized_type = str(expected_type or "").strip().upper()
         if value in (None, ""):
+            return value, None
+        if BigQueryService._value_matches_bigquery_type(value, normalized_type):
             return value, None
         if normalized_type in {"FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"}:
             try:
@@ -755,6 +803,81 @@ class BigQueryService:
         if not applied_changes:
             return None, []
         return tolerated_rows, applied_changes
+
+    @classmethod
+    def _flatten_gcp_schema_scalar_paths(
+        cls,
+        fields: List[Any],
+        *,
+        prefix: str = "",
+    ) -> List[Dict[str, str]]:
+        scalar_paths: List[Dict[str, str]] = []
+        for field in fields or []:
+            field_name = _sanitize_storage_field_name(getattr(field, "name", ""))
+            if not field_name:
+                continue
+            field_type = str(getattr(field, "field_type", "") or "").strip().upper()
+            field_path = f"{prefix}.{field_name}" if prefix else field_name
+            nested_fields = list(getattr(field, "fields", None) or [])
+            if field_type in {"RECORD", "STRUCT"} and nested_fields:
+                scalar_paths.extend(cls._flatten_gcp_schema_scalar_paths(nested_fields, prefix=field_path))
+                continue
+            if field_type:
+                scalar_paths.append({"field_path": field_path, "expected_type": field_type})
+        return scalar_paths
+
+    def _align_rows_to_existing_gcp_schema(
+        self,
+        rows: List[Dict[str, Any]],
+        table_id: str,
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        if not rows:
+            return rows, []
+        get_table = getattr(getattr(self, "_client", None), "get_table", None)
+        if not callable(get_table):
+            return rows, []
+        try:
+            table = get_table(table_id)
+        except Exception as exc:
+            if self._is_missing_gcp_resource_error(exc):
+                return rows, []
+            raise
+        scalar_paths = self._flatten_gcp_schema_scalar_paths(list(getattr(table, "schema", None) or []))
+        if not scalar_paths:
+            return rows, []
+        aligned_rows = copy.deepcopy(rows)
+        applied_changes: List[Dict[str, Any]] = []
+        for scalar_path in scalar_paths:
+            adjusted_rows = 0
+            dropped_rows = 0
+            for row in aligned_rows:
+                action = self._apply_schema_tolerance_to_row(
+                    row,
+                    scalar_path["field_path"],
+                    scalar_path["expected_type"],
+                )
+                if action == "coerced":
+                    adjusted_rows += 1
+                elif action == "dropped":
+                    dropped_rows += 1
+            if adjusted_rows or dropped_rows:
+                applied_changes.append(
+                    {
+                        "field_path": scalar_path["field_path"],
+                        "expected_type": scalar_path["expected_type"],
+                        "incoming_type": "prealigned",
+                        "coerced_rows": adjusted_rows,
+                        "dropped_rows": dropped_rows,
+                    }
+                )
+        return aligned_rows, applied_changes
+
+    @staticmethod
+    def is_tolerable_schema_load_error(exc: Exception) -> bool:
+        message = str(exc or "").lower()
+        if "provided schema does not match table" in message and "has changed type" in message:
+            return True
+        return "400" in message and "provided schema does not match table" in message
 
     def _append_rows_unlocked(self, rows: List[Dict[str, Any]], target: str = "events_staging"):
         prepared_events = []

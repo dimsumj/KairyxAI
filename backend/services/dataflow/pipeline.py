@@ -151,6 +151,20 @@ class DataflowNormalizationRunner:
         self.bigquery_service.write_pipeline_dead_letters(result["dead_letters"], job_id=manifest["job_id"])
         return result["stats"]
 
+    @staticmethod
+    def _notification_from_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "job_id": manifest["job_id"],
+            "source": manifest["source"],
+            "gcs_path": manifest["gcs_uri"],
+            "event_count": manifest["event_count"],
+            "start_date": manifest["start_date"],
+            "end_date": manifest["end_date"],
+            "shard_index": manifest["shard_index"],
+            "source_config_id": manifest["source_config_id"],
+            "schema_version": manifest["schema_version"],
+        }
+
     def process_manifests(
         self,
         manifest_payloads: Iterable[Dict[str, Any]],
@@ -159,21 +173,50 @@ class DataflowNormalizationRunner:
         manifests = list(manifest_payloads)
         summary = {
             "manifests_processed": 0,
+            "manifests_failed": 0,
             "raw_normalized_events": 0,
             "events_staging_written": 0,
             "pipeline_dead_letters_written": 0,
             "flag_counts": {},
             "warehouse_stats": {},
+            "processed_notifications": [],
+            "failed_notifications": [],
+            "manifest_errors": [],
         }
         total_manifests = len(manifests)
         for payload in manifests:
-            stats = self.process_manifest(payload)
-            summary["manifests_processed"] += 1
-            summary["raw_normalized_events"] += stats["raw_normalized_events"]
-            summary["events_staging_written"] += stats["events_staging_written"]
-            summary["pipeline_dead_letters_written"] += stats["pipeline_dead_letters_written"]
-            for flag, count in stats["flag_counts"].items():
-                summary["flag_counts"][flag] = summary["flag_counts"].get(flag, 0) + count
+            manifest = _coerce_manifest(payload)
+            notification = self._notification_from_manifest(manifest)
+            try:
+                stats = self.process_manifest(manifest)
+            except Exception as exc:
+                classifier = getattr(self.bigquery_service, "is_tolerable_schema_load_error", None)
+                is_tolerable = classifier(exc) if callable(classifier) else BigQueryService.is_tolerable_schema_load_error(exc)
+                if not is_tolerable:
+                    raise
+                summary["manifests_failed"] += 1
+                summary["failed_notifications"].append({"notification": notification, "error": str(exc)})
+                summary["manifest_errors"].append(
+                    {
+                        "shard_index": manifest["shard_index"],
+                        "gcs_uri": manifest["gcs_uri"],
+                        "error": str(exc),
+                    }
+                )
+                logger.warning(
+                    "Skipping manifest after tolerable BigQuery schema-load failure. shard_index=%s gcs_uri=%s error=%s",
+                    manifest["shard_index"],
+                    manifest["gcs_uri"],
+                    exc,
+                )
+            else:
+                summary["manifests_processed"] += 1
+                summary["processed_notifications"].append(notification)
+                summary["raw_normalized_events"] += stats["raw_normalized_events"]
+                summary["events_staging_written"] += stats["events_staging_written"]
+                summary["pipeline_dead_letters_written"] += stats["pipeline_dead_letters_written"]
+                for flag, count in stats["flag_counts"].items():
+                    summary["flag_counts"][flag] = summary["flag_counts"].get(flag, 0) + count
             if callable(progress_callback):
                 progress_callback(summary["manifests_processed"], total_manifests, dict(summary))
         if summary["manifests_processed"] > 0:

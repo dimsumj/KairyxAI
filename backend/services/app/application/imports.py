@@ -547,6 +547,8 @@ class ImportService:
                         "dead_letters_written": int(summary.get("pipeline_dead_letters_written", 0) or 0),
                         "processed_manifests": int(processed_manifests),
                         "total_manifests": int(total_manifests),
+                        "failed_manifests": int(summary.get("manifests_failed", 0) or 0),
+                        "manifest_errors": list(summary.get("manifest_errors") or []),
                         "checkpoint_state": self._summarize_checkpoints(job_id),
                     },
                 ),
@@ -582,7 +584,7 @@ class ImportService:
             "published": published,
             "staged": staged,
             "failed": failed,
-            "pending": max(0, len(items) - processed),
+            "pending": max(0, len(items) - processed - failed),
             "last_cursor": last_cursor,
             "counts": counts,
         }
@@ -712,6 +714,58 @@ class ImportService:
                 payload=resource_payload,
             )
 
+    def _mark_notification_failures(
+        self,
+        job_id: str,
+        source_name: str,
+        failed_notifications: List[Dict[str, Any]],
+    ) -> None:
+        failed_at = datetime.utcnow().isoformat()
+        for failed_notification in failed_notifications:
+            notification = dict(failed_notification.get("notification") or {})
+            failure_reason = str(failed_notification.get("error") or "Manifest processing failed")
+            shard_index = int(notification.get("shard_index") or 0)
+            self.repository.upsert_checkpoint(
+                {
+                    "job_id": job_id,
+                    "shard_index": shard_index,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "cursor": str(notification.get("shard_index") or ""),
+                    "gcs_uri": notification.get("gcs_path"),
+                    "message_id": notification.get("message_id"),
+                    "manifest": notification,
+                    "event_count": int(notification.get("event_count") or 0),
+                    "failure_reason": failure_reason,
+                    "failed_at": failed_at,
+                }
+            )
+            resource_id = f"{job_id}:{shard_index}"
+            existing = self.repository.get_resource("import_manifest", resource_id)
+            resource_payload = dict((existing or {}).get("payload") or {})
+            resource_payload.update(
+                {
+                    "manifest_id": resource_id,
+                    "job_id": job_id,
+                    "source_name": source_name,
+                    "status": CheckpointStatus.FAILED.value,
+                    "gcs_uri": notification.get("gcs_path"),
+                    "message_id": notification.get("message_id"),
+                    "shard_index": shard_index,
+                    "event_count": int(notification.get("event_count") or 0),
+                    "manifest": notification,
+                    "failure_reason": failure_reason,
+                    "failed_at": failed_at,
+                }
+            )
+            self.repository.upsert_resource(
+                "import_manifest",
+                resource_id,
+                status=CheckpointStatus.FAILED.value,
+                name=job_id,
+                payload=resource_payload,
+            )
+
     def _failure_stage(self, job: Dict[str, Any] | None) -> str:
         details = ((job or {}).get("progress") or {}).get("details") or {}
         phase = str(details.get("phase") or "").strip().lower()
@@ -743,7 +797,28 @@ class ImportService:
                     summary,
                 ),
             )
-        self._mark_checkpoint_status(job_id, connector_record["name"], notifications, status=CheckpointStatus.PROCESSED.value)
+        processed_notifications = (
+            list(processing_stats.get("processed_notifications") or [])
+            if "processed_notifications" in processing_stats
+            else list(notifications)
+        )
+        failed_notifications = (
+            list(processing_stats.get("failed_notifications") or [])
+            if "failed_notifications" in processing_stats
+            else []
+        )
+        if failed_notifications:
+            self._mark_notification_failures(job_id, connector_record["name"], failed_notifications)
+        if processed_notifications:
+            self._mark_checkpoint_status(
+                job_id,
+                connector_record["name"],
+                processed_notifications,
+                status=CheckpointStatus.PROCESSED.value,
+            )
+        if failed_notifications and not processed_notifications:
+            first_failure = str(failed_notifications[0].get("error") or "All manifests failed during processing.")
+            raise RuntimeError(first_failure)
         mapping_coverage = self._mapping_coverage(connector_record["name"], job_id=job_id)
         identity_summary = self._identity_summary(job_id)
         quality_report = self._build_quality_report(

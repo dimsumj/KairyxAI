@@ -309,3 +309,67 @@ def test_write_events_staging_retries_schema_drift_by_coercing_or_dropping_field
     assert retry_rows[1]["event_properties"]["bingo_dropped_numbers"] is None
     assert "schema_type_coerced:event_properties.bingo_dropped_numbers" in retry_rows[0]["data_quality_flags"]
     assert "schema_type_dropped:event_properties.bingo_dropped_numbers" in retry_rows[1]["data_quality_flags"]
+
+
+def test_write_events_staging_aligns_rows_to_existing_bigquery_schema_before_first_load():
+    captured_calls: list[list[dict[str, object]]] = []
+
+    class FakeLoadJob:
+        def result(self):
+            return None
+
+    def field(name, field_type, fields=None):
+        return SimpleNamespace(name=name, field_type=field_type, fields=fields or [])
+
+    class FakeClient:
+        def get_table(self, table_id):
+            return SimpleNamespace(
+                schema=[
+                    field(
+                        "event_properties",
+                        "RECORD",
+                        fields=[field("bingo_dropped_numbers", "FLOAT")],
+                    )
+                ]
+            )
+
+        def load_table_from_json(self, rows, table_id, job_config=None):
+            captured_calls.append(rows)
+            return FakeLoadJob()
+
+    service = BigQueryService.__new__(BigQueryService)
+    service.mode = "bigquery"
+    service._lock = threading.Lock()
+    service._table_id = "demo.scope.events_staging"
+    service._bigquery = SimpleNamespace(
+        LoadJobConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+        SourceFormat=SimpleNamespace(NEWLINE_DELIMITED_JSON="NEWLINE_DELIMITED_JSON"),
+        WriteDisposition=SimpleNamespace(WRITE_APPEND="WRITE_APPEND"),
+        CreateDisposition=SimpleNamespace(CREATE_IF_NEEDED="CREATE_IF_NEEDED"),
+    )
+    service._client = FakeClient()
+
+    service.write_events_staging(
+        [
+            {
+                "event_type": "spin_completed",
+                "event_properties": {
+                    "bingo_dropped_numbers": "17.5",
+                },
+            },
+            {
+                "event_type": "spin_completed",
+                "event_properties": {
+                    "bingo_dropped_numbers": "07,11,19",
+                },
+            },
+        ],
+        job_id="job-1",
+    )
+
+    assert len(captured_calls) == 1
+    load_rows = captured_calls[0]
+    assert load_rows[0]["event_properties"]["bingo_dropped_numbers"] == 17.5
+    assert load_rows[1]["event_properties"]["bingo_dropped_numbers"] is None
+    assert "schema_type_coerced:event_properties.bingo_dropped_numbers" in load_rows[0]["data_quality_flags"]
+    assert "schema_type_dropped:event_properties.bingo_dropped_numbers" in load_rows[1]["data_quality_flags"]

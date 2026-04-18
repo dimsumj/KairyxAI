@@ -2778,6 +2778,159 @@ def test_import_processing_failure_marks_failed_checkpoints(client, monkeypatch)
     assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "failed"]
 
 
+def test_import_processing_schema_load_failure_only_fails_affected_checkpoint(client, monkeypatch):
+    connector_resp = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Amplitude 1",
+            "type": "amplitude",
+            "config": {"api_key": "mock-key", "secret_key": "mock-secret"},
+        },
+    )
+    assert connector_resp.status_code == 201
+
+    create_import = client.post(
+        "/api/v1/imports",
+        json={
+            "source_name": "Amplitude 1",
+            "start_date": "20260201",
+            "end_date": "20260206",
+        },
+    )
+    assert create_import.status_code == 201
+    import_job = create_import.json()
+
+    first_manifest = {
+        "job_id": import_job["id"],
+        "source": "amplitude",
+        "gcs_uri": "gs://mock/raw/part-00001.jsonl",
+        "gcs_path": "gs://mock/raw/part-00001.jsonl",
+        "event_count": 1000,
+        "schema_version": "v1",
+        "shard_index": 1,
+        "source_config_id": "Amplitude 1",
+    }
+    second_manifest = {
+        "job_id": import_job["id"],
+        "source": "amplitude",
+        "gcs_uri": "gs://mock/raw/part-00002.jsonl",
+        "gcs_path": "gs://mock/raw/part-00002.jsonl",
+        "event_count": 1000,
+        "schema_version": "v1",
+        "shard_index": 2,
+        "source_config_id": "Amplitude 1",
+    }
+
+    def fake_fetch_and_stage_events(
+        self,
+        start_date,
+        end_date,
+        job_id=None,
+        page_size=None,
+        should_stop=None,
+        progress_callback=None,
+        page_fetch_wrapper=None,
+    ):
+        if callable(progress_callback):
+            progress_callback(1000, 1, {})
+            progress_callback(2000, 2, {})
+        return {
+            "job_id": job_id,
+            "source": self.connector_type,
+            "shards_created": 2,
+            "events_staged": 2000,
+            "last_checkpoint": {"gcs_uri": "gs://mock/raw/part-00002.jsonl", "event_count": 1000},
+            "shard_manifests": [first_manifest, second_manifest],
+            "stopped": False,
+        }
+
+    def fake_process_notifications(self, notifications, progress_callback=None):
+        if callable(progress_callback):
+            progress_callback(
+                1,
+                2,
+                {
+                    "manifests_processed": 1,
+                    "manifests_failed": 1,
+                    "raw_normalized_events": 1000,
+                    "events_staging_written": 750,
+                    "pipeline_dead_letters_written": 250,
+                    "flag_counts": {},
+                    "warehouse_stats": {},
+                    "processed_notifications": [second_manifest],
+                    "failed_notifications": [
+                        {
+                            "notification": first_manifest,
+                            "error": (
+                                "400 Provided Schema does not match Table demo.scope.processed_events. "
+                                "Field event_properties.bingo_dropped_numbers has changed type from FLOAT to STRING"
+                            ),
+                        }
+                    ],
+                    "manifest_errors": [
+                        {
+                            "shard_index": 1,
+                            "gcs_uri": first_manifest["gcs_path"],
+                            "error": (
+                                "400 Provided Schema does not match Table demo.scope.processed_events. "
+                                "Field event_properties.bingo_dropped_numbers has changed type from FLOAT to STRING"
+                            ),
+                        }
+                    ],
+                },
+            )
+        return {
+            "manifests_processed": 1,
+            "manifests_failed": 1,
+            "raw_normalized_events": 1000,
+            "events_staging_written": 750,
+            "pipeline_dead_letters_written": 250,
+            "flag_counts": {},
+            "warehouse_stats": {},
+            "processed_notifications": [second_manifest],
+            "failed_notifications": [
+                {
+                    "notification": first_manifest,
+                    "error": (
+                        "400 Provided Schema does not match Table demo.scope.processed_events. "
+                        "Field event_properties.bingo_dropped_numbers has changed type from FLOAT to STRING"
+                    ),
+                }
+            ],
+            "manifest_errors": [
+                {
+                    "shard_index": 1,
+                    "gcs_uri": first_manifest["gcs_path"],
+                    "error": (
+                        "400 Provided Schema does not match Table demo.scope.processed_events. "
+                        "Field event_properties.bingo_dropped_numbers has changed type from FLOAT to STRING"
+                    ),
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "app.application.imports.IngestionService.fetch_and_stage_events",
+        fake_fetch_and_stage_events,
+    )
+    monkeypatch.setattr(
+        "app.application.imports.DataflowNormalizationRunner.process_notifications",
+        fake_process_notifications,
+    )
+
+    run_import = client.post(import_job["links"]["self"] + "/run")
+    assert run_import.status_code == 200
+    payload = run_import.json()
+    assert payload["progress"]["details"]["processing"]["manifests_failed"] == 1
+    assert payload["progress"]["details"]["checkpoint_state"]["processed"] == 1
+    assert payload["progress"]["details"]["checkpoint_state"]["failed"] == 1
+    assert payload["progress"]["details"]["checkpoint_state"]["pending"] == 0
+
+    checkpoints = client.get(import_job["links"]["checkpoints"])
+    assert checkpoints.status_code == 200
+    assert [item["status"] for item in checkpoints.json()["items"]] == ["failed", "processed"]
+
+
 def test_delete_failed_import_skips_warehouse_cleanup_without_processed_rows(client, monkeypatch):
     connector_resp = client.post(
         "/api/v1/connectors",
