@@ -1283,10 +1283,89 @@ WHERE predicted_churn_risk = 'high'
                         <span>Push Notifications</span>
                         <span class="inline-help">
                             <button type="button" class="inline-help-button" aria-label="Show push workflow help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">Build reusable push workflows with scheduling, guardrails, and optional live-provider routing. Leave Provider Connection blank to keep simulator delivery.</span>
+                            <span class="inline-help-source" aria-hidden="true">Send an immediate one-time push to a single user, or build reusable push workflows with scheduling, guardrails, and optional live-provider routing. Leave Provider Connection blank to keep simulator delivery.</span>
                         </span>
                     </h2>
                     <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
+                </div>
+                <div class="card split-card" style="margin-bottom: 1rem;">
+                    <div class="module-section-header">
+                        <h3 class="section-title-with-help" style="margin: 0;">
+                            <span>Send One-Time Push</span>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show one-time push help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Use this form for an immediate single-user push send. It does not create a scheduled workflow, does not ask for cadence or limits, and sends only once to the entered user id.</span>
+                            </span>
+                        </h3>
+                        <span class="pill">Immediate</span>
+                    </div>
+                    <div class="grid-3">
+                        <div class="form-group">
+                            <label for="push-dispatch-name-input">Name (optional)</label>
+                            <input type="text" id="push-dispatch-name-input" placeholder="vip_reactivation">
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-user-id-input">User ID</label>
+                            <input type="text" id="push-dispatch-user-id-input" placeholder="player_123">
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-provider-connection-select">Provider Connection</label>
+                            <select id="push-dispatch-provider-connection-select">
+                                <option value="">Simulator only (no provider connection)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="push-dispatch-campaign-name-input">Campaign Name (optional)</label>
+                            <input type="text" id="push-dispatch-campaign-name-input" placeholder="vip_reactivation_push">
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-title-input">Title</label>
+                            <input type="text" id="push-dispatch-title-input" placeholder="We miss you">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="push-dispatch-body-input">Body</label>
+                        <textarea id="push-dispatch-body-input" style="min-height: 8rem;" placeholder="A reward is waiting for you."></textarea>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="push-dispatch-deep-link-input">Deep Link (optional)</label>
+                            <input type="text" id="push-dispatch-deep-link-input" placeholder="app://promotions/vip">
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-deep-link-token-input">Deep Link Token (optional)</label>
+                            <input type="text" id="push-dispatch-deep-link-token-input" placeholder="campaign-default-token">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="push-dispatch-data-input">Push Data JSON</label>
+                        <textarea id="push-dispatch-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                    </div>
+                    <details>
+                        <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
+                        <div class="form-group" style="margin-top: 0.75rem;">
+                            <label for="push-dispatch-provider-options-input">Provider Options JSON</label>
+                            <textarea id="push-dispatch-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                        </div>
+                    </details>
+                    <div class="inline-actions">
+                        <button id="push-dispatch-send-now-btn" type="button">Send Now</button>
+                        <button id="push-dispatch-clear-btn" type="button">Clear</button>
+                        <span id="push-dispatch-status" class="subtle"></span>
+                    </div>
+                    <pre id="push-dispatch-output" class="json-output">No one-time push sent yet.</pre>
+                </div>
+                <div class="module-section-header" style="margin-bottom: 1rem;">
+                    <h3 class="section-title-with-help" style="margin: 0;">
+                        <span>Reusable Push Workflow</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show reusable push workflow help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Use the workflow builder when you need scheduled, reusable, cohort-based push automation with cadence, policy, and experiment settings.</span>
+                        </span>
+                    </h3>
+                    <span class="pill">Scheduled / Guardrailed</span>
                 </div>
                 <div class="grid-3">
                     <div class="form-group">

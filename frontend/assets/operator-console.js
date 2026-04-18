@@ -10713,6 +10713,20 @@ export function initializeOperatorConsole() {
             const workflowPushDataInput = document.getElementById('workflow-push-data-input');
             const workflowPushProviderOptionsInput = document.getElementById('workflow-push-provider-options-input');
             const workflowClearSelectionBtn = document.getElementById('workflow-clear-selection-btn');
+            const pushDispatchStatus = document.getElementById('push-dispatch-status');
+            const pushDispatchOutput = document.getElementById('push-dispatch-output');
+            const pushDispatchNameInput = document.getElementById('push-dispatch-name-input');
+            const pushDispatchUserIdInput = document.getElementById('push-dispatch-user-id-input');
+            const pushDispatchProviderConnectionSelect = document.getElementById('push-dispatch-provider-connection-select');
+            const pushDispatchCampaignNameInput = document.getElementById('push-dispatch-campaign-name-input');
+            const pushDispatchTitleInput = document.getElementById('push-dispatch-title-input');
+            const pushDispatchBodyInput = document.getElementById('push-dispatch-body-input');
+            const pushDispatchDeepLinkInput = document.getElementById('push-dispatch-deep-link-input');
+            const pushDispatchDeepLinkTokenInput = document.getElementById('push-dispatch-deep-link-token-input');
+            const pushDispatchDataInput = document.getElementById('push-dispatch-data-input');
+            const pushDispatchProviderOptionsInput = document.getElementById('push-dispatch-provider-options-input');
+            const pushDispatchSendNowBtn = document.getElementById('push-dispatch-send-now-btn');
+            const pushDispatchClearBtn = document.getElementById('push-dispatch-clear-btn');
             const workflowStudioList = document.getElementById('workflow-studio-list');
             const workflowStudioStatus = document.getElementById('workflow-studio-status');
             const workflowStudioSelectedLabel = document.getElementById('workflow-studio-selected-label');
@@ -10943,28 +10957,72 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function populateWorkflowPushProviderSelect({ preferredValue = '' } = {}) {
-                if (!workflowPushProviderConnectionSelect) {
+            function populatePushProviderSelect(selectElement, { preferredValue = '' } = {}) {
+                if (!selectElement) {
                     return;
                 }
-                const previousValue = String(preferredValue || workflowPushProviderConnectionSelect.value || '').trim();
+                const previousValue = String(preferredValue || selectElement.value || '').trim();
                 const providers = getPushWorkflowProviderConnections();
-                workflowPushProviderConnectionSelect.innerHTML = '';
+                selectElement.innerHTML = '';
                 const placeholder = document.createElement('option');
                 placeholder.value = '';
                 placeholder.textContent = 'Simulator only (no provider connection)';
-                workflowPushProviderConnectionSelect.appendChild(placeholder);
+                selectElement.appendChild(placeholder);
                 providers.forEach((provider) => {
                     const option = document.createElement('option');
                     option.value = provider.provider_connection_id;
                     option.textContent = `${provider.name} (${(provider.config || {}).base_url || 'configured'})`;
-                    workflowPushProviderConnectionSelect.appendChild(option);
+                    selectElement.appendChild(option);
                 });
                 if (previousValue && providers.some((item) => item.provider_connection_id === previousValue)) {
-                    workflowPushProviderConnectionSelect.value = previousValue;
-                } else {
-                    workflowPushProviderConnectionSelect.value = '';
+                    selectElement.value = previousValue;
+                    return;
                 }
+                selectElement.value = '';
+            }
+
+            function populateWorkflowPushProviderSelect({ preferredValue = '' } = {}) {
+                populatePushProviderSelect(workflowPushProviderConnectionSelect, { preferredValue });
+            }
+
+            function populatePushDispatchProviderSelect({ preferredValue = '' } = {}) {
+                populatePushProviderSelect(pushDispatchProviderConnectionSelect, { preferredValue });
+            }
+
+            function resetPushDispatchForm({ preserveProviderConnection = false } = {}) {
+                const preservedProviderConnectionId = preserveProviderConnection
+                    ? String(pushDispatchProviderConnectionSelect?.value || '').trim()
+                    : '';
+                if (pushDispatchNameInput) {
+                    pushDispatchNameInput.value = '';
+                }
+                if (pushDispatchUserIdInput) {
+                    pushDispatchUserIdInput.value = '';
+                }
+                populatePushDispatchProviderSelect({ preferredValue: preservedProviderConnectionId });
+                if (pushDispatchCampaignNameInput) {
+                    pushDispatchCampaignNameInput.value = '';
+                }
+                if (pushDispatchTitleInput) {
+                    pushDispatchTitleInput.value = '';
+                }
+                if (pushDispatchBodyInput) {
+                    pushDispatchBodyInput.value = '';
+                }
+                if (pushDispatchDeepLinkInput) {
+                    pushDispatchDeepLinkInput.value = '';
+                }
+                if (pushDispatchDeepLinkTokenInput) {
+                    pushDispatchDeepLinkTokenInput.value = '';
+                }
+                if (pushDispatchDataInput) {
+                    pushDispatchDataInput.value = '{}';
+                }
+                if (pushDispatchProviderOptionsInput) {
+                    pushDispatchProviderOptionsInput.value = '{}';
+                }
+                renderJsonOutput(pushDispatchOutput, null, 'No one-time push sent yet.');
+                setInlineStatus(pushDispatchStatus, 'Ready to send a one-time push.');
             }
 
             function syncWorkflowChannelFields() {
@@ -11043,6 +11101,48 @@ export function initializeOperatorConsole() {
                 syncWorkflowChannelFields();
                 syncWorkflowBuilderState(null);
                 setInlineStatus(workflowCreateStatus, 'Creating a new push workflow.');
+            }
+
+            function buildPushDispatchPayload() {
+                const userId = String(pushDispatchUserIdInput?.value || '').trim();
+                const body = String(pushDispatchBodyInput?.value || '').trim();
+                if (!userId) {
+                    throw new Error('User ID is required.');
+                }
+                if (!body) {
+                    throw new Error('Body is required.');
+                }
+                const payload = {
+                    user_id: userId,
+                    body,
+                    data: parseJsonText(pushDispatchDataInput?.value, {}),
+                    provider_options: parseJsonText(pushDispatchProviderOptionsInput?.value, {}),
+                };
+                const name = String(pushDispatchNameInput?.value || '').trim();
+                const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
+                const campaignName = String(pushDispatchCampaignNameInput?.value || '').trim();
+                const title = String(pushDispatchTitleInput?.value || '').trim();
+                const deepLink = String(pushDispatchDeepLinkInput?.value || '').trim();
+                const deepLinkToken = String(pushDispatchDeepLinkTokenInput?.value || '').trim();
+                if (name) {
+                    payload.name = name;
+                }
+                if (providerConnectionId) {
+                    payload.provider_connection_id = providerConnectionId;
+                }
+                if (campaignName) {
+                    payload.campaign_name = campaignName;
+                }
+                if (title) {
+                    payload.title = title;
+                }
+                if (deepLink) {
+                    payload.deep_link = deepLink;
+                }
+                if (deepLinkToken) {
+                    payload.deep_link_token = deepLinkToken;
+                }
+                return payload;
             }
 
             function loadWorkflowIntoBuilder(workflow) {
@@ -11787,6 +11887,10 @@ export function initializeOperatorConsole() {
                                 closeSidebar: true,
                                 scrollBehavior: 'smooth',
                             });
+                            populatePushDispatchProviderSelect({ preferredValue: providerConnectionId });
+                            if (pushDispatchProviderConnectionSelect) {
+                                pushDispatchProviderConnectionSelect.value = providerConnectionId;
+                            }
                             if (workflowChannelSelect) {
                                 workflowChannelSelect.value = 'push_notification';
                             }
@@ -11795,6 +11899,7 @@ export function initializeOperatorConsole() {
                                 workflowPushProviderConnectionSelect.value = providerConnectionId;
                             }
                             syncWorkflowChannelFields();
+                            setInlineStatus(pushDispatchStatus, `${provider.name} selected for one-time push delivery.`);
                             setInlineStatus(workflowCreateStatus, `${provider.name} selected for live push workflow delivery.`);
                             return;
                         }
@@ -11830,6 +11935,7 @@ export function initializeOperatorConsole() {
                         syncProviderConnectionFormState();
                     }
                     renderProviderConnectionList(providers);
+                    populatePushDispatchProviderSelect();
                     populateWorkflowPushProviderSelect();
                     populateEmailCampaignProviderSelect();
                     updateEmailCampaignSummary();
@@ -11838,6 +11944,7 @@ export function initializeOperatorConsole() {
                         cachedProviderConnections = [];
                         setProviderConnectionFormVisible(false);
                         renderProviderConnectionList([]);
+                        populatePushDispatchProviderSelect();
                         populateWorkflowPushProviderSelect();
                         setInlineStatus(providerConnectionStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         updateEmailCampaignSummary();
@@ -13781,6 +13888,30 @@ export function initializeOperatorConsole() {
                 renderJsonOutput(workflowDeliveryDiagnosticsOutput, diagnosticsPayload, 'No workflow delivery diagnostics recorded.');
             }
 
+            async function sendPushDispatchNow() {
+                try {
+                    const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
+                    setInlineStatus(
+                        pushDispatchStatus,
+                        providerConnectionId ? 'Sending one-time push...' : 'Running simulator one-time push...',
+                    );
+                    const response = await apiRequest('/push-dispatches/send-now', {
+                        method: 'POST',
+                        body: buildPushDispatchPayload(),
+                    });
+                    renderJsonOutput(pushDispatchOutput, response, 'No one-time push response.');
+                    setInlineStatus(
+                        pushDispatchStatus,
+                        response.simulated
+                            ? `Simulator send completed for ${response.user_id}.`
+                            : `One-time push sent for ${response.user_id}.`,
+                    );
+                } catch (error) {
+                    renderJsonOutput(pushDispatchOutput, { error: error.message }, 'Failed to send one-time push.');
+                    setInlineStatus(pushDispatchStatus, error.message || 'Failed to send one-time push.', true);
+                }
+            }
+
             async function createWorkflow() {
                 try {
                     const editingWorkflowId = selectedWorkflowBuilderId;
@@ -13935,9 +14066,13 @@ export function initializeOperatorConsole() {
                         refreshExportJobsState(),
                     ]);
                     populateWorkflowCohortSelect(cohorts || []);
+                    populatePushDispatchProviderSelect();
                     populateWorkflowPushProviderSelect();
                     syncWorkflowChannelFields();
                     populateExportJobSelect(cachedExportJobs);
+                    if (pushDispatchOutput && !String(pushDispatchOutput.textContent || '').trim()) {
+                        renderJsonOutput(pushDispatchOutput, null, 'No one-time push sent yet.');
+                    }
                     await loadEmailCampaignWorkspace({ preserveSelection: true, forceTemplateRefresh: false });
                     if (selectedWorkflowBuilderId) {
                         const selectedWorkflow = findWorkflow(selectedWorkflowBuilderId);
@@ -13977,11 +14112,14 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     if (isWorkspaceContextError(error)) {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        setInlineStatus(pushDispatchStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         cachedWorkflows = [];
                         populateWorkflowCohortSelect([]);
+                        populatePushDispatchProviderSelect();
                         populateWorkflowPushProviderSelect();
                         syncWorkflowChannelFields();
                         populateExportJobSelect([]);
+                        renderJsonOutput(pushDispatchOutput, null, 'Finish workspace setup to send a one-time push.');
                         await loadWorkflowDetail(null);
                         await loadEmailCampaignWorkspace({ preserveSelection: false, forceTemplateRefresh: false });
                         renderWorkflowStudioList();
@@ -15158,6 +15296,10 @@ export function initializeOperatorConsole() {
                 } catch (error) {
                     setInlineStatus(emailCampaignStatus, error.message || 'Failed to send email campaign.', true);
                 }
+            });
+            pushDispatchSendNowBtn?.addEventListener('click', sendPushDispatchNow);
+            pushDispatchClearBtn?.addEventListener('click', () => {
+                resetPushDispatchForm();
             });
             workflowChannelSelect?.addEventListener('change', syncWorkflowChannelFields);
             document.getElementById('workflow-create-btn').addEventListener('click', createWorkflow);

@@ -47,7 +47,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, draft or update a push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, send a one-time single-user push or draft a reusable push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -1034,7 +1034,57 @@ State rules:
 
 ### 5.2 Push Notifications
 
-Use this section to create or update provider-backed push workflows. The push builder reuses the existing workflow backend, keeps the simulator fallback when no provider connection is selected, and writes draft workflow versions that later move through `Workflow Studio`.
+Use this page for two different push paths:
+
+- `Send One-Time Push` for an immediate single-user send that should happen once right now
+- `Reusable Push Workflow` for scheduled, cohort-based, policy-driven push automation that later moves through `Workflow Studio`
+
+#### 5.2.1 Send One-Time Push
+
+Use this card when KairyxAI should send a push to one explicit Wynn player id immediately without asking for cohort, cadence, cooldown, budget, or workflow versioning.
+
+| Control | Type | How to use it | Sample input | Expected result |
+| --- | --- | --- | --- | --- |
+| `Name (optional)` | Text box | Optional operator label for the one-time send record. | `vip_reactivation` | The dispatch is stored with that name. |
+| `User ID` | Text box | Enter the Wynn `canonical_user_id` / `playerId` to target. | `player_123` | Kairyx sends only that user as the downstream `player_ids[0]`. |
+| `Provider Connection` | Select | Leave blank to simulate the push, or choose a Push Provider connection for live Wynn delivery. | `Push Provider Production` | Execution uses the selected provider connection. |
+| `Campaign Name (optional)` | Text box | Optional downstream campaign label. If blank, Kairyx defaults it from the dispatch name. | `vip_reactivation_push` | The outbound payload includes `campaign_name`. |
+| `Title` | Text box | Recommended for all sends and required for live Wynn delivery. | `We miss you` | The outbound payload includes `title`. |
+| `Body` | Text area | Required message body. | `A reward is waiting for you.` | The outbound payload includes `body`. |
+| `Deep Link (optional)` | Text box | Optional deep link metadata for the push request. | `app://promotions/vip` | The outbound payload includes `deep_link`. |
+| `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
+| `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"vip_pack"}` | The outbound payload includes `data`. |
+| `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for one-time sends. | None | The advanced JSON field becomes visible. |
+| `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
+| `Send Now` | Button | Sends the one-time push immediately. | None | The push dispatch runs once and the response renders below the form. |
+| `Clear` | Button | Clears the one-time push composer. | None | The form resets to an empty single-user send. |
+
+One-time push behavior:
+- This path does not create a workflow and does not require `Cohort`, `Trigger Type`, `Global Daily Limit`, `Cooldown Hours`, or other cadence/policy fields.
+- Leaving `Provider Connection` blank keeps the simulator path.
+- Choosing a Push Provider connection sends the request to Wynn PushNotifier immediately.
+- Live Wynn sends require both `Title` and `Body`.
+- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the send can start.
+
+#### Sample one-time push request
+```json
+{
+  "name": "vip_reactivation",
+  "user_id": "player_123",
+  "provider_connection_id": "pc_01hxyz...",
+  "campaign_name": "vip_reactivation_push",
+  "title": "We miss you",
+  "body": "A reward is waiting for you.",
+  "deep_link": "app://promotions/vip",
+  "deep_link_token": "vip-token",
+  "data": { "reward_id": "vip_pack" },
+  "provider_options": { "priority": "high" }
+}
+```
+
+#### 5.2.2 Reusable Push Workflow
+
+Use this builder when the push should stay cohort-driven, scheduled, reusable, and manageable through `Workflow Studio`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1066,14 +1116,14 @@ Use this section to create or update provider-backed push workflows. The push bu
 | `Create Push Workflow` / `Update Push Workflow` | Button | Creates a new draft workflow or updates the selected workflow back into a draft version. | None | The workflow is saved and becomes manageable in `Workflow Studio`. |
 | `Clear` | Button | Clears the selected workflow and resets the builder to a new draft. | None | The form is ready for a new push workflow. |
 
-Push builder behavior:
+Reusable push workflow behavior:
 - Leaving `Provider Connection` blank keeps the legacy simulator path for push workflows.
 - Selecting a Push Provider connection switches the workflow to live push delivery. Kairyx sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
 - Live push workflows require both `Title` and `Body`.
 - `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
 - Editing a published or paused workflow creates a new draft version on that same workflow record.
 
-#### Sample push workflow request
+#### Sample reusable push workflow request
 ```json
 {
   "name": "daily_churn_rescue_push",
@@ -1746,7 +1796,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
      }
      ```
    - Click `Create Cohort`.
-5. In `Action Orchestrator -> Push Notifications`, create a push workflow:
+5. In `Action Orchestrator -> Push Notifications`, create a reusable push workflow:
    - `Name`: `daily_churn_rescue_push`
    - `Cohort`: select the new cohort
    - `Experiment ID`: `churn_rescue_v1`
@@ -1757,6 +1807,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
    - `Title`: `Come back`
    - `Body`: `Rewards are waiting for you.`
    - Click `Create Push Workflow`.
+   - For an immediate single-user send instead, use `Send One-Time Push`, enter one `User ID`, choose a `Provider Connection`, fill `Title` and `Body`, then click `Send Now`.
 6. In `Action Orchestrator -> Workflow Studio`, find the new workflow and click `Publish`.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.

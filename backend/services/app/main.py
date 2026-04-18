@@ -30,6 +30,7 @@ from app.api.routers import (
     organization_members,
     predictions,
     projects,
+    push_dispatches,
     provider_connections,
     sql_workspace,
     templates,
@@ -365,6 +366,7 @@ def create_app() -> FastAPI:
     app.include_router(cohorts.router, prefix=settings.api_v1_prefix)
     app.include_router(sql_workspace.router, prefix=settings.api_v1_prefix)
     app.include_router(email_campaigns.router, prefix=settings.api_v1_prefix)
+    app.include_router(push_dispatches.router, prefix=settings.api_v1_prefix)
     app.include_router(workflows.workflow_router, prefix=settings.api_v1_prefix)
     app.include_router(workflows.orchestrator_router, prefix=settings.api_v1_prefix)
     app.include_router(activation.router, prefix=settings.api_v1_prefix)
