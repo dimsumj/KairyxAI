@@ -10981,11 +10981,12 @@ export function initializeOperatorConsole() {
                 }
             }
 
-            function populatePushProviderSelect(selectElement, { preferredValue = '' } = {}) {
+            function populatePushProviderSelect(selectElement, { preferredValue } = {}) {
                 if (!selectElement) {
                     return;
                 }
-                const previousValue = String(preferredValue || selectElement.value || '').trim();
+                const hasPreferredValue = preferredValue !== undefined;
+                const previousValue = String(hasPreferredValue ? preferredValue : (selectElement.value || '')).trim();
                 const providers = getPushWorkflowProviderConnections();
                 selectElement.innerHTML = '';
                 const placeholder = document.createElement('option');
@@ -14155,11 +14156,18 @@ export function initializeOperatorConsole() {
                         body: buildPushDispatchPayload(),
                     });
                     renderJsonOutput(pushDispatchOutput, response, 'No one-time push response.');
+                    const dispatchFailed = String(response.status || '').trim().toLowerCase() === 'failed';
+                    const dispatchStatusMessage = dispatchFailed
+                        ? `One-time push failed for ${response.user_id}: ${response.last_error || 'provider delivery failed'}.`
+                        : (
+                            response.simulated
+                                ? `Simulator send completed for ${response.user_id}.`
+                                : `One-time push sent for ${response.user_id}.`
+                        );
                     setInlineStatus(
                         pushDispatchStatus,
-                        response.simulated
-                            ? `Simulator send completed for ${response.user_id}.`
-                            : `One-time push sent for ${response.user_id}.`,
+                        dispatchStatusMessage,
+                        dispatchFailed,
                     );
                 } catch (error) {
                     renderJsonOutput(pushDispatchOutput, { error: error.message }, 'Failed to send one-time push.');
