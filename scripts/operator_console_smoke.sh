@@ -116,12 +116,31 @@ assert_audience_builder_ui() {
       throw new Error('Missing guided audience builder controls');
     }
 
-    await basisSelect.first().selectOption('advanced_sql');
+    await basisSelect.first().selectOption('managed_warehouse_sql');
     await page.waitForTimeout(250);
 
     const sqlOpen = await advancedSql.evaluate((element) => element.hasAttribute('open'));
     if (!sqlOpen) {
-      throw new Error('Advanced SQL section did not open when selecting advanced_sql basis');
+      throw new Error('Managed Warehouse SQL section did not open when selecting managed_warehouse_sql basis');
+    }
+
+    const savedQuerySelect = page.locator('#audience-builder-saved-query-select');
+    if (await savedQuerySelect.count() === 0) {
+      throw new Error('Missing saved query selector for managed warehouse audiences');
+    }
+
+    await basisSelect.first().selectOption('connector_bigquery_table');
+    await page.waitForTimeout(250);
+
+    const connectorSelect = page.locator('#audience-builder-connector-select');
+    const connectorTableSelect = page.locator('#audience-builder-connector-table-select');
+    const canonicalFieldInput = page.locator('#audience-builder-canonical-user-id-field-input');
+    if (
+      await connectorSelect.count() === 0
+      || await connectorTableSelect.count() === 0
+      || await canonicalFieldInput.count() === 0
+    ) {
+      throw new Error('Missing BigQuery connector cohort controls');
     }
 
     await basisSelect.first().selectOption('manual_list');
@@ -144,6 +163,8 @@ assert_audience_builder_ui() {
       previewLabel: await previewButton.textContent() || '',
       aiDraftLabel: await aiDraftButton.textContent() || '',
       sqlOpen,
+      savedQuerySelectorVisible: await savedQuerySelect.count(),
+      connectorSelectorVisible: await connectorSelect.count(),
       manualListDisplay,
     };
   }"

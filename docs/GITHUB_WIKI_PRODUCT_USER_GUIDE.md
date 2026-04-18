@@ -749,7 +749,7 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Name` | Text box | Unique cohort name. | `churn_rescue_high_risk` | Used as the cohort display name. |
-| `Audience Basis` | Select | Choose the cohort entry point: `Prediction results`, `Behavior / attributes`, `Manual list`, or `Advanced SQL`. | `Prediction results` | The builder switches to the matching controls and preview behavior. |
+| `Audience Basis` | Select | Choose the cohort entry point: `Prediction results`, `Behavior / attributes`, `Manual list`, `Managed warehouse query`, or `BigQuery connector table`. | `Prediction results` | The builder switches to the matching controls and preview behavior. |
 | `Refresh Mode` | Select | Choose `Daily` or `Manual`. | `Manual` | Controls automatic refresh behavior. |
 | `Owner` | Text box | Sets the cohort owner. | `frontend_operator` | Saved in cohort metadata. |
 | `Tags (comma separated)` | Text box | Free-form tags for organization. | `churn,rescue,high-risk` | Stored as tag array. |
@@ -759,6 +759,14 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | `Logic` | Select | Sets whether selector rows use `AND` or `OR`. | `All filters must match` | Preview filters use the chosen logic. |
 | `Prediction Sources` | Multi-select | Picks one or more prediction sources. The latest completed run per source is used automatically. | `Amplitude 1`, `Adjust Source` | Preview resolves the latest completed run for each selected source. |
 | `Prediction Runs` | Multi-select | Picks exact completed prediction runs when you do not want latest-by-source resolution. | `pred_20260417_1015` | Preview uses only those explicit runs. |
+| `Saved Query` | Select | Used only for `Managed warehouse query`. Loads a saved SQL workspace query into the builder while still freezing the current SQL editor text into the cohort definition at create time. | `High risk users` | Preview and create use the selected query provenance plus the current SQL text. |
+| `BigQuery Connector` | Select | Used only for `BigQuery connector table`. Chooses the tenant BigQuery connector that owns the dataset. | `Warehouse Scores` | Table discovery and preview use that connector. |
+| `Table / View` | Select | Used only for `BigQuery connector table`. Picks the connector-backed table or view to snapshot. | `retention_scores` | Preview and refresh read from that table or view. |
+| `Selected Columns (optional)` | Text box | Comma-separated column allowlist for connector-table snapshots. Leave blank to keep all returned fields. | `player_id,email_address,external_user_id,reward_code` | Preview and stored cohort members include only those columns plus mapped fields. |
+| `Safe Filter (optional)` | Text box | Adds a safe connector-side filter such as equality or `IN` logic. Write statements, comments, and semicolons are rejected. | `send_flag = 'yes'` | Preview and refresh read only matching connector rows. |
+| `Canonical User ID Field` | Text box | Required for `BigQuery connector table`. Maps the connector row key that should become `canonical_user_id`. | `player_id` | Preview and cohort activation stay eligible because each member has a canonical id. |
+| `Email Field (optional)` | Text box | Optional connector-table mapping for `email`. | `email_address` | Email campaigns can pick `email` directly from cohort members later. |
+| `External User ID Field (optional)` | Text box | Optional connector-table mapping for `external_user_id`. | `external_user_id` | Braze or other downstream tooling can reuse the mapped identifier directly from the cohort snapshot. |
 | `Add Filter` | Button | Adds a marketer-safe selector row. | None | A new field/operator/value row appears. |
 | Filter `Field` | Select | Chooses a curated prediction or behavior field such as churn risk, churn state, sessions, revenue, or source name. | `Predicted churn risk` | Operators available for the row adjust to the field type. |
 | Filter `Operator` | Select | Chooses the comparison operator for that field. | `in` | Value input is interpreted using the selected operator. |
@@ -777,6 +785,24 @@ This page currently contains a visible form but the `Save Limits` button is not 
 4. Add selector rows such as `Predicted churn risk in high,medium` or `Churn state != churned`.
 5. Click `Preview Cohort` to inspect member count, preview members, and source contribution.
 6. Click `Create Cohort` to save draft cohort assets. Combined mode creates one draft cohort; split mode creates one draft cohort per source or run.
+
+#### Managed warehouse reverse ETL flow
+1. Set `Audience Basis` to `Managed warehouse query`.
+2. Either select a `Saved Query` or type directly into the SQL workspace editor below.
+3. Click `Preview Cohort` to validate the frozen SQL, inspect sampled members, and review discovered field keys.
+4. Click `Create Cohort` to store a warehouse-backed cohort. The cohort definition saves both the frozen SQL and optional saved-query provenance so refreshes stay stable even if the saved query is edited later.
+
+#### BigQuery connector reverse ETL flow
+1. Set `Audience Basis` to `BigQuery connector table`.
+2. Choose a tenant `BigQuery Connector`, click `Refresh Tables` if needed, then choose the source `Table / View`.
+3. Optionally narrow the snapshot with `Selected Columns` and `Safe Filter`.
+4. Map `Canonical User ID Field`, then optionally map `Email Field` and `External User ID Field`.
+5. Click `Preview Cohort` to inspect sampled members and discovered keys, then `Create Cohort` to store the snapshot-backed cohort.
+
+#### Reverse ETL guardrails
+- Warehouse-backed cohorts stay snapshot-based. Email campaigns, workflows, experiments, and Copilot continue consuming the saved cohort resource instead of running warehouse queries live at send time.
+- `Managed warehouse query` and `BigQuery connector table` cohorts enforce a tenant snapshot-size cap. Preview, create, refresh, and activation fail closed if the cohort would exceed that cap.
+- Connector-table mode is intentionally limited to table/view reads plus a safe filter. Arbitrary connector SQL is not supported in this flow.
 
 #### Sample builder preview output
 ```json
@@ -807,10 +833,28 @@ This page currently contains a visible form but the `Save Limits` button is not 
 ]
 ```
 
-#### Sample advanced SQL input
+#### Sample managed warehouse SQL input
 ```json
 {
+  "audience_basis": "managed_warehouse_sql",
+  "saved_query_id": "sql_20260417_0900",
   "sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"
+}
+```
+
+#### Sample BigQuery connector audience input
+```json
+{
+  "audience_basis": "connector_bigquery_table",
+  "connector_id": "conn_20260417_0915",
+  "table_name": "retention_scores",
+  "selected_columns": ["player_id", "email_address", "external_user_id", "reward_code"],
+  "where_sql": "send_flag = 'yes'",
+  "column_mapping": {
+    "canonical_user_id": "player_id",
+    "email": "email_address",
+    "external_user_id": "external_user_id"
+  }
 }
 ```
 
@@ -825,10 +869,13 @@ This page currently contains a visible form but the `Save Limits` button is not 
   "member_count": 128,
   "definition": {
     "entrypoint": "guided_builder",
-    "audience_basis": "prediction",
+    "audience_basis": "managed_warehouse_sql",
+    "source_kind": "managed_warehouse_sql",
+    "saved_query_id": "sql_20260417_0900",
     "split_strategy": "combined",
     "dedupe_key": "canonical_user_id"
-  }
+  },
+  "source_label": "Managed Warehouse"
 }
 ```
 
@@ -843,9 +890,9 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | `SQL` | Text area | Enter the read-only warehouse query. | See sample below | Used for preview/save/cohort creation. |
 | `Preview` | Button | Runs a preview against the current SQL. | None | Preview JSON appears. |
 | `Save Query` | Button | Saves the query and metadata. | None | Query appears in the saved query list. |
-| `Query to Cohort` | Button | Converts the current SQL into a draft cohort. Use this as the advanced escape hatch when the guided builder is not expressive enough. | None | A new draft cohort is created from the SQL. |
+| `Query to Cohort` | Button | Converts the current SQL into a draft warehouse-backed cohort. Use this when the guided builder needs a manual SQL entry point. | None | A new draft cohort is created from the frozen SQL. |
 | Saved query `Preview` | Row button | Loads the saved SQL and previews it. | None | SQL text and preview output refresh. |
-| Saved query `To Cohort` | Row button | Creates a draft cohort from the saved query. | None | A draft cohort is created from that saved query id. |
+| Saved query `To Cohort` | Row button | Creates a draft warehouse-backed cohort from the saved query. | None | A draft cohort is created from that saved query id and stores both the saved-query reference and the frozen SQL text. |
 
 #### Sample SQL input
 ```sql
@@ -881,7 +928,7 @@ WHERE predicted_churn_risk = 'high'
 | `Load Members` | Button | Loads cohort member preview rows. | None | Member table appears. |
 | `Load Versions` | Button | Loads cohort version history. | None | Version table appears. |
 | `Load Metrics` | Button | Loads cohort metrics JSON. | None | Metrics JSON appears. |
-| Guided cohort detail cards | Read-only summary | Guided-builder cohorts now show audience basis, source kind, split strategy, selector pills, tags, and prediction provenance before the raw JSON. | None | Operators can understand how the cohort was built without opening raw definition JSON. |
+| Guided cohort detail cards | Read-only summary | Guided-builder cohorts now show audience basis, source kind, split strategy, selector pills, tags, prediction provenance, and warehouse source summaries before the raw JSON. | None | Operators can understand how the cohort was built without opening raw definition JSON. |
 | `Advanced Definition` | Disclosure | Expands the raw definition, metric summary, and activation-preflight JSON. | None | Full JSON remains available without being the primary detail surface. |
 | `Base Version` | Number box | Choose the base version for compare or rollback. | `1` | Used in compare and rollback actions. |
 | `Target Version` | Number box | Choose the compare target version. | `2` | Used in version comparison. |
@@ -926,7 +973,7 @@ Provider behavior:
 | `Refresh Assets` | Button | Reloads templates or Braze campaigns for the selected provider connection. | None | The asset select refreshes from the current provider account. |
 | `Audience Source` | Select | Switches the audience input between prediction jobs and saved cohorts. | `Cohort` | The builder shows the matching audience selector and payload shape. |
 | `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. The label now prefers the prediction audience label or resolved import name instead of the raw job id. | `High Risk Winback Import (completed)` | Campaign execution resolves recipients from that prediction job at send time. |
-| `Cohort Audience` | Select | Chooses a saved cohort whose latest members already contain identifiers such as `user_id`, `canonical_user_id`, or `email`. | `VIP Returners (active)` | Campaign execution resolves recipients from that cohort at send time. |
+| `Cohort Audience` | Select | Chooses a saved cohort whose latest members already contain identifiers such as `user_id`, `canonical_user_id`, or `email`. Warehouse-backed cohorts now show source badges such as `Managed Warehouse` or `BigQuery Connector` directly in the selector label. | `VIP Returners (active) · Managed Warehouse` | Campaign execution resolves recipients from that cohort at send time. |
 | `Risk Filters` | Text box | Prediction-only filter for risk values to keep. Leave it blank to send to all non-churned prediction rows. | blank | All non-churned prediction rows are eligible at send time. |
 | `Recipient Email Field` | Select | Visible when `Campaign Provider` is `SendGrid`. The options are sampled from JSON keys found in the selected audience rows. | `email` | Each SendGrid personalization uses that field as the `to` email. |
 | `Recipient External ID Field` | Select | Visible when `Campaign Provider` is `Braze`. The options are sampled from JSON keys found in the selected audience rows. | `braze_external_id` | Each Braze recipient uses that field as `external_user_id`. |

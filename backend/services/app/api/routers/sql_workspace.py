@@ -91,7 +91,16 @@ def create_cohort_from_saved_query(
         payload = cohort_service.create_cohort(
             name=request.name,
             cohort_type="sql",
-            definition={"sql": query["sql"]},
+            definition={
+                "entrypoint": "guided_builder",
+                "audience_basis": "managed_warehouse_sql",
+                "source_kind": "managed_warehouse_sql",
+                "split_strategy": "combined",
+                "dedupe_key": "canonical_user_id",
+                "saved_query_id": query["query_id"],
+                "saved_query_name": query["name"],
+                "sql": query["sql"],
+            },
             refresh_mode=request.refresh_mode,
             owner=request.owner,
             activate=request.activate,

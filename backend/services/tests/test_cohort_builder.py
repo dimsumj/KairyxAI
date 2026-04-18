@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 import pytest
 
 from app.core import db as db_module
 from app.core.db import session_scope
+from app.core.deps import get_settings_dependency
+from app.core.settings import get_settings
 from app.main import create_app
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
@@ -173,8 +177,46 @@ def _seed_builder_prediction_data() -> None:
     )
 
 
+def _create_bigquery_connector(client: TestClient, *, name: str, mock_tables: dict) -> dict:
+    response = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": name,
+            "type": "bigquery",
+            "config": {
+                "project_id": "tenant-warehouse",
+                "dataset_id": "growth_inputs",
+                "mock_tables": mock_tables,
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _replace_saved_query_sql(query_id: str, sql: str) -> None:
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        record = repository.get_resource("saved_query", query_id)
+        payload = dict((record or {}).get("payload") or {})
+        payload["sql"] = sql
+        repository.upsert_resource(
+            "saved_query",
+            query_id,
+            status="active",
+            name=payload.get("name"),
+            payload=payload,
+        )
+        session.commit()
+
+
 def test_cohort_builder_options_expose_prediction_sources_and_fields(client):
     _seed_builder_prediction_data()
+    _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={"retention_scores": [{"user_id": "u_1", "email": "u1@example.com"}]},
+    )
 
     response = client.get("/api/v1/cohorts/builder/options")
 
@@ -182,10 +224,14 @@ def test_cohort_builder_options_expose_prediction_sources_and_fields(client):
     payload = response.json()
     assert payload["defaults"]["audience_basis"] == "prediction"
     assert payload["defaults"]["prediction_scope"] == "source"
+    audience_bases = {item["id"] for item in payload["audience_bases"]}
+    assert {"managed_warehouse_sql", "connector_bigquery_table"} <= audience_bases
     source_names = {item["source_name"] for item in payload["prediction_sources"]}
     assert source_names == {"Amplitude 1", "Adjust Source"}
     field_names = {item["field"] for item in payload["filter_fields"]}
     assert {"predicted_churn_risk", "days_since_last_seen", "source_name"} <= field_names
+    connector_names = {item["name"] for item in payload["warehouse_connectors"]}
+    assert connector_names == {"Warehouse Scores"}
 
 
 def test_cohort_builder_preview_uses_latest_source_job_and_dedupes_users(client):
@@ -253,3 +299,217 @@ def test_cohort_builder_create_separate_creates_one_draft_per_source(client):
         assert item["status"] == "draft"
         assert item["definition"]["entrypoint"] == "guided_builder"
         assert len(item["definition"]["prediction_job_ids"]) == 1
+
+
+def test_cohort_builder_preview_and_create_managed_warehouse_sql(client):
+    response = client.post(
+        "/api/v1/cohorts/builder/preview",
+        json={
+            "name": "warehouse_reward_users",
+            "audience_basis": "managed_warehouse_sql",
+            "sql": """
+                SELECT 'u_1001' AS canonical_user_id, 'u1001@example.com' AS email, 'vip' AS tier
+                UNION ALL
+                SELECT 'u_1002' AS canonical_user_id, 'u1002@example.com' AS email, 'core' AS tier
+            """,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    assert preview["member_count"] == 2
+    assert preview["preview_members"][0]["canonical_user_id"] == "u_1001"
+    assert preview["request"]["audience_basis"] == "managed_warehouse_sql"
+
+    create_response = client.post(
+        "/api/v1/cohorts/builder/create",
+        json=preview["request"],
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    created = create_response.json()["items"][0]
+    assert created["member_count"] == 2
+    assert created["definition"]["source_kind"] == "managed_warehouse_sql"
+    assert created["definition"]["sql"].strip().lower().startswith("select")
+    assert created["source_label"] == "Managed Warehouse"
+
+
+def test_saved_query_to_cohort_freezes_sql_for_refresh(client):
+    created_query = client.post(
+        "/api/v1/sql-workspace/queries",
+        json={
+            "name": "Winback Query",
+            "description": "Original reverse ETL audience.",
+            "sql": "SELECT 'u_1' AS canonical_user_id, 'u1@example.com' AS email",
+        },
+    )
+    assert created_query.status_code == 201, created_query.text
+    query_id = created_query.json()["query_id"]
+
+    created_cohort = client.post(
+        f"/api/v1/sql-workspace/queries/{query_id}/cohort",
+        json={
+            "name": "warehouse_saved_query_cohort",
+            "refresh_mode": "manual",
+            "owner": "frontend_operator",
+            "activate": False,
+        },
+    )
+
+    assert created_cohort.status_code == 201, created_cohort.text
+    cohort = created_cohort.json()
+    assert cohort["member_count"] == 1
+    assert cohort["definition"]["saved_query_id"] == query_id
+    assert cohort["definition"]["source_kind"] == "managed_warehouse_sql"
+
+    _replace_saved_query_sql(query_id, "SELECT 'u_2' AS canonical_user_id, 'u2@example.com' AS email")
+
+    refreshed = client.post(f"/api/v1/cohorts/{cohort['cohort_id']}/refresh")
+
+    assert refreshed.status_code == 200, refreshed.text
+    refreshed_payload = refreshed.json()
+    assert refreshed_payload["member_count"] == 1
+    member_page = client.get(f"/api/v1/cohorts/{cohort['cohort_id']}/members?page=1&page_size=10")
+    assert member_page.status_code == 200, member_page.text
+    assert member_page.json()["items"][0]["canonical_user_id"] == "u_1"
+
+
+def test_cohort_builder_connector_bigquery_table_preview_create_and_refresh(client):
+    connector = _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={
+            "retention_scores": [
+                {"player_id": "u_1", "email_address": "u1@example.com", "tier": "vip", "send_flag": "yes"},
+                {"player_id": "u_2", "email_address": "u2@example.com", "tier": "core", "send_flag": "no"},
+            ]
+        },
+    )
+    connector_id = connector["connector_id"]
+
+    response = client.post(
+        "/api/v1/cohorts/builder/preview",
+        json={
+            "name": "connector_reward_users",
+            "audience_basis": "connector_bigquery_table",
+            "connector_id": connector_id,
+            "table_name": "retention_scores",
+            "selected_columns": ["player_id", "email_address", "tier", "send_flag"],
+            "where_sql": "send_flag = 'yes'",
+            "column_mapping": {
+                "canonical_user_id": "player_id",
+                "email": "email_address",
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    assert preview["member_count"] == 1
+    assert preview["preview_members"][0]["canonical_user_id"] == "u_1"
+    assert preview["preview_members"][0]["email"] == "u1@example.com"
+
+    create_response = client.post(
+        "/api/v1/cohorts/builder/create",
+        json=preview["request"],
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    created = create_response.json()["items"][0]
+    assert created["definition"]["source_kind"] == "connector_bigquery_table"
+    assert created["source_label"] == "BigQuery Connector"
+
+    updated_connector = client.post(
+        "/api/v1/connectors",
+        json={
+            "name": "Warehouse Scores",
+            "type": "bigquery",
+            "connector_id": connector_id,
+            "config": {
+                "project_id": "tenant-warehouse",
+                "dataset_id": "growth_inputs",
+                "mock_tables": {
+                    "retention_scores": [
+                        {"player_id": "u_1", "email_address": "u1@example.com", "tier": "vip", "send_flag": "yes"},
+                        {"player_id": "u_3", "email_address": "u3@example.com", "tier": "vip", "send_flag": "yes"},
+                    ]
+                },
+            },
+        },
+    )
+    assert updated_connector.status_code == 201, updated_connector.text
+
+    refreshed = client.post(f"/api/v1/cohorts/{created['cohort_id']}/refresh")
+
+    assert refreshed.status_code == 200, refreshed.text
+    member_page = client.get(f"/api/v1/cohorts/{created['cohort_id']}/members?page=1&page_size=10")
+    assert member_page.status_code == 200, member_page.text
+    member_ids = {item["canonical_user_id"] for item in member_page.json()["items"]}
+    assert member_ids == {"u_1", "u_3"}
+
+
+def test_cohort_builder_connector_bigquery_table_requires_canonical_user_id_mapping(client):
+    connector = _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={"retention_scores": [{"player_id": "u_1", "email_address": "u1@example.com"}]},
+    )
+
+    response = client.post(
+        "/api/v1/cohorts/builder/preview",
+        json={
+            "name": "invalid_connector_reward_users",
+            "audience_basis": "connector_bigquery_table",
+            "connector_id": connector["connector_id"],
+            "table_name": "retention_scores",
+            "selected_columns": ["player_id", "email_address"],
+            "column_mapping": {"email": "email_address"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "canonical_user_id" in response.json()["detail"]
+
+
+def test_cohort_builder_connector_bigquery_table_rejects_unsafe_where_sql(client):
+    connector = _create_bigquery_connector(
+        client,
+        name="Warehouse Scores",
+        mock_tables={"retention_scores": [{"player_id": "u_1", "email_address": "u1@example.com"}]},
+    )
+
+    response = client.post(
+        "/api/v1/cohorts/builder/preview",
+        json={
+            "name": "unsafe_connector_reward_users",
+            "audience_basis": "connector_bigquery_table",
+            "connector_id": connector["connector_id"],
+            "table_name": "retention_scores",
+            "column_mapping": {"canonical_user_id": "player_id"},
+            "where_sql": "send_flag = 'yes'; DROP TABLE retention_scores",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "where_sql" in response.json()["detail"].lower() or "unsafe" in response.json()["detail"].lower()
+
+
+def test_cohort_builder_reverse_etl_cap_blocks_oversized_preview(client):
+    settings = replace(get_settings(), max_reverse_etl_members_per_snapshot=1)
+    client.app.dependency_overrides[get_settings_dependency] = lambda: settings
+
+    response = client.post(
+        "/api/v1/cohorts/builder/preview",
+        json={
+            "name": "oversized_warehouse_reward_users",
+            "audience_basis": "managed_warehouse_sql",
+            "sql": """
+                SELECT 'u_1001' AS canonical_user_id, 'u1001@example.com' AS email
+                UNION ALL
+                SELECT 'u_1002' AS canonical_user_id, 'u1002@example.com' AS email
+            """,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "reverse etl" in response.json()["detail"].lower()

@@ -94,13 +94,7 @@ class ConnectorService:
         }
 
     def get_table_row_count(self, name: str, table_name: str) -> Dict[str, Any]:
-        connector_record = self.repository.get_connector(name)
-        if connector_record is None:
-            raise KeyError(name)
-        connector = create_connector(
-            connector_record["type"],
-            self._materialize_runtime_config(connector_record),
-        )
+        connector_record, connector = self._resolve_runtime_connector(name)
         if not hasattr(connector, "get_table_row_count"):
             raise ValueError(f"Connector '{name}' does not support row-count discovery.")
         payload = dict(connector.get_table_row_count(table_name))
@@ -114,6 +108,39 @@ class ConnectorService:
             "table_type": payload.get("table_type"),
             "row_count": int(payload.get("row_count") or 0),
         }
+
+    def fetch_table_rows_page(
+        self,
+        name: str,
+        table_name: str,
+        *,
+        cursor: str | None = None,
+        page_size: int | None = None,
+        selected_columns: List[str] | None = None,
+        where_sql: str | None = None,
+        timestamp_column: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Dict[str, Any]:
+        connector_record, connector = self._resolve_runtime_connector(name)
+        if not hasattr(connector, "fetch_table_rows_page"):
+            raise ValueError(f"Connector '{name}' does not support paged row fetches.")
+        payload = dict(
+            connector.fetch_table_rows_page(
+                table_name,
+                cursor=cursor,
+                page_size=page_size,
+                selected_columns=selected_columns,
+                where_sql=where_sql,
+                timestamp_column=timestamp_column,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        )
+        payload["connector_id"] = connector_record.get("connector_id")
+        payload["name"] = connector_record.get("name")
+        payload["type"] = connector_record.get("type")
+        return payload
 
     @staticmethod
     def _validate_connector_config(connector_type: str, config: Dict[str, Any]) -> None:
@@ -194,6 +221,16 @@ class ConnectorService:
         if str((connector_record or {}).get("type") or "").strip().lower() == "bigquery":
             return self._normalize_bigquery_runtime_config(connector_record, config)
         return config
+
+    def _resolve_runtime_connector(self, ref: str) -> tuple[Dict[str, Any], Any]:
+        connector_record = self.repository.get_connector(ref)
+        if connector_record is None:
+            raise KeyError(ref)
+        connector = create_connector(
+            connector_record["type"],
+            self._materialize_runtime_config(connector_record),
+        )
+        return connector_record, connector
 
     def _to_response(self, connector_record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(connector_record or {})
