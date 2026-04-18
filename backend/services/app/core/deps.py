@@ -19,6 +19,7 @@ from app.application.imports import ImportService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
 from app.application.projects import ProjectWorkspaceService
+from app.application.push_dispatches import PushDispatchService
 from app.application.sendgrid_provider import SendGridProviderService
 from app.application.sql_workspace import SqlWorkspaceService
 from app.application.templates import ScenarioTemplateService
@@ -101,6 +102,12 @@ def get_email_campaign_service(
     settings: Settings = Depends(get_settings_dependency),
 ) -> EmailCampaignService:
     return EmailCampaignService(repository, settings)
+
+
+def get_push_dispatch_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> PushDispatchService:
+    return PushDispatchService(repository)
 
 
 def get_sendgrid_provider_service(

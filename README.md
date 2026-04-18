@@ -6,7 +6,7 @@ The product is organized around five operator areas:
 
 - `Data Core` for connectors, mappings, imports, predictions, data quality, and governance
 - `Audience Engine` for guided cohort building, multi-source prediction audience selection, SQL fallback, refresh, comparison, and activation readiness
-- `Action Orchestrator` for provider-aware lifecycle email campaigns, dedicated push workflow drafting, shared Workflow Studio scheduling and management, delivery, callbacks, and guardrails
+- `Action Orchestrator` for provider-aware lifecycle email campaigns, immediate single-user push sends, dedicated push workflow drafting, shared Workflow Studio scheduling and management, delivery, callbacks, and guardrails
 - `Experiment Hub` for assignment, exposure, outcomes, integrity, and decision support
 - `Insight Copilot` for grounded operator help, summaries, recommendations, and evidence-backed reporting
 

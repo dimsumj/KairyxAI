@@ -57,6 +57,7 @@ ROLE_PERMISSIONS = {
         "health.scheduler.read",
         "predictions.models.read",
         "email_campaigns.read",
+        "push_dispatches.read",
     },
     "operator": {
         "copilot.agent.read",
@@ -138,6 +139,8 @@ ROLE_PERMISSIONS = {
         "email_campaigns.read",
         "email_campaigns.write",
         "email_campaigns.execute",
+        "push_dispatches.read",
+        "push_dispatches.execute",
     },
 }
 
