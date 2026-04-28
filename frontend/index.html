@@ -1345,21 +1345,21 @@ WHERE predicted_churn_risk = 'high'
                         <span>Push Notifications</span>
                         <span class="inline-help">
                             <button type="button" class="inline-help-button" aria-label="Show push workflow help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">Send an immediate one-time push to a single user, or build reusable push workflows with scheduling, guardrails, and optional live-provider routing. Leave Provider Connection blank to keep simulator delivery.</span>
+                            <span class="inline-help-source" aria-hidden="true">Use the unified Push Composer for immediate sends, one-time scheduled sends, or repeated Wynn provider campaigns. Leave User IDs blank to target all players through Wynn PushNotifier, or enter comma-separated user ids to target explicit players.</span>
                         </span>
                     </h2>
-                    <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
+                    <span id="workflow-builder-selected-label" class="pill">No legacy workflow selected</span>
                 </div>
                 <div class="card split-card" style="margin-bottom: 1rem;">
                     <div class="module-section-header">
                         <h3 class="section-title-with-help" style="margin: 0;">
-                            <span>Send One-Time Push</span>
+                            <span>Push Composer</span>
                             <span class="inline-help">
-                                <button type="button" class="inline-help-button" aria-label="Show one-time push help">?</button>
-                                <span class="inline-help-source" aria-hidden="true">Use this form for an immediate single-user push send. It does not create a scheduled workflow, does not ask for cadence or limits, and sends only once to the entered user id.</span>
+                                <button type="button" class="inline-help-button" aria-label="Show push composer help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Choose Single send or Repeated send. Single send can go out immediately or be scheduled once for a future time. Enter comma-separated user ids to target specific players, or leave the field blank to target all players through Wynn PushNotifier.</span>
                             </span>
                         </h3>
-                        <span class="pill">Immediate</span>
+                        <span class="pill">Immediate / Scheduled / Repeated</span>
                     </div>
                     <div class="grid-3">
                         <div class="form-group">
@@ -1367,8 +1367,11 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="push-dispatch-name-input" placeholder="vip_reactivation">
                         </div>
                         <div class="form-group">
-                            <label for="push-dispatch-user-id-input">User ID</label>
-                            <input type="text" id="push-dispatch-user-id-input" placeholder="player_123">
+                            <label for="push-dispatch-mode-select">Mode</label>
+                            <select id="push-dispatch-mode-select">
+                                <option value="single" selected>Single send</option>
+                                <option value="repeated">Repeated send</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label for="push-dispatch-provider-connection-select">Provider Connection</label>
@@ -1378,10 +1381,38 @@ WHERE predicted_churn_risk = 'high'
                         </div>
                     </div>
                     <div class="grid-2">
+                        <div class="form-group" id="push-dispatch-single-timing-group">
+                            <label for="push-dispatch-single-timing-select">Single Send Timing</label>
+                            <select id="push-dispatch-single-timing-select">
+                                <option value="immediate" selected>Send immediately</option>
+                                <option value="schedule_once">Schedule once</option>
+                            </select>
+                        </div>
                         <div class="form-group">
                             <label for="push-dispatch-campaign-name-input">Campaign Name (optional)</label>
                             <input type="text" id="push-dispatch-campaign-name-input" placeholder="vip_reactivation_push">
                         </div>
+                    </div>
+                    <div id="push-dispatch-schedule-once-group" class="form-group" style="display: none;">
+                        <label for="push-dispatch-schedule-once-input">Schedule Once For</label>
+                        <input type="datetime-local" id="push-dispatch-schedule-once-input">
+                    </div>
+                    <div id="push-dispatch-repeat-schedule-group" class="grid-2" style="display: none;">
+                        <div class="form-group">
+                            <label for="push-dispatch-repeat-hour-input">Daily Hour</label>
+                            <input type="number" id="push-dispatch-repeat-hour-input" min="0" max="23" value="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-repeat-minute-input">Daily Minute</label>
+                            <input type="number" id="push-dispatch-repeat-minute-input" min="0" max="59" value="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="push-dispatch-user-id-input">User IDs (optional)</label>
+                        <textarea id="push-dispatch-user-id-input" style="min-height: 7rem;" placeholder="player_123, player_456"></textarea>
+                        <div class="subtle" style="margin-top: 0.35rem;">Leave blank to target all players. Enter comma-separated ids to target specific players.</div>
+                    </div>
+                    <div class="grid-2">
                         <div class="form-group">
                             <label for="push-dispatch-title-input">Title</label>
                             <input type="text" id="push-dispatch-title-input" placeholder="We miss you">
@@ -1411,23 +1442,30 @@ WHERE predicted_churn_risk = 'high'
                             <label for="push-dispatch-provider-options-input">Provider Options JSON</label>
                             <textarea id="push-dispatch-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
+                        <div class="form-group" id="push-dispatch-wynn-filters-group" style="margin-top: 0.75rem; display: none;">
+                            <label for="push-dispatch-wynn-filters-input">Wynn Filters JSON</label>
+                            <textarea id="push-dispatch-wynn-filters-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                            <div class="subtle" style="margin-top: 0.35rem;">Uses native Wynn filter keys such as <code>minVIPLevel</code>, <code>platform</code>, <code>daysFromLastLogin</code>, and <code>newUserInstallationDateRange</code>.</div>
+                        </div>
                     </details>
                     <div class="inline-actions">
                         <button id="push-dispatch-send-now-btn" type="button">Send Now</button>
                         <button id="push-dispatch-clear-btn" type="button">Clear</button>
                         <span id="push-dispatch-status" class="subtle"></span>
                     </div>
-                    <pre id="push-dispatch-output" class="json-output">No one-time push sent yet.</pre>
+                    <pre id="push-dispatch-output" class="json-output">No push composer action submitted yet.</pre>
                 </div>
+                <details id="legacy-push-workflow-builder" style="margin-bottom: 1rem;">
+                    <summary style="cursor: pointer; font-weight: 600; margin-bottom: 1rem;">Legacy Advanced Workflow Builder</summary>
                 <div class="module-section-header" style="margin-bottom: 1rem;">
                     <h3 class="section-title-with-help" style="margin: 0;">
-                        <span>Reusable Push Workflow</span>
+                        <span>Legacy Cohort Workflow Builder</span>
                         <span class="inline-help">
-                            <button type="button" class="inline-help-button" aria-label="Show reusable push workflow help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">Use the workflow builder when you need scheduled, reusable, cohort-based push automation with cadence, policy, and experiment settings.</span>
+                            <button type="button" class="inline-help-button" aria-label="Show legacy push workflow help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Use this builder only when you need the older cohort-based push workflow path with cadence, policy, and experiment controls. The main Push Composer above is the default path for Wynn provider campaigns.</span>
                         </span>
                     </h3>
-                    <span class="pill">Scheduled / Guardrailed</span>
+                    <span class="pill">Legacy / Cohort-Based</span>
                 </div>
                 <div class="grid-3">
                     <div class="form-group">
@@ -1567,6 +1605,7 @@ WHERE predicted_churn_risk = 'high'
                     <span id="workflow-create-status" class="subtle"></span>
                 </div>
             </div>
+                </details>
 
                 <div id="workflow-studio-section" class="card" style="margin-top: 1rem;">
                     <div class="module-section-header">
