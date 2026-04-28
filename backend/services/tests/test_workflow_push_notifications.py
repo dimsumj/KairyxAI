@@ -131,6 +131,54 @@ def _create_push_workflow(
     return response.json()["workflow_id"]
 
 
+def _create_provider_campaign_workflow(
+    client: TestClient,
+    *,
+    provider_connection_id: str,
+    user_ids: list[str] | None = None,
+    trigger: dict | None = None,
+    provider_options: dict | None = None,
+) -> str:
+    channel_config = {
+        "channel": "push_notification",
+        "campaign_name": "provider_campaign_push",
+        "title": "Come back",
+        "body": "Rewards are waiting.",
+        "deep_link": "wynn://promotions/welcome-back",
+        "deep_link_token": "custom-token",
+        "data": {"reward_id": "reward_pack"},
+        "provider_connection_id": provider_connection_id,
+        "provider_options": provider_options or {"priority": "high"},
+    }
+    response = client.post(
+        "/api/v1/workflows",
+        headers=_headers(),
+        json={
+            "name": "provider_campaign_flow",
+            "audience_mode": "provider_campaign",
+            "user_ids": user_ids or [],
+            "trigger": trigger or {
+                "type": "daily_schedule",
+                "hour": 10,
+                "minute": 0,
+            },
+            "action": channel_config,
+            "channel_config": channel_config,
+            "policy": {
+                "global_daily_limit": 5,
+                "channel_daily_limit": 5,
+                "cooldown_hours": 0,
+            },
+            "budget_policy": {"daily_budget_limit": 5},
+        },
+    )
+    assert response.status_code == 201, response.text
+    workflow_id = response.json()["workflow_id"]
+    publish = client.post(f"/api/v1/workflows/{workflow_id}/publish", headers=_headers())
+    assert publish.status_code == 200, publish.text
+    return workflow_id
+
+
 def test_provider_connection_create_supports_wynn_push_notifier(client: TestClient):
     response = client.post(
         "/api/v1/provider-connections",
@@ -354,3 +402,123 @@ def test_push_workflow_retries_5xx_with_stable_provider_request_id(client: TestC
     assert delivery["delivery_diagnostics"]["attempt_count"] == 2
     assert delivery["delivery_diagnostics"]["retry_schedule_seconds"] == [2]
     assert delivery["provider_response"]["campaign_id"] == "PUSH_NOTIFICATION.cid_retry"
+
+
+def test_provider_campaign_one_time_schedule_runs_once_and_archives(client: TestClient, monkeypatch):
+    captured_requests: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_requests.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_once",
+                "duplicate": False,
+                "scheduled_at": "2026-04-16T18:30:00+00:00",
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    provider_connection_id = _create_wynn_provider_connection(client)
+    workflow_id = _create_provider_campaign_workflow(
+        client,
+        provider_connection_id=provider_connection_id,
+        user_ids=[],
+        trigger={
+            "type": "one_time_schedule",
+            "scheduled_at": "2026-04-16T18:30:00+00:00",
+        },
+        provider_options={
+            "priority": "high",
+            "filters": {
+                "minVIPLevel": 5,
+                "daysFromLastLogin": 14,
+            },
+        },
+    )
+
+    run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers=_headers(),
+        json={"reference_time": "2026-04-16T18:30:00+00:00", "limit_per_workflow": 10},
+    )
+    assert run.status_code == 200, run.text
+    assert len(run.json()["items"]) == 1
+
+    workflow = client.get(f"/api/v1/workflows/{workflow_id}", headers=_headers())
+    assert workflow.status_code == 200
+    assert workflow.json()["status"] == "archived"
+
+    deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
+    assert deliveries.status_code == 200
+    delivery = deliveries.json()["items"][0]
+    assert delivery["audience_mode"] == "provider_broadcast_all_players"
+    assert delivery["user_ids"] == []
+    assert delivery["provider_request"]["player_ids"] == []
+    assert delivery["provider_request"]["provider_options"]["filters"] == {
+        "minVIPLevel": 5,
+        "daysFromLastLogin": 14,
+    }
+
+    second_run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers=_headers(),
+        json={"reference_time": "2026-04-16T19:00:00+00:00", "limit_per_workflow": 10},
+    )
+    assert second_run.status_code == 200, second_run.text
+    assert second_run.json()["items"] == []
+    assert len(captured_requests) == 1
+
+
+def test_provider_campaign_daily_workflow_sends_multi_user_campaign_once_per_run(client: TestClient, monkeypatch):
+    captured_requests: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_requests.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_daily",
+                "duplicate": False,
+                "scheduled_at": "2026-04-16T10:00:00+00:00",
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    provider_connection_id = _create_wynn_provider_connection(client)
+    workflow_id = _create_provider_campaign_workflow(
+        client,
+        provider_connection_id=provider_connection_id,
+        user_ids=["player_1", "player_2", "player_1"],
+        provider_options={
+            "priority": "high",
+            "filters": {
+                "platform": "ios",
+                "minVIPLevel": 3,
+            },
+        },
+    )
+
+    run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers=_headers(),
+        json={"reference_time": "2026-04-16T10:00:00+00:00", "limit_per_workflow": 10},
+    )
+    assert run.status_code == 200, run.text
+    assert len(captured_requests) == 1
+    assert captured_requests[0]["json"]["player_ids"] == ["player_1", "player_2"]
+    assert captured_requests[0]["json"]["provider_options"]["filters"] == {
+        "platform": "ios",
+        "minVIPLevel": 3,
+    }
+
+    deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
+    assert deliveries.status_code == 200
+    delivery = deliveries.json()["items"][0]
+    assert delivery["audience_mode"] == "explicit_user_ids"
+    assert delivery["user_ids"] == ["player_1", "player_2"]
+    assert delivery["provider_request"]["player_ids"] == ["player_1", "player_2"]

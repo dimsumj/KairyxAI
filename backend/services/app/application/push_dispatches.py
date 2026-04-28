@@ -11,6 +11,8 @@ from app.core.request_context import get_request_context
 
 class PushDispatchService:
     _RESOURCE_TYPE = "push_dispatch"
+    _AUDIENCE_EXPLICIT = "explicit_user_ids"
+    _AUDIENCE_ALL_PLAYERS = "provider_broadcast_all_players"
 
     def __init__(self, repository):
         self.repository = repository
@@ -37,10 +39,11 @@ class PushDispatchService:
         action = self.workflows._resolve_provider_connection_config(dict(normalized["action"]))
         action = self.workflows._validate_action_for_execution(action, workflow_name=normalized["name"])
         provider_name = self.workflows._resolve_provider_name(action) or "simulator"
-        provider_request_id = f"{push_dispatch_id}:{normalized['user_id']}"
+        provider_request_id = push_dispatch_id
         action_payload = self._build_action_payload(
             push_dispatch_id=push_dispatch_id,
-            user_id=normalized["user_id"],
+            user_ids=normalized["user_ids"],
+            audience_mode=normalized["audience_mode"],
             action=action,
             provider_request_id=provider_request_id,
         )
@@ -54,6 +57,8 @@ class PushDispatchService:
             "status": status,
             "channel": "push_notification",
             "user_id": normalized["user_id"],
+            "user_ids": normalized["user_ids"],
+            "audience_mode": normalized["audience_mode"],
             "provider": provider_result.get("provider") or provider_name,
             "provider_mode": provider_result.get("provider_mode") or ("simulator" if provider_name == "simulator" else "live"),
             "provider_backend": provider_result.get("provider_backend") or provider_result.get("provider") or provider_name,
@@ -104,9 +109,8 @@ class PushDispatchService:
 
     def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         name = str(payload.get("name") or "").strip() or f"one_time_push_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-        user_id = str(payload.get("user_id") or "").strip()
-        if not user_id:
-            raise ValueError("One-time push send requires user_id.")
+        user_ids = self._normalize_user_ids(payload)
+        audience_mode = self._AUDIENCE_EXPLICIT if user_ids else self._AUDIENCE_ALL_PLAYERS
 
         body = str(payload.get("body") or payload.get("content") or "").strip()
         if not body:
@@ -136,17 +140,44 @@ class PushDispatchService:
             "data": data,
             "provider_options": provider_options,
         }
+        resolved_action = self.workflows._resolve_provider_connection_config(dict(action))
+        if not user_ids and not self.workflows._is_live_provider_push_action(resolved_action):
+            raise ValueError("Broadcast push sends require a live Wynn PushNotifier provider connection.")
         return {
             "name": name,
-            "user_id": user_id,
+            "user_id": user_ids[0] if len(user_ids) == 1 else None,
+            "user_ids": user_ids,
+            "audience_mode": audience_mode,
             "action": action,
         }
+
+    @staticmethod
+    def _normalize_user_ids(payload: Dict[str, Any]) -> List[str]:
+        raw_user_ids = payload.get("user_ids")
+        if raw_user_ids in (None, ""):
+            raw_values = []
+        elif isinstance(raw_user_ids, list):
+            raw_values = raw_user_ids
+        else:
+            raise ValueError("user_ids must be an array.")
+        legacy_user_id = str(payload.get("user_id") or "").strip()
+        combined = [*raw_values, legacy_user_id] if legacy_user_id else list(raw_values)
+        seen: set[str] = set()
+        normalized: List[str] = []
+        for value in combined:
+            user_id = str(value or "").strip()
+            if not user_id or user_id in seen:
+                continue
+            seen.add(user_id)
+            normalized.append(user_id)
+        return normalized
 
     def _build_action_payload(
         self,
         *,
         push_dispatch_id: str,
-        user_id: str,
+        user_ids: List[str],
+        audience_mode: str,
         action: Dict[str, Any],
         provider_request_id: str,
     ) -> Dict[str, Any]:
@@ -162,7 +193,9 @@ class PushDispatchService:
             "deep_link": action.get("deep_link"),
             "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
             "provider_options": dict(action.get("provider_options") or {}),
-            "player_id": user_id,
+            "player_id": list(user_ids),
+            "player_ids": list(user_ids),
+            "audience_mode": audience_mode,
             "api_token": action.get("api_token"),
             "base_url": action.get("base_url"),
             "provider": action.get("provider"),
@@ -173,6 +206,7 @@ class PushDispatchService:
             "project_id": request_context.project_id if request_context else None,
             "context": {
                 "push_dispatch_id": push_dispatch_id,
+                "audience_mode": audience_mode,
                 "tenant_id": request_context.tenant_id if request_context else None,
                 "project_id": request_context.project_id if request_context else None,
             },

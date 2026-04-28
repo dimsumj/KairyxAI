@@ -106,11 +106,13 @@ def test_send_now_single_user_push_uses_wynn_provider_connection(client: TestCli
     assert payload["provider_mode"] == "live"
     assert payload["provider_connection_id"] == provider_connection_id
     assert payload["user_id"] == "player_123"
+    assert payload["user_ids"] == ["player_123"]
+    assert payload["audience_mode"] == "explicit_user_ids"
     assert payload["campaign_name"] == "vip_reactivation_push"
     assert payload["provider_campaign_id"] == "PUSH_NOTIFICATION.cid_42"
     assert payload["provider_accepted"] is True
     assert payload["simulated"] is False
-    assert payload["provider_request_id"].startswith(f"{payload['push_dispatch_id']}:")
+    assert payload["provider_request_id"] == payload["push_dispatch_id"]
 
     assert len(captured_requests) == 1
     outbound = captured_requests[0]
@@ -152,6 +154,8 @@ def test_send_now_single_user_push_uses_simulator_without_provider_connection(cl
     assert payload["provider_mode"] == "simulator"
     assert payload["simulated"] is True
     assert payload["provider_connection_id"] is None
+    assert payload["user_ids"] == ["player_sim"]
+    assert payload["audience_mode"] == "explicit_user_ids"
     assert payload["body"] == "Simulator fallback copy."
     assert payload["data"] == {"reward_id": "simulator_pack"}
 
@@ -172,6 +176,128 @@ def test_send_now_live_push_requires_title(client: TestClient):
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Live push workflows require title."
+
+
+def test_send_now_supports_multi_user_provider_campaign_with_wynn_filters(client: TestClient, monkeypatch):
+    provider_connection_id = _create_wynn_provider_connection(client)
+    captured_requests: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_requests.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_multi",
+                "duplicate": False,
+                "scheduled_at": None,
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    response = client.post(
+        "/api/v1/push-dispatches/send-now",
+        headers=_headers(),
+        json={
+            "name": "vip_reactivation_multi",
+            "user_ids": ["player_123", "player_456", "player_123"],
+            "provider_connection_id": provider_connection_id,
+            "campaign_name": "vip_multi_push",
+            "title": "We miss you",
+            "body": "A reward is waiting.",
+            "provider_options": {
+                "priority": "high",
+                "filters": {
+                    "minVIPLevel": 3,
+                    "platform": "ios",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["user_id"] is None
+    assert payload["user_ids"] == ["player_123", "player_456"]
+    assert payload["audience_mode"] == "explicit_user_ids"
+    assert payload["provider_request_id"] == payload["push_dispatch_id"]
+
+    assert len(captured_requests) == 1
+    outbound = captured_requests[0]
+    assert outbound["json"]["player_ids"] == ["player_123", "player_456"]
+    assert outbound["json"]["provider_options"] == {
+        "priority": "high",
+        "filters": {
+            "minVIPLevel": 3,
+            "platform": "ios",
+        },
+    }
+
+
+def test_send_now_blank_user_ids_broadcasts_to_all_players_for_live_wynn_provider(client: TestClient, monkeypatch):
+    provider_connection_id = _create_wynn_provider_connection(client)
+    captured_requests: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_requests.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_all",
+                "duplicate": False,
+                "scheduled_at": None,
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    response = client.post(
+        "/api/v1/push-dispatches/send-now",
+        headers=_headers(),
+        json={
+            "name": "broadcast_all",
+            "provider_connection_id": provider_connection_id,
+            "campaign_name": "broadcast_push",
+            "title": "Weekend event",
+            "body": "Rewards are live.",
+            "provider_options": {
+                "filters": {
+                    "minVIPLevel": 5,
+                    "daysFromLastLogin": 14,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["user_id"] is None
+    assert payload["user_ids"] == []
+    assert payload["audience_mode"] == "provider_broadcast_all_players"
+
+    assert len(captured_requests) == 1
+    assert captured_requests[0]["json"]["player_ids"] == []
+    assert captured_requests[0]["json"]["provider_options"]["filters"] == {
+        "minVIPLevel": 5,
+        "daysFromLastLogin": 14,
+    }
+
+
+def test_send_now_blank_user_ids_rejects_simulator_broadcast(client: TestClient):
+    response = client.post(
+        "/api/v1/push-dispatches/send-now",
+        headers=_headers(),
+        json={
+            "name": "simulator_broadcast",
+            "title": "Weekend event",
+            "body": "Rewards are live.",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Broadcast push sends require a live Wynn PushNotifier provider connection."
 
 
 def test_send_now_rejects_non_object_push_json(client: TestClient):

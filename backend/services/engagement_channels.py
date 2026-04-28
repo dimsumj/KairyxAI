@@ -120,7 +120,8 @@ class WynnPushNotifierAdapter(ChannelAdapter):
             "project_id": action.get("project_id") or context.get("project_id"),
         }
         context = {key: value for key, value in context.items() if value not in (None, "")}
-        player_ids = player_id if isinstance(player_id, list) else [player_id]
+        raw_player_ids = action.get("player_ids") if isinstance(action.get("player_ids"), list) else player_id
+        player_ids = raw_player_ids if isinstance(raw_player_ids, list) else [raw_player_ids]
         player_ids = [str(item).strip() for item in player_ids if str(item).strip()]
         request_payload = {
             "provider_request_id": provider_request_id,

@@ -28,7 +28,9 @@ class WorkflowService:
         self,
         *,
         name: str,
-        cohort_id: str,
+        cohort_id: str | None,
+        audience_mode: str | None = None,
+        user_ids: List[str] | None = None,
         schedule: Dict[str, Any],
         action: Dict[str, Any],
         policy: Dict[str, Any],
@@ -39,8 +41,11 @@ class WorkflowService:
         channel_config: Dict[str, Any] | None = None,
         steps: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
-        if self.cohorts.get_cohort(cohort_id) is None:
-            raise KeyError(cohort_id)
+        normalized_audience = self._normalize_audience_config(
+            audience_mode=audience_mode,
+            cohort_id=cohort_id,
+            user_ids=user_ids,
+        )
         workflow_id = f"wf_{uuid.uuid4().hex[:20]}"
         normalized_trigger = self._normalize_trigger(trigger or schedule or {"type": "daily"})
         normalized_channel = self._normalize_channel_config(channel_config or action or {}, workflow_name=name)
@@ -58,7 +63,9 @@ class WorkflowService:
             "experiment_id": experiment_id,
             "channel_config": normalized_channel,
             "definition": {
-                "cohort_id": cohort_id,
+                "audience_mode": normalized_audience["audience_mode"],
+                "cohort_id": normalized_audience["cohort_id"],
+                "user_ids": normalized_audience["user_ids"],
                 "schedule": normalized_trigger,
                 "action": normalized_channel,
                 "policy": normalized_policy,
@@ -85,12 +92,17 @@ class WorkflowService:
         if str(payload.get("status") or "").lower() == "archived":
             raise ValueError("Archived workflows cannot be edited.")
         definition = dict(payload.get("definition") or {})
-        if patch.get("cohort_id") and self.cohorts.get_cohort(str(patch["cohort_id"])) is None:
-            raise KeyError(str(patch["cohort_id"]))
         if patch.get("name") is not None:
             payload["name"] = patch["name"]
-        if patch.get("cohort_id") is not None:
-            definition["cohort_id"] = patch["cohort_id"]
+        if any(key in patch for key in ("audience_mode", "cohort_id", "user_ids")):
+            normalized_audience = self._normalize_audience_config(
+                audience_mode=patch.get("audience_mode", definition.get("audience_mode")),
+                cohort_id=patch.get("cohort_id", definition.get("cohort_id")),
+                user_ids=patch.get("user_ids", definition.get("user_ids") or []),
+            )
+            definition["audience_mode"] = normalized_audience["audience_mode"]
+            definition["cohort_id"] = normalized_audience["cohort_id"]
+            definition["user_ids"] = normalized_audience["user_ids"]
         if patch.get("policy") is not None:
             payload["policy"] = self._normalize_policy(patch["policy"])
             definition["policy"] = payload["policy"]
@@ -159,10 +171,12 @@ class WorkflowService:
         if str(payload.get("status") or "").lower() == "archived":
             raise ValueError("Archived workflows cannot be published.")
         self._assert_publishable_provider_config(payload)
-        self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
-        experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
-        if experiment_id:
-            self._require_active_experiment(experiment_id)
+        definition = payload.get("definition") or {}
+        if not self._workflow_uses_provider_campaign(payload):
+            self._require_active_cohort(str(definition.get("cohort_id") or ""))
+            experiment_id = str(payload.get("experiment_id") or definition.get("experiment_id") or "").strip()
+            if experiment_id:
+                self._require_active_experiment(experiment_id)
         preflight = self._build_publish_preflight(payload)
         if not preflight["eligible"]:
             raise ValueError("; ".join(preflight["reasons"]))
@@ -225,10 +239,12 @@ class WorkflowService:
         if str(payload.get("status") or "").lower() == "archived":
             raise ValueError("Archived workflows cannot be resumed.")
         self._assert_publishable_provider_config(payload)
-        self._require_active_cohort(str((payload.get("definition") or {}).get("cohort_id") or ""))
-        experiment_id = str(payload.get("experiment_id") or (payload.get("definition") or {}).get("experiment_id") or "").strip()
-        if experiment_id:
-            self._require_active_experiment(experiment_id)
+        definition = payload.get("definition") or {}
+        if not self._workflow_uses_provider_campaign(payload):
+            self._require_active_cohort(str(definition.get("cohort_id") or ""))
+            experiment_id = str(payload.get("experiment_id") or definition.get("experiment_id") or "").strip()
+            if experiment_id:
+                self._require_active_experiment(experiment_id)
         preflight = self._build_publish_preflight(payload)
         if not preflight["eligible"]:
             raise ValueError("; ".join(preflight["reasons"]))
@@ -510,24 +526,34 @@ class WorkflowService:
             if workflow.get("status") != "published":
                 continue
             trigger = workflow.get("trigger") or {}
-            if str(trigger.get("type") or "") != "daily_schedule":
+            trigger_type = str(trigger.get("type") or "")
+            if trigger_type not in {"daily_schedule", "one_time_schedule"}:
                 continue
-            scheduled_hour, scheduled_minute = self._resolve_scheduled_window(workflow, trigger)
-            if (resolved_time.hour, resolved_time.minute) < (scheduled_hour, scheduled_minute):
-                continue
-            if self._already_executed_for_date(workflow["workflow_id"], action_date):
-                continue
-            runs.append(
-                self._execute_workflow(
-                    workflow,
-                    limit=max(1, int(limit_per_workflow)),
-                    confirm=True,
-                    sandbox=False,
-                    manual_test=False,
-                    reference_time=resolved_time,
-                    confirmation_token=tokens.get(workflow["workflow_id"]),
-                )
+            if trigger_type == "daily_schedule":
+                scheduled_hour, scheduled_minute = self._resolve_scheduled_window(workflow, trigger)
+                if (resolved_time.hour, resolved_time.minute) < (scheduled_hour, scheduled_minute):
+                    continue
+                if self._already_executed_for_date(workflow["workflow_id"], action_date):
+                    continue
+            else:
+                scheduled_at = self._parse_reference_time(str(trigger.get("scheduled_at") or ""))
+                if scheduled_at > resolved_time:
+                    continue
+                if self._has_execution_for_trigger(workflow["workflow_id"], "one_time_schedule"):
+                    continue
+            run_result = self._execute_workflow(
+                workflow,
+                limit=max(1, int(limit_per_workflow)),
+                confirm=True,
+                sandbox=False,
+                manual_test=False,
+                reference_time=resolved_time,
+                trigger_type=trigger_type,
+                confirmation_token=tokens.get(workflow["workflow_id"]),
             )
+            if trigger_type == "one_time_schedule":
+                self._finalize_one_time_workflow(workflow["workflow_id"], completed_at=resolved_time.isoformat())
+            runs.append(run_result)
         return {"reference_time": resolved_time.isoformat(), "items": runs}
 
     def ingest_event(
@@ -630,6 +656,8 @@ class WorkflowService:
     def _to_response(self, record: Dict[str, Any], *, include_runtime_summary: bool = True) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
         definition = payload.get("definition") or {}
+        payload.setdefault("audience_mode", definition.get("audience_mode") or ("cohort" if definition.get("cohort_id") else "provider_campaign"))
+        payload.setdefault("user_ids", list(definition.get("user_ids") or []))
         payload.setdefault("trigger", definition.get("trigger") or definition.get("schedule") or {"type": "daily_schedule"})
         payload.setdefault("policy", definition.get("policy") or {})
         payload.setdefault("budget_policy", definition.get("budget_policy") or {})
@@ -732,10 +760,10 @@ class WorkflowService:
 
     @staticmethod
     def _workflow_has_next_run(workflow: Dict[str, Any]) -> bool:
-        return (
-            str(workflow.get("status") or "").lower() == "published"
-            and str((workflow.get("trigger") or {}).get("type") or "").lower() == "daily_schedule"
-        )
+        if str(workflow.get("status") or "").lower() != "published":
+            return False
+        trigger_type = str((workflow.get("trigger") or {}).get("type") or "").lower()
+        return trigger_type in {"daily_schedule", "one_time_schedule"}
 
     def _compute_next_run_at(self, workflow: Dict[str, Any], latest_live: Dict[str, Any] | None) -> str | None:
         if not self._workflow_has_next_run(workflow):
@@ -743,6 +771,15 @@ class WorkflowService:
         if str(workflow.get("status") or "").lower() == "archived":
             return None
         trigger = dict(workflow.get("trigger") or {})
+        trigger_type = str(trigger.get("type") or "").lower()
+        if trigger_type == "one_time_schedule":
+            scheduled_at = str(trigger.get("scheduled_at") or "").strip()
+            if not scheduled_at:
+                return None
+            if latest_live:
+                return None
+            scheduled_time = self._parse_execution_sort_key(scheduled_at)
+            return scheduled_at if scheduled_time >= datetime.utcnow() else None
         hour = int(trigger.get("hour") or 0)
         minute = int(trigger.get("minute") or 0)
         now = datetime.utcnow()
@@ -782,8 +819,8 @@ class WorkflowService:
         raw_type = str((trigger or {}).get("type") or "daily").lower()
         if raw_type == "daily":
             raw_type = "daily_schedule"
-        if raw_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger"}:
-            raise ValueError("Supported triggers are daily_schedule, manual_test, event_trigger, and threshold_trigger.")
+        if raw_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger", "one_time_schedule"}:
+            raise ValueError("Supported triggers are daily_schedule, manual_test, event_trigger, threshold_trigger, and one_time_schedule.")
         payload = {
             "type": raw_type,
             "hour": int((trigger or {}).get("hour") or 0),
@@ -795,6 +832,14 @@ class WorkflowService:
             payload["metric_id"] = str((trigger or {}).get("metric_id") or "").strip()
             payload["operator"] = str((trigger or {}).get("operator") or ">=").strip()
             payload["threshold"] = float((trigger or {}).get("threshold") or 0.0)
+        if raw_type == "one_time_schedule":
+            scheduled_at = self._parse_iso_timestamp(str((trigger or {}).get("scheduled_at") or ""))
+            if not scheduled_at:
+                raise ValueError("one_time_schedule requires scheduled_at.")
+            payload["scheduled_at"] = scheduled_at
+            scheduled_time = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            payload["hour"] = scheduled_time.hour
+            payload["minute"] = scheduled_time.minute
         return payload
 
     def _normalize_policy(self, policy: Dict[str, Any]) -> Dict[str, Any]:
@@ -1012,11 +1057,13 @@ class WorkflowService:
     def _build_publish_preflight(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         reasons: List[str] = []
         definition = workflow.get("definition") or {}
-        cohort = self.cohorts.get_cohort(definition.get("cohort_id"))
-        if cohort is None:
-            reasons.append("cohort_not_found")
-        elif cohort.get("status") != "active":
-            reasons.append("cohort_not_active")
+        audience_mode = str(definition.get("audience_mode") or ("cohort" if definition.get("cohort_id") else "provider_campaign")).strip().lower()
+        if audience_mode == "cohort":
+            cohort = self.cohorts.get_cohort(definition.get("cohort_id"))
+            if cohort is None:
+                reasons.append("cohort_not_found")
+            elif cohort.get("status") != "active":
+                reasons.append("cohort_not_active")
         channel_config = workflow.get("channel_config") or definition.get("channel_config") or definition.get("action") or {}
         steps = list(definition.get("steps") or [])
         step_actions = [dict(step.get("action") or {}) for step in steps if str(step.get("type") or "") == "action"]
@@ -1044,7 +1091,7 @@ class WorkflowService:
                     reasons.append("push_body_missing")
         trigger = workflow.get("trigger") or definition.get("trigger") or definition.get("schedule") or {}
         trigger_type = str(trigger.get("type") or "")
-        if trigger_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger"}:
+        if trigger_type not in {"daily_schedule", "manual_test", "event_trigger", "threshold_trigger", "one_time_schedule"}:
             reasons.append("unsupported_trigger")
         if trigger_type == "event_trigger" and not str(trigger.get("event_type") or "").strip():
             reasons.append("event_type_missing")
@@ -1053,15 +1100,22 @@ class WorkflowService:
                 reasons.append("metric_id_missing")
             if str(trigger.get("operator") or "") not in {">", ">=", "<", "<=", "=="}:
                 reasons.append("threshold_operator_invalid")
-        if not workflow.get("experiment_id") and not definition.get("experiment_id"):
+        if trigger_type == "one_time_schedule" and not str(trigger.get("scheduled_at") or "").strip():
+            reasons.append("scheduled_at_missing")
+        if audience_mode != "provider_campaign" and not workflow.get("experiment_id") and not definition.get("experiment_id"):
             reasons.append("experiment_missing")
-        else:
+        elif audience_mode != "provider_campaign":
             experiment_id = str(workflow.get("experiment_id") or definition.get("experiment_id") or "")
             experiment = self.repository.get_resource("experiment", experiment_id)
             if experiment is None:
                 reasons.append("experiment_not_found")
             elif str(((experiment.get("payload") or {}).get("status") or experiment.get("status") or "")).lower() != "active":
                 reasons.append("experiment_not_active")
+        if audience_mode == "provider_campaign":
+            resolved_action = self._resolve_provider_connection_config(dict(channel_config or {}))
+            user_ids = list(definition.get("user_ids") or [])
+            if not user_ids and not self._is_live_provider_push_action(resolved_action):
+                reasons.append("provider_connection_required_for_broadcast")
         policy = workflow.get("policy") or definition.get("policy") or {}
         for field in ("global_daily_limit", "channel_daily_limit", "cooldown_hours"):
             if int(policy.get(field) or 0) < 0:
@@ -1072,6 +1126,47 @@ class WorkflowService:
             if not has_action_step and not has_branch_action:
                 reasons.append("workflow_steps_missing_action")
         return {"eligible": not reasons, "reasons": reasons}
+
+    @staticmethod
+    def _normalize_user_ids(user_ids: List[Any] | None) -> List[str]:
+        seen: set[str] = set()
+        normalized: List[str] = []
+        for value in list(user_ids or []):
+            user_id = str(value or "").strip()
+            if not user_id or user_id in seen:
+                continue
+            seen.add(user_id)
+            normalized.append(user_id)
+        return normalized
+
+    def _normalize_audience_config(
+        self,
+        *,
+        audience_mode: str | None,
+        cohort_id: str | None,
+        user_ids: List[Any] | None,
+    ) -> Dict[str, Any]:
+        normalized_mode = str(audience_mode or ("cohort" if cohort_id else "provider_campaign")).strip().lower()
+        if normalized_mode not in {"cohort", "provider_campaign"}:
+            raise ValueError("Workflow audience_mode must be cohort or provider_campaign.")
+        normalized_cohort_id = str(cohort_id or "").strip() or None
+        normalized_user_ids = self._normalize_user_ids(user_ids)
+        if normalized_mode == "cohort":
+            if not normalized_cohort_id:
+                raise ValueError("Cohort workflows require cohort_id.")
+            if self.cohorts.get_cohort(normalized_cohort_id) is None:
+                raise KeyError(normalized_cohort_id)
+        else:
+            normalized_cohort_id = None
+        return {
+            "audience_mode": normalized_mode,
+            "cohort_id": normalized_cohort_id,
+            "user_ids": normalized_user_ids,
+        }
+
+    def _workflow_uses_provider_campaign(self, workflow: Dict[str, Any]) -> bool:
+        definition = workflow.get("definition") or {}
+        return str(definition.get("audience_mode") or "").strip().lower() == "provider_campaign"
 
     def _iter_action_configs(self, workflow: Dict[str, Any]) -> List[Dict[str, Any]]:
         definition = dict(workflow.get("definition") or {})
@@ -1187,6 +1282,13 @@ class WorkflowService:
                 return True
         return False
 
+    def _has_execution_for_trigger(self, workflow_id: str, trigger_type: str) -> bool:
+        for event in self.repository.list_resource_events("workflow", workflow_id, event_type="workflow_execution", limit=500):
+            payload = event.get("payload") or {}
+            if str(payload.get("trigger_type") or "") == str(trigger_type or "") and not self._is_test_execution(payload):
+                return True
+        return False
+
     def _list_policy_state_for_user(self, user_id: str, action_date: str) -> List[Dict[str, Any]]:
         items = []
         for resource in self.repository.list_resources("workflow_policy_state"):
@@ -1285,6 +1387,8 @@ class WorkflowService:
             "cohort_snapshot_id": execution_payload.get("cohort_snapshot_id"),
             "experiment_id": experiment_id,
             "user_id": execution_payload.get("user_id"),
+            "user_ids": list(execution_payload.get("user_ids") or []),
+            "audience_mode": execution_payload.get("audience_mode"),
             "group": execution_payload.get("group"),
             "variant_id": execution_payload.get("variant_id"),
             "template_id": execution_payload.get("template_id"),
@@ -1315,6 +1419,8 @@ class WorkflowService:
                 "scheduled_at": channel_config.get("scheduled_at"),
                 "provider_request_id": channel_config.get("provider_request_id"),
                 "provider_options": channel_config.get("provider_options"),
+                "player_ids": list(execution_payload.get("user_ids") or []),
+                "audience_mode": execution_payload.get("audience_mode"),
                 "template_id": channel_config.get("template_id"),
                 "provider_connection_id": channel_config.get("provider_connection_id"),
                 "provider_mode": provider_result.get("provider_mode") or "live",
@@ -1618,6 +1724,16 @@ class WorkflowService:
             if not confirm:
                 raise ValueError("Workflow requires confirmation before execution.")
             self._validate_confirmation(workflow["workflow_id"], confirmation_token)
+
+        if self._workflow_uses_provider_campaign(workflow):
+            return self._execute_provider_campaign_workflow(
+                workflow,
+                limit=limit,
+                sandbox=sandbox,
+                manual_test=manual_test,
+                reference_time=reference_time,
+                trigger_type=trigger_type,
+            )
 
         cohort = self._require_active_cohort(str(definition["cohort_id"]))
         experiment_id = workflow.get("experiment_id") or definition.get("experiment_id")
@@ -1927,6 +2043,171 @@ class WorkflowService:
         self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="workflow_execution", payload=summary)
         self.repository.record_action("workflow_execution_completed", "workflow", workflow["workflow_id"], summary)
         return summary
+
+    def _execute_provider_campaign_workflow(
+        self,
+        workflow: Dict[str, Any],
+        *,
+        limit: int,
+        sandbox: bool,
+        manual_test: bool,
+        reference_time: datetime,
+        trigger_type: str | None,
+    ) -> Dict[str, Any]:
+        definition = workflow.get("definition") or {}
+        channel_config = workflow.get("channel_config") or definition.get("channel_config") or definition.get("action") or {}
+        action = self._resolve_provider_connection_config(dict(channel_config))
+        action = self._validate_action_for_execution(action, workflow_name=str(workflow.get("name") or workflow["workflow_id"]))
+
+        configured_user_ids = self._normalize_user_ids(definition.get("user_ids") or [])
+        if not configured_user_ids and not self._is_live_provider_push_action(action):
+            raise ValueError("Provider campaign broadcasts require a live Wynn PushNotifier provider connection.")
+
+        execution_id = f"run_{uuid.uuid4().hex[:20]}"
+        action_date = reference_time.date().isoformat()
+        audience_mode = "explicit_user_ids" if configured_user_ids else "provider_broadcast_all_players"
+        summary = {
+            "execution_id": execution_id,
+            "workflow_id": workflow["workflow_id"],
+            "workflow_version": workflow.get("published_version") or workflow.get("current_version") or 1,
+            "tenant_id": workflow.get("tenant_id"),
+            "project_id": workflow.get("project_id"),
+            "sandbox": bool(sandbox),
+            "trigger_type": trigger_type or ("manual_test" if manual_test else "daily_schedule"),
+            "action_date": action_date,
+            "cohort_snapshot_id": None,
+            "audience_mode": audience_mode,
+            "triggered": len(configured_user_ids) if configured_user_ids else 1,
+            "executed": 0,
+            "success": 0,
+            "holdout": 0,
+            "filtered_out": 0,
+            "ended": 0,
+            "policy_blocked": 0,
+            "duplicate_suppressed": 0,
+            "budget_exhausted": 0,
+            "invalid_target": 0,
+            "failures": 0,
+            "results": [],
+            "recorded_at": reference_time.isoformat(),
+        }
+
+        provider_request_id = self._provider_request_id(
+            workflow["workflow_id"],
+            execution_id,
+            "",
+            str(action.get("channel") or "push_notification"),
+        )
+        action["provider_request_id"] = provider_request_id
+        action_payload = {
+            "decision": "ACT",
+            "channel": action.get("channel", "push_notification"),
+            "content": action.get("content", ""),
+            "title": action.get("title"),
+            "body": action.get("body") or action.get("content", ""),
+            "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
+            "data": dict(action.get("data") or {}),
+            "deep_link": action.get("deep_link"),
+            "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
+            "scheduled_at": action.get("scheduled_at"),
+            "provider_options": dict(action.get("provider_options") or {}),
+            "subject": action.get("subject", "KairyxAI"),
+            "player_id": list(configured_user_ids),
+            "player_ids": list(configured_user_ids),
+            "audience_mode": audience_mode,
+            "api_key": action.get("api_key"),
+            "api_token": action.get("api_token"),
+            "base_url": action.get("base_url"),
+            "provider": action.get("provider"),
+            "from_email": action.get("from_email"),
+            "rest_endpoint": action.get("rest_endpoint"),
+            "webhook_url": action.get("webhook_url"),
+            "webhook_token": action.get("webhook_token"),
+            "provider_connection_id": action.get("provider_connection_id"),
+            "provider_request_id": provider_request_id,
+            "workflow_id": workflow["workflow_id"],
+            "execution_id": execution_id,
+            "tenant_id": workflow.get("tenant_id"),
+            "project_id": workflow.get("project_id"),
+            "context": {
+                "workflow_id": workflow["workflow_id"],
+                "execution_id": execution_id,
+                "tenant_id": workflow.get("tenant_id"),
+                "project_id": workflow.get("project_id"),
+                "audience_mode": audience_mode,
+            },
+            "metadata": dict(action.get("metadata") or {}),
+        }
+
+        provider_result = self._execute_action_with_retry(action_payload, action)
+        summary["executed"] = 1
+        execution_payload = {
+            "execution_id": execution_id,
+            "workflow_id": workflow["workflow_id"],
+            "workflow_version": summary["workflow_version"],
+            "cohort_id": None,
+            "cohort_snapshot_id": None,
+            "user_id": configured_user_ids[0] if len(configured_user_ids) == 1 else None,
+            "user_ids": configured_user_ids,
+            "channel": action.get("channel", "push_notification"),
+            "tenant_id": workflow.get("tenant_id"),
+            "project_id": workflow.get("project_id"),
+            "execution_status": "executed" if provider_result.get("ok") else "failed",
+            "group": None,
+            "variant_id": None,
+            "template_id": None,
+            "policy_snapshot_id": None,
+            "sandbox": bool(sandbox),
+            "trigger_type": summary["trigger_type"],
+            "recorded_at": reference_time.isoformat(),
+            "audience_mode": audience_mode,
+            "step_trace": [],
+        }
+        self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_execution", payload=execution_payload)
+        delivery_payload = self._persist_delivery(
+            workflow_id=workflow["workflow_id"],
+            cohort_id=None,
+            experiment_id=None,
+            execution_payload=execution_payload,
+            channel_config=action,
+            provider_result=provider_result,
+            sandbox=sandbox,
+            recorded_at=reference_time.isoformat(),
+        )
+
+        if not provider_result.get("ok"):
+            summary["failures"] = 1
+            self.repository.record_resource_event(
+                "workflow",
+                workflow["workflow_id"],
+                event_type="action_delivery",
+                payload={**execution_payload, **delivery_payload, "delivery_status": "failed", "failure_reason": str(provider_result.get("failure_classification") or "provider_error")},
+            )
+            summary["results"].append(delivery_payload)
+        else:
+            summary["success"] = 1
+            self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="action_delivery", payload=delivery_payload)
+            summary["results"].append(delivery_payload)
+
+        self.repository.record_resource_event("workflow", workflow["workflow_id"], event_type="workflow_execution", payload=summary)
+        self.repository.record_action("workflow_execution_completed", "workflow", workflow["workflow_id"], summary)
+        return summary
+
+    def _finalize_one_time_workflow(self, workflow_id: str, *, completed_at: str) -> None:
+        record = self.repository.get_resource("workflow", workflow_id)
+        if record is None:
+            return
+        payload = dict(record.get("payload") or {})
+        payload["status"] = "archived"
+        payload["archived_at"] = completed_at
+        payload["archived_reason"] = "one_time_schedule_completed"
+        self.repository.upsert_resource("workflow", workflow_id, status="archived", name=payload.get("name"), payload=payload)
+        self.repository.record_resource_event(
+            "workflow",
+            workflow_id,
+            event_type="workflow_archived",
+            payload={"status": "archived", "archived_at": completed_at, "reason": "one_time_schedule_completed"},
+        )
 
     def _require_active_cohort(self, cohort_id: str) -> Dict[str, Any]:
         if not cohort_id:
