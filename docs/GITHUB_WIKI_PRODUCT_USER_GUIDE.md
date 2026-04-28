@@ -47,7 +47,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, send a one-time single-user push or draft a reusable push workflow in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
+7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
 9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
@@ -507,11 +507,11 @@ Deployment note:
 
 Legacy `Google Gemini` connector records are no longer created from this generic connector form. Ask AI runtimes are managed through `AI Agents & Models` instead.
 
-For lifecycle email campaigns and provider-backed push workflows, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Push Provider accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Push Provider connections are used by `Action Orchestrator -> Push Notifications` when a `push_notification` workflow should route live push delivery through the configured provider instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
+For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Push Provider accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Push Provider connections are used by `Action Orchestrator -> Push Notifications` when the Push Composer or the legacy push workflow path should route live push delivery through the configured provider instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
 
 #### Campaign Provider Connections
 
-Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns and provider-backed push workflows. Browser-entered API keys and bearer tokens are encrypted before storage and later reads expose only the matching `*_configured` flag. The credential form stays hidden until you click `Connect Campaign Provider`.
+Use the dedicated provider-connection card on `Data Core -> Connectors` to manage credentials for lifecycle email campaigns, the Push Composer, and provider-backed legacy push workflows. Browser-entered API keys and bearer tokens are encrypted before storage and later reads expose only the matching `*_configured` flag. The credential form stays hidden until you click `Connect Campaign Provider`.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -520,13 +520,13 @@ Use the dedicated provider-connection card on `Data Core -> Connectors` to manag
 | `Connection Name` | Text box | Sets the label that appears later in the email campaign builder or workflow composer. | `Push Provider Production` | The provider connection is listed under that name. |
 | SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
 | Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
-| Push Provider fields | Text box, password boxes | When `Provider` is `Push Provider`, fill `Push Provider Base URL`, `Push API Token`, optional `Default Deep Link Token`, and optional `Callback Signing Secret`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token` | The connection becomes selectable for push workflows and Kairyx can route live push delivery for explicit player IDs. |
+| Push Provider fields | Text box, password boxes | When `Provider` is `Push Provider`, fill `Push Provider Base URL`, `Push API Token`, optional `Default Deep Link Token`, and optional `Callback Signing Secret`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token` | The connection becomes selectable in the Push Composer and Kairyx can route live push delivery for explicit player IDs, all-player sends, and Wynn-filtered campaigns. |
 | `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key or API token blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder or workflow composer. |
 | `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
 | Provider row `Edit` | Row button | Loads the selected provider connection into the form for editing. | None | The form switches to update mode for that row. |
 | Provider row `Use in Campaign` | Row button | Visible for SendGrid and Braze rows. Jumps to `Action Orchestrator -> Email Campaigns`, sets the provider switch, selects that provider connection, and loads its assets. | None | The email campaign builder is preloaded for that provider account. |
-| Provider row `Use in Push` | Row button | Visible for Push Provider rows. Jumps to `Action Orchestrator -> Push Notifications` and preselects that provider connection in the push workflow composer. | None | The push workflow builder is preloaded for provider-backed `push_notification` delivery. |
+| Provider row `Use in Push` | Row button | Visible for Push Provider rows. Jumps to `Action Orchestrator -> Push Notifications` and preselects that provider connection in the Push Composer. | None | The Push Composer is preloaded for provider-backed `push_notification` delivery. |
 | Provider row `Delete` | Row button | Removes the saved provider connection when it is no longer needed. Kairyx blocks the delete if any draft, scheduled, or sending campaign still references that provider connection. | None | The provider connection is deleted or the UI returns a guardrail error explaining which campaigns must be cancelled or removed first. |
 
 #### Sample connector output
@@ -1081,43 +1081,51 @@ State rules:
 
 ### 5.2 Push Notifications
 
-Use this page for two different push paths:
+Use this page for two push paths:
 
-- `Send One-Time Push` for an immediate single-user send that should happen once right now
-- `Reusable Push Workflow` for scheduled, cohort-based, policy-driven push automation that later moves through `Workflow Studio`
+- `Push Composer` for immediate sends, one-time scheduled sends, and repeated Wynn provider campaigns
+- `Legacy Advanced Workflow Builder` for the older cohort-based workflow path with experiment and policy controls
 
-#### 5.2.1 Send One-Time Push
+#### 5.2.1 Push Composer
 
-Use this card when KairyxAI should send a push to one explicit Wynn player id immediately without asking for cohort, cadence, cooldown, budget, or workflow versioning.
+Use the main composer when KairyxAI should create a Wynn push campaign directly. This is the default operator path for single sends, future one-time sends, repeated daily sends, explicit multi-user sends, all-player sends, and Wynn-native audience filters.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Name (optional)` | Text box | Optional operator label for the one-time send record. | `vip_reactivation` | The dispatch is stored with that name. |
-| `User ID` | Text box | Enter the Wynn `canonical_user_id` / `playerId` to target. | `player_123` | Kairyx sends only that user as the downstream `player_ids[0]`. |
-| `Provider Connection` | Select | Leave blank to simulate the push, or choose a Push Provider connection for live Wynn delivery. | `Push Provider Production` | Execution uses the selected provider connection. |
-| `Campaign Name (optional)` | Text box | Optional downstream campaign label. If blank, Kairyx defaults it from the dispatch name. | `vip_reactivation_push` | The outbound payload includes `campaign_name`. |
+| `Name (optional)` | Text box | Optional operator label for the dispatch or generated workflow. | `vip_reactivation` | Immediate sends store the dispatch with that name. Scheduled and repeated sends use it as the workflow name. |
+| `Mode` | Select | Choose `Single send` or `Repeated send`. | `Single send` | The composer changes between immediate/one-time flow and daily repeated flow. |
+| `Provider Connection` | Select | Leave blank to keep simulator delivery for explicit ids, or choose a Push Provider connection for live Wynn delivery. | `Push Provider Production` | Execution uses the selected connection. |
+| `Single Send Timing` | Select | Visible when `Mode` is `Single send`. Choose `Send immediately` or `Schedule once`. | `Schedule once` | The composer either sends now or creates a one-time scheduled workflow. |
+| `Schedule Once For` | Date/time picker | Visible when `Single Send Timing` is `Schedule once`. | `2026-04-16 11:30` | Kairyx creates and publishes a one-time scheduled workflow. |
+| `Daily Hour` / `Daily Minute` | Number boxes | Visible when `Mode` is `Repeated send`. | `10` / `15` | Kairyx creates and publishes a daily workflow scheduled for 10:15. |
+| `User IDs (optional)` | Text area | Enter comma-separated Wynn `canonical_user_id` / `playerId` values, or leave blank to target all players. | `player_123, player_456` | Kairyx sends only those ids when filled, or broadcasts to all Wynn players when blank. |
+| `Campaign Name (optional)` | Text box | Optional downstream campaign label. If blank, Kairyx defaults it from the name field. | `vip_reactivation_push` | The outbound payload includes `campaign_name`. |
 | `Title` | Text box | Recommended for all sends and required for live Wynn delivery. | `We miss you` | The outbound payload includes `title`. |
 | `Body` | Text area | Required message body. | `A reward is waiting for you.` | The outbound payload includes `body`. |
 | `Deep Link (optional)` | Text box | Optional deep link metadata for the push request. | `app://promotions/vip` | The outbound payload includes `deep_link`. |
 | `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
 | `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"vip_pack"}` | The outbound payload includes `data`. |
-| `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for one-time sends. | None | The advanced JSON field becomes visible. |
+| `Advanced Provider Options` | Disclosure section | Expands the provider-specific editors. | None | The advanced JSON fields become visible. |
 | `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
-| `Send Now` | Button | Sends the one-time push immediately. | None | The push dispatch runs once and the response renders below the form. |
-| `Clear` | Button | Clears the one-time push composer. | None | The form resets to an empty single-user send. |
+| `Wynn Filters JSON` | Text area | Visible when the selected connection is a Wynn Push Provider. Use native Wynn filter keys. | `{"minVIPLevel":5,"platform":"ios"}` | Wynn applies those filters when it resolves campaign recipients. |
+| `Send Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode. | None | Immediate sends create a one-time dispatch. Scheduled and repeated sends create and publish workflows. |
+| `Clear` | Button | Clears the composer. | None | The composer resets to a new single send. |
 
-One-time push behavior:
-- This path does not create a workflow and does not require `Cohort`, `Trigger Type`, `Global Daily Limit`, `Cooldown Hours`, or other cadence/policy fields.
-- Leaving `Provider Connection` blank keeps the simulator path.
-- Choosing a Push Provider connection sends the request to Wynn PushNotifier immediately.
+Push Composer behavior:
+- Leaving `User IDs` blank means `all players`, but that broadcast path requires a live Wynn Push Provider connection.
+- Entering one or more `User IDs` means Kairyx sends one Wynn campaign targeting exactly those ids.
+- Immediate sends use `POST /api/v1/push-dispatches/send-now`.
+- `Schedule once` and `Repeated send` create and publish `provider_campaign` workflows that later appear in `Workflow Studio`.
 - Live Wynn sends require both `Title` and `Body`.
-- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the send can start.
+- `Push Data JSON`, `Provider Options JSON`, and `Wynn Filters JSON` must parse as JSON objects.
+- `Wynn Filters JSON` is stored at `provider_options.filters` and uses native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
+- Leaving `Provider Connection` blank keeps the simulator path, but simulator delivery is only valid for explicit user ids and does not broadcast to all players.
 
-#### Sample one-time push request
+#### Sample immediate push request
 ```json
 {
   "name": "vip_reactivation",
-  "user_id": "player_123",
+  "user_ids": ["player_123", "player_456"],
   "provider_connection_id": "pc_01hxyz...",
   "campaign_name": "vip_reactivation_push",
   "title": "We miss you",
@@ -1125,122 +1133,67 @@ One-time push behavior:
   "deep_link": "app://promotions/vip",
   "deep_link_token": "vip-token",
   "data": { "reward_id": "vip_pack" },
-  "provider_options": { "priority": "high" }
+  "provider_options": {
+    "priority": "high",
+    "filters": {
+      "minVIPLevel": 5,
+      "platform": "ios"
+    }
+  }
 }
 ```
 
-#### 5.2.2 Reusable Push Workflow
-
-Use this builder when the push should stay cohort-driven, scheduled, reusable, and manageable through `Workflow Studio`.
-
-| Control | Type | How to use it | Sample input | Expected result |
-| --- | --- | --- | --- | --- |
-| `Name` | Text box | Workflow name. | `daily_churn_rescue` | Stored as the workflow name. |
-| `Cohort` | Select | Choose the source cohort. | `cohort_20260322_1200` | Workflow binds to that cohort. |
-| `Experiment ID` | Text box | Link the workflow to an experiment id. | `churn_rescue_v1` | Publish and measurement use this experiment id. |
-| `Trigger Type` | Select | Choose `daily_schedule` or `manual_test`. | `daily_schedule` | Trigger config uses the selected type. |
-| `Hour` | Number box | Scheduled run hour. | `10` | Daily run executes at 10:00. |
-| `Minute` | Number box | Scheduled run minute. | `15` | Daily run executes at `:15`. |
-| `Channel` | Select | Fixed to `Push Notification` for this builder. | `Push Notification` | Workflow action stays on the push path. |
-| `Global Daily Limit` | Number box | Max sends per day across workflow. | `5` | Policy blocks sends beyond five. |
-| `Channel Daily Limit` | Number box | Max push sends per day. | `5` | Policy applies at the push-channel level. |
-| `Cooldown Hours` | Number box | Cooldown per user. | `24` | Same user is skipped for 24 hours. |
-| `Quiet Hours Start` | Number box | Start of no-send window. | `22` | Sends are blocked after 22:00. |
-| `Quiet Hours End` | Number box | End of no-send window. | `7` | Sends resume at 07:00. |
-| `Daily Budget Limit` | Number box | Workflow budget cap. | `25` | Policy blocks sends beyond budget. |
-| `Blacklist IDs (comma separated)` | Text box | Users who should never receive this workflow. | `user_1,user_2` | Those users are always skipped. |
-| `Provider Connection` | Select | Leave blank to keep simulator delivery, or choose a Push Provider connection for live push delivery. | `Push Provider Production` | Execution uses the selected provider connection. |
-| `Campaign Name` | Text box | Sets the campaign label created for the workflow send. | `winback_push` | The outbound payload includes `campaign_name`. |
-| `Title` | Text box | Required for live push delivery. | `Come back` | The outbound payload includes `title`. |
-| `Schedule Override (optional)` | Date/time picker | Converts the local date and time into an ISO timestamp for the selected push provider. | `2026-04-16 11:30` | The outbound payload includes `scheduled_at`. |
-| `Body` | Text area | Required for live push delivery and also used as simulator content when no provider connection is selected. | `Rewards are waiting for you.` | The outbound payload includes `body`. |
-| `Deep Link (optional)` | Text box | Sets the deep link metadata stored on the push request. | `app://promotions/welcome-back` | The outbound payload includes `deep_link`. |
-| `Deep Link Token (optional)` | Text box | Overrides the provider connection's default deep link token for this workflow. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
-| `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"reward_pack"}` | The outbound payload includes `data`. |
-| `Advanced Provider Options` | Disclosure section | Expands the provider-specific options editor for push workflows. | None | The advanced JSON field becomes visible. |
-| `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
-| `Requires manual confirmation` | Checkbox | Require manual confirmation before high-risk execution. | Checked | Workflow is marked confirmation-required. |
-| `Create Push Workflow` / `Update Push Workflow` | Button | Creates a new draft workflow or updates the selected workflow back into a draft version. | None | The workflow is saved and becomes manageable in `Workflow Studio`. |
-| `Clear` | Button | Clears the selected workflow and resets the builder to a new draft. | None | The form is ready for a new push workflow. |
-
-Reusable push workflow behavior:
-- Leaving `Provider Connection` blank keeps the legacy simulator path for push workflows.
-- Selecting a Push Provider connection switches the workflow to live push delivery. Kairyx sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
-- Live push workflows require both `Title` and `Body`.
-- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
-- Editing a published or paused workflow creates a new draft version on that same workflow record.
-
-#### Sample reusable push workflow request
+#### Sample one-time scheduled workflow request
 ```json
 {
-  "name": "daily_churn_rescue_push",
-  "cohort_id": "cohort_20260322_1200",
-  "experiment_id": "churn_rescue_v1",
-  "schedule": { "type": "daily" },
+  "name": "vip_once_schedule",
+  "audience_mode": "provider_campaign",
+  "user_ids": [],
   "trigger": {
-    "type": "daily_schedule",
-    "hour": 10,
-    "minute": 15
+    "type": "one_time_schedule",
+    "scheduled_at": "2026-04-16T18:30:00+00:00"
   },
   "action": {
     "channel": "push_notification",
     "provider_connection_id": "pc_push_1234567890",
-    "campaign_name": "winback_push",
-    "title": "Come back",
+    "campaign_name": "vip_broadcast_push",
+    "title": "Weekend event",
     "body": "Rewards are waiting for you.",
-    "deep_link": "app://promotions/welcome-back",
-    "deep_link_token": "campaign-default-token",
-    "scheduled_at": "2026-04-16T18:30:00Z",
-    "data": {
-      "reward_id": "reward_pack"
-    },
+    "data": { "reward_id": "reward_pack" },
     "provider_options": {
-      "priority": "high"
+      "filters": {
+        "minVIPLevel": 5,
+        "daysFromLastLogin": 14
+      }
     }
   },
   "channel_config": {
     "channel": "push_notification",
     "provider_connection_id": "pc_push_1234567890",
-    "campaign_name": "winback_push",
-    "title": "Come back",
+    "campaign_name": "vip_broadcast_push",
+    "title": "Weekend event",
     "body": "Rewards are waiting for you.",
-    "deep_link": "app://promotions/welcome-back",
-    "deep_link_token": "campaign-default-token",
-    "scheduled_at": "2026-04-16T18:30:00Z",
-    "data": {
-      "reward_id": "reward_pack"
-    },
+    "data": { "reward_id": "reward_pack" },
     "provider_options": {
-      "priority": "high"
+      "filters": {
+        "minVIPLevel": 5,
+        "daysFromLastLogin": 14
+      }
     }
   }
 }
 ```
 
-#### Sample workflow response
-```json
-{
-  "workflow_id": "wf_20260322_1215",
-  "name": "daily_churn_rescue_push",
-  "status": "draft",
-  "archived_at": null,
-  "experiment_id": "churn_rescue_v1",
-  "runtime_summary": {
-    "last_run_at": null,
-    "last_test_run_at": null,
-    "next_run_at": null,
-    "last_result": {},
-    "totals": {
-      "runs": 0,
-      "test_runs": 0,
-      "triggered": 0,
-      "executed": 0,
-      "success": 0,
-      "failures": 0
-    }
-  }
-}
-```
+#### 5.2.2 Legacy Advanced Workflow Builder
+
+Use the collapsed legacy builder only when the push should stay cohort-driven, reusable, and experiment/policy controlled. This older path still supports cadence, blacklist, quiet hours, cooldown, and budget controls, and editing it still creates a draft version on the same workflow record.
+
+Legacy workflow behavior:
+- Leaving `Provider Connection` blank keeps the simulator path for explicit cohort members.
+- Selecting a Push Provider connection switches the workflow to live push delivery and sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
+- Live push workflows require both `Title` and `Body`.
+- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
+- Editing a published or paused workflow creates a new draft version on that same workflow record.
 
 ### 5.3 Workflow Studio
 
@@ -1843,19 +1796,19 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
      }
      ```
    - Click `Create Cohort`.
-5. In `Action Orchestrator -> Push Notifications`, create a reusable push workflow:
-   - `Name`: `daily_churn_rescue_push`
-   - `Cohort`: select the new cohort
-   - `Experiment ID`: `churn_rescue_v1`
-   - `Trigger Type`: `daily_schedule`
-   - `Hour`: `10`
-   - `Minute`: `15`
+5. In `Action Orchestrator -> Push Notifications`, use the `Push Composer`:
+   - `Mode`: `Repeated send`
+   - `Provider Connection`: choose your Wynn Push Provider
+   - `Daily Hour`: `10`
+   - `Daily Minute`: `15`
+   - `User IDs`: leave blank to target all players, or enter comma-separated ids for a smaller audience
    - `Campaign Name`: `winback_push`
    - `Title`: `Come back`
    - `Body`: `Rewards are waiting for you.`
-   - Click `Create Push Workflow`.
-   - For an immediate single-user send instead, use `Send One-Time Push`, enter one `User ID`, choose a `Provider Connection`, fill `Title` and `Body`, then click `Send Now`.
-6. In `Action Orchestrator -> Workflow Studio`, find the new workflow and click `Publish`.
+   - Optional `Wynn Filters JSON`: `{"minVIPLevel":5}`
+   - Click `Create Repeated Workflow`.
+   - For an immediate send instead, switch to `Mode = Single send`, choose `Send immediately`, fill the same content, and click `Send Now`.
+6. In `Action Orchestrator -> Workflow Studio`, find the new workflow. Composer-created scheduled and repeated workflows are already published, so use Workflow Studio to inspect, pause, resume, archive, or test-run them.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.
 9. Open the global `Ask AI` bubble and run:

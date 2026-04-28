@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
 
 class PushDispatchSendRequest(BaseModel):
     name: str | None = None
-    user_id: str
+    user_id: str | None = None
+    user_ids: List[str] = Field(default_factory=list)
     provider_connection_id: str | None = None
     campaign_name: str | None = None
     title: str | None = None
@@ -23,7 +24,9 @@ class PushDispatchResponse(BaseModel):
     name: str
     status: str
     channel: str = "push_notification"
-    user_id: str
+    user_id: str | None = None
+    user_ids: List[str] = Field(default_factory=list)
+    audience_mode: str
     provider: str
     provider_mode: str
     provider_backend: str

@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 
 class WorkflowCreateRequest(BaseModel):
     name: str
-    cohort_id: str
+    cohort_id: str | None = None
+    audience_mode: str | None = None
+    user_ids: List[str] = Field(default_factory=list)
     schedule: Dict[str, Any] = Field(default_factory=lambda: {"type": "daily"})
     action: Dict[str, Any] = Field(default_factory=dict)
     policy: Dict[str, Any] = Field(default_factory=dict)
@@ -22,6 +24,8 @@ class WorkflowCreateRequest(BaseModel):
 class WorkflowUpdateRequest(BaseModel):
     name: str | None = None
     cohort_id: str | None = None
+    audience_mode: str | None = None
+    user_ids: List[str] | None = None
     schedule: Dict[str, Any] | None = None
     action: Dict[str, Any] | None = None
     policy: Dict[str, Any] | None = None
@@ -71,6 +75,8 @@ class WorkflowResponse(BaseModel):
     workflow_id: str
     name: str
     status: str
+    audience_mode: str | None = None
+    user_ids: List[str] = Field(default_factory=list)
     archived_at: str | None = None
     tenant_id: str | None = None
     project_id: str | None = None

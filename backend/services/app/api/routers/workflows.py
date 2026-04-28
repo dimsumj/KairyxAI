@@ -36,6 +36,8 @@ def create_workflow(request: WorkflowCreateRequest, http_request: Request, servi
         return service.create_workflow(
             name=request.name,
             cohort_id=request.cohort_id,
+            audience_mode=request.audience_mode,
+            user_ids=request.user_ids,
             schedule=request.schedule,
             action=request.action,
             policy=request.policy,
