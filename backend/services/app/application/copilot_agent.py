@@ -21,6 +21,7 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 from app.application.cohorts import CohortService
 from app.application.connectors import ConnectorService
 from app.application.copilot import CopilotService
+from app.application.copilot_action_router import build_copilot_action_router
 from app.application.experiments import ExperimentConfigService
 from app.application.copilot_help_catalog import build_help_support_answer
 from app.application.health_monitor import HealthMonitorService
@@ -653,6 +654,12 @@ class CopilotAgentService:
         self.sendgrid_provider = SendGridProviderService(repository)
         self.braze_provider = BrazeProviderService(repository)
         self.model_runtime_resolver = TextModelRuntimeResolver(repository, circuit_namespace="copilot_agent")
+        self.action_router = build_copilot_action_router(
+            repository=self.repository,
+            copilot=self.copilot,
+            health_monitor=self.health_monitor,
+            cohorts=self.cohorts,
+        )
 
     def create_session(
         self,
@@ -1828,8 +1835,15 @@ class CopilotAgentService:
         ui_context: Dict[str, Any],
         model_adapter: CopilotAgentModelAdapter,
     ) -> Dict[str, Any]:
-        if action_type == "summarize_dashboard":
-            return self._execute_dashboard_summary(parameters)
+        if self.action_router.can_execute(action_type):
+            return self.action_router.execute(
+                action_type,
+                parameters,
+                context=context,
+                session=session,
+                ui_context=ui_context,
+                model_adapter=model_adapter,
+            )
         if action_type == "run_prediction":
             return self._execute_prediction_action(parameters)
         if action_type == "draft_sql_from_prompt":
@@ -2608,52 +2622,6 @@ class CopilotAgentService:
             "artifacts": artifacts,
         }
 
-    def _execute_dashboard_summary(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        overview = self.copilot.get_overview()
-        health = self.health_monitor.snapshot(persist=True)
-        cohorts = self.cohorts.list_cohorts()
-        workflows = self.repository.list_resources("workflow")
-        experiments = [item.get("payload") or {} for item in self.repository.list_resources("experiment")]
-        imports = self.repository.list_import_jobs()
-        active_cohorts = [item for item in cohorts if str(item.get("status") or "") == "active"]
-        open_alerts = [item for item in health.get("alerts") or [] if str(item.get("status") or "open") == "open"]
-        active_experiments = [item for item in experiments if str(item.get("status") or "") == "active"]
-        published_workflows = [item for item in workflows if str((item.get("payload") or {}).get("status") or item.get("status") or "") == "published"]
-        blocked_imports = [item for item in imports if str(item.get("status") or "") in {"awaiting_mapping", "failed"}]
-        top_risks = [
-            str(item.get("message") or "")
-            for item in open_alerts[:3]
-            if str(item.get("message") or "").strip()
-        ]
-        suggested_next_steps = build_summary_next_steps(open_alerts, blocked_imports, overview)
-        headline = (
-            f"{len(open_alerts)} open alert(s), {len(active_cohorts)} active cohort(s), "
-            f"{len(published_workflows)} published workflow(s), and {len(active_experiments)} active experiment(s)."
-        )
-        summary = {
-            "headline": headline,
-            "counts": {
-                "open_alerts": len(open_alerts),
-                "active_cohorts": len(active_cohorts),
-                "published_workflows": len(published_workflows),
-                "active_experiments": len(active_experiments),
-                "blocked_imports": len(blocked_imports),
-                "recent_reports": int((overview.get("report_counts") or {}).get("total") or 0),
-            },
-            "top_risks": top_risks,
-            "suggested_next_steps": suggested_next_steps,
-            "recent_reports": overview.get("recent_reports") or [],
-            "recent_anomalies": overview.get("recent_anomalies") or [],
-            "module_statuses": health.get("modules") or {},
-            "blocked_imports": blocked_imports[:5],
-            "active_cohorts": active_cohorts[:5],
-        }
-        return {
-            "summary": headline if not top_risks else f"{headline} Top risk: {top_risks[0]}",
-            "result": {"dashboard_summary": summary},
-            "artifacts": [],
-        }
-
     def _preview_from_actions(self, actions: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {
             "intent": actions[0]["action_type"] if actions else "summary",
@@ -3038,21 +3006,6 @@ def deterministic_action_summary(action_type: str, result: Dict[str, Any]) -> st
     if action_type == "summarize_dashboard":
         return str(((result.get("dashboard_summary") or {}).get("headline")) or "Summarized the dashboard.")
     return f"Completed `{action_type}`."
-
-
-def build_summary_next_steps(alerts: List[Dict[str, Any]], blocked_imports: List[Dict[str, Any]], overview: Dict[str, Any]) -> List[str]:
-    steps: List[str] = []
-    if blocked_imports:
-        steps.append("Resolve blocked imports before relying on downstream cohorts or experiments.")
-    if any(str(item.get("module") or "") == "experiment_hub" for item in alerts):
-        steps.append("Review experiment integrity warnings before making rollout decisions.")
-    if any(str(item.get("module") or "") == "audience_engine" for item in alerts):
-        steps.append("Inspect recent cohort refresh failures and rerun any stale audience definitions.")
-    if int((overview.get("report_counts") or {}).get("pending_review") or 0) > 0:
-        steps.append("Review pending Copilot reports so anomalies and recommendations do not age out.")
-    if not steps:
-        steps.append("The workspace looks healthy; the next safe step is to prepare the next cohort or experiment draft.")
-    return steps
 
 
 def artifact_for_cohort(cohort: Dict[str, Any]) -> Dict[str, Any]:

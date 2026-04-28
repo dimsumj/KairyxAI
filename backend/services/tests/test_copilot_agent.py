@@ -309,6 +309,44 @@ def test_copilot_agent_support_answers_with_page_context_and_samples(client):
     assert "```json" in payload["assistant_message"]
 
 
+def test_copilot_agent_dashboard_summary_routes_through_action_router(client, monkeypatch):
+    from app.application.copilot_action_router import CopilotActionRouter
+
+    headers = _headers("analyst", actor_id="agent_router_reader")
+    session_id = _create_session(client, headers, title="Agent Router Session")
+    routed_actions: list[str] = []
+    original_execute = CopilotActionRouter.execute
+
+    def _spy_execute(self, action_type, parameters, *, context, session, ui_context, model_adapter):
+        routed_actions.append(action_type)
+        return original_execute(
+            self,
+            action_type,
+            parameters,
+            context=context,
+            session=session,
+            ui_context=ui_context,
+            model_adapter=model_adapter,
+        )
+
+    monkeypatch.setattr(CopilotActionRouter, "execute", _spy_execute)
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={"message": "Summarize the dashboard.", "ui_context": {"active_module_id": "insight-copilot"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert routed_actions == ["summarize_dashboard"]
+    assert payload["session_state"]["status"] == "active"
+    assert payload["completed_actions"][0]["action_type"] == "summarize_dashboard"
+    assert payload["completed_actions"][0]["status"] == "completed"
+    assert "dashboard_summary" in payload["completed_actions"][0]["result"]
+    assert payload["completed_actions"][0]["result"]["dashboard_summary"]["suggested_next_steps"]
+
+
 def test_copilot_agent_unsupported_requests_fall_back_to_grounded_help(client):
     headers = _headers("analyst", actor_id="agent_analyst")
     session_id = _create_session(client, headers, title="Agent Unsupported Fallback Session")
