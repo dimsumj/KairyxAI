@@ -66,6 +66,28 @@ def _create_sendgrid_provider_connection(client: TestClient, headers: dict[str, 
     return payload["provider_connection_id"]
 
 
+def _spy_router_actions(monkeypatch) -> list[str]:
+    from app.application.copilot_action_router import CopilotActionRouter
+
+    routed_actions: list[str] = []
+    original_execute = CopilotActionRouter.execute
+
+    def _spy_execute(self, action_type, parameters, *, context, session, ui_context, model_adapter):
+        routed_actions.append(action_type)
+        return original_execute(
+            self,
+            action_type,
+            parameters,
+            context=context,
+            session=session,
+            ui_context=ui_context,
+            model_adapter=model_adapter,
+        )
+
+    monkeypatch.setattr(CopilotActionRouter, "execute", _spy_execute)
+    return routed_actions
+
+
 def _seed_completed_import_job(job_id: str, *, source_name: str = "Amplitude 1") -> None:
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
@@ -240,7 +262,8 @@ def _seed_mock_warehouse():
     )
 
 
-def test_copilot_agent_connection_clarification_loop_and_safe_execution(client):
+def test_copilot_agent_connection_clarification_loop_and_safe_execution(client, monkeypatch):
+    routed_actions = _spy_router_actions(monkeypatch)
     headers = _headers("operator", actor_id="agent_operator")
     session_id = _create_session(client, headers)
 
@@ -272,6 +295,7 @@ def test_copilot_agent_connection_clarification_loop_and_safe_execution(client):
     assert second_turn.status_code == 200
     payload = second_turn.json()
     assert payload["session_state"]["status"] == "active"
+    assert routed_actions == ["upsert_connector", "check_connector_health"]
     assert {item["action_type"] for item in payload["completed_actions"]} >= {"upsert_connector", "check_connector_health"}
     connector_action = next(item for item in payload["completed_actions"] if item["action_type"] == "upsert_connector")
     assert connector_action["status"] == "completed"
@@ -284,6 +308,40 @@ def test_copilot_agent_connection_clarification_loop_and_safe_execution(client):
     turns = client.get(f"/api/v1/copilot/agent/sessions/{session_id}/turns", headers=headers)
     assert turns.status_code == 200
     assert len(turns.json()["items"]) == 2
+
+
+def test_copilot_agent_provider_connection_routes_through_action_router(client, monkeypatch):
+    routed_actions = _spy_router_actions(monkeypatch)
+    headers = _headers("operator", actor_id="agent_provider_operator")
+    session_id = _create_session(client, headers, title="Agent Provider Connection Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "\n".join(
+                [
+                    "Set up a provider connection",
+                    "connection_scope: provider_connection",
+                    "connection_type: webhook",
+                    "name: agent_webhook_provider",
+                    "webhook_url: https://example.com/kairyx-webhook",
+                    "webhook_token: agent-provider-token",
+                ]
+            ),
+            "ui_context": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert routed_actions == ["upsert_provider_connection"]
+    provider_action = payload["completed_actions"][0]
+    assert provider_action["action_type"] == "upsert_provider_connection"
+    assert provider_action["status"] == "completed"
+    assert provider_action["parameters"]["config"]["webhook_token"] is None
+    assert provider_action["parameters"]["config"]["webhook_token_configured"] is True
+    assert any(item["resource_type"] == "provider_connection" for item in payload["artifacts"])
 
 
 def test_copilot_agent_support_answers_with_page_context_and_samples(client):
@@ -310,26 +368,9 @@ def test_copilot_agent_support_answers_with_page_context_and_samples(client):
 
 
 def test_copilot_agent_dashboard_summary_routes_through_action_router(client, monkeypatch):
-    from app.application.copilot_action_router import CopilotActionRouter
-
+    routed_actions = _spy_router_actions(monkeypatch)
     headers = _headers("analyst", actor_id="agent_router_reader")
     session_id = _create_session(client, headers, title="Agent Router Session")
-    routed_actions: list[str] = []
-    original_execute = CopilotActionRouter.execute
-
-    def _spy_execute(self, action_type, parameters, *, context, session, ui_context, model_adapter):
-        routed_actions.append(action_type)
-        return original_execute(
-            self,
-            action_type,
-            parameters,
-            context=context,
-            session=session,
-            ui_context=ui_context,
-            model_adapter=model_adapter,
-        )
-
-    monkeypatch.setattr(CopilotActionRouter, "execute", _spy_execute)
 
     response = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -369,7 +410,8 @@ def test_copilot_agent_unsupported_requests_fall_back_to_grounded_help(client):
     assert "Set up a cohort" in payload["assistant_message"]
 
 
-def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
+def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client, monkeypatch):
+    routed_actions = _spy_router_actions(monkeypatch)
     _seed_mock_warehouse()
     headers = _headers("operator", actor_id="agent_operator")
     session_id = _create_session(client, headers, title="Agent Cohort Session")
@@ -387,6 +429,7 @@ def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
     )
     assert cohort_turn.status_code == 200
     cohort_payload = cohort_turn.json()
+    assert routed_actions == ["preview_sql", "save_query", "create_cohort_sql"]
     assert [item["action_type"] for item in cohort_payload["completed_actions"]] == ["preview_sql", "save_query", "create_cohort_sql"]
     cohort_artifact = next(item for item in cohort_payload["artifacts"] if item["resource_type"] == "cohort")
     cohort_id = cohort_artifact["resource_id"]
@@ -418,6 +461,7 @@ def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
     )
     assert experiment_turn.status_code == 200
     experiment_payload = experiment_turn.json()
+    assert routed_actions[-1] == "save_experiment_config"
     experiment_action = next(item for item in experiment_payload["completed_actions"] if item["action_type"] == "save_experiment_config")
     experiment = experiment_action["result"]["experiment"]
     assert experiment["experiment_id"] == "agent_exp_1"
@@ -486,7 +530,8 @@ def test_copilot_agent_drafts_audience_builder_state_artifact(client):
     assert builder_state["preview"]["member_count"] == 2
 
 
-def test_copilot_agent_confirmation_gate_for_risky_action(client):
+def test_copilot_agent_confirmation_gate_for_risky_action(client, monkeypatch):
+    routed_actions = _spy_router_actions(monkeypatch)
     headers = _headers("operator", actor_id="agent_operator")
     session_id = _create_session(client, headers, title="Agent Confirmation Session")
 
@@ -520,6 +565,7 @@ def test_copilot_agent_confirmation_gate_for_risky_action(client):
     )
     assert confirmed.status_code == 200
     confirmed_payload = confirmed.json()
+    assert routed_actions == ["activate_cohort"]
     assert confirmed_payload["completed_actions"][0]["action_type"] == "activate_cohort"
     assert confirmed_payload["completed_actions"][0]["status"] == "completed"
 

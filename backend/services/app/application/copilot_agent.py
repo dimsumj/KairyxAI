@@ -20,6 +20,11 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 from app.application.cohorts import CohortService
 from app.application.connectors import ConnectorService
+from app.application.copilot_action_artifacts import (
+    artifact_for_cohort,
+    artifact_for_experiment,
+    artifact_for_saved_query,
+)
 from app.application.copilot import CopilotService
 from app.application.copilot_action_router import build_copilot_action_router
 from app.application.experiments import ExperimentConfigService
@@ -659,6 +664,10 @@ class CopilotAgentService:
             copilot=self.copilot,
             health_monitor=self.health_monitor,
             cohorts=self.cohorts,
+            connectors=self.connectors,
+            provider_connections=self.provider_connections,
+            sql_workspace=self.sql_workspace,
+            experiments=self.experiments,
         )
 
     def create_session(
@@ -1864,174 +1873,6 @@ class CopilotAgentService:
                 context=context,
                 model_adapter=model_adapter,
             )
-        if action_type == "upsert_connector":
-            connector = self.connectors.create_connector(parameters["name"], parameters["connector_type"], parameters["config"])
-            return {
-                "summary": f"Created connector `{connector['name']}` for `{connector['type']}`.",
-                "result": {"connector": connector},
-                "artifacts": [artifact_for_connector(connector)],
-            }
-        if action_type == "check_connector_health":
-            try:
-                health = self.connectors.health_check(parameters["name"])
-                return {
-                    "summary": f"Ran health check for `{parameters['name']}` and the connector reported `{health.get('message') or ('ok' if health.get('ok') else 'issue')}`.",
-                    "result": {"health": health},
-                    "artifacts": [],
-                }
-            except Exception as exc:
-                return {
-                    "summary": f"Created the connector, but the optional health check could not complete: {exc}",
-                    "result": {"health_error": str(exc)},
-                    "artifacts": [],
-                }
-        if action_type == "upsert_provider_connection":
-            existing = None
-            if parameters.get("update_existing"):
-                existing = next(
-                    (
-                        item
-                        for item in self.provider_connections.list_connections()
-                        if str(item.get("name") or "") == str(parameters["name"])
-                        and str(item.get("provider") or "") == str(parameters["provider"])
-                    ),
-                    None,
-                )
-            if existing is not None:
-                connection = self.provider_connections.update_connection(existing["provider_connection_id"], {"name": parameters["name"], "config": parameters["config"]})
-                summary = f"Updated provider connection `{connection['name']}` for `{connection['provider']}`."
-            else:
-                connection = self.provider_connections.create_connection(parameters["name"], parameters["provider"], parameters["config"])
-                summary = f"Created provider connection `{connection['name']}` for `{connection['provider']}`."
-            return {
-                "summary": summary,
-                "result": {"provider_connection": connection},
-                "artifacts": [artifact_for_provider_connection(connection)],
-            }
-        if action_type == "preview_sql":
-            preview = self.sql_workspace.preview(
-                parameters["sql"],
-                limit=int(parameters.get("limit") or 20),
-                timeout_seconds=int(parameters.get("timeout_seconds") or 30),
-            )
-            return {
-                "summary": f"Previewed the SQL query and returned {int(preview.get('row_count') or 0)} row(s).",
-                "result": {"preview": preview},
-                "artifacts": [],
-            }
-        if action_type == "save_query":
-            saved_query = self.sql_workspace.create_saved_query(parameters["name"], parameters["sql"], parameters.get("description") or "")
-            return {
-                "summary": f"Saved SQL query `{saved_query['name']}`.",
-                "result": {"saved_query": saved_query},
-                "artifacts": [artifact_for_saved_query(saved_query)],
-            }
-        if action_type == "create_cohort_sql":
-            cohort = self.cohorts.create_cohort(
-                name=parameters["name"],
-                cohort_type="sql",
-                definition=dict(parameters["definition"] or {}),
-                refresh_mode=parameters.get("refresh_mode") or "manual",
-                owner=parameters.get("owner") or context.actor_id,
-                description=parameters.get("description") or "",
-                tags=list(parameters.get("tags") or []),
-                activate=False,
-            )
-            return {
-                "summary": f"Created draft SQL cohort `{cohort['name']}` with {int(cohort.get('member_count') or 0)} member(s).",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "create_cohort_definition":
-            cohort = self.cohorts.create_cohort(
-                name=parameters["name"],
-                cohort_type=parameters["cohort_type"],
-                definition=dict(parameters["definition"] or {}),
-                refresh_mode=parameters.get("refresh_mode") or "manual",
-                owner=parameters.get("owner") or context.actor_id,
-                description=parameters.get("description") or "",
-                tags=list(parameters.get("tags") or []),
-                activate=False,
-            )
-            return {
-                "summary": f"Created draft {parameters['cohort_type']} cohort `{cohort['name']}`.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "update_cohort_definition":
-            cohort = self.cohorts.update_cohort(
-                parameters["cohort_id"],
-                {
-                    "name": parameters["name"],
-                    "type": parameters["cohort_type"],
-                    "definition": dict(parameters["definition"] or {}),
-                    "refresh_mode": parameters.get("refresh_mode") or "manual",
-                    "owner": parameters.get("owner") or context.actor_id,
-                    "description": parameters.get("description") or "",
-                    "tags": list(parameters.get("tags") or []),
-                },
-            )
-            return {
-                "summary": f"Updated draft cohort `{cohort['name']}`.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "save_experiment_config":
-            experiment = self.experiments.save_config(parameters, experiment_id=parameters["experiment_id"])
-            return {
-                "summary": f"Saved experiment config `{experiment['experiment_id']}` in a non-running state.",
-                "result": {"experiment": experiment},
-                "artifacts": [artifact_for_experiment(experiment)],
-            }
-        if action_type == "activate_cohort":
-            cohort = self.cohorts.activate_cohort(parameters["cohort_id"])
-            return {
-                "summary": f"Activated cohort `{cohort['name']}`.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "pause_cohort":
-            cohort = self.cohorts.pause_cohort(parameters["cohort_id"])
-            return {
-                "summary": f"Paused cohort `{cohort['name']}`.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "archive_cohort":
-            cohort = self.cohorts.archive_cohort(parameters["cohort_id"])
-            return {
-                "summary": f"Archived cohort `{cohort['name']}`.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "restore_cohort":
-            cohort = self.cohorts.restore_cohort(parameters["cohort_id"])
-            return {
-                "summary": f"Restored cohort `{cohort['name']}` to draft status.",
-                "result": {"cohort": cohort},
-                "artifacts": [artifact_for_cohort(cohort)],
-            }
-        if action_type == "start_experiment":
-            experiment = self.experiments.start(parameters["experiment_id"])
-            return {
-                "summary": f"Started experiment `{parameters['experiment_id']}`.",
-                "result": {"experiment": experiment},
-                "artifacts": [artifact_for_experiment(experiment)],
-            }
-        if action_type == "stop_experiment":
-            experiment = self.experiments.stop(parameters["experiment_id"])
-            return {
-                "summary": f"Stopped experiment `{parameters['experiment_id']}`.",
-                "result": {"experiment": experiment},
-                "artifacts": [artifact_for_experiment(experiment)],
-            }
-        if action_type == "record_experiment_decision":
-            decision = self.experiments.decide(parameters["experiment_id"], decided_by=parameters.get("decided_by") or context.actor_id)
-            return {
-                "summary": f"Recorded an experiment decision for `{parameters['experiment_id']}`.",
-                "result": {"decision": decision},
-                "artifacts": [artifact_for_experiment({"experiment_id": parameters["experiment_id"]})],
-            }
         raise ValueError(f"Unsupported agent action '{action_type}'.")
 
     def _execute_prediction_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -3006,76 +2847,6 @@ def deterministic_action_summary(action_type: str, result: Dict[str, Any]) -> st
     if action_type == "summarize_dashboard":
         return str(((result.get("dashboard_summary") or {}).get("headline")) or "Summarized the dashboard.")
     return f"Completed `{action_type}`."
-
-
-def artifact_for_cohort(cohort: Dict[str, Any]) -> Dict[str, Any]:
-    cohort_id = str(cohort.get("cohort_id") or "")
-    return {
-        "resource_type": "cohort",
-        "resource_id": cohort_id,
-        "label": str(cohort.get("name") or cohort_id or "Cohort"),
-        "module_id": "audience-engine",
-        "page_id": "audience-engine",
-        "api_path": f"/api/v1/cohorts/{quote(cohort_id)}" if cohort_id else "",
-        "focus": {"cohort_id": cohort_id},
-        "status": str(cohort.get("status") or ""),
-    }
-
-
-def artifact_for_experiment(experiment: Dict[str, Any]) -> Dict[str, Any]:
-    experiment_id = str(experiment.get("experiment_id") or "")
-    return {
-        "resource_type": "experiment",
-        "resource_id": experiment_id,
-        "label": experiment_id or "Experiment",
-        "module_id": "experiment-hub",
-        "page_id": "experiment-hub",
-        "api_path": f"/api/v1/experiments/config?experiment_id={quote(experiment_id)}" if experiment_id else "",
-        "focus": {"experiment_id": experiment_id},
-        "status": str(experiment.get("status") or ""),
-    }
-
-
-def artifact_for_connector(connector: Dict[str, Any]) -> Dict[str, Any]:
-    connector_name = str(connector.get("name") or "")
-    return {
-        "resource_type": "connector",
-        "resource_id": str(connector.get("connector_id") or connector_name),
-        "label": connector_name or "Connector",
-        "module_id": "data-core",
-        "page_id": "connectors",
-        "api_path": f"/api/v1/connectors/{quote(connector_name)}/health" if connector_name else "",
-        "focus": {"connector_name": connector_name},
-        "status": "configured",
-    }
-
-
-def artifact_for_provider_connection(connection: Dict[str, Any]) -> Dict[str, Any]:
-    connection_id = str(connection.get("provider_connection_id") or "")
-    return {
-        "resource_type": "provider_connection",
-        "resource_id": connection_id,
-        "label": str(connection.get("name") or connection_id or "Provider Connection"),
-        "module_id": "data-core",
-        "page_id": "connectors",
-        "api_path": f"/api/v1/provider-connections/{quote(connection_id)}" if connection_id else "",
-        "focus": {"provider_connection_id": connection_id},
-        "status": str(connection.get("status") or ""),
-    }
-
-
-def artifact_for_saved_query(saved_query: Dict[str, Any]) -> Dict[str, Any]:
-    query_id = str(saved_query.get("query_id") or "")
-    return {
-        "resource_type": "saved_query",
-        "resource_id": query_id,
-        "label": str(saved_query.get("name") or query_id or "Saved Query"),
-        "module_id": "audience-engine",
-        "page_id": "audience-engine",
-        "api_path": "",
-        "focus": {"query_id": query_id},
-        "status": "saved",
-    }
 
 
 def artifact_for_builder_state(builder_state: Dict[str, Any]) -> Dict[str, Any]:
