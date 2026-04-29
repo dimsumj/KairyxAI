@@ -11042,9 +11042,32 @@ export function initializeOperatorConsole() {
                 return String(provider?.provider || '').trim().toLowerCase() === 'wynn_push_notifier';
             }
 
+            function syncPushDispatchAudienceFieldState() {
+                if (!pushDispatchUserIdInput) {
+                    return;
+                }
+                pushDispatchUserIdInput.required = false;
+                pushDispatchUserIdInput.removeAttribute('required');
+                pushDispatchUserIdInput.setCustomValidity('');
+            }
+
+            function validatePushComposerAudience({ userIds, providerConnectionId }) {
+                syncPushDispatchAudienceFieldState();
+                if (Array.isArray(userIds) && userIds.length > 0) {
+                    return;
+                }
+                if (String(providerConnectionId || '').trim()) {
+                    return;
+                }
+                throw new Error(
+                    'Leave User IDs blank only when sending through a live Wynn PushNotifier provider connection. Select a provider connection to target all players, or enter one or more User IDs for simulator sends.',
+                );
+            }
+
             function syncPushDispatchComposerFields() {
                 const mode = getPushComposerMode();
                 const singleTiming = getPushComposerSingleTiming();
+                syncPushDispatchAudienceFieldState();
                 if (pushDispatchSingleTimingGroup) {
                     pushDispatchSingleTimingGroup.style.display = mode === 'single' ? 'block' : 'none';
                 }
@@ -11218,19 +11241,18 @@ export function initializeOperatorConsole() {
                     throw new Error('Body is required.');
                 }
                 const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
+                const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
+                validatePushComposerAudience({ userIds, providerConnectionId });
                 const payload = {
                     body,
+                    user_ids: userIds,
                     data: parseJsonText(pushDispatchDataInput?.value, {}),
                     provider_options: buildPushComposerProviderOptions(),
                 };
                 if (userIds.length === 1) {
                     payload.user_id = userIds[0];
                 }
-                if (userIds.length > 0) {
-                    payload.user_ids = userIds;
-                }
                 const name = String(pushDispatchNameInput?.value || '').trim();
-                const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
                 const campaignName = String(pushDispatchCampaignNameInput?.value || '').trim();
                 const title = String(pushDispatchTitleInput?.value || '').trim();
                 const deepLink = String(pushDispatchDeepLinkInput?.value || '').trim();
@@ -11265,6 +11287,7 @@ export function initializeOperatorConsole() {
                 }
                 const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
                 const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim() || null;
+                validatePushComposerAudience({ userIds, providerConnectionId });
                 const channelConfig = {
                     channel: 'push_notification',
                     campaign_name: String(pushDispatchCampaignNameInput?.value || '').trim() || name,
