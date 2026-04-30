@@ -8,6 +8,7 @@ from secret_manager_service import SecretManagerService
 SENSITIVE_FIELDS = {
     "api_key",
     "api_token",
+    "callback_bearer_token",
     "callback_signing_secret",
     "client_secret",
     "password",

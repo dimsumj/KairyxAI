@@ -6,7 +6,7 @@ The product is organized around five operator areas:
 
 - `Data Core` for connectors, mappings, imports, predictions, data quality, and governance
 - `Audience Engine` for guided cohort building, multi-source prediction audience selection, SQL fallback, refresh, comparison, and activation readiness
-- `Action Orchestrator` for provider-aware lifecycle email campaigns, a unified push composer for immediate, one-time scheduled, and repeated Wynn push campaigns, legacy advanced push workflow drafting, shared Workflow Studio scheduling and management, delivery, callbacks, and guardrails
+- `Action Orchestrator` for provider-aware lifecycle email campaigns, a unified push composer for immediate, one-time scheduled, and repeated Wynn push campaigns, legacy advanced push workflow drafting, shared Workflow Studio scheduling and management, delivery, callback-authenticated Wynn push outcomes, and guardrails
 - `Experiment Hub` for assignment, exposure, outcomes, integrity, and decision support
 - `Insight Copilot` for grounded operator help, summaries, recommendations, and evidence-backed reporting
 

@@ -521,7 +521,7 @@ Use the dedicated provider-connection card on `Data Core -> Connectors` to manag
 | `Connection Name` | Text box | Sets the label that appears later in the email campaign builder or workflow composer. | `Push Provider Production` | The provider connection is listed under that name. |
 | SendGrid fields | Email box, text boxes, password box | When `Provider` is `SendGrid`, fill `Default From Email`, optional `Default From Name`, optional `Base URL`, and `SendGrid API Key`. | `rewards@example.com`, `KairyxAI Rewards`, `SG.xxxxx` | The SendGrid account can browse dynamic templates and send campaigns. |
 | Braze fields | Text box, password box | When `Provider` is `Braze`, fill `Braze REST Endpoint` and `Braze API Key`. | `https://rest.iad-01.braze.com`, `braze_key_123` | The Braze account can browse API-triggered campaigns and execute them. |
-| Push Provider fields | Text box, password boxes | When `Provider` is `Push Provider`, fill `Push Provider Base URL`, `Push API Token`, optional `Default Deep Link Token`, and optional `Callback Signing Secret`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token` | The connection becomes selectable in the Push Composer and Kairyx can route live push delivery for explicit player IDs, all-player sends, and Wynn-filtered campaigns. |
+| Push Provider fields | Text boxes, password boxes | When `Provider` is `Push Provider`, fill `Push Provider Base URL`, `Push API Token`, optional `Default Deep Link Token`, optional `Callback Signing Secret`, and the optional Kairyx callback pair: `Kairyx Callback URL` plus `Kairyx Callback Bearer Token`. | `https://push.example.com`, `push-secret-token`, `campaign-default-token`, `https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier` | The connection becomes selectable in the Push Composer and Kairyx can route live push delivery for explicit player IDs, all-player sends, Wynn-filtered campaigns, and authenticated Wynn outcome callbacks. |
 | `Save Provider Connection` / `Update Provider Connection` | Button | Creates a new provider connection or updates the selected one. Leave the API key or API token blank while editing if you want to keep the existing secret. | None | The provider connection is saved and becomes selectable in the email campaign builder or workflow composer. |
 | `Cancel` | Button | Hides the provider-connection form without saving changes. | None | The connector page returns to the provider list view. |
 | `Refresh` | Button | Reloads the provider-connection list from the control plane. | None | The connector page reflects the latest saved connections. |
@@ -1121,6 +1121,7 @@ Push Composer behavior:
 - `Push Data JSON`, `Provider Options JSON`, and `Wynn Filters JSON` must parse as JSON objects.
 - `Wynn Filters JSON` is stored at `provider_options.filters` and uses native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
 - Leaving `Provider Connection` blank keeps the simulator path, but simulator delivery is only valid for explicit user ids and does not broadcast to all players.
+- When the selected Wynn provider connection also includes `Kairyx Callback URL` and `Kairyx Callback Bearer Token`, Kairyx injects flat tracking ids into the push payload and Wynn can forward `opened`, `clicked`, `claimed`, and `returned` callbacks back into the activation service.
 
 #### Sample immediate push request
 ```json
@@ -1185,6 +1186,29 @@ Push Composer behavior:
 }
 ```
 
+#### Wynn push callbacks and outcome attribution
+
+To close the loop on Wynn push results, configure the Wynn provider connection with:
+
+- `Kairyx Callback URL`: the public Kairyx endpoint, typically `https://<host>/api/v1/activation/callbacks/wynn_push_notifier`
+- `Kairyx Callback Bearer Token`: a shared bearer token that Wynn uses when posting callbacks
+- `Callback Signing Secret` optional: if set, Wynn also signs the raw callback body with `X-Kairyx-Signature`
+
+When callback delivery is configured, Kairyx automatically adds flat tracking values such as `kairyxProviderRequestId`, `kairyxProviderConnectionId`, `kairyxExecutionId`, and `kairyxWorkflowId` or `kairyxPushDispatchId` into the push `data` object that Wynn stores with the campaign. Wynn can then forward outcome events back into Kairyx.
+
+Supported Wynn callback event mapping:
+
+- `opened` stays `opened`
+- `clicked` stays `clicked`
+- `claimed` is treated as the Kairyx outcome `purchase`
+- `reactivated` and `returned` are treated as the Kairyx outcome `returned`
+
+Kairyx applies those callbacks in three places:
+
+- updates `workflow_delivery` records when the callback matches a workflow send
+- updates `push_dispatch` records and `callback_summary` when the callback matches a one-time Push Composer dispatch
+- records experiment/product outcomes so return-rate and churn analyses can use Wynn push results
+
 #### 5.2.2 Legacy Advanced Workflow Builder
 
 Use the collapsed legacy builder only when the push should stay cohort-driven, reusable, and experiment/policy controlled. This older path still supports cadence, blacklist, quiet hours, cooldown, and budget controls, and editing it still creates a draft version on the same workflow record.
@@ -1244,7 +1268,7 @@ Workflow Studio behavior:
 | `Limit Per Workflow` | Number box | Max items to execute per workflow in a run. | `100` | Scheduler run caps execution per workflow. |
 | `Run Due Workflows` | Button | Runs currently due workflows. | None | Due executions are created and shown. |
 | `Callback Provider` | Select | Choose callback provider parser. | `braze` | Callback ingestion treats payload as Braze callbacks. |
-| `Callback Payload` | Text area | JSON body for callback ingestion. | See sample below | Callback events are ingested. |
+| `Callback Payload` | Text area | JSON body for callback ingestion. Wynn callbacks may include provider ids instead of delivery ids when they are matching push dispatches or provider-campaign workflows. | See sample below | Callback events are ingested. |
 | `Ingest Callback` | Button | Sends callbacks into the activation endpoint. | None | Ingestion status and output update. |
 | `Export Job` | Select | Choose an export job for diagnostics or retry. | `export_20260322_1220` | Diagnostics actions target that export. |
 | `Load Diagnostics` | Button | Loads export diagnostics for the selected export. | None | Diagnostics JSON appears. |
@@ -1255,12 +1279,16 @@ Workflow Studio behavior:
 {
   "callbacks": [
     {
-      "provider": "braze",
-      "delivery_id": "dlv_1001",
+      "provider": "wynn_push_notifier",
+      "provider_request_id": "pd_20260430_1001",
+      "provider_campaign_id": "campaign_1001",
       "workflow_id": "wf_20260322_1215",
-      "user_id": "u_1001",
-      "status": "delivered",
-      "occurred_at": "2026-03-22T12:25:00Z"
+      "user_id": "player_1001",
+      "event_type": "clicked",
+      "occurred_at": "2026-03-22T12:25:00Z",
+      "metadata": {
+        "campaign_id": "campaign_1001"
+      }
     }
   ]
 }

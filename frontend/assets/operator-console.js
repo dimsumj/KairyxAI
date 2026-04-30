@@ -11844,6 +11844,16 @@ export function initializeOperatorConsole() {
                                 <input type="password" id="provider-connection-wynn-callback-signing-secret-input" placeholder="Optional future callback secret">
                             </div>
                         </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-callback-url-input">Kairyx Callback URL (optional)</label>
+                                <input type="text" id="provider-connection-wynn-callback-url-input" placeholder="https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier">
+                            </div>
+                            <div class="form-group">
+                                <label for="provider-connection-wynn-callback-bearer-token-input">Kairyx Callback Bearer Token (optional)</label>
+                                <input type="password" id="provider-connection-wynn-callback-bearer-token-input" placeholder="Required when callback URL is set">
+                            </div>
+                        </div>
                     `;
                 } else {
                     providerConnectionConfigFields.innerHTML = `
@@ -11923,6 +11933,8 @@ export function initializeOperatorConsole() {
                     const baseUrlInput = document.getElementById('provider-connection-wynn-base-url-input');
                     const defaultDeepLinkTokenInput = document.getElementById('provider-connection-wynn-default-deep-link-token-input');
                     const callbackSigningSecretInput = document.getElementById('provider-connection-wynn-callback-signing-secret-input');
+                    const callbackUrlInput = document.getElementById('provider-connection-wynn-callback-url-input');
+                    const callbackBearerTokenInput = document.getElementById('provider-connection-wynn-callback-bearer-token-input');
                     if (baseUrlInput) {
                         baseUrlInput.value = (provider.config || {}).base_url || '';
                     }
@@ -11931,6 +11943,12 @@ export function initializeOperatorConsole() {
                     }
                     if (callbackSigningSecretInput) {
                         callbackSigningSecretInput.value = '';
+                    }
+                    if (callbackUrlInput) {
+                        callbackUrlInput.value = (provider.config || {}).callback_url || '';
+                    }
+                    if (callbackBearerTokenInput) {
+                        callbackBearerTokenInput.value = '';
                     }
                 } else {
                     const fromEmailInput = document.getElementById('provider-connection-sendgrid-from-email-input');
@@ -12013,12 +12031,16 @@ export function initializeOperatorConsole() {
                     const baseUrl = String(document.getElementById('provider-connection-wynn-base-url-input')?.value || '').trim();
                     const defaultDeepLinkToken = String(document.getElementById('provider-connection-wynn-default-deep-link-token-input')?.value || '').trim();
                     const callbackSigningSecret = String(document.getElementById('provider-connection-wynn-callback-signing-secret-input')?.value || '').trim();
+                    const callbackUrl = String(document.getElementById('provider-connection-wynn-callback-url-input')?.value || '').trim();
+                    const callbackBearerToken = String(document.getElementById('provider-connection-wynn-callback-bearer-token-input')?.value || '').trim();
                     if (!baseUrl) {
                         throw new Error('Push provider base URL is required.');
                     }
                     config = {
                         base_url: baseUrl,
                         ...(defaultDeepLinkToken ? { default_deep_link_token: defaultDeepLinkToken } : {}),
+                        ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+                        ...(callbackBearerToken ? { callback_bearer_token: callbackBearerToken } : {}),
                         ...(callbackSigningSecret ? { callback_signing_secret: callbackSigningSecret } : {}),
                         ...(apiKey ? { api_token: apiKey } : {}),
                     };

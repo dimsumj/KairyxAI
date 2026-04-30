@@ -127,6 +127,23 @@ class ProviderConnectionService:
         payload["config"] = materialize_secret_refs(dict((record.get("payload") or {}).get("config") or {}))
         return payload
 
+    def resolve_callback_connection_for_bearer_token(self, token: str, *, provider: str | None = None) -> Dict[str, Any] | None:
+        normalized_token = str(token or "").strip()
+        normalized_provider = str(provider or "").strip().lower()
+        if not normalized_token:
+            return None
+        for record in self.repository.list_resources("provider_connection"):
+            payload = dict(record.get("payload") or {})
+            if normalized_provider and str(payload.get("provider") or "").strip().lower() != normalized_provider:
+                continue
+            config = materialize_secret_refs(dict(payload.get("config") or {}))
+            if str(config.get("callback_bearer_token") or "").strip() != normalized_token:
+                continue
+            response = self._to_response(record)
+            response["config"] = config
+            return response
+        return None
+
     def _build_payload(self, *, provider_connection_id: str, name: str, provider: str, config: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "provider_connection_id": provider_connection_id,
@@ -184,6 +201,14 @@ class ProviderConnectionService:
                 raise ValueError("Push provider connections require base_url.")
             if not base_url.startswith(("https://", "http://")):
                 raise ValueError("Push provider base_url must start with https:// or http://.")
+            callback_url = str((config or {}).get("callback_url") or "").strip()
+            callback_bearer_token_present = ProviderConnectionService._has_secret_reference(config, "callback_bearer_token")
+            if callback_url and not callback_url.startswith(("https://", "http://")):
+                raise ValueError("Push provider callback_url must start with https:// or http://.")
+            if callback_url and not callback_bearer_token_present:
+                raise ValueError("Push provider callback_url requires callback_bearer_token.")
+            if callback_bearer_token_present and not callback_url:
+                raise ValueError("Push provider callback_bearer_token requires callback_url.")
             return
         if normalized_provider != "braze":
             return

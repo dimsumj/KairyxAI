@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 import requests
 
 import pytest
@@ -79,6 +83,9 @@ def _create_wynn_provider_connection(client: TestClient) -> str:
                 "base_url": "https://push.example.com",
                 "api_token": "push-secret-token",
                 "default_deep_link_token": "default-token",
+                "callback_url": "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier",
+                "callback_bearer_token": "callback-bearer-token",
+                "callback_signing_secret": "callback-signing-secret",
             },
         },
     )
@@ -189,6 +196,8 @@ def test_provider_connection_create_supports_wynn_push_notifier(client: TestClie
             "config": {
                 "base_url": "https://push.example.com",
                 "api_token": "push-secret-token",
+                "callback_url": "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier",
+                "callback_bearer_token": "callback-bearer-token",
             },
         },
     )
@@ -198,6 +207,8 @@ def test_provider_connection_create_supports_wynn_push_notifier(client: TestClie
     assert payload["config"]["base_url"] == "https://push.example.com"
     assert payload["config"]["api_token"] is None
     assert payload["config"]["api_token_configured"] is True
+    assert payload["config"]["callback_bearer_token"] is None
+    assert payload["config"]["callback_bearer_token_configured"] is True
 
 
 def test_legacy_push_workflow_without_provider_connection_uses_simulator(client: TestClient):
@@ -278,6 +289,12 @@ def test_push_workflow_delivery_records_wynn_campaign_metadata(client: TestClien
     assert outbound["json"]["player_ids"] == ["player_1"]
     assert outbound["json"]["deep_link"] == "wynn://promotions/welcome-back"
     assert outbound["json"]["provider_options"] == {"priority": "high"}
+    assert outbound["json"]["data"]["reward_id"] == "reward_pack"
+    assert outbound["json"]["data"]["kairyxProviderRequestId"]
+    assert outbound["json"]["data"]["kairyxWorkflowId"] == workflow_id
+    assert outbound["json"]["data"]["kairyxProviderConnectionId"] == provider_connection_id
+    assert outbound["json"]["context"]["kairyx_callback"]["url"] == "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier"
+    assert outbound["json"]["context"]["kairyx_callback"]["bearer_token"] == "callback-bearer-token"
 
     deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
     assert deliveries.status_code == 200
@@ -291,6 +308,72 @@ def test_push_workflow_delivery_records_wynn_campaign_metadata(client: TestClien
     assert delivery["provider_request"]["body"] == "Rewards are waiting."
     assert delivery["provider_response"]["accepted"] is True
     assert delivery["provider_response"]["campaign_id"] == "PUSH_NOTIFICATION.cid_42"
+
+
+def test_push_workflow_callback_matches_by_provider_request_id(client: TestClient, monkeypatch):
+    captured_requests: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured_requests.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_callback",
+                "duplicate": False,
+                "scheduled_at": "2026-04-16T18:30:00+00:00",
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    provider_connection_id = _create_wynn_provider_connection(client)
+    cohort_id = _create_active_cohort(client, name="callback_match_cohort")
+    workflow_id = _create_push_workflow(client, cohort_id=cohort_id, provider_connection_id=provider_connection_id)
+
+    run = client.post(
+        f"/api/v1/workflows/{workflow_id}/test-run",
+        headers=_headers(),
+        json={"limit": 1, "confirm": True, "sandbox": False},
+    )
+    assert run.status_code == 200, run.text
+
+    outbound = captured_requests[0]["json"]
+    callback_payload = {
+        "callbacks": [
+            {
+                "provider_connection_id": provider_connection_id,
+                "provider_request_id": outbound["provider_request_id"],
+                "provider_campaign_id": "PUSH_NOTIFICATION.cid_callback",
+                "workflow_id": workflow_id,
+                "user_id": "player_1",
+                "event_id": "evt_return_1",
+                "event_type": "returned",
+                "occurred_at": "2026-04-30T20:20:00Z",
+            }
+        ]
+    }
+    raw_body = json.dumps(callback_payload).encode("utf-8")
+    signature = hmac.new(b"callback-signing-secret", raw_body, hashlib.sha256).hexdigest()
+
+    callback_response = client.post(
+        "/api/v1/activation/callbacks/wynn_push_notifier",
+        headers={
+            "Authorization": "Bearer callback-bearer-token",
+            "Content-Type": "application/json",
+            "X-Kairyx-Signature": signature,
+        },
+        content=raw_body,
+    )
+    assert callback_response.status_code == 200, callback_response.text
+    assert callback_response.json()["ingested"] == 1
+
+    deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
+    assert deliveries.status_code == 200
+    delivery = deliveries.json()["items"][0]
+    assert delivery["callback_count"] == 1
+    assert delivery["last_provider_event"] == "returned"
+    assert delivery["delivery_status"] == "converted"
 
 
 def test_push_notification_adapter_surfaces_auth_failure(monkeypatch):
@@ -515,6 +598,8 @@ def test_provider_campaign_daily_workflow_sends_multi_user_campaign_once_per_run
         "platform": "ios",
         "minVIPLevel": 3,
     }
+    assert captured_requests[0]["json"]["data"]["kairyxProviderRequestId"]
+    assert captured_requests[0]["json"]["data"]["kairyxWorkflowId"] == workflow_id
 
     deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
     assert deliveries.status_code == 200

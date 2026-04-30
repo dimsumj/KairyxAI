@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,6 +54,9 @@ def _create_wynn_provider_connection(client: TestClient) -> str:
                 "base_url": "https://push.example.com",
                 "api_token": "push-secret-token",
                 "default_deep_link_token": "default-token",
+                "callback_url": "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier",
+                "callback_bearer_token": "callback-bearer-token",
+                "callback_signing_secret": "callback-signing-secret",
             },
         },
     )
@@ -123,7 +130,12 @@ def test_send_now_single_user_push_uses_wynn_provider_connection(client: TestCli
     assert outbound["json"]["title"] == "We miss you"
     assert outbound["json"]["body"] == "A reward is waiting."
     assert outbound["json"]["provider_request_id"] == payload["provider_request_id"]
-    assert outbound["json"]["data"] == {"reward_id": "vip_pack"}
+    assert outbound["json"]["data"]["reward_id"] == "vip_pack"
+    assert outbound["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
+    assert outbound["json"]["data"]["kairyxPushDispatchId"] == payload["push_dispatch_id"]
+    assert outbound["json"]["data"]["kairyxProviderConnectionId"] == provider_connection_id
+    assert outbound["json"]["context"]["kairyx_callback"]["url"] == "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier"
+    assert outbound["json"]["context"]["kairyx_callback"]["bearer_token"] == "callback-bearer-token"
     assert outbound["json"]["provider_options"] == {"priority": "high"}
 
     list_response = client.get("/api/v1/push-dispatches", headers=_headers())
@@ -233,6 +245,7 @@ def test_send_now_supports_multi_user_provider_campaign_with_wynn_filters(client
             "platform": "ios",
         },
     }
+    assert outbound["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
 
 
 def test_send_now_blank_user_ids_broadcasts_to_all_players_for_live_wynn_provider(client: TestClient, monkeypatch):
@@ -283,6 +296,7 @@ def test_send_now_blank_user_ids_broadcasts_to_all_players_for_live_wynn_provide
         "minVIPLevel": 5,
         "daysFromLastLogin": 14,
     }
+    assert captured_requests[0]["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
 
 
 def test_send_now_blank_user_ids_rejects_simulator_broadcast(client: TestClient):
@@ -313,3 +327,87 @@ def test_send_now_rejects_non_object_push_json(client: TestClient):
     )
 
     assert response.status_code == 422, response.text
+
+
+def test_push_dispatch_callbacks_accept_provider_callback_bearer_token_and_update_summary(client: TestClient, monkeypatch):
+    provider_connection_id = _create_wynn_provider_connection(client)
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_callbacks",
+                "duplicate": False,
+                "scheduled_at": None,
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    dispatch_response = client.post(
+        "/api/v1/push-dispatches/send-now",
+        headers=_headers(),
+        json={
+            "name": "callback_dispatch",
+            "user_ids": ["player_123", "player_456"],
+            "provider_connection_id": provider_connection_id,
+            "campaign_name": "callback_dispatch_push",
+            "title": "We miss you",
+            "body": "A reward is waiting.",
+            "data": {"reward_id": "vip_pack"},
+        },
+    )
+    assert dispatch_response.status_code == 201, dispatch_response.text
+    dispatch_payload = dispatch_response.json()
+
+    callback_payload = {
+        "callbacks": [
+            {
+                "provider_connection_id": provider_connection_id,
+                "provider_request_id": dispatch_payload["provider_request_id"],
+                "push_dispatch_id": dispatch_payload["push_dispatch_id"],
+                "provider_campaign_id": dispatch_payload["provider_campaign_id"],
+                "user_id": "player_123",
+                "event_id": "evt_click_1",
+                "event_type": "clicked",
+                "occurred_at": "2026-04-30T20:10:00Z",
+            },
+            {
+                "provider_connection_id": provider_connection_id,
+                "provider_request_id": dispatch_payload["provider_request_id"],
+                "push_dispatch_id": dispatch_payload["push_dispatch_id"],
+                "provider_campaign_id": dispatch_payload["provider_campaign_id"],
+                "user_id": "player_123",
+                "event_id": "evt_claim_1",
+                "event_type": "claimed",
+                "outcome_name": "purchase",
+                "occurred_at": "2026-04-30T20:15:00Z",
+            },
+        ]
+    }
+    raw_body = json.dumps(callback_payload).encode("utf-8")
+    signature = hmac.new(b"callback-signing-secret", raw_body, hashlib.sha256).hexdigest()
+
+    callback_response = client.post(
+        "/api/v1/activation/callbacks/wynn_push_notifier",
+        headers={
+            "Authorization": "Bearer callback-bearer-token",
+            "Content-Type": "application/json",
+            "X-Kairyx-Signature": signature,
+        },
+        content=raw_body,
+    )
+
+    assert callback_response.status_code == 200, callback_response.text
+    assert callback_response.json()["ingested"] == 2
+
+    detail_response = client.get(f"/api/v1/push-dispatches/{dispatch_payload['push_dispatch_id']}", headers=_headers())
+    assert detail_response.status_code == 200, detail_response.text
+    detail_payload = detail_response.json()
+    assert detail_payload["callback_count"] == 2
+    assert detail_payload["last_provider_event"] == "claimed"
+    assert detail_payload["callback_summary"]["event_counts"]["clicked"] == 1
+    assert detail_payload["callback_summary"]["event_counts"]["claimed"] == 1
+    assert detail_payload["callback_summary"]["event_counts"]["purchase"] == 1
+    assert detail_payload["callback_summary"]["unique_user_counts"]["clicked"] == 1

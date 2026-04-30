@@ -406,7 +406,45 @@ class WorkflowService:
             ingested += 1
 
             if delivery is None:
-                items.append({"callback_id": callback_id, "status": "unmatched"})
+                push_dispatch = self._find_push_dispatch_for_callback(callback_payload)
+                if push_dispatch is None:
+                    items.append({"callback_id": callback_id, "status": "unmatched"})
+                    continue
+                push_dispatch_payload = dict(push_dispatch.get("payload") or {})
+                push_dispatch_payload["callback_count"] = int(push_dispatch_payload.get("callback_count") or 0) + 1
+                push_dispatch_payload["last_callback_at"] = occurred_at
+                push_dispatch_payload["last_provider_event"] = event_type
+                push_dispatch_payload["provider_callback_status"] = str(callback.get("status") or event_type)
+                result_summary = dict(push_dispatch_payload.get("result_summary") or {})
+                result_summary["last_callback_event"] = event_type
+                result_summary["last_callback_at"] = occurred_at
+                push_dispatch_payload["result_summary"] = result_summary
+                self.repository.upsert_resource(
+                    "push_dispatch",
+                    str(push_dispatch_payload.get("push_dispatch_id") or push_dispatch.get("resource_id")),
+                    status=str(push_dispatch_payload.get("status") or push_dispatch.get("status") or "sent"),
+                    name=push_dispatch_payload.get("name"),
+                    payload=push_dispatch_payload,
+                    tenant_id=push_dispatch_payload.get("tenant_id"),
+                    project_id=push_dispatch_payload.get("project_id"),
+                )
+                self.repository.record_resource_event(
+                    "push_dispatch",
+                    str(push_dispatch_payload.get("push_dispatch_id") or push_dispatch.get("resource_id")),
+                    event_type="push_dispatch_callback",
+                    payload={
+                        **callback_payload,
+                        "push_dispatch_id": push_dispatch_payload.get("push_dispatch_id"),
+                        "provider_request_id": push_dispatch_payload.get("provider_request_id"),
+                    },
+                )
+                items.append(
+                    {
+                        "callback_id": callback_id,
+                        "push_dispatch_id": push_dispatch_payload.get("push_dispatch_id"),
+                        "status": "matched_push_dispatch",
+                    }
+                )
                 continue
 
             delivery_payload = dict(delivery.get("payload") or {})
@@ -418,8 +456,8 @@ class WorkflowService:
             occurred_at_dt = self._parse_reference_time(occurred_at)
             if occurred_at_dt >= recorded_at_dt:
                 delivery_payload["callback_latency_seconds"] = int((occurred_at_dt - recorded_at_dt).total_seconds())
-            if event_type in {"opened", "clicked", "returned", "converted"}:
-                delivery_payload["delivery_status"] = "converted" if event_type in {"returned", "converted"} else event_type
+            if event_type in {"opened", "clicked", "returned", "converted", "claimed", "purchase", "reactivated"}:
+                delivery_payload["delivery_status"] = "converted" if event_type in {"returned", "converted", "claimed", "purchase", "reactivated"} else event_type
             elif event_type in {"bounced", "failed", "dropped"}:
                 delivery_payload["delivery_status"] = "failed"
                 delivery_payload["failure_reason"] = "provider_error"
@@ -450,7 +488,7 @@ class WorkflowService:
                         "workflow_id": delivery_payload.get("workflow_id"),
                         "cohort_id": delivery_payload.get("cohort_id"),
                         "experiment_id": experiment_id,
-                        "user_id": delivery_payload.get("user_id"),
+                        "user_id": callback_payload.get("user_id") or delivery_payload.get("user_id"),
                         "group": delivery_payload.get("group") or "treatment",
                         "action_execution_id": delivery_payload.get("action_execution_id"),
                         "delivery_id": delivery_payload.get("delivery_id"),
@@ -1197,7 +1235,10 @@ class WorkflowService:
         if not reference_time:
             return datetime.utcnow()
         try:
-            return datetime.fromisoformat(str(reference_time))
+            parsed = datetime.fromisoformat(str(reference_time))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
         except ValueError:
             return datetime.utcnow()
 
@@ -1465,7 +1506,17 @@ class WorkflowService:
             str(callback.get("tenant_id") or (request_context.tenant_id if request_context else "") or "default"),
             str(callback.get("project_id") or (request_context.project_id if request_context else "") or "default"),
             str(provider),
-            str(callback.get("delivery_id") or callback.get("action_execution_id") or callback.get("event_id") or callback.get("message_id") or callback.get("user_id") or "unknown"),
+            str(
+                callback.get("delivery_id")
+                or callback.get("action_execution_id")
+                or callback.get("push_dispatch_id")
+                or callback.get("provider_request_id")
+                or callback.get("provider_campaign_id")
+                or callback.get("event_id")
+                or callback.get("message_id")
+                or callback.get("user_id")
+                or "unknown"
+            ),
             str(event_type),
             str(callback.get("occurred_at") or ""),
         ]
@@ -1475,6 +1526,13 @@ class WorkflowService:
     def _find_delivery_for_callback(self, callback: Dict[str, Any]) -> Dict[str, Any] | None:
         callback_provider = str(callback.get("provider") or "").strip().lower()
         delivery_id = str(callback.get("delivery_id") or callback.get("action_execution_id") or "").strip()
+        provider_request_id = str(callback.get("provider_request_id") or "").strip()
+        provider_campaign_id = str(
+            callback.get("provider_campaign_id")
+            or callback.get("campaign_id")
+            or ((callback.get("metadata") or {}).get("campaign_id") if isinstance(callback.get("metadata"), dict) else "")
+            or ""
+        ).strip()
         tenant_id = str(callback.get("tenant_id") or "").strip()
         project_id = str(callback.get("project_id") or "").strip()
         if delivery_id:
@@ -1499,11 +1557,48 @@ class WorkflowService:
             payload = record.get("payload") or {}
             if callback_provider and str(payload.get("provider") or "").strip().lower() not in {"", callback_provider}:
                 continue
+            provider_request = dict(payload.get("provider_request") or {})
+            if provider_request_id and str(provider_request.get("provider_request_id") or "").strip() == provider_request_id:
+                return record
+            if provider_campaign_id and str(payload.get("provider_campaign_id") or "").strip() == provider_campaign_id:
+                return record
             if workflow_id and str(payload.get("workflow_id") or "") != workflow_id:
                 continue
             if user_id and str(payload.get("user_id") or "") != user_id:
                 continue
             if workflow_id or user_id:
+                return record
+        return None
+
+    def _find_push_dispatch_for_callback(self, callback: Dict[str, Any]) -> Dict[str, Any] | None:
+        push_dispatch_id = str(callback.get("push_dispatch_id") or "").strip()
+        provider_request_id = str(callback.get("provider_request_id") or "").strip()
+        provider_campaign_id = str(
+            callback.get("provider_campaign_id")
+            or callback.get("campaign_id")
+            or ((callback.get("metadata") or {}).get("campaign_id") if isinstance(callback.get("metadata"), dict) else "")
+            or ""
+        ).strip()
+        tenant_id = str(callback.get("tenant_id") or "").strip()
+        project_id = str(callback.get("project_id") or "").strip()
+        if push_dispatch_id:
+            record = self.repository.get_resource(
+                "push_dispatch",
+                push_dispatch_id,
+                tenant_id=tenant_id or None,
+                project_id=project_id or None,
+            )
+            if record is not None:
+                return record
+        for record in self.repository.list_resources(
+            "push_dispatch",
+            tenant_id=tenant_id or None,
+            project_id=project_id or None,
+        ):
+            payload = dict(record.get("payload") or {})
+            if provider_request_id and str(payload.get("provider_request_id") or "").strip() == provider_request_id:
+                return record
+            if provider_campaign_id and str(payload.get("provider_campaign_id") or "").strip() == provider_campaign_id:
                 return record
         return None
 
@@ -1521,12 +1616,57 @@ class WorkflowService:
         provider_payload["provider_connection_id"] = provider_connection_id
         return {**provider_payload, **resolved_action}
 
+    @staticmethod
+    def _build_wynn_callback_context(action: Dict[str, Any]) -> Dict[str, Any]:
+        callback_url = str(action.get("callback_url") or "").strip()
+        callback_bearer_token = str(action.get("callback_bearer_token") or "").strip()
+        callback_signing_secret = str(action.get("callback_signing_secret") or "").strip()
+        if not callback_url or not callback_bearer_token:
+            return {}
+        payload = {
+            "url": callback_url,
+            "bearer_token": callback_bearer_token,
+        }
+        if callback_signing_secret:
+            payload["signing_secret"] = callback_signing_secret
+        return payload
+
+    @staticmethod
+    def _build_wynn_tracking_data(
+        data: Dict[str, Any] | None,
+        *,
+        provider_request_id: str,
+        provider_connection_id: str | None,
+        execution_id: str | None,
+        workflow_id: str | None = None,
+        push_dispatch_id: str | None = None,
+        audience_mode: str | None = None,
+    ) -> Dict[str, Any]:
+        payload = dict(data or {})
+        tracking_fields = {
+            "kairyxProviderRequestId": provider_request_id,
+            "kairyxProviderConnectionId": provider_connection_id,
+            "kairyxExecutionId": execution_id,
+            "kairyxWorkflowId": workflow_id,
+            "kairyxPushDispatchId": push_dispatch_id,
+            "kairyxAudienceMode": audience_mode,
+        }
+        for key, value in tracking_fields.items():
+            if value in (None, ""):
+                continue
+            payload[key] = str(value)
+        return payload
+
     def _resolve_callback_secret(self, provider: str, callback: Dict[str, Any]) -> str | None:
         provider_connection_id = str(callback.get("provider_connection_id") or "").strip()
         if not provider_connection_id:
             delivery = self._find_delivery_for_callback({**callback, "provider": provider})
             delivery_payload = dict((delivery or {}).get("payload") or {})
             provider_connection_id = str(delivery_payload.get("provider_connection_id") or "").strip()
+        if not provider_connection_id:
+            push_dispatch = self._find_push_dispatch_for_callback(callback)
+            push_dispatch_payload = dict((push_dispatch or {}).get("payload") or {})
+            provider_connection_id = str(push_dispatch_payload.get("provider_connection_id") or "").strip()
         if not provider_connection_id:
             return None
         record = self.repository.get_resource("provider_connection", provider_connection_id)
@@ -1572,10 +1712,12 @@ class WorkflowService:
             "opened": "opened",
             "clicked": "engaged",
             "engaged": "engaged",
+            "claimed": "purchase",
+            "purchase": "purchase",
             "returned": "returned",
+            "reactivated": "returned",
             "returned_to_game": "returned",
             "converted": "returned",
-            "purchase": "returned",
         }
         return mapping.get(str(event_type).lower())
 
@@ -1934,6 +2076,26 @@ class WorkflowService:
                 str(action.get("channel") or execution_payload["channel"]),
             )
             action["provider_request_id"] = provider_request_id
+            outbound_data = dict(action.get("data") or {})
+            outbound_context = {
+                "workflow_id": workflow["workflow_id"],
+                "execution_id": execution_id,
+                "provider_connection_id": action.get("provider_connection_id"),
+                "tenant_id": workflow.get("tenant_id"),
+                "project_id": workflow.get("project_id"),
+            }
+            if self._is_live_provider_push_action(action):
+                outbound_data = self._build_wynn_tracking_data(
+                    outbound_data,
+                    provider_request_id=provider_request_id,
+                    provider_connection_id=action.get("provider_connection_id"),
+                    execution_id=execution_id,
+                    workflow_id=workflow["workflow_id"],
+                    audience_mode=execution_payload.get("audience_mode"),
+                )
+                callback_context = self._build_wynn_callback_context(action)
+                if callback_context:
+                    outbound_context["kairyx_callback"] = callback_context
             action_payload = {
                 "decision": "ACT",
                 "channel": action.get("channel", "push_notification"),
@@ -1941,7 +2103,7 @@ class WorkflowService:
                 "title": action.get("title"),
                 "body": action.get("body") or action.get("content", ""),
                 "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
-                "data": dict(action.get("data") or {}),
+                "data": outbound_data,
                 "deep_link": action.get("deep_link"),
                 "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
                 "scheduled_at": action.get("scheduled_at"),
@@ -1962,12 +2124,7 @@ class WorkflowService:
                 "execution_id": execution_id,
                 "tenant_id": workflow.get("tenant_id"),
                 "project_id": workflow.get("project_id"),
-                "context": {
-                    "workflow_id": workflow["workflow_id"],
-                    "execution_id": execution_id,
-                    "tenant_id": workflow.get("tenant_id"),
-                    "project_id": workflow.get("project_id"),
-                },
+                "context": outbound_context,
                 "metadata": dict(action.get("metadata") or {}),
             }
             provider_result = self._execute_action_with_retry(action_payload, action)
@@ -2099,6 +2256,27 @@ class WorkflowService:
             str(action.get("channel") or "push_notification"),
         )
         action["provider_request_id"] = provider_request_id
+        outbound_data = dict(action.get("data") or {})
+        outbound_context = {
+            "workflow_id": workflow["workflow_id"],
+            "execution_id": execution_id,
+            "provider_connection_id": action.get("provider_connection_id"),
+            "tenant_id": workflow.get("tenant_id"),
+            "project_id": workflow.get("project_id"),
+            "audience_mode": audience_mode,
+        }
+        if self._is_live_provider_push_action(action):
+            outbound_data = self._build_wynn_tracking_data(
+                outbound_data,
+                provider_request_id=provider_request_id,
+                provider_connection_id=action.get("provider_connection_id"),
+                execution_id=execution_id,
+                workflow_id=workflow["workflow_id"],
+                audience_mode=audience_mode,
+            )
+            callback_context = self._build_wynn_callback_context(action)
+            if callback_context:
+                outbound_context["kairyx_callback"] = callback_context
         action_payload = {
             "decision": "ACT",
             "channel": action.get("channel", "push_notification"),
@@ -2106,7 +2284,7 @@ class WorkflowService:
             "title": action.get("title"),
             "body": action.get("body") or action.get("content", ""),
             "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
-            "data": dict(action.get("data") or {}),
+            "data": outbound_data,
             "deep_link": action.get("deep_link"),
             "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
             "scheduled_at": action.get("scheduled_at"),
@@ -2129,13 +2307,7 @@ class WorkflowService:
             "execution_id": execution_id,
             "tenant_id": workflow.get("tenant_id"),
             "project_id": workflow.get("project_id"),
-            "context": {
-                "workflow_id": workflow["workflow_id"],
-                "execution_id": execution_id,
-                "tenant_id": workflow.get("tenant_id"),
-                "project_id": workflow.get("project_id"),
-                "audience_mode": audience_mode,
-            },
+            "context": outbound_context,
             "metadata": dict(action.get("metadata") or {}),
         }
 

@@ -40,6 +40,15 @@ class PushDispatchService:
         action = self.workflows._validate_action_for_execution(action, workflow_name=normalized["name"])
         provider_name = self.workflows._resolve_provider_name(action) or "simulator"
         provider_request_id = push_dispatch_id
+        if self.workflows._is_live_provider_push_action(action):
+            action["data"] = self.workflows._build_wynn_tracking_data(
+                dict(action.get("data") or {}),
+                provider_request_id=provider_request_id,
+                provider_connection_id=action.get("provider_connection_id"),
+                execution_id=push_dispatch_id,
+                push_dispatch_id=push_dispatch_id,
+                audience_mode=normalized["audience_mode"],
+            )
         action_payload = self._build_action_payload(
             push_dispatch_id=push_dispatch_id,
             user_ids=normalized["user_ids"],
@@ -78,6 +87,9 @@ class PushDispatchService:
             "last_send_started_at": started_at,
             "last_send_completed_at": completed_at,
             "last_error": provider_result.get("error"),
+            "callback_count": 0,
+            "last_callback_at": None,
+            "last_provider_event": None,
             "result_summary": {
                 "accepted": provider_result.get("accepted"),
                 "duplicate": provider_result.get("duplicate"),
@@ -182,6 +194,17 @@ class PushDispatchService:
         provider_request_id: str,
     ) -> Dict[str, Any]:
         request_context = get_request_context()
+        outbound_context = {
+            "push_dispatch_id": push_dispatch_id,
+            "audience_mode": audience_mode,
+            "provider_connection_id": action.get("provider_connection_id"),
+            "tenant_id": request_context.tenant_id if request_context else None,
+            "project_id": request_context.project_id if request_context else None,
+        }
+        if self.workflows._is_live_provider_push_action(action):
+            callback_context = self.workflows._build_wynn_callback_context(action)
+            if callback_context:
+                outbound_context["kairyx_callback"] = callback_context
         return {
             "decision": "ACT",
             "channel": "push_notification",
@@ -204,16 +227,12 @@ class PushDispatchService:
             "execution_id": push_dispatch_id,
             "tenant_id": request_context.tenant_id if request_context else None,
             "project_id": request_context.project_id if request_context else None,
-            "context": {
-                "push_dispatch_id": push_dispatch_id,
-                "audience_mode": audience_mode,
-                "tenant_id": request_context.tenant_id if request_context else None,
-                "project_id": request_context.project_id if request_context else None,
-            },
+            "context": outbound_context,
         }
 
     def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        payload["callback_summary"] = self._build_callback_summary(payload)
         payload.setdefault("created_at", record.get("created_at"))
         payload.setdefault("updated_at", record.get("updated_at"))
         payload.setdefault("tenant_id", record.get("tenant_id"))
@@ -222,3 +241,38 @@ class PushDispatchService:
         payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
         payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
         return redact_secret_values(payload)
+
+    def _build_callback_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        provider_request_id = str(payload.get("provider_request_id") or "").strip()
+        push_dispatch_id = str(payload.get("push_dispatch_id") or "").strip()
+        counts = {"opened": 0, "clicked": 0, "claimed": 0, "returned": 0, "purchase": 0}
+        users = {key: set() for key in counts}
+        if not provider_request_id and not push_dispatch_id:
+            return {"event_counts": counts, "unique_user_counts": {key: 0 for key in counts}}
+        for record in self.repository.list_resources(
+            "provider_callback",
+            tenant_id=payload.get("tenant_id") or None,
+            project_id=payload.get("project_id") or None,
+        ):
+            callback_payload = dict(record.get("payload") or {})
+            if provider_request_id and str(callback_payload.get("provider_request_id") or "").strip() == provider_request_id:
+                pass
+            elif push_dispatch_id and str(callback_payload.get("push_dispatch_id") or "").strip() == push_dispatch_id:
+                pass
+            else:
+                continue
+            event_type = str(callback_payload.get("event_type") or "").strip().lower()
+            outcome_name = str(callback_payload.get("outcome_name") or "").strip().lower()
+            user_id = str(callback_payload.get("user_id") or "").strip()
+            if event_type in counts:
+                counts[event_type] += 1
+                if user_id:
+                    users[event_type].add(user_id)
+            if outcome_name == "purchase":
+                counts["purchase"] += 1
+                if user_id:
+                    users["purchase"].add(user_id)
+        return {
+            "event_counts": counts,
+            "unique_user_counts": {key: len(value) for key, value in users.items()},
+        }

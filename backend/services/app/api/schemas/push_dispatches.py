@@ -46,6 +46,10 @@ class PushDispatchResponse(BaseModel):
     last_send_started_at: str | None = None
     last_send_completed_at: str | None = None
     last_error: str | None = None
+    callback_count: int = 0
+    last_callback_at: str | None = None
+    last_provider_event: str | None = None
+    callback_summary: Dict[str, Any] = Field(default_factory=dict)
     result_summary: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: str | None = None
     project_id: str | None = None

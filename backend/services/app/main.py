@@ -40,6 +40,7 @@ from app.api.routers import (
 from app.application.imports import ImportService
 from app.application.control_loop import ControlLoopService
 from app.application.health_monitor import HealthMonitorService
+from app.application.provider_connections import ProviderConnectionService
 from app.application.projects import project_role_for_org_role
 from app.application.predictions import PredictionService
 from app.core.db import get_engine, get_session_factory, init_db, is_runtime_database_fallback_active
@@ -57,6 +58,52 @@ from bigquery_service import clear_shared_bigquery_service_cache, get_shared_big
 
 logger = logging.getLogger(__name__)
 _FRONTEND_SHELL_RESERVED_PATHS = frozenset({"api", "health", "static"})
+
+
+def _is_provider_callback_path(path: str, settings) -> bool:
+    prefix = settings.api_v1_prefix.rstrip("/")
+    return str(path or "").startswith(f"{prefix}/activation/callbacks/")
+
+
+def _provider_from_callback_path(path: str) -> str:
+    return str(path or "").rstrip("/").split("/")[-1].strip().lower()
+
+
+def _resolve_provider_callback_context(request: Request, settings, correlation_id: str, token: str, resolved_path: str) -> GovernanceContext | None:
+    provider = _provider_from_callback_path(resolved_path)
+    session = get_session_factory()()
+    try:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        connection = ProviderConnectionService(repository).resolve_callback_connection_for_bearer_token(
+            token,
+            provider=provider,
+        )
+        if connection is None:
+            return None
+        tenant_id = (
+            str(request.headers.get("x-kairyx-tenant") or request.headers.get("x-tenant-id") or "").strip()
+            or str(connection.get("tenant_id") or settings.bootstrap_tenant_id).strip()
+            or settings.bootstrap_tenant_id
+        )
+        project_id = (
+            str(request.headers.get("x-kairyx-project") or request.headers.get("x-project-id") or "").strip()
+            or str(connection.get("project_id") or settings.bootstrap_project_id).strip()
+            or settings.bootstrap_project_id
+        )
+        session.commit()
+        return GovernanceContext(
+            actor_role="operator",
+            actor_id=f"provider_callback:{connection.get('provider_connection_id') or provider}",
+            tenant_id=tenant_id,
+            project_id=project_id,
+            correlation_id=correlation_id,
+            platform_admin=False,
+            org_role="member",
+            project_role="operator",
+            auth_mode="provider_callback_token",
+        )
+    finally:
+        session.close()
 
 
 def _resolve_frontend_paths(settings, frontend_dir: Path) -> tuple[Path, Path]:
@@ -464,6 +511,10 @@ def _build_governance_context(request: Request, settings, correlation_id: str) -
     auth_header = str(request.headers.get("authorization") or "").strip()
     if auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
+        if _is_provider_callback_path(resolved_path, settings):
+            callback_context = _resolve_provider_callback_context(request, settings, correlation_id, token, resolved_path)
+            if callback_context is not None:
+                return callback_context
         try:
             principal = get_authenticator().authenticate_token(token)
         except ValueError as exc:
