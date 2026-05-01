@@ -1121,7 +1121,7 @@ Push Composer behavior:
 - `Push Data JSON`, `Provider Options JSON`, and `Wynn Filters JSON` must parse as JSON objects.
 - `Wynn Filters JSON` is stored at `provider_options.filters` and uses native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
 - Leaving `Provider Connection` blank keeps the simulator path, but simulator delivery is only valid for explicit user ids and does not broadcast to all players.
-- When the selected Wynn provider connection also includes `Kairyx Callback URL` and `Kairyx Callback Bearer Token`, Kairyx injects flat tracking ids into the push payload and Wynn can forward `opened`, `clicked`, `claimed`, and `returned` callbacks back into the activation service.
+- When the selected Wynn provider connection also includes `Kairyx Callback URL` and `Kairyx Callback Bearer Token`, Kairyx keeps callback correlation server-side and Wynn can forward `opened`, `clicked`, `claimed`, and `returned` callbacks back into the activation service without polluting the visible push `data` payload.
 
 #### Sample immediate push request
 ```json
@@ -1194,7 +1194,7 @@ To close the loop on Wynn push results, configure the Wynn provider connection w
 - `Kairyx Callback Bearer Token`: a shared bearer token that Wynn uses when posting callbacks
 - `Callback Signing Secret` optional: if set, Wynn also signs the raw callback body with `X-Kairyx-Signature`
 
-When callback delivery is configured, Kairyx automatically adds flat tracking values such as `kairyxProviderRequestId`, `kairyxProviderConnectionId`, `kairyxExecutionId`, and `kairyxWorkflowId` or `kairyxPushDispatchId` into the push `data` object that Wynn stores with the campaign. Wynn can then forward outcome events back into Kairyx.
+When callback delivery is configured, Kairyx keeps the callback correlation ids in the provider request and Wynn stores the campaign-to-request mapping server-side. The visible push `data` object remains the operator-authored app payload, and Wynn can still forward outcome events back into Kairyx.
 
 Supported Wynn callback event mapping:
 

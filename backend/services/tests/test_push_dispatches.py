@@ -130,10 +130,7 @@ def test_send_now_single_user_push_uses_wynn_provider_connection(client: TestCli
     assert outbound["json"]["title"] == "We miss you"
     assert outbound["json"]["body"] == "A reward is waiting."
     assert outbound["json"]["provider_request_id"] == payload["provider_request_id"]
-    assert outbound["json"]["data"]["reward_id"] == "vip_pack"
-    assert outbound["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
-    assert outbound["json"]["data"]["kairyxPushDispatchId"] == payload["push_dispatch_id"]
-    assert outbound["json"]["data"]["kairyxProviderConnectionId"] == provider_connection_id
+    assert outbound["json"]["data"] == {"reward_id": "vip_pack"}
     assert outbound["json"]["context"]["kairyx_callback"]["url"] == "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier"
     assert outbound["json"]["context"]["kairyx_callback"]["bearer_token"] == "callback-bearer-token"
     assert outbound["json"]["provider_options"] == {"priority": "high"}
@@ -245,7 +242,7 @@ def test_send_now_supports_multi_user_provider_campaign_with_wynn_filters(client
             "platform": "ios",
         },
     }
-    assert outbound["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
+    assert dict(outbound["json"].get("data") or {}) == {}
 
 
 def test_send_now_blank_user_ids_broadcasts_to_all_players_for_live_wynn_provider(client: TestClient, monkeypatch):
@@ -296,7 +293,7 @@ def test_send_now_blank_user_ids_broadcasts_to_all_players_for_live_wynn_provide
         "minVIPLevel": 5,
         "daysFromLastLogin": 14,
     }
-    assert captured_requests[0]["json"]["data"]["kairyxProviderRequestId"] == payload["provider_request_id"]
+    assert captured_requests[0]["json"]["data"] == {}
 
 
 def test_send_now_blank_user_ids_rejects_simulator_broadcast(client: TestClient):

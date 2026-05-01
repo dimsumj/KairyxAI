@@ -40,15 +40,6 @@ class PushDispatchService:
         action = self.workflows._validate_action_for_execution(action, workflow_name=normalized["name"])
         provider_name = self.workflows._resolve_provider_name(action) or "simulator"
         provider_request_id = push_dispatch_id
-        if self.workflows._is_live_provider_push_action(action):
-            action["data"] = self.workflows._build_wynn_tracking_data(
-                dict(action.get("data") or {}),
-                provider_request_id=provider_request_id,
-                provider_connection_id=action.get("provider_connection_id"),
-                execution_id=push_dispatch_id,
-                push_dispatch_id=push_dispatch_id,
-                audience_mode=normalized["audience_mode"],
-            )
         action_payload = self._build_action_payload(
             push_dispatch_id=push_dispatch_id,
             user_ids=normalized["user_ids"],

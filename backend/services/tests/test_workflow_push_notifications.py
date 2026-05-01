@@ -289,10 +289,7 @@ def test_push_workflow_delivery_records_wynn_campaign_metadata(client: TestClien
     assert outbound["json"]["player_ids"] == ["player_1"]
     assert outbound["json"]["deep_link"] == "wynn://promotions/welcome-back"
     assert outbound["json"]["provider_options"] == {"priority": "high"}
-    assert outbound["json"]["data"]["reward_id"] == "reward_pack"
-    assert outbound["json"]["data"]["kairyxProviderRequestId"]
-    assert outbound["json"]["data"]["kairyxWorkflowId"] == workflow_id
-    assert outbound["json"]["data"]["kairyxProviderConnectionId"] == provider_connection_id
+    assert outbound["json"]["data"] == {"reward_id": "reward_pack"}
     assert outbound["json"]["context"]["kairyx_callback"]["url"] == "https://operator.example.com/api/v1/activation/callbacks/wynn_push_notifier"
     assert outbound["json"]["context"]["kairyx_callback"]["bearer_token"] == "callback-bearer-token"
 
@@ -598,8 +595,7 @@ def test_provider_campaign_daily_workflow_sends_multi_user_campaign_once_per_run
         "platform": "ios",
         "minVIPLevel": 3,
     }
-    assert captured_requests[0]["json"]["data"]["kairyxProviderRequestId"]
-    assert captured_requests[0]["json"]["data"]["kairyxWorkflowId"] == workflow_id
+    assert captured_requests[0]["json"]["data"] == {"reward_id": "reward_pack"}
 
     deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
     assert deliveries.status_code == 200

@@ -1631,32 +1631,6 @@ class WorkflowService:
             payload["signing_secret"] = callback_signing_secret
         return payload
 
-    @staticmethod
-    def _build_wynn_tracking_data(
-        data: Dict[str, Any] | None,
-        *,
-        provider_request_id: str,
-        provider_connection_id: str | None,
-        execution_id: str | None,
-        workflow_id: str | None = None,
-        push_dispatch_id: str | None = None,
-        audience_mode: str | None = None,
-    ) -> Dict[str, Any]:
-        payload = dict(data or {})
-        tracking_fields = {
-            "kairyxProviderRequestId": provider_request_id,
-            "kairyxProviderConnectionId": provider_connection_id,
-            "kairyxExecutionId": execution_id,
-            "kairyxWorkflowId": workflow_id,
-            "kairyxPushDispatchId": push_dispatch_id,
-            "kairyxAudienceMode": audience_mode,
-        }
-        for key, value in tracking_fields.items():
-            if value in (None, ""):
-                continue
-            payload[key] = str(value)
-        return payload
-
     def _resolve_callback_secret(self, provider: str, callback: Dict[str, Any]) -> str | None:
         provider_connection_id = str(callback.get("provider_connection_id") or "").strip()
         if not provider_connection_id:
@@ -2076,7 +2050,6 @@ class WorkflowService:
                 str(action.get("channel") or execution_payload["channel"]),
             )
             action["provider_request_id"] = provider_request_id
-            outbound_data = dict(action.get("data") or {})
             outbound_context = {
                 "workflow_id": workflow["workflow_id"],
                 "execution_id": execution_id,
@@ -2085,14 +2058,6 @@ class WorkflowService:
                 "project_id": workflow.get("project_id"),
             }
             if self._is_live_provider_push_action(action):
-                outbound_data = self._build_wynn_tracking_data(
-                    outbound_data,
-                    provider_request_id=provider_request_id,
-                    provider_connection_id=action.get("provider_connection_id"),
-                    execution_id=execution_id,
-                    workflow_id=workflow["workflow_id"],
-                    audience_mode=execution_payload.get("audience_mode"),
-                )
                 callback_context = self._build_wynn_callback_context(action)
                 if callback_context:
                     outbound_context["kairyx_callback"] = callback_context
@@ -2103,7 +2068,7 @@ class WorkflowService:
                 "title": action.get("title"),
                 "body": action.get("body") or action.get("content", ""),
                 "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
-                "data": outbound_data,
+                "data": dict(action.get("data") or {}),
                 "deep_link": action.get("deep_link"),
                 "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
                 "scheduled_at": action.get("scheduled_at"),
@@ -2256,7 +2221,6 @@ class WorkflowService:
             str(action.get("channel") or "push_notification"),
         )
         action["provider_request_id"] = provider_request_id
-        outbound_data = dict(action.get("data") or {})
         outbound_context = {
             "workflow_id": workflow["workflow_id"],
             "execution_id": execution_id,
@@ -2266,14 +2230,6 @@ class WorkflowService:
             "audience_mode": audience_mode,
         }
         if self._is_live_provider_push_action(action):
-            outbound_data = self._build_wynn_tracking_data(
-                outbound_data,
-                provider_request_id=provider_request_id,
-                provider_connection_id=action.get("provider_connection_id"),
-                execution_id=execution_id,
-                workflow_id=workflow["workflow_id"],
-                audience_mode=audience_mode,
-            )
             callback_context = self._build_wynn_callback_context(action)
             if callback_context:
                 outbound_context["kairyx_callback"] = callback_context
@@ -2284,7 +2240,7 @@ class WorkflowService:
             "title": action.get("title"),
             "body": action.get("body") or action.get("content", ""),
             "campaign_name": action.get("campaign_name") or workflow.get("name") or workflow["workflow_id"],
-            "data": outbound_data,
+            "data": dict(action.get("data") or {}),
             "deep_link": action.get("deep_link"),
             "deep_link_token": action.get("deep_link_token") or action.get("default_deep_link_token"),
             "scheduled_at": action.get("scheduled_at"),
