@@ -169,7 +169,44 @@ ensure_push_subscription() {
     --ack-deadline=600 \
     --min-retry-delay=10s \
     --max-retry-delay=600s \
-    >/dev/null
+      >/dev/null
+}
+
+is_retryable_scheduler_mutation_error() {
+  local output="${1:-}"
+  [[ "$output" == *"ABORTED: sync mutate calls cannot be queued"* ]]
+}
+
+run_scheduler_mutation_with_retry() {
+  local job_name="$1"
+  shift
+  local -a command=( "$@" )
+  local max_attempts=5
+  local sleep_seconds=5
+  local attempt=1
+  local status=0
+  local output=""
+
+  while (( attempt <= max_attempts )); do
+    set +e
+    output="$("${command[@]}" 2>&1)"
+    status=$?
+    set -e
+    if [[ "$status" -eq 0 ]]; then
+      return 0
+    fi
+    if is_retryable_scheduler_mutation_error "$output" && (( attempt < max_attempts )); then
+      log "Cloud Scheduler job ${job_name} is busy; retrying in ${sleep_seconds}s (attempt ${attempt}/${max_attempts})"
+      sleep "$sleep_seconds"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    printf '%s\n' "$output" >&2
+    return "$status"
+  done
+
+  printf '%s\n' "$output" >&2
+  return "$status"
 }
 
 ensure_scheduler_job() {
@@ -179,11 +216,28 @@ ensure_scheduler_job() {
   local worker_auth_value="$4"
   local cron="${GCP_SCHEDULER_CRON:-* * * * *}"
   local timezone="${GCP_SCHEDULER_TIME_ZONE:-UTC}"
+  local -a mutation_command=()
 
   if gcloud scheduler jobs describe "$job_name" \
     --project="$GCP_PROJECT_ID" \
     --location="$GCP_REGION" >/dev/null 2>&1; then
-    gcloud scheduler jobs update http "$job_name" \
+    mutation_command=(
+      gcloud scheduler jobs update http "$job_name"
+      --project="$GCP_PROJECT_ID"
+      --location="$GCP_REGION"
+      --schedule="$cron"
+      --time-zone="$timezone"
+      --uri="${scheduler_url}/run?token=${worker_auth_value}"
+      --http-method=POST
+      --oidc-service-account-email="$scheduler_invoker_email"
+      --oidc-token-audience="$scheduler_url"
+    )
+    run_scheduler_mutation_with_retry "$job_name" "${mutation_command[@]}"
+    return
+  fi
+
+  mutation_command=(
+    gcloud scheduler jobs create http "$job_name"
       --project="$GCP_PROJECT_ID" \
       --location="$GCP_REGION" \
       --schedule="$cron" \
@@ -192,20 +246,8 @@ ensure_scheduler_job() {
       --http-method=POST \
       --oidc-service-account-email="$scheduler_invoker_email" \
       --oidc-token-audience="$scheduler_url" \
-      >/dev/null
-    return
-  fi
-
-  gcloud scheduler jobs create http "$job_name" \
-    --project="$GCP_PROJECT_ID" \
-    --location="$GCP_REGION" \
-    --schedule="$cron" \
-    --time-zone="$timezone" \
-    --uri="${scheduler_url}/run?token=${worker_auth_value}" \
-    --http-method=POST \
-    --oidc-service-account-email="$scheduler_invoker_email" \
-    --oidc-token-audience="$scheduler_url" \
-    >/dev/null
+  )
+  run_scheduler_mutation_with_retry "$job_name" "${mutation_command[@]}"
 }
 
 validate_configuration() {

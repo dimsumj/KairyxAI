@@ -117,6 +117,110 @@ def test_configure_dev_eventing_validate_only_fails_fast_on_missing_import_topic
     assert "Required env var is missing: IMPORT_COMMAND_TOPIC" in result.stderr
 
 
+def test_configure_dev_eventing_retries_scheduler_job_update_when_gcp_reports_sync_mutate_queue(tmp_path):
+    env_file = tmp_path / "dev.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "GCP_DEPLOYMENT_TIER=dev",
+                "GCP_PROJECT_ID=kairyx-dev",
+                "GCP_REGION=us-central1",
+                "GCP_SERVICE_PREFIX=dev",
+                "WORKER_SHARED_TOKEN_SECRET=dev-worker-shared-token",
+                "IMPORT_COMMAND_TOPIC=kairyx-dev-import-jobs",
+                "PREDICTION_COMMAND_TOPIC=kairyx-dev-prediction-jobs",
+                "EXPORT_COMMAND_TOPIC=kairyx-dev-export-jobs",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    gcloud_script = bin_dir / "gcloud"
+    gcloud_script.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${GCLOUD_STUB_STATE_DIR:?}"
+
+case "$1 $2 ${3:-}" in
+  "config set project")
+    exit 0
+    ;;
+  "projects describe kairyx-dev")
+    printf '123456789012\\n'
+    exit 0
+    ;;
+  "secrets versions access")
+    printf 'worker-shared-token\\n'
+    exit 0
+    ;;
+  "run services describe")
+    printf 'https://%s.example.run.app\\n' "$4"
+    exit 0
+    ;;
+  "run services add-iam-policy-binding")
+    exit 0
+    ;;
+  "iam service-accounts add-iam-policy-binding")
+    exit 0
+    ;;
+  "pubsub subscriptions describe")
+    exit 1
+    ;;
+  "pubsub subscriptions create")
+    exit 0
+    ;;
+  "scheduler jobs describe")
+    exit 0
+    ;;
+  "scheduler jobs update")
+    counter_file="${state_dir}/scheduler-update-count"
+    current_count=0
+    if [[ -f "${counter_file}" ]]; then
+      current_count="$(cat "${counter_file}")"
+    fi
+    current_count="$((current_count + 1))"
+    printf '%s' "${current_count}" > "${counter_file}"
+    if [[ "${current_count}" -eq 1 ]]; then
+      printf 'ERROR: (gcloud.scheduler.jobs.update.http) ABORTED: sync mutate calls cannot be queued\\n' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'unexpected gcloud command: %s\\n' "$*" >&2
+    exit 1
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    gcloud_script.chmod(0o755)
+
+    sleep_script = bin_dir / "sleep"
+    sleep_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    sleep_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["GCLOUD_STUB_STATE_DIR"] = str(tmp_path)
+
+    result = _run(
+        "bash",
+        str(GCP_DEPLOY_DIR / "configure_dev_eventing.sh"),
+        str(env_file),
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Cloud Scheduler job dev-scheduler-worker is busy; retrying" in result.stdout
+    assert (tmp_path / "scheduler-update-count").read_text(encoding="utf-8") == "2"
+
+
 def test_render_ci_env_helper_preserves_space_containing_values(tmp_path):
     env_file = tmp_path / "deploy-dev.env"
     env = dict(os.environ)
