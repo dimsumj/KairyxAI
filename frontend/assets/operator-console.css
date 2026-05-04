@@ -2648,6 +2648,39 @@
             box-shadow: var(--shadow);
         }
 
+        .settings-dialog-header,
+        .settings-dialog-actions {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .settings-dialog-header h2 {
+            margin: 0.15rem 0 0.35rem;
+        }
+
+        .settings-dialog-eyebrow {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0;
+        }
+
+        .settings-dialog-close {
+            width: auto;
+            padding: 0.45rem 0.7rem;
+            background: var(--surface-muted);
+            color: var(--main-text);
+        }
+
+        .settings-dialog-actions {
+            align-items: center;
+            margin-top: 1rem;
+        }
+
         .danger-action {
             background: #dc2626;
             color: #ffffff;
@@ -3076,6 +3109,39 @@
         .copilot-agent-form-row input,
         .copilot-agent-form-row select {
             width: 100%;
+        }
+
+        .copilot-agent-secure-input-callout {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            padding: 0.85rem 0.95rem;
+            border-radius: 0.75rem;
+            border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--border-color) 72%);
+            background: color-mix(in srgb, var(--blue) 7%, var(--white) 93%);
+        }
+
+        #copilot-agent-secure-input-backdrop {
+            position: fixed;
+            z-index: 69;
+        }
+
+        .copilot-agent-secure-input-card {
+            width: min(560px, 100%);
+        }
+
+        .copilot-agent-secure-input-fields {
+            display: grid;
+            gap: 0.8rem;
+            margin-top: 1rem;
+        }
+
+        .copilot-agent-secure-input-fields label {
+            display: grid;
+            gap: 0.35rem;
+            font-weight: 600;
         }
 
         .copilot-agent-artifact-actions,
@@ -3529,6 +3595,45 @@
     color: var(--main-text);
 }
 
+.ai-starter-panel,
+.ai-command-center {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    margin: 0 0 1rem;
+    padding: 1rem 1.1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--white) 92%, var(--bg-color) 8%);
+}
+
+.ai-starter-panel h2,
+.ai-command-center h2 {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+}
+
+.ai-command-center-copy {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.ai-starter-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.55rem;
+}
+
+.copilot-manual-tools-panel:not([open]) #copilot-query-section,
+.copilot-manual-tools-panel:not([open]) #copilot-explain-section,
+.copilot-manual-tools-panel:not([open]) #copilot-recommend-section,
+.copilot-manual-tools-panel:not([open]) #copilot-report-section,
+.copilot-manual-tools-panel:not([open]) #copilot-evidence-section {
+    display: none;
+}
+
 #audience-builder-source-select,
 #audience-builder-job-select {
     min-height: 9rem;
@@ -3541,6 +3646,15 @@
 }
 
 @media (max-width: 720px) {
+    .ai-starter-panel,
+    .ai-command-center {
+        grid-template-columns: 1fr;
+    }
+
+    .ai-starter-actions {
+        justify-content: flex-start;
+    }
+
     .builder-filter-row-grid {
         grid-template-columns: 1fr;
     }

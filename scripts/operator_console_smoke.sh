@@ -93,6 +93,62 @@ assert_module() {
   }"
 }
 
+assert_ai_first_operator_ui() {
+  log_step "Checking AI-first operator console surfaces"
+  run_pw run-code "async (page) => {
+    const checks = [];
+    const modules = [
+      ['data-core', '#data-sandbox', '[data-ai-command-center=\"data-core\"]', '#data-sandbox-advanced-json-panel'],
+      ['audience-engine', '#audience-engine', '[data-ai-command-center=\"audience-engine\"]', '#audience-builder-manual-list-group details'],
+      ['action-orchestrator', '#action-orchestrator', '[data-ai-command-center=\"action-orchestrator\"]', '#push-dispatch-data-input'],
+      ['experiment-hub', '#experiment-hub', '[data-ai-command-center=\"experiment-hub\"]', '#experiment-outcomes-json'],
+      ['insight-copilot', '#insight-copilot', '[data-ai-command-center=\"insight-copilot\"]', '#copilot-manual-tools-panel'],
+    ];
+    for (const [moduleId, pageSelector, aiSelector, advancedSelector] of modules) {
+      const nav = page.locator('[data-module=\"' + moduleId + '\"]');
+      if (await nav.count() === 0) throw new Error('Missing module nav for ' + moduleId);
+      await nav.first().click();
+      await page.waitForTimeout(500);
+      if (await page.locator(pageSelector).count() === 0) throw new Error('Missing page for ' + moduleId);
+      const aiPanel = page.locator(aiSelector);
+      if (await aiPanel.count() === 0) throw new Error('Missing AI starter panel for ' + moduleId);
+      const starterCount = await aiPanel.locator('[data-agent-starter-message]').count();
+      if (starterCount === 0 && moduleId !== 'insight-copilot') throw new Error('Missing starter prompts for ' + moduleId);
+      checks.push({ moduleId, starterCount });
+    }
+
+    await page.locator('[data-module=\"data-core\"]').first().click();
+    await page.waitForTimeout(300);
+    const dataSandboxLink = page.locator('[data-item=\"data-core-mappings\"]');
+    if (await dataSandboxLink.count() > 0) {
+      await dataSandboxLink.first().click();
+      await page.waitForTimeout(300);
+    }
+    const mappingAdvancedOpen = await page.locator('#data-sandbox-advanced-json-panel').evaluate((element) => element.open);
+    if (mappingAdvancedOpen) throw new Error('Mapping JSON advanced panel should start collapsed');
+
+    await page.locator('[data-module=\"action-orchestrator\"]').first().click();
+    await page.waitForTimeout(500);
+    const pushAdvancedOpen = await page.locator('#push-dispatch-data-input').evaluate((element) => element.closest('details')?.open);
+    if (pushAdvancedOpen) throw new Error('Push data JSON should start inside a collapsed advanced panel');
+
+    await page.locator('[data-module=\"experiment-hub\"]').first().click();
+    await page.waitForTimeout(500);
+    const outcomeAdvancedOpen = await page.locator('#experiment-outcomes-json').evaluate((element) => element.closest('details')?.open);
+    if (outcomeAdvancedOpen) throw new Error('Outcome payload should start inside a collapsed advanced panel');
+
+    await page.locator('[data-module=\"insight-copilot\"]').first().click();
+    await page.waitForTimeout(500);
+    const manualPanelOpen = await page.locator('#copilot-manual-tools-panel').evaluate((element) => element.open);
+    const queryVisible = await page.locator('#copilot-query-section').isVisible();
+    if (manualPanelOpen || queryVisible) {
+      throw new Error('Manual Copilot forms should not be primary visible controls');
+    }
+
+    return checks;
+  }"
+}
+
 assert_audience_builder_ui() {
   log_step "Checking guided audience builder UI"
   run_pw run-code "async (page) => {
@@ -394,31 +450,67 @@ exercise_copilot_agent() {
     }
 
     const connectorName = 'agent_smoke_' + Date.now();
-    await textarea.fill([
-      'Set up a connection',
-      'connection_scope: connector',
-      'connection_type: amplitude',
-      'name: ' + connectorName,
-      'api_key: demo_api_key',
-      'secret_key: demo_secret_key'
-    ].join('\n'));
+    await textarea.fill('Set up a BigQuery connector named ' + connectorName + ' with project_id: analytics-prod');
     await sendButton.click();
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(900);
+
+    const securePrompt = await page.locator('#copilot-agent-thread').textContent() || '';
+    const secureButton = page.locator('[data-copilot-agent-secure-inputs]');
+    if (!securePrompt.toLowerCase().includes('service account') || await secureButton.count() === 0) {
+      throw new Error('Expected secure credential prompt for BigQuery setup');
+    }
+    const datasetClarification = page.locator('[data-clarification-key=\"dataset_id\"]');
+    if (await datasetClarification.count() === 0) {
+      throw new Error('Expected non-sensitive dataset clarification before secure setup');
+    }
+    await datasetClarification.fill('game_events');
+    await page.locator('[data-copilot-agent-submit-clarifications]').first().click();
+    await page.waitForTimeout(900);
+
+    await page.locator('[data-copilot-agent-secure-inputs]').first().click();
+    await page.waitForTimeout(250);
+
+    const secureDialog = page.locator('#copilot-agent-secure-input-dialog');
+    if (await secureDialog.count() === 0 || !(await secureDialog.isVisible())) {
+      throw new Error('Secure input dialog did not open');
+    }
+    const serviceAccountJson = JSON.stringify({
+      type: 'service_account',
+      project_id: 'analytics-prod',
+      client_email: 'svc@analytics-prod.iam.gserviceaccount.com',
+      private_key: '-----BEGIN PRIVATE KEY-----\\nsmoke-private-key\\n-----END PRIVATE KEY-----\\n',
+      token_uri: 'https://oauth2.googleapis.com/token',
+    });
+    await page.locator('[data-secure-input-key=\"service_account_json\"]').fill(serviceAccountJson);
+    await page.locator('#copilot-agent-secure-input-submit-btn').click();
+    await page.waitForTimeout(1400);
+
+    const secureDialogHidden = await secureDialog.evaluate((element) => element.classList.contains('hidden'));
+    if (!secureDialogHidden) {
+      throw new Error('Secure input dialog did not close after submission');
+    }
 
     const artifacts = await page.locator('#copilot-agent-thread').textContent() || '';
     const artifactButton = page.locator('[data-copilot-agent-artifact-index]');
-    if (!artifacts.includes(connectorName) || await artifactButton.count() === 0) {
-      throw new Error('Expected connector artifact after safe setup flow');
+    if (!artifacts.includes(connectorName) || artifacts.includes('smoke-private-key') || await artifactButton.count() === 0) {
+      throw new Error('Expected redacted connector artifact after secure setup flow');
     }
 
-    await textarea.fill('Start experiment smoke_agent_exp');
+    await artifactButton.first().click();
+    await page.waitForTimeout(600);
+    const activeDataCore = await page.locator('[data-module=\"data-core\"]').first().evaluate((element) => element.classList.contains('active'));
+    if (!activeDataCore) {
+      throw new Error('Artifact navigation did not return to Data Core');
+    }
+
+    await textarea.fill('Send push notification user_id: smoke_user title: Smoke body: Test message');
     await sendButton.click();
     await page.waitForTimeout(900);
 
     const confirmations = await page.locator('#copilot-agent-thread').textContent() || '';
     const confirmationButton = page.locator('[data-copilot-agent-confirm]');
-    if (!confirmations.toLowerCase().includes('start experiment') || await confirmationButton.count() === 0) {
-      throw new Error('Expected pending confirmation for experiment start');
+    if (!confirmations.toLowerCase().includes('one-time push') || await confirmationButton.count() === 0) {
+      throw new Error('Expected pending confirmation for push send');
     }
 
     const closeDrawerButton = page.locator('#copilot-agent-close-btn');
@@ -436,7 +528,7 @@ exercise_copilot_agent() {
 
     const persistedConfirmations = await page.locator('#copilot-agent-thread').textContent() || '';
     const persistedConfirmationButton = page.locator('[data-copilot-agent-confirm]');
-    if (!persistedConfirmations.toLowerCase().includes('start experiment') || await persistedConfirmationButton.count() === 0) {
+    if (!persistedConfirmations.toLowerCase().includes('one-time push') || await persistedConfirmationButton.count() === 0) {
       throw new Error('Expected pending confirmation to persist across navigation');
     }
 
@@ -462,6 +554,7 @@ log_step "Opening $BASE_URL"
 assert_base_url_ready
 open_and_wait
 assert_auth_shell
+assert_ai_first_operator_ui
 assert_module "data-core" "#import-detail-output"
 assert_bigquery_connector_ui
 assert_module "audience-engine" "#audience-cohort-list"
@@ -469,6 +562,6 @@ assert_audience_builder_ui
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"
 assert_email_campaign_ui
 assert_module "experiment-hub" "#experiment-integrity-output"
-assert_module "insight-copilot" "#copilot-query-section"
+assert_module "insight-copilot" "#copilot-manual-tools-panel"
 exercise_copilot_agent
 log_step "Operator console smoke completed."

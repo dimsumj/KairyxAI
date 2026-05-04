@@ -32,6 +32,13 @@ export function initializeOperatorConsole() {
             const copilotAgentDrawerBackdrop = document.getElementById('copilot-agent-drawer-backdrop');
             const copilotAgentCloseBtn = document.getElementById('copilot-agent-close-btn');
             const copilotOpenGlobalAgentBtn = document.getElementById('copilot-open-global-agent-btn');
+            const copilotAgentSecureInputDialog = document.getElementById('copilot-agent-secure-input-dialog');
+            const copilotAgentSecureInputBackdrop = document.getElementById('copilot-agent-secure-input-backdrop');
+            const copilotAgentSecureInputFields = document.getElementById('copilot-agent-secure-input-fields');
+            const copilotAgentSecureInputStatus = document.getElementById('copilot-agent-secure-input-status');
+            const copilotAgentSecureInputCloseBtn = document.getElementById('copilot-agent-secure-input-close-btn');
+            const copilotAgentSecureInputCancelBtn = document.getElementById('copilot-agent-secure-input-cancel-btn');
+            const copilotAgentSecureInputSubmitBtn = document.getElementById('copilot-agent-secure-input-submit-btn');
             const settingsWorkspaceSummary = document.getElementById('settings-workspace-summary');
             const settingsSessionSummary = document.getElementById('settings-session-summary');
             const settingsAuthCopy = document.getElementById('settings-auth-copy');
@@ -10863,6 +10870,7 @@ export function initializeOperatorConsole() {
             let copilotAgentSessionBootstrapPromise = null;
             let copilotAgentModelProfiles = [];
             let copilotAgentSelectedModelProfileId = '';
+            let copilotAgentSecureClarifications = [];
             const COPILOT_AGENT_READY_PLACEHOLDER = 'Ask how to use this page, request a sample payload, summarize the dashboard, or tell the agent to set something up.';
             const COPILOT_AGENT_LOADING_PLACEHOLDER = 'Getting Agents Ready...';
 
@@ -14971,11 +14979,27 @@ export function initializeOperatorConsole() {
                 return rendered.join('');
             }
 
+            function isSecureCopilotClarification(item = {}) {
+                const inputType = String(item.input_type || '');
+                return inputType.startsWith('secure_') || Boolean(item.metadata?.secure_input);
+            }
+
             function renderCopilotAgentClarificationFields(items = []) {
                 const clarifications = Array.isArray(items) ? items : [];
                 return clarifications.map((item) => {
                     const key = String(item.key || '');
                     const inputType = String(item.input_type || 'text');
+                    if (isSecureCopilotClarification(item)) {
+                        return `
+                            <div class="copilot-agent-secure-input-callout" data-secure-clarification-key="${escapeHtml(key)}">
+                                <div>
+                                    <strong>${escapeHtml(item.label || key)}</strong>
+                                    <div class="subtle">Use the secure setup dialog for this value.</div>
+                                </div>
+                                <button type="button" data-copilot-agent-secure-inputs="true">Open Secure Setup</button>
+                            </div>
+                        `;
+                    }
                     if (inputType === 'choice') {
                         return `
                             <label class="copilot-agent-form-row">
@@ -15026,7 +15050,8 @@ export function initializeOperatorConsole() {
                                 ${renderCopilotAgentClarificationFields(clarifications)}
                             </div>
                             <div class="copilot-agent-confirmation-actions">
-                                <button type="button" data-copilot-agent-submit-clarifications="true">Send Answers</button>
+                                ${clarifications.some(isSecureCopilotClarification) ? '<button type="button" data-copilot-agent-secure-inputs="true">Open Secure Setup</button>' : ''}
+                                ${clarifications.some((item) => !isSecureCopilotClarification(item)) ? '<button type="button" data-copilot-agent-submit-clarifications="true">Send Answers</button>' : ''}
                             </div>
                         </div>
                     `);
@@ -15127,6 +15152,14 @@ export function initializeOperatorConsole() {
                 });
                 copilotAgentThread?.querySelectorAll('[data-copilot-agent-submit-clarifications]').forEach((button) => {
                     button.addEventListener('click', submitCopilotAgentClarifications);
+                });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-secure-inputs]').forEach((button) => {
+                    button.addEventListener('click', () => {
+                        const clarifications = copilotAgentLastResponse?.clarifications
+                            || copilotAgentLastResponse?.session_state?.latest_clarifications
+                            || [];
+                        openCopilotAgentSecureInputDialog(clarifications);
+                    });
                 });
             }
 
@@ -15442,6 +15475,9 @@ export function initializeOperatorConsole() {
                 for (const field of fields) {
                     const key = field.dataset.clarificationKey || '';
                     const type = field.dataset.clarificationType || 'text';
+                    if (type.startsWith('secure_')) {
+                        continue;
+                    }
                     const value = String(field.value || '').trim();
                     if (!value) {
                         if (field.required) {
@@ -15561,6 +15597,105 @@ export function initializeOperatorConsole() {
                     await sendCopilotAgentMessage(message);
                 } catch (error) {
                     setInlineStatus(copilotAgentSendStatus, error.message || 'Failed to submit clarifications.', true);
+                }
+            }
+
+            function setCopilotAgentSecureInputDialogOpen(open) {
+                copilotAgentSecureInputDialog?.classList.toggle('hidden', !open);
+                copilotAgentSecureInputBackdrop?.classList.toggle('hidden', !open);
+                copilotAgentSecureInputDialog?.setAttribute('aria-hidden', open ? 'false' : 'true');
+                copilotAgentSecureInputBackdrop?.setAttribute('aria-hidden', open ? 'false' : 'true');
+                if (open) {
+                    const firstField = copilotAgentSecureInputFields?.querySelector('[data-secure-input-key]');
+                    firstField?.focus();
+                }
+            }
+
+            function openCopilotAgentSecureInputDialog(clarifications = []) {
+                const items = (Array.isArray(clarifications) ? clarifications : []).filter((item) => item && item.key);
+                const secureItems = items.filter(isSecureCopilotClarification);
+                const requiredPlainItems = items.filter((item) => item.required && !isSecureCopilotClarification(item));
+                if (requiredPlainItems.length) {
+                    const labels = requiredPlainItems.map((item) => item.label || item.key).join(', ');
+                    setInlineStatus(copilotAgentSendStatus, `Send non-sensitive answers first: ${labels}.`, true);
+                    return;
+                }
+                copilotAgentSecureClarifications = secureItems;
+                if (!copilotAgentSecureClarifications.length) {
+                    setInlineStatus(copilotAgentSendStatus, 'No secure setup fields are pending.', true);
+                    return;
+                }
+                if (!copilotAgentSecureInputFields) return;
+                copilotAgentSecureInputFields.innerHTML = copilotAgentSecureClarifications.map((item) => {
+                    const key = String(item.key || '');
+                    const inputType = String(item.input_type || 'text');
+                    const label = escapeHtml(item.label || key);
+                    const required = item.required ? 'required' : '';
+                    if (inputType === 'choice') {
+                        return `
+                            <label>
+                                <span>${label}</span>
+                                <select data-secure-input-key="${escapeHtml(key)}" ${required}>
+                                    <option value="">Select...</option>
+                                    ${(item.options || []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}
+                                </select>
+                            </label>
+                        `;
+                    }
+                    if (inputType === 'secure_multiline' || inputType === 'code') {
+                        return `
+                            <label>
+                                <span>${label}</span>
+                                <textarea data-secure-input-key="${escapeHtml(key)}" ${required} style="min-height: 8rem; font-family: monospace;"></textarea>
+                            </label>
+                        `;
+                    }
+                    const inputKind = inputType === 'secure_text' ? 'password' : 'text';
+                    return `
+                        <label>
+                            <span>${label}</span>
+                            <input type="${inputKind}" data-secure-input-key="${escapeHtml(key)}" ${required}>
+                        </label>
+                    `;
+                }).join('');
+                setInlineStatus(copilotAgentSecureInputStatus, '');
+                setCopilotAgentSecureInputDialogOpen(true);
+            }
+
+            async function submitCopilotAgentSecureInputs() {
+                try {
+                    await ensureCopilotAgentSession(false);
+                    const fields = Array.from(copilotAgentSecureInputFields?.querySelectorAll('[data-secure-input-key]') || []);
+                    const values = {};
+                    for (const field of fields) {
+                        const key = String(field.dataset.secureInputKey || '');
+                        const value = String(field.value || '').trim();
+                        if (!value) {
+                            if (field.required) {
+                                field.focus();
+                                throw new Error(`Missing secure value for ${key}.`);
+                            }
+                            continue;
+                        }
+                        values[key] = value;
+                    }
+                    if (!Object.keys(values).length) {
+                        throw new Error('Enter at least one secure value.');
+                    }
+                    setInlineStatus(copilotAgentSecureInputStatus, 'Submitting...');
+                    const payload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/secure-inputs`, {
+                        method: 'POST',
+                        body: {
+                            values,
+                            ui_context: getCopilotAgentUiContext(),
+                        },
+                    });
+                    const turnsPayload = await apiRequest(`/copilot/agent/sessions/${encodeURIComponent(copilotAgentSessionId)}/turns`);
+                    setCopilotAgentSecureInputDialogOpen(false);
+                    renderCopilotAgentWorkspace(payload, turnsPayload.items || []);
+                    setInlineStatus(copilotAgentSendStatus, 'Secure setup submitted.');
+                } catch (error) {
+                    setInlineStatus(copilotAgentSecureInputStatus, error.message || 'Failed to submit secure setup.', true);
                 }
             }
 
@@ -16025,6 +16160,10 @@ export function initializeOperatorConsole() {
             copilotAgentCloseBtn?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(false);
             });
+            copilotAgentSecureInputSubmitBtn?.addEventListener('click', submitCopilotAgentSecureInputs);
+            copilotAgentSecureInputCancelBtn?.addEventListener('click', () => setCopilotAgentSecureInputDialogOpen(false));
+            copilotAgentSecureInputCloseBtn?.addEventListener('click', () => setCopilotAgentSecureInputDialogOpen(false));
+            copilotAgentSecureInputBackdrop?.addEventListener('click', () => setCopilotAgentSecureInputDialogOpen(false));
             copilotAgentDrawerBackdrop?.addEventListener('click', async () => {
                 await setCopilotAgentDrawerOpen(false);
             });
@@ -16035,6 +16174,10 @@ export function initializeOperatorConsole() {
                 await setCopilotAgentDrawerOpen(true);
             });
             document.addEventListener('keydown', async (event) => {
+                if (event.key === 'Escape' && copilotAgentSecureInputDialog && !copilotAgentSecureInputDialog.classList.contains('hidden')) {
+                    setCopilotAgentSecureInputDialogOpen(false);
+                    return;
+                }
                 if (event.key === 'Escape' && copilotAgentDrawerOpen) {
                     await setCopilotAgentDrawerOpen(false);
                 }

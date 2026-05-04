@@ -61,6 +61,11 @@ class CopilotAgentMessageRequest(BaseModel):
     ui_context: Dict[str, Any] = Field(default_factory=dict)
 
 
+class CopilotAgentSecureInputRequest(BaseModel):
+    values: Dict[str, Any] = Field(default_factory=dict)
+    ui_context: Dict[str, Any] = Field(default_factory=dict)
+
+
 class CopilotAgentConfirmRequest(BaseModel):
     note: str = ""
 
@@ -86,6 +91,7 @@ class AgentClarification(BaseModel):
     required: bool = True
     input_type: str = "text"
     options: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentExecutionPreviewStep(BaseModel):

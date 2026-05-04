@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from app.application.email_campaigns import EmailCampaignService
 from app.application.sendgrid_provider import SendGridProviderService
 from app.application.braze_provider import BrazeProviderService
+from app.application.imports import ImportService
+from app.application.push_dispatches import PushDispatchService
 from app.application.workflows import WorkflowService
 from app.application.predictions import PredictionService
 from app.application.text_model_runtime import ConfiguredTextModelRuntime, TextModelRuntimeResolver
@@ -40,13 +42,14 @@ CONNECTOR_REQUIRED_FIELDS: Dict[str, List[str]] = {
     "amplitude": ["api_key", "secret_key"],
     "adjust": ["api_token"],
     "appsflyer": ["api_token", "app_id"],
-    "bigquery": ["project_id"],
+    "bigquery": ["project_id", "dataset_id", "service_account_json"],
     "google": ["api_key"],
 }
 
 PROVIDER_CONNECTION_REQUIRED_FIELDS: Dict[str, List[str]] = {
     "braze": ["api_key", "rest_endpoint"],
-    "sendgrid": ["api_key"],
+    "sendgrid": ["api_key", "from_email"],
+    "wynn_push_notifier": ["api_token", "base_url"],
     "webhook": ["webhook_url"],
     "simulator": [],
 }
@@ -62,8 +65,23 @@ CONNECTOR_TYPE_SYNONYMS: Dict[str, List[str]] = {
 PROVIDER_CONNECTION_TYPE_SYNONYMS: Dict[str, List[str]] = {
     "braze": ["braze"],
     "sendgrid": ["sendgrid", "send grid"],
+    "wynn_push_notifier": ["push provider", "push notifier", "wynn push", "wynn pushnotifier", "pushnotification", "push notification provider"],
     "webhook": ["webhook", "hook"],
     "simulator": ["simulator"],
+}
+
+SECURE_INPUT_FIELDS = {
+    "api_key",
+    "api_token",
+    "callback_bearer_token",
+    "callback_signing_secret",
+    "client_secret",
+    "password",
+    "secret_key",
+    "service_account_info_json",
+    "service_account_json",
+    "signing_secret",
+    "webhook_token",
 }
 
 RISK_ORDER = {
@@ -195,6 +213,96 @@ ACTION_REGISTRY: Dict[str, AgentActionSpec] = {
         permissions=("copilot.agent.run", "experiments.config.write"),
         risk_level="low",
     ),
+    "remap_import": AgentActionSpec(
+        action_type="remap_import",
+        title="Apply mapping and reprocess import",
+        permissions=("copilot.agent.confirm", "imports.resume", "mappings.update"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "send_push_dispatch": AgentActionSpec(
+        action_type="send_push_dispatch",
+        title="Send one-time push",
+        permissions=("copilot.agent.confirm", "push_dispatches.execute"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "schedule_email_campaign": AgentActionSpec(
+        action_type="schedule_email_campaign",
+        title="Schedule email campaign",
+        permissions=("copilot.agent.confirm", "email_campaigns.write"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "send_email_campaign": AgentActionSpec(
+        action_type="send_email_campaign",
+        title="Send email campaign",
+        permissions=("copilot.agent.confirm", "email_campaigns.execute"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "cancel_email_campaign": AgentActionSpec(
+        action_type="cancel_email_campaign",
+        title="Cancel email campaign",
+        permissions=("copilot.agent.confirm", "email_campaigns.write"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "delete_email_campaign": AgentActionSpec(
+        action_type="delete_email_campaign",
+        title="Delete email campaign",
+        permissions=("copilot.agent.confirm", "email_campaigns.write"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "publish_workflow": AgentActionSpec(
+        action_type="publish_workflow",
+        title="Publish workflow",
+        permissions=("copilot.agent.confirm", "workflows.publish"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "pause_workflow": AgentActionSpec(
+        action_type="pause_workflow",
+        title="Pause workflow",
+        permissions=("copilot.agent.confirm", "workflows.pause"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "resume_workflow": AgentActionSpec(
+        action_type="resume_workflow",
+        title="Resume workflow",
+        permissions=("copilot.agent.confirm", "workflows.resume"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "test_run_workflow": AgentActionSpec(
+        action_type="test_run_workflow",
+        title="Test-run workflow",
+        permissions=("copilot.agent.confirm", "workflows.execute"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "archive_workflow": AgentActionSpec(
+        action_type="archive_workflow",
+        title="Archive workflow",
+        permissions=("copilot.agent.confirm", "workflows.archive"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "delete_workflow": AgentActionSpec(
+        action_type="delete_workflow",
+        title="Delete workflow",
+        permissions=("copilot.agent.confirm", "workflows.delete"),
+        requires_confirmation=True,
+        risk_level="high",
+    ),
+    "ingest_experiment_outcomes": AgentActionSpec(
+        action_type="ingest_experiment_outcomes",
+        title="Ingest experiment outcomes",
+        permissions=("copilot.agent.run", "experiments.outcomes.ingest"),
+        risk_level="medium",
+    ),
     "activate_cohort": AgentActionSpec(
         action_type="activate_cohort",
         title="Activate cohort",
@@ -289,7 +397,7 @@ class ConfiguredCopilotAgentModel:
             "task": "Classify the operator request and extract structured slots for the Kytrics/Kairyx control plane.",
             "instructions": [
                 "Return JSON only.",
-                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, draft_audience_builder, setup_operator_flow, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
+                "Keep the intent one of summarize_dashboard, setup_cohort, setup_experiment, setup_connection, run_prediction, setup_email_campaign, setup_workflow, list_provider_messaging_assets, draft_sql_from_prompt, draft_audience_builder, setup_operator_flow, remap_import, send_push_dispatch, schedule_email_campaign, send_email_campaign, cancel_email_campaign, delete_email_campaign, publish_workflow, pause_workflow, resume_workflow, test_run_workflow, archive_workflow, delete_workflow, ingest_experiment_outcomes, help_support, activate_cohort, pause_cohort, archive_cohort, restore_cohort, start_experiment, stop_experiment, record_experiment_decision, unsupported.",
                 "Fill slots only when explicitly present or strongly implied.",
                 "Do not invent SQL, identifiers, or credentials.",
             ],
@@ -511,20 +619,105 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
             "how do i use this",
         )
     )
-    if "permanent delete" in lowered or re.search(r"\bdelete\b", lowered):
+    if "permanent delete" in lowered:
         return {"intent": "unsupported", "slots": slots, "notes": ["Destructive delete flows are out of scope for the v1 agent."]}
+    if any(
+        phrase in lowered
+        for phrase in (
+            "summarize health",
+            "summarise health",
+            "health summary",
+            "summarize data health",
+            "summarise data health",
+            "summarize experiment health",
+            "summarise experiment health",
+            "inspect diagnostics",
+            "mapping diagnostics",
+            "rollout diagnostics",
+        )
+    ):
+        return {"intent": "summarize_dashboard", "slots": slots}
+    if any(token in lowered for token in ("remap", "re-map", "fix mapping", "apply mapping", "reprocess import", "rerun import")) or (
+        "mapping" in lowered and any(token in lowered for token in ("fix", "apply", "reprocess", "rerun", "reprocessing"))
+    ):
+        return {"intent": "remap_import", "slots": slots}
     if is_help_support_request:
         return {"intent": "help_support", "slots": slots}
-    if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign", "workflow")) and any(
+    if any(token in lowered for token in ("push dispatch", "one-time push", "one time push", "send push", "push notification")) and any(
+        token in lowered for token in ("send", "dispatch", "deliver")
+    ):
+        return {"intent": "send_push_dispatch", "slots": slots}
+    if "email campaign" in lowered or slots.get("email_campaign_id"):
+        if re.search(r"\bschedule\b", lowered):
+            return {"intent": "schedule_email_campaign", "slots": slots}
+        if re.search(r"\bsend\b", lowered):
+            return {"intent": "send_email_campaign", "slots": slots}
+        if re.search(r"\bcancel\b", lowered):
+            return {"intent": "cancel_email_campaign", "slots": slots}
+        if re.search(r"\bdelete\b", lowered):
+            return {"intent": "delete_email_campaign", "slots": slots}
+    if "workflow" in lowered or slots.get("workflow_id"):
+        if re.search(r"\bpublish\b", lowered):
+            return {"intent": "publish_workflow", "slots": slots}
+        if re.search(r"\bpause\b", lowered):
+            return {"intent": "pause_workflow", "slots": slots}
+        if re.search(r"\bresume\b", lowered):
+            return {"intent": "resume_workflow", "slots": slots}
+        if "test run" in lowered or "test-run" in lowered or re.search(r"\brun test\b", lowered):
+            return {"intent": "test_run_workflow", "slots": slots}
+        if re.search(r"\barchive\b", lowered):
+            return {"intent": "archive_workflow", "slots": slots}
+        if re.search(r"\bdelete\b", lowered):
+            return {"intent": "delete_workflow", "slots": slots}
+    if "outcome" in lowered and ("experiment" in lowered or slots.get("experiment_id")) and any(
+        token in lowered for token in ("ingest", "record", "load", "import")
+    ):
+        return {"intent": "ingest_experiment_outcomes", "slots": slots}
+    has_setup_verb = bool(re.search(r"\b(build|create|draft|set up|setup|run|start|prepare|configure)\b", lowered))
+    wants_broad_operator_flow = has_setup_verb and (
+        "prediction" in lowered
+        and ("cohort" in lowered or "audience" in lowered)
+        and any(token in lowered for token in ("workflow", "campaign", "sendgrid", "braze", "template"))
+    ) or (has_setup_verb and any(
+        phrase in lowered
+        for phrase in (
+            "whole flow",
+            "end-to-end",
+            "end to end",
+            "prediction-to-campaign",
+            "prediction to campaign",
+            "prediction ->",
+            "full flow",
+            "entire flow",
+        )
+    ))
+    if wants_broad_operator_flow and any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign", "workflow", "campaign")) and any(
         token in lowered for token in ("high risk", "churn", "prediction", "cohort", "audience")
     ):
         slots.setdefault("wants_prediction", True)
         slots.setdefault("wants_cohort", True)
-        if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign")):
+        if any(token in lowered for token in ("sendgrid", "braze", "template", "email campaign", "campaign")):
             slots["wants_email_campaign"] = True
         if "workflow" in lowered:
             slots["wants_workflow"] = True
         return {"intent": "setup_operator_flow", "slots": slots}
+    if any(token in lowered for token in ("cohort", "audience")) and any(token in lowered for token in ("set up", "setup", "create", "configure")) and not any(
+        token in lowered for token in ("campaign", "sendgrid", "braze", "template", "workflow", "experiment", "a/b", "ab test", "a b test")
+    ):
+        slots.setdefault("cohort_id", extract_resource_id(normalized, prefix="cohort_") or selected_cohort_id or None)
+        if "select" in lowered or sql:
+            slots["cohort_type"] = "sql"
+        elif "rule" in lowered:
+            slots["cohort_type"] = "rule"
+        elif "list" in lowered or "members" in lowered:
+            slots["cohort_type"] = "list"
+        return {"intent": "setup_cohort", "slots": slots}
+    if any(token in lowered for token in ("email campaign", "sendgrid campaign", "braze campaign", "build campaign", "campaign")) and any(
+        token in lowered for token in ("set up", "setup", "create", "configure", "draft", "build")
+    ):
+        return {"intent": "setup_email_campaign", "slots": slots}
+    if "workflow" in lowered and any(token in lowered for token in ("set up", "setup", "create", "configure", "draft", "build")):
+        return {"intent": "setup_workflow", "slots": slots}
     if any(token in lowered for token in ("run prediction", "predict churn", "prediction", "score users")) and any(
         token in lowered for token in ("run", "start", "create", "reuse", "refresh", "fresh", "rerun")
     ):
@@ -602,6 +795,8 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         elif "list" in lowered or "members" in lowered:
             slots["cohort_type"] = "list"
         return {"intent": "setup_cohort", "slots": slots}
+    if re.search(r"\bdelete\b", lowered):
+        return {"intent": "unsupported", "slots": slots, "notes": ["I can only prepare delete actions for supported workflow and email campaign resources."]}
     return {"intent": "unsupported", "slots": slots}
 
 
@@ -649,6 +844,8 @@ class CopilotAgentService:
         self.health_monitor = HealthMonitorService(repository, self.bigquery_service)
         self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.workflows = WorkflowService(repository)
+        self.imports = ImportService(repository, settings, self.bigquery_service)
+        self.push_dispatches = PushDispatchService(repository)
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
         self.sendgrid_provider = SendGridProviderService(repository)
         self.braze_provider = BrazeProviderService(repository)
@@ -812,7 +1009,7 @@ class CopilotAgentService:
                 "latest_execution_preview": plan["execution_preview"],
                 "latest_artifacts": response_payload["artifacts"],
                 "latest_clarifications": plan["clarifications"],
-                "draft_slots": dict(plan["slots"] or {}) if plan["clarifications"] else {},
+                "draft_slots": sanitize_draft_slots(plan["slots"] or {}) if plan["clarifications"] else {},
                 "pending_confirmation_count": len(pending_confirmations),
                 "async_status": execution_result.get("async_status", session.get("async_status") or ""),
                 "waiting_for_action_type": execution_result.get("waiting_for_action_type", session.get("waiting_for_action_type")),
@@ -824,6 +1021,152 @@ class CopilotAgentService:
         self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status=session_status, name=session.get("title"), payload=session)
         response_payload["session_state"] = self._session_state(session)
         return response_payload
+
+    def handle_secure_inputs(
+        self,
+        session_id: str,
+        *,
+        values: Dict[str, Any],
+        ui_context: Dict[str, Any] | None,
+        context: GovernanceContext,
+    ) -> Dict[str, Any]:
+        session = self._decorate_session_async_state(self._get_session_payload(session_id))
+        if str(session.get("status") or "").strip() != "awaiting_input":
+            raise HTTPException(status_code=409, detail="Secure inputs are accepted only while the agent is waiting for secure setup details.")
+        clarifications = list(session.get("latest_clarifications") or [])
+        required_plain_fields = [
+            str(item.get("key") or "")
+            for item in clarifications
+            if item.get("required") and not is_secure_clarification(item) and str(item.get("key") or "").strip()
+        ]
+        if required_plain_fields:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Submit non-sensitive clarification fields first: {', '.join(required_plain_fields)}.",
+            )
+        secure_keys = {
+            str(item.get("key") or "")
+            for item in clarifications
+            if is_secure_clarification(item) and str(item.get("key") or "").strip()
+        }
+        if not secure_keys:
+            raise HTTPException(status_code=400, detail="No secure setup fields are pending for this session.")
+        submitted_values = {
+            key: value
+            for key, value in dict(values or {}).items()
+            if value is not None and not (isinstance(value, str) and not value.strip())
+        }
+        if not submitted_values:
+            raise HTTPException(status_code=400, detail="Submit at least one pending secure field.")
+        invalid_keys = sorted(set(submitted_values) - secure_keys)
+        if invalid_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Secure inputs may only include pending secure fields: {', '.join(sorted(secure_keys))}.",
+            )
+        merged_ui_context = dict(session.get("ui_context") or {})
+        merged_ui_context.update(dict(ui_context or {}))
+        model_adapter = self._model_adapter_for_session(session)
+        current_intent = str(session.get("current_intent") or "setup_connection").strip() or "setup_connection"
+        secure_slots = self._secure_values_to_slots(submitted_values, session=session, allowed_keys=secure_keys)
+        parsed = {
+            "intent": current_intent,
+            "slots": merge_slots(dict(session.get("draft_slots") or {}), secure_slots),
+        }
+        safe_user_message = f"Secure setup details submitted for: {', '.join(sorted(submitted_values))}."
+        plan = self._build_plan(message=safe_user_message, parsed=parsed, ui_context=merged_ui_context, context=context)
+
+        completed_actions: List[Dict[str, Any]] = []
+        pending_confirmations: List[Dict[str, Any]] = []
+        artifacts: List[Dict[str, Any]] = []
+        session_status = "active"
+        execution_result: Dict[str, Any] = {}
+
+        if plan["clarifications"]:
+            session_status = "awaiting_input"
+        else:
+            execution_result = self._execute_plan(
+                session_id=session_id,
+                plan=plan,
+                context=context,
+                session=session,
+                ui_context=merged_ui_context,
+                model_adapter=model_adapter,
+            )
+            completed_actions = execution_result["completed_actions"]
+            pending_confirmations = execution_result["pending_confirmations"]
+            artifacts = execution_result["artifacts"]
+            session_status = execution_result["session_status"]
+
+        response_payload = {
+            "assistant_message": "",
+            "session_state": {},
+            "clarifications": plan["clarifications"],
+            "execution_preview": plan["execution_preview"],
+            "completed_actions": completed_actions,
+            "pending_confirmations": pending_confirmations,
+            "artifacts": artifacts or collect_artifacts_from_actions(completed_actions, pending_confirmations),
+        }
+        response_payload["assistant_message"] = model_adapter.compose_message(
+            {
+                **response_payload,
+                "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
+            }
+        )
+
+        turn_payload = {
+            "turn_id": f"cpat_{uuid.uuid4().hex[:20]}",
+            "session_id": session_id,
+            "user_message": safe_user_message,
+            "assistant_message": response_payload["assistant_message"],
+            "intent": plan["intent"],
+            "status": session_status,
+            "clarifications": plan["clarifications"],
+            "execution_preview": plan["execution_preview"],
+            "completed_actions": completed_actions,
+            "pending_confirmations": pending_confirmations,
+            "artifacts": response_payload["artifacts"],
+            "ui_context": merged_ui_context,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        self.repository.upsert_resource(TURN_RESOURCE_TYPE, turn_payload["turn_id"], status=session_status, name=plan["intent"], payload=turn_payload)
+        self.repository.record_resource_event(SESSION_RESOURCE_TYPE, session_id, event_type="turn_recorded", payload={"turn_id": turn_payload["turn_id"], "intent": plan["intent"], "status": session_status})
+
+        session.update(
+            {
+                "status": session_status,
+                "current_intent": plan["intent"],
+                "last_user_message": safe_user_message,
+                "ui_context": merged_ui_context,
+                "latest_execution_preview": plan["execution_preview"],
+                "latest_artifacts": response_payload["artifacts"],
+                "latest_clarifications": plan["clarifications"],
+                "draft_slots": sanitize_draft_slots(plan["slots"] or {}) if plan["clarifications"] else {},
+                "pending_confirmation_count": len(pending_confirmations),
+                "async_status": execution_result.get("async_status", session.get("async_status") or ""),
+                "waiting_for_action_type": execution_result.get("waiting_for_action_type", session.get("waiting_for_action_type")),
+                "waiting_for_resource_id": execution_result.get("waiting_for_resource_id", session.get("waiting_for_resource_id")),
+                "pending_flow": execution_result.get("pending_flow", session.get("pending_flow")),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status=session_status, name=session.get("title"), payload=session)
+        response_payload["session_state"] = self._session_state(session)
+        return response_payload
+
+    def _secure_values_to_slots(self, values: Dict[str, Any], *, session: Dict[str, Any], allowed_keys: set[str]) -> Dict[str, Any]:
+        payload = dict(values or {})
+        slots: Dict[str, Any] = {"config": {}}
+        for key, raw_value in payload.items():
+            if key not in allowed_keys:
+                continue
+            value = raw_value
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            slots["config"][key] = value
+        if not slots["config"]:
+            slots.pop("config", None)
+        return slots
 
     def _normalize_parsed_request(self, session: Dict[str, Any], parsed: Dict[str, Any], *, message: str) -> Dict[str, Any]:
         normalized = dict(parsed or {})
@@ -879,16 +1222,16 @@ class CopilotAgentService:
         )
         self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_id, status="completed", name=action_payload.get("title"), payload=action_payload)
         self.repository.record_action(
-            "copilot_agent_action_completed",
-            ACTION_RESOURCE_TYPE,
-            action_id,
-            {
-                "action_type": action_payload["action_type"],
-                "artifacts": artifacts,
-                "parameters": action_payload.get("parameters") or {},
-                "result": action_payload.get("result") or {},
-            },
-        )
+                "copilot_agent_action_completed",
+                ACTION_RESOURCE_TYPE,
+                action_id,
+                {
+                    "action_type": action_payload["action_type"],
+                    "artifacts": artifacts,
+                    "parameters": sanitize_action_parameters(action_payload.get("parameters") or {}),
+                    "result": action_payload.get("result") or {},
+                },
+            )
 
         confirmation_payload.update(
             {
@@ -1029,6 +1372,26 @@ class CopilotAgentService:
             clarifications.extend(self._operator_flow_clarifications(slots, ui_context=ui_context))
             if not clarifications:
                 actions.append(self._operator_flow_action(slots, ui_context=ui_context))
+        elif intent == "remap_import":
+            clarifications.extend(self._remap_import_clarifications(slots))
+            if not clarifications:
+                actions.append(self._remap_import_action(slots, context=context))
+        elif intent == "send_push_dispatch":
+            clarifications.extend(self._push_dispatch_clarifications(slots))
+            if not clarifications:
+                actions.append(self._push_dispatch_action(slots))
+        elif intent in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
+            clarifications.extend(self._email_campaign_lifecycle_clarifications(intent, slots))
+            if not clarifications:
+                actions.append(self._email_campaign_lifecycle_action(intent, slots))
+        elif intent in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
+            clarifications.extend(self._workflow_lifecycle_clarifications(slots))
+            if not clarifications:
+                actions.append(self._workflow_lifecycle_action(intent, slots))
+        elif intent == "ingest_experiment_outcomes":
+            clarifications.extend(self._experiment_outcome_clarifications(slots, ui_context=ui_context))
+            if not clarifications:
+                actions.append(self._experiment_outcome_action(slots, ui_context=ui_context))
         elif intent in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
             cohort_id = str(slots.get("cohort_id") or "").strip()
             if not cohort_id:
@@ -1127,13 +1490,19 @@ class CopilotAgentService:
         for field in required_fields:
             if str(config.get(field) or "").strip():
                 continue
+            is_secure = field in SECURE_INPUT_FIELDS or field.endswith("_json")
             clarifications.append(
                 {
                     "key": field,
                     "label": humanize_field(field),
                     "question": f"What should I use for `{field}` on the {connection_type} {scope.replace('_', ' ')}?",
                     "required": True,
-                    "input_type": "text",
+                    "input_type": "secure_multiline" if field.endswith("_json") else ("secure_text" if is_secure else "text"),
+                    "metadata": {
+                        "secure_input": is_secure,
+                        "connection_scope": scope,
+                        "connection_type": connection_type,
+                    },
                 }
             )
         return clarifications
@@ -1539,8 +1908,174 @@ class CopilotAgentService:
                 "source_message": str(slots.get("source_message") or ""),
                 "wants_prediction": True,
                 "wants_cohort": True,
-                "wants_email_campaign": bool(slots.get("wants_email_campaign")),
+                "wants_email_campaign": bool(slots.get("wants_email_campaign") or slots.get("wants_workflow")),
                 "wants_workflow": bool(slots.get("wants_workflow")),
+            },
+        }
+
+    def _remap_import_clarifications(self, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications: List[Dict[str, Any]] = []
+        if not str(slots.get("import_job_id") or "").strip():
+            clarifications.append(
+                {
+                    "key": "import_job_id",
+                    "label": "Import Job",
+                    "question": "Which blocked import job should I remap and reprocess?",
+                    "required": True,
+                    "input_type": "text",
+                }
+            )
+        mapping = slots.get("mapping") or slots.get("definition_json")
+        if not isinstance(mapping, dict) or not mapping:
+            clarifications.append(
+                {
+                    "key": "mapping",
+                    "label": "Mapping JSON",
+                    "question": "Send the mapping JSON to apply before reprocessing the import.",
+                    "required": True,
+                    "input_type": "code",
+                }
+            )
+        return clarifications
+
+    def _remap_import_action(self, slots: Dict[str, Any], *, context: GovernanceContext) -> Dict[str, Any]:
+        return {
+            "action_type": "remap_import",
+            "title": ACTION_REGISTRY["remap_import"].title,
+            "parameters": {
+                "import_job_id": str(slots.get("import_job_id") or ""),
+                "mapping": dict(slots.get("mapping") or slots.get("definition_json") or {}),
+                "changed_by": context.actor_id,
+                "persist_source_mapping": bool(slots.get("persist_source_mapping", True)),
+                "background": True,
+            },
+        }
+
+    def _push_dispatch_clarifications(self, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if str(slots.get("body") or "").strip():
+            return []
+        return [
+            {
+                "key": "body",
+                "label": "Push Body",
+                "question": "What push body should I send?",
+                "required": True,
+                "input_type": "text",
+            }
+        ]
+
+    def _push_dispatch_action(self, slots: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "action_type": "send_push_dispatch",
+            "title": ACTION_REGISTRY["send_push_dispatch"].title,
+            "parameters": {
+                "name": str(slots.get("name") or slots.get("campaign_name") or ""),
+                "provider_connection_id": str(slots.get("provider_connection_id") or ""),
+                "campaign_name": str(slots.get("campaign_name") or slots.get("name") or ""),
+                "user_id": str(slots.get("user_id") or ""),
+                "user_ids": list(slots.get("user_ids") or []),
+                "title": str(slots.get("title") or ""),
+                "body": str(slots.get("body") or ""),
+                "deep_link": str(slots.get("deep_link") or ""),
+                "data": dict(slots.get("data") or {}),
+                "provider_options": dict(slots.get("provider_options") or {}),
+            },
+        }
+
+    def _email_campaign_lifecycle_clarifications(self, intent: str, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications: List[Dict[str, Any]] = []
+        if not str(slots.get("email_campaign_id") or "").strip():
+            clarifications.append(
+                {
+                    "key": "email_campaign_id",
+                    "label": "Email Campaign",
+                    "question": "Which email campaign should I target?",
+                    "required": True,
+                    "input_type": "text",
+                }
+            )
+        if intent == "schedule_email_campaign" and not str(slots.get("schedule_at") or "").strip():
+            clarifications.append(
+                {
+                    "key": "schedule_at",
+                    "label": "Schedule Time",
+                    "question": "When should I schedule the email campaign? Use an ISO timestamp.",
+                    "required": True,
+                    "input_type": "text",
+                }
+            )
+        return clarifications
+
+    def _email_campaign_lifecycle_action(self, intent: str, slots: Dict[str, Any]) -> Dict[str, Any]:
+        parameters = {
+            "email_campaign_id": str(slots.get("email_campaign_id") or ""),
+            "schedule_at": str(slots.get("schedule_at") or ""),
+        }
+        return {
+            "action_type": intent,
+            "title": ACTION_REGISTRY[intent].title,
+            "parameters": parameters,
+        }
+
+    def _workflow_lifecycle_clarifications(self, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if str(slots.get("workflow_id") or "").strip():
+            return []
+        return [
+            {
+                "key": "workflow_id",
+                "label": "Workflow",
+                "question": "Which workflow should I target?",
+                "required": True,
+                "input_type": "text",
+            }
+        ]
+
+    def _workflow_lifecycle_action(self, intent: str, slots: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "action_type": intent,
+            "title": ACTION_REGISTRY[intent].title,
+            "parameters": {
+                "workflow_id": str(slots.get("workflow_id") or ""),
+                "limit": int(slots.get("limit") or 20),
+                "confirm": bool(slots.get("confirm", False)),
+                "sandbox": bool(slots.get("sandbox", True)),
+                "reference_time": str(slots.get("reference_time") or ""),
+            },
+        }
+
+    def _experiment_outcome_clarifications(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clarifications: List[Dict[str, Any]] = []
+        experiment_id = str(slots.get("experiment_id") or ui_context.get("current_experiment_id") or "").strip()
+        if not experiment_id:
+            clarifications.append(
+                {
+                    "key": "experiment_id",
+                    "label": "Experiment",
+                    "question": "Which experiment should receive these outcomes?",
+                    "required": True,
+                    "input_type": "text",
+                }
+            )
+        outcomes = slots.get("outcomes")
+        if not isinstance(outcomes, list) or not outcomes:
+            clarifications.append(
+                {
+                    "key": "outcomes",
+                    "label": "Outcomes JSON",
+                    "question": "Send an outcomes JSON array or an object with an `outcomes` array.",
+                    "required": True,
+                    "input_type": "code",
+                }
+            )
+        return clarifications
+
+    def _experiment_outcome_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "action_type": "ingest_experiment_outcomes",
+            "title": ACTION_REGISTRY["ingest_experiment_outcomes"].title,
+            "parameters": {
+                "experiment_id": str(slots.get("experiment_id") or ui_context.get("current_experiment_id") or ""),
+                "outcomes": list(slots.get("outcomes") or []),
             },
         }
 
@@ -1723,7 +2258,7 @@ class CopilotAgentService:
                     action_payload["action_id"],
                     {
                         "action_type": action_type,
-                        "parameters": parameters,
+                        "parameters": sanitize_action_parameters(parameters),
                         "result": action_payload["result"],
                         "artifacts": action_payload["artifacts"],
                     },
@@ -1815,7 +2350,16 @@ class CopilotAgentService:
                 },
             )
         self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_id, status=payload["status"], name=title, payload=payload)
-        self.repository.record_action("copilot_agent_action_prepared", ACTION_RESOURCE_TYPE, action_id, {"action_type": action_type, "parameters": parameters, "requires_confirmation": spec.requires_confirmation})
+        self.repository.record_action(
+            "copilot_agent_action_prepared",
+            ACTION_RESOURCE_TYPE,
+            action_id,
+            {
+                "action_type": action_type,
+                "parameters": sanitize_action_parameters(parameters),
+                "requires_confirmation": spec.requires_confirmation,
+            },
+        )
         return payload
 
     def _execute_action(
@@ -1968,6 +2512,97 @@ class CopilotAgentService:
                 "summary": f"Saved experiment config `{experiment['experiment_id']}` in a non-running state.",
                 "result": {"experiment": experiment},
                 "artifacts": [artifact_for_experiment(experiment)],
+            }
+        if action_type == "remap_import":
+            result = self.imports.start_remap_and_resume_background(
+                parameters["import_job_id"],
+                dict(parameters.get("mapping") or {}),
+                changed_by=parameters.get("changed_by") or context.actor_id,
+                persist_source_mapping=bool(parameters.get("persist_source_mapping", True)),
+            )
+            job = result.get("job") or {}
+            return {
+                "summary": f"Applied mapping and queued import `{parameters['import_job_id']}` for reprocessing.",
+                "result": {"import_job": job, "started": bool(result.get("started"))},
+                "artifacts": [artifact_for_import_job(job)],
+            }
+        if action_type == "send_push_dispatch":
+            dispatch = self.push_dispatches.send_now(parameters)
+            return {
+                "summary": f"Sent one-time push dispatch `{dispatch['push_dispatch_id']}` with status `{dispatch['status']}`.",
+                "result": {"push_dispatch": dispatch},
+                "artifacts": [artifact_for_push_dispatch(dispatch)],
+            }
+        if action_type == "schedule_email_campaign":
+            campaign = self.email_campaigns.update_campaign(parameters["email_campaign_id"], {"schedule_at": parameters["schedule_at"]})
+            return {
+                "summary": f"Scheduled email campaign `{campaign['name']}`.",
+                "result": {"email_campaign": campaign},
+                "artifacts": [artifact_for_email_campaign(campaign)],
+            }
+        if action_type == "send_email_campaign":
+            campaign = self.email_campaigns.send_now(parameters["email_campaign_id"])
+            return {
+                "summary": f"Sent email campaign `{campaign['name']}`.",
+                "result": {"email_campaign": campaign},
+                "artifacts": [artifact_for_email_campaign(campaign)],
+            }
+        if action_type == "cancel_email_campaign":
+            campaign = self.email_campaigns.cancel_campaign(parameters["email_campaign_id"])
+            return {
+                "summary": f"Cancelled email campaign `{campaign['name']}`.",
+                "result": {"email_campaign": campaign},
+                "artifacts": [artifact_for_email_campaign(campaign)],
+            }
+        if action_type == "delete_email_campaign":
+            deleted = self.email_campaigns.delete_campaign(parameters["email_campaign_id"])
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Email campaign '{parameters['email_campaign_id']}' not found.")
+            return {
+                "summary": f"Deleted email campaign `{parameters['email_campaign_id']}`.",
+                "result": {"email_campaign_id": parameters["email_campaign_id"], "deleted": True},
+                "artifacts": [],
+            }
+        if action_type == "publish_workflow":
+            workflow = self.workflows.publish_workflow(parameters["workflow_id"])
+            return {"summary": f"Published workflow `{workflow['name']}`.", "result": {"workflow": workflow}, "artifacts": [artifact_for_workflow(workflow)]}
+        if action_type == "pause_workflow":
+            workflow = self.workflows.pause_workflow(parameters["workflow_id"])
+            return {"summary": f"Paused workflow `{workflow['name']}`.", "result": {"workflow": workflow}, "artifacts": [artifact_for_workflow(workflow)]}
+        if action_type == "resume_workflow":
+            workflow = self.workflows.resume_workflow(parameters["workflow_id"])
+            return {"summary": f"Resumed workflow `{workflow['name']}`.", "result": {"workflow": workflow}, "artifacts": [artifact_for_workflow(workflow)]}
+        if action_type == "test_run_workflow":
+            result = self.workflows.test_run(
+                parameters["workflow_id"],
+                limit=int(parameters.get("limit") or 20),
+                confirm=bool(parameters.get("confirm")),
+                sandbox=bool(parameters.get("sandbox", True)),
+                reference_time=str(parameters.get("reference_time") or "") or None,
+            )
+            return {
+                "summary": f"Completed workflow test run for `{parameters['workflow_id']}`.",
+                "result": {"test_run": result},
+                "artifacts": [artifact_for_workflow({"workflow_id": parameters["workflow_id"], "name": parameters["workflow_id"]})],
+            }
+        if action_type == "archive_workflow":
+            workflow = self.workflows.archive_workflow(parameters["workflow_id"])
+            return {"summary": f"Archived workflow `{workflow['name']}`.", "result": {"workflow": workflow}, "artifacts": [artifact_for_workflow(workflow)]}
+        if action_type == "delete_workflow":
+            deleted = self.workflows.delete_workflow(parameters["workflow_id"])
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Workflow '{parameters['workflow_id']}' not found.")
+            return {
+                "summary": f"Deleted workflow `{parameters['workflow_id']}`.",
+                "result": {"workflow_id": parameters["workflow_id"], "deleted": True},
+                "artifacts": [],
+            }
+        if action_type == "ingest_experiment_outcomes":
+            result = self.experiments.ingest_outcomes(parameters["experiment_id"], list(parameters.get("outcomes") or []))
+            return {
+                "summary": f"Ingested {int(result.get('ingested') or 0)} outcome(s) for experiment `{parameters['experiment_id']}`.",
+                "result": {"experiment_outcomes": result},
+                "artifacts": [artifact_for_experiment({"experiment_id": parameters["experiment_id"]})],
             }
         if action_type == "activate_cohort":
             cohort = self.cohorts.activate_cohort(parameters["cohort_id"])
@@ -2758,6 +3393,16 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
         return f"Create or update draft cohort `{parameters.get('name')}` without auto-activating it."
     if action_type == "save_experiment_config":
         return f"Save experiment `{parameters.get('experiment_id')}` in a non-running state."
+    if action_type == "remap_import":
+        return f"Apply mapping to import `{parameters.get('import_job_id')}` and queue reprocessing after confirmation."
+    if action_type == "send_push_dispatch":
+        return "Send a one-time push notification after confirmation."
+    if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
+        return f"Apply `{action_type}` to email campaign `{parameters.get('email_campaign_id')}` after confirmation."
+    if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
+        return f"Apply `{action_type}` to workflow `{parameters.get('workflow_id')}` after confirmation."
+    if action_type == "ingest_experiment_outcomes":
+        return f"Ingest {len(parameters.get('outcomes') or [])} outcome(s) into experiment `{parameters.get('experiment_id')}`."
     if action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
         return f"Apply `{action_type}` to cohort `{parameters.get('cohort_id')}` after confirmation."
     if action_type in {"start_experiment", "stop_experiment", "record_experiment_decision"}:
@@ -2790,6 +3435,10 @@ def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: Li
         return "Build the prediction-to-campaign draft flow with prediction, SQL, cohort, email campaign, and optional workflow steps."
     if intent == "setup_experiment":
         return "Save the experiment config in a non-running state and leave start as a separate confirmed action."
+    if intent in {"remap_import", "send_push_dispatch", "schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign", "publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
+        return "Prepare the requested live operation and hold it for explicit confirmation."
+    if intent == "ingest_experiment_outcomes":
+        return "Record experiment outcomes through the agent while keeping the original outcome payload as an artifact-backed action result."
     if notes:
         return notes[0]
     return "Prepare the requested control-plane change."
@@ -2819,8 +3468,12 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
         "secret_key": [r"\bsecret[_ ]key(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "api_token": [r"\bapi[_ ]token(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "project_id": [r"\bproject[_ ]id(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
+        "dataset_id": [r"\bdataset[_ ]id(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
+        "location": [r"\blocation(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "app_id": [r"\bapp[_ ]id(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "rest_endpoint": [r"\brest[_ ]endpoint(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
+        "base_url": [r"\bbase[_ ]url(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
+        "from_email": [r"\bfrom[_ ]email(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "webhook_url": [r"\bwebhook[_ ]url(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "webhook_token": [r"\bwebhook[_ ]token(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
         "model_name": [r"\bmodel(?:[_ ]name)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?"],
@@ -2849,6 +3502,12 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     import_job_match = re.search(r"\b(imp_[A-Za-z0-9]+)\b", message)
     if import_job_match:
         slots["import_job_id"] = import_job_match.group(1).strip()
+    workflow_match = re.search(r"\b(wf_[A-Za-z0-9]+|workflow_[A-Za-z0-9]+)\b", message)
+    if workflow_match:
+        slots["workflow_id"] = workflow_match.group(1).strip()
+    email_campaign_id_match = re.search(r"\b(ec_[A-Za-z0-9]+|email_campaign_[A-Za-z0-9]+)\b", message)
+    if email_campaign_id_match:
+        slots["email_campaign_id"] = email_campaign_id_match.group(1).strip()
     primary_metric_match = re.search(r"\bprimary metric(?: is|=|:)?\s*([A-Za-z0-9_.\-]+)", message, flags=re.IGNORECASE)
     if primary_metric_match:
         slots["primary_metric"] = primary_metric_match.group(1).strip()
@@ -2875,7 +3534,7 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
         template_value = template_match.group(1).strip()
         slots["template_id"] = template_value
         slots.setdefault("template_hint", template_value)
-    campaign_match = re.search(r"\bcampaign(?: id)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    campaign_match = re.search(r"\b(?:campaign[_ ]id|api[_ ]campaign[_ ]id)(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
     if campaign_match and "template_id" not in slots:
         template_value = campaign_match.group(1).strip()
         slots["template_id"] = template_value
@@ -2886,6 +3545,28 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     workflow_name_match = re.search(r"\bworkflow[_ ]name(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
     if workflow_name_match:
         slots["workflow_name"] = workflow_name_match.group(1).strip()
+    schedule_match = re.search(
+        r"\bschedule[_ ]at(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?|\bschedule\b.*?\b(?:at|for)\s+[\"']?([^\"'\n]+)[\"']?",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if schedule_match:
+        slots["schedule_at"] = (schedule_match.group(1) or schedule_match.group(2) or "").strip()
+    title_match = re.search(r"\btitle(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
+    if title_match:
+        slots["title"] = title_match.group(1).strip()
+    body_match = re.search(r"\bbody(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
+    if body_match:
+        slots["body"] = body_match.group(1).strip()
+    deep_link_match = re.search(r"\bdeep[_ ]link(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
+    if deep_link_match:
+        slots["deep_link"] = deep_link_match.group(1).strip()
+    user_ids_match = re.search(r"\buser[_ ]ids(?: are| is|=|:)?\s*([A-Za-z0-9_,.\- ]+)", message, flags=re.IGNORECASE)
+    if user_ids_match:
+        slots["user_ids"] = [item.strip() for item in user_ids_match.group(1).split(",") if item.strip()]
+    user_id_match = re.search(r"\buser[_ ]id(?: is|=|:)?\s*([A-Za-z0-9_.\-]+)", message, flags=re.IGNORECASE)
+    if user_id_match and "user_ids" not in slots:
+        slots["user_id"] = user_id_match.group(1).strip()
     if any(token in message.lower() for token in ("rerun", "re-run", "fresh prediction", "new prediction")):
         slots["force_prediction_refresh"] = True
     lowered = message.lower()
@@ -2907,6 +3588,8 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
         slots["messaging_provider"] = "sendgrid"
     elif "braze" in lowered:
         slots["messaging_provider"] = "braze"
+    elif "wynn" in lowered or "push notifier" in lowered or "push provider" in lowered:
+        slots["messaging_provider"] = "wynn_push_notifier"
     typed_fields = {
         "connection_scope": r"\bconnection[_ ]scope(?: is|=|:)?\s*([A-Za-z_ -]+)",
         "connection_type": r"\bconnection[_ ]type(?: is|=|:)?\s*([A-Za-z0-9_.\- ]+)",
@@ -2932,6 +3615,14 @@ def parse_json_blocks(message: str) -> Dict[str, Any]:
         return payload
     if isinstance(parsed, dict):
         payload["definition_json"] = parsed
+        if isinstance(parsed.get("mapping"), dict):
+            payload["mapping"] = parsed["mapping"]
+        if isinstance(parsed.get("outcomes"), list):
+            payload["outcomes"] = parsed["outcomes"]
+        if isinstance(parsed.get("data"), dict):
+            payload["data"] = parsed["data"]
+        if isinstance(parsed.get("provider_options"), dict):
+            payload["provider_options"] = parsed["provider_options"]
         if isinstance(parsed.get("members"), list):
             payload["members"] = parsed["members"]
     elif isinstance(parsed, list):
@@ -3027,8 +3718,21 @@ def merge_slots(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any
     return merged
 
 
+def is_secure_clarification(item: Dict[str, Any]) -> bool:
+    input_type = str(item.get("input_type") or "")
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    return input_type.startswith("secure_") or bool(metadata.get("secure_input"))
+
+
 def sanitize_action_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = dict(parameters or {})
+    if isinstance(sanitized.get("config"), dict):
+        sanitized["config"] = redact_secret_values(dict(sanitized["config"]))
+    return sanitized
+
+
+def sanitize_draft_slots(slots: Dict[str, Any]) -> Dict[str, Any]:
+    sanitized = dict(slots or {})
     if isinstance(sanitized.get("config"), dict):
         sanitized["config"] = redact_secret_values(dict(sanitized["config"]))
     return sanitized
@@ -3195,6 +3899,34 @@ def artifact_for_workflow(workflow: Dict[str, Any]) -> Dict[str, Any]:
         "api_path": f"/api/v1/workflows/{quote(workflow_id)}" if workflow_id else "",
         "focus": {"workflow_id": workflow_id},
         "status": str(workflow.get("status") or ""),
+    }
+
+
+def artifact_for_import_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    job_id = str(job.get("id") or job.get("job_id") or "")
+    return {
+        "resource_type": "import_job",
+        "resource_id": job_id,
+        "label": str(((job.get("spec") or {}).get("display_name") or (job.get("spec") or {}).get("source_name") or job_id or "Import Job")),
+        "module_id": "data-core",
+        "page_id": "data-sandbox",
+        "api_path": f"/api/v1/imports/{quote(job_id)}" if job_id else "",
+        "focus": {"import_job_id": job_id},
+        "status": str(job.get("status") or ""),
+    }
+
+
+def artifact_for_push_dispatch(dispatch: Dict[str, Any]) -> Dict[str, Any]:
+    dispatch_id = str(dispatch.get("push_dispatch_id") or "")
+    return {
+        "resource_type": "push_dispatch",
+        "resource_id": dispatch_id,
+        "label": str(dispatch.get("name") or dispatch_id or "Push Dispatch"),
+        "module_id": "action-orchestrator",
+        "page_id": "action-orchestrator",
+        "api_path": f"/api/v1/push-dispatches/{quote(dispatch_id)}" if dispatch_id else "",
+        "focus": {"push_dispatch_id": dispatch_id},
+        "status": str(dispatch.get("status") or ""),
     }
 
 

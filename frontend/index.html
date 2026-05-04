@@ -753,6 +753,17 @@
 
         <section id="data-sandbox" class="page">
             <h1>Mapping Sandbox</h1>
+            <div class="ai-starter-panel" data-ai-command-center="data-core">
+                <div>
+                    <h2>Ask AI For Mapping</h2>
+                    <p class="subtle">Use prompts for mapping fixes, connector setup, and import reprocessing. Manual JSON editors are advanced fallback controls.</p>
+                </div>
+                <div class="ai-starter-actions">
+                    <button type="button" data-agent-starter-message="Connect a BigQuery data source and open the secure credential dialog.">Connect Data</button>
+                    <button type="button" data-agent-starter-message="Fix the selected import mapping, preview it, and prepare reprocessing for confirmation.">Fix Mapping</button>
+                    <button type="button" data-agent-starter-message="Summarize data health, blocked imports, and mapping diagnostics.">Inspect Diagnostics</button>
+                </div>
+            </div>
             <div class="card">
                  <h2 class="section-title-with-help" style="margin-top: 2rem;">
                      <span>Manual Field Mapping</span>
@@ -811,32 +822,35 @@
                      </div>
                      <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
                  </div>
-                <div class="form-group">
-                    <div class="field-label-with-help">
-                        <label for="data-sandbox-mapping-json">Mapping JSON</label>
-                        <span class="inline-help">
-                            <button type="button" class="inline-help-button" aria-label="Show mapping JSON help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as raw JSON paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
-                        </span>
+                <details id="data-sandbox-advanced-json-panel" class="builder-advanced-panel">
+                    <summary>Advanced JSON Editors</summary>
+                    <div class="form-group" style="margin-top: 1rem;">
+                        <div class="field-label-with-help">
+                            <label for="data-sandbox-mapping-json">Mapping JSON</label>
+                            <span class="inline-help">
+                                <button type="button" class="inline-help-button" aria-label="Show mapping JSON help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as raw JSON paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
+                            </span>
+                        </div>
+                        <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
                     </div>
-                    <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
-                </div>
-                 <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
-                     <div class="form-group" style="margin-bottom: 0;">
-                         <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                             <div class="field-label-with-help" style="margin-bottom: 0;">
-                                 <label for="data-sandbox-sample-json">Sample Raw Event</label>
-                                 <span class="inline-help">
-                                     <button type="button" class="inline-help-button" aria-label="Show sample raw event help">?</button>
-                                     <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use the JSON in this editor. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
-                                 </span>
-                             </div>
-                             <select id="data-sandbox-sample-picker" style="max-width: 22rem;">
-                                 <option value="">No raw samples loaded</option>
-                             </select>
-                         </div>
-                         <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
-                     </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                            <div class="field-label-with-help" style="margin-bottom: 0;">
+                                <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                                <span class="inline-help">
+                                    <button type="button" class="inline-help-button" aria-label="Show sample raw event help">?</button>
+                                    <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use the JSON in this editor. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
+                                </span>
+                            </div>
+                            <select id="data-sandbox-sample-picker" style="max-width: 22rem;">
+                                <option value="">No raw samples loaded</option>
+                            </select>
+                        </div>
+                        <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
+                    </div>
+                </details>
+                 <div style="display: grid; grid-template-columns: 1fr; gap: 1rem; margin-top: 1rem;">
                      <div class="form-group" style="margin-bottom: 0;">
                          <label for="data-sandbox-preview-result">Preview Result</label>
                         <pre id="data-sandbox-preview-result" style="margin: 0; min-height: 10rem; padding: 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2); white-space: pre-wrap; overflow: auto;"></pre>
@@ -909,6 +923,17 @@
 
         <section id="audience-engine" class="page">
             <h1>Audience Engine</h1>
+            <div class="ai-starter-panel" data-ai-command-center="audience-engine">
+                <div>
+                    <h2>Ask AI For Audiences</h2>
+                    <p class="subtle">Prompt the assistant to draft cohorts, SQL, filters, and prediction audiences before using advanced manual inputs.</p>
+                </div>
+                <div class="ai-starter-actions">
+                    <button type="button" data-agent-starter-message="Create a cohort for high-risk winback users from the latest completed prediction runs.">Create Cohort</button>
+                    <button type="button" data-agent-starter-message="Draft SQL for high-risk users with canonical_user_id and email, then preview it.">Draft SQL</button>
+                    <button type="button" data-agent-starter-message="Draft the audience builder state for high-risk churn rescue users and show the preview.">Draft Builder</button>
+                </div>
+            </div>
             <div id="audience-create-section" class="card split-card">
                 <div class="module-section-header">
                     <h2>Guided Cohort Builder</h2>
@@ -1059,8 +1084,13 @@
                 <div id="audience-builder-filters" class="builder-filter-list"></div>
 
                 <div id="audience-builder-manual-list-group" class="form-group hidden">
-                    <label for="audience-builder-members-input">Members JSON or CSV</label>
-                    <textarea id="audience-builder-members-input" style="min-height: 10rem; font-family: monospace;" placeholder='[{"canonical_user_id":"u_1001","email":"u1001@example.com"}]'></textarea>
+                    <details class="builder-advanced-panel">
+                        <summary>Advanced Manual Members</summary>
+                        <div class="form-group" style="margin-top: 1rem;">
+                            <label for="audience-builder-members-input">Members JSON or CSV</label>
+                            <textarea id="audience-builder-members-input" style="min-height: 10rem; font-family: monospace;" placeholder='[{"canonical_user_id":"u_1001","email":"u1001@example.com"}]'></textarea>
+                        </div>
+                    </details>
                 </div>
 
                 <div class="card builder-ai-card">
@@ -1196,6 +1226,17 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="action-orchestrator" class="page">
             <h1>Action Orchestrator</h1>
+            <div class="ai-starter-panel" data-ai-command-center="action-orchestrator">
+                <div>
+                    <h2>Ask AI For Actions</h2>
+                    <p class="subtle">Build, schedule, send, publish, pause, and test operator actions through confirmation-gated prompts.</p>
+                </div>
+                <div class="ai-starter-actions">
+                    <button type="button" data-agent-starter-message="Build a SendGrid campaign for the selected high-risk cohort and leave it in draft.">Build Campaign</button>
+                    <button type="button" data-agent-starter-message="Create a draft workflow for the selected cohort and leave it in draft.">Create Workflow</button>
+                    <button type="button" data-agent-starter-message="Send a one-time push notification after previewing the action and asking for confirmation.">Send Push</button>
+                </div>
+            </div>
             <div id="email-campaigns-section" class="card">
                 <div class="module-section-header">
                     <h2>Email Campaigns</h2>
@@ -1298,13 +1339,16 @@ WHERE predicted_churn_risk = 'high'
                             <label for="email-campaign-deeplink-template-input">Campaign Deeplink Template (optional)</label>
                             <input type="text" id="email-campaign-deeplink-template-input" placeholder="mygame://reward?user_id={user_id}&reward_id={reward_id}">
                         </div>
-                        <div class="form-group">
-                            <label for="email-campaign-merge-fields-input">Merge Fields JSON</label>
-                            <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
+                        <details class="builder-advanced-panel">
+                            <summary>Advanced Merge Fields</summary>
+                            <div class="form-group" style="margin-top: 1rem;">
+                                <label for="email-campaign-merge-fields-input">Merge Fields JSON</label>
+                                <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
   "first_name": { "source": "field", "value": "first_name" },
   "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
 }</textarea>
-                        </div>
+                            </div>
+                        </details>
                         <div class="grid-2">
                             <div class="form-group">
                                 <label for="email-campaign-schedule-at-input">Schedule For (optional)</label>
@@ -1432,13 +1476,13 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="push-dispatch-deep-link-token-input" placeholder="campaign-default-token">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="push-dispatch-data-input">Push Data JSON</label>
-                        <textarea id="push-dispatch-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
-                    </div>
-                    <details>
-                        <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
+                    <details class="builder-advanced-panel">
+                        <summary>Advanced Push Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
+                            <label for="push-dispatch-data-input">Push Data JSON</label>
+                            <textarea id="push-dispatch-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                        </div>
+                        <div class="form-group">
                             <label for="push-dispatch-provider-options-input">Provider Options JSON</label>
                             <textarea id="push-dispatch-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
@@ -1583,13 +1627,13 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="workflow-push-deep-link-token-input" placeholder="campaign-default-token">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="workflow-push-data-input">Push Data JSON</label>
-                        <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
-                    </div>
-                    <details>
-                        <summary style="cursor: pointer; font-weight: 600;">Advanced Provider Options</summary>
+                    <details class="builder-advanced-panel">
+                        <summary>Advanced Workflow Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
+                            <label for="workflow-push-data-input">Push Data JSON</label>
+                            <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                        </div>
+                        <div class="form-group">
                             <label for="workflow-push-provider-options-input">Provider Options JSON</label>
                             <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
@@ -1729,6 +1773,17 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="experiment-hub" class="page">
             <h1>Experiment Hub</h1>
+            <div class="ai-starter-panel" data-ai-command-center="experiment-hub">
+                <div>
+                    <h2>Ask AI For Experiments</h2>
+                    <p class="subtle">Configure tests, summarize integrity, start or stop runs with confirmation, and ingest outcomes from prompts.</p>
+                </div>
+                <div class="ai-starter-actions">
+                    <button type="button" data-agent-starter-message="Configure an A/B experiment for the selected cohort with return_rate as the primary metric.">Configure Experiment</button>
+                    <button type="button" data-agent-starter-message="Summarize experiment health, guardrails, measurement gaps, and rollout diagnostics.">Summarize Health</button>
+                    <button type="button" data-agent-starter-message="Ingest experiment outcomes for the selected experiment from an outcomes JSON payload.">Ingest Outcomes</button>
+                </div>
+            </div>
             <div class="grid-2">
                 <div class="card split-card">
                     <div class="module-section-header">
@@ -1821,14 +1876,17 @@ WHERE predicted_churn_risk = 'high'
             <div id="experiment-ingest-section" class="card split-card">
                 <div class="module-section-header">
                     <h2>Outcome Ingestion</h2>
-                    <span class="pill">Internal writeback</span>
+                    <span class="pill">Advanced</span>
                 </div>
-                <div class="form-group">
-                    <label for="experiment-outcomes-json">Outcome Payload</label>
-                    <textarea id="experiment-outcomes-json" style="min-height: 12rem; font-family: monospace;">{
+                <details class="builder-advanced-panel">
+                    <summary>Advanced Outcome Payload</summary>
+                    <div class="form-group" style="margin-top: 1rem;">
+                        <label for="experiment-outcomes-json">Outcome Payload</label>
+                        <textarea id="experiment-outcomes-json" style="min-height: 12rem; font-family: monospace;">{
   "outcomes": []
 }</textarea>
-                </div>
+                    </div>
+                </details>
                 <div class="inline-actions">
                     <button id="experiment-ingest-outcomes-btn">Ingest Outcomes</button>
                     <span id="experiment-ingest-status" class="subtle"></span>
@@ -1838,25 +1896,22 @@ WHERE predicted_churn_risk = 'high'
 
         <section id="insight-copilot" class="page">
             <h1>Insight Copilot</h1>
-            <div class="card split-card copilot-page-banner">
-                <div class="module-section-header">
-                    <h2 class="section-title-with-help">
-                        <span>Manual Copilot Tools</span>
-                        <span class="inline-help">
-                            <button type="button" class="inline-help-button" aria-label="Show copilot tool help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">The global AI assistant bubble is the primary AI surface. This page remains the manual fallback for direct Query, Explain, Recommend, Report, and Evidence &amp; Logs workflows.</span>
-                        </span>
-                    </h2>
-                    <div class="inline-actions">
-                        <button id="copilot-open-global-agent-btn">Open Assistant</button>
-                    </div>
+            <div class="ai-command-center" data-ai-command-center="insight-copilot">
+                <div class="ai-command-center-copy">
+                    <span class="pill">Primary Workflow</span>
+                    <h2>AI Command Center</h2>
+                    <p class="subtle">Ask AI creates plans, previews execution, opens artifacts, collects confirmations, and keeps evidence in the session history. Credential prompts open secure setup dialogs instead of chat.</p>
+                </div>
+                <div class="ai-starter-actions">
+                    <button id="copilot-open-global-agent-btn" type="button">Open Ask AI</button>
+                    <button type="button" data-agent-starter-message="Summarize the dashboard, current risks, blocked imports, active experiments, and recommended next steps.">Summarize Health</button>
+                    <button type="button" data-agent-starter-message="Inspect diagnostics across data, audiences, workflows, experiments, and recent Copilot reports.">Inspect Diagnostics</button>
+                    <button type="button" data-agent-starter-message="Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation.">Build Workflow</button>
                 </div>
             </div>
-            <div class="module-section-header copilot-manual-header">
-                <h2>Manual Tools</h2>
-                <span class="pill">Advanced</span>
-            </div>
-            <div class="grid-2">
+            <details id="copilot-manual-tools-panel" class="builder-advanced-panel copilot-manual-tools-panel">
+                <summary>Advanced Manual Copilot Tools</summary>
+            <div class="grid-2" style="margin-top: 1rem;">
                 <div id="copilot-query-section" class="card split-card">
                     <div class="module-section-header">
                         <h2>Query</h2>
@@ -1963,6 +2018,7 @@ WHERE predicted_churn_risk = 'high'
                     <div id="copilot-reports-list"></div>
                 </div>
             </div>
+            </details>
         </section>
 
         <section id="settings" class="page">
@@ -2323,6 +2379,25 @@ WHERE predicted_churn_risk = 'high'
                 </div>
             </div>
         </aside>
+        <div id="copilot-agent-secure-input-backdrop" class="settings-dialog-backdrop hidden" aria-hidden="true"></div>
+        <div id="copilot-agent-secure-input-dialog" class="settings-dialog hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="copilot-agent-secure-input-title">
+            <div class="settings-dialog-card copilot-agent-secure-input-card">
+                <div class="settings-dialog-header">
+                    <div>
+                        <div class="settings-dialog-eyebrow">Secure Setup</div>
+                        <h2 id="copilot-agent-secure-input-title">Enter Sensitive Fields</h2>
+                        <p class="subtle">Values submitted here go to the secure agent endpoint and are not added to the chat transcript.</p>
+                    </div>
+                    <button id="copilot-agent-secure-input-close-btn" type="button" class="settings-dialog-close" aria-label="Close secure setup">Close</button>
+                </div>
+                <div id="copilot-agent-secure-input-fields" class="copilot-agent-secure-input-fields"></div>
+                <div class="settings-dialog-actions">
+                    <span id="copilot-agent-secure-input-status" class="subtle"></span>
+                    <button id="copilot-agent-secure-input-cancel-btn" type="button" class="secondary-button">Cancel</button>
+                    <button id="copilot-agent-secure-input-submit-btn" type="button">Submit Securely</button>
+                </div>
+            </div>
+        </div>
     </main>
 
     <div id="workspace-overlay" class="workspace-overlay hidden" aria-hidden="true">

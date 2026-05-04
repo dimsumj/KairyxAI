@@ -10,6 +10,7 @@ from app.api.schemas.copilot import (
     CopilotAgentConfirmRequest,
     CopilotAgentMessageRequest,
     CopilotAgentMessageResponse,
+    CopilotAgentSecureInputRequest,
     CopilotAgentSessionCreateRequest,
     CopilotAgentSessionResponse,
     CopilotAgentTurnsResponse,
@@ -122,6 +123,34 @@ def send_copilot_agent_message(
         service.repository,
         context,
         action_type="copilot_agent_message",
+        resource_type="copilot_agent_turn",
+        resource_id=session_id,
+        payload=payload,
+    )
+
+
+@router.post("/agent/sessions/{session_id}/secure-inputs", response_model=CopilotAgentMessageResponse)
+def submit_copilot_agent_secure_inputs(
+    session_id: str,
+    request: CopilotAgentSecureInputRequest,
+    http_request: Request,
+    service: CopilotAgentService = Depends(get_copilot_agent_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "copilot.agent.run")
+    try:
+        payload = service.handle_secure_inputs(
+            session_id,
+            values=request.values,
+            ui_context=request.ui_context,
+            context=context,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Copilot agent session '{session_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="copilot_agent_secure_input",
         resource_type="copilot_agent_turn",
         resource_id=session_id,
         payload=payload,

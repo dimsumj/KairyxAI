@@ -49,7 +49,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Use the global `Ask AI` bubble from any page for dashboard summary, cohort setup, experiment setup, connection setup, product help, and sample payloads, then open `Insight Copilot` only when you want the manual query, explain, recommend, and report tools directly.
+9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and operate workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and hold live actions for confirmation. Open the collapsed advanced manual panels only when you need raw SQL, JSON payloads, member lists, or legacy direct tools.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
 ### 2.3 Deployment Surface Notes
@@ -594,7 +594,7 @@ Teams that keep warehouse credentials in Secret Manager can still use:
 ```
 
 ### 3.4 Mappings
-Use the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize.
+Use Ask AI or the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize. The prompt-first path can prepare mapping fixes and reprocessing for confirmation; the manual JSON editors remain collapsed under `Advanced JSON Editors`.
 
 The Mapping Sandbox now keeps the page action-first: persistent helper paragraphs were removed, section-level guidance moved into `?` help beside the headings and labels, and each guided-field or saved-memory card exposes its detail through a per-card `?` tooltip instead of always-visible multi-line helper text.
 
@@ -611,8 +611,9 @@ The Mapping Sandbox now keeps the page action-first: persistent helper paragraph
 | `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
 | `Coverage` | Button | Calculates mapping coverage against the selected connector. | None | Coverage summary appears. |
 | `Save and Reprocess Import` | Button | Persists the corrected connector mapping, applies the same mapping as a job override for the selected paused import, and resumes that import in the background. | None | Import processing reruns normalization and dedupe for the paused job using the corrected mapping, while the Mapping Sandbox status and the expanded import row keep updating with live progress. |
-| `Mapping JSON` | Text area | The canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
-| `Sample Raw Event` | Text area | A raw source event used for local preview. When a paused import is selected, the Mapping Sandbox now loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. The nearby `?` helper explains how the sample picker and textarea work together. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
+| `Advanced JSON Editors` | Disclosure section | Expands the raw mapping and sample-event JSON editors when prompt/guided controls are not enough. | None | Manual JSON editors become visible. |
+| `Mapping JSON` | Text area | Advanced fallback for the canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
+| `Sample Raw Event` | Text area | Advanced fallback raw source event used for local preview. When a paused import is selected, the Mapping Sandbox loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
 | `Raw Sample Picker` | Select | Switch between returned raw sample events from the selected paused import. | `Sample 2 · purchase · player-123` | The textarea updates to the selected true raw event, and `Preview Mapping` / `Coverage` run against that sample. |
 
 #### Operator flow
@@ -982,7 +983,8 @@ Provider behavior:
 | `Template Deeplink Variable` | Text box | Variable name that receives the final deeplink URL in the provider payload. | `deeplink_url` | SendGrid receives it in `dynamic_template_data`; Braze receives it in `trigger_properties`. |
 | `Audience Deeplink Override Field (optional)` | Text box | If present on a row, this field wins over the campaign deeplink template. | `reward_deeplink_url` | Matching rows use the row-level deeplink directly. |
 | `Campaign Deeplink Template (optional)` | Text box | URL template with `{field_name}` placeholders resolved from the audience row and campaign context. | `mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}` | Rows without an override field receive a rendered deeplink URL. |
-| `Merge Fields JSON` | Text area | Maps provider template variables to row fields or literals. | See sample below | SendGrid builds `dynamic_template_data`; Braze builds `trigger_properties`. |
+| `Advanced Merge Fields` | Disclosure section | Expands the merge-field JSON editor for provider-template edge cases. | None | Merge-field JSON becomes visible. |
+| `Merge Fields JSON` | Text area | Advanced fallback that maps provider template variables to row fields or literals. | See sample below | SendGrid builds `dynamic_template_data`; Braze builds `trigger_properties`. |
 | `Schedule For (optional)` | Date/time picker | Sets the one-time scheduled send time in the operator's local timezone. | `2026-04-15 11:00` | Campaign status becomes `scheduled`. |
 | `Clear` | Button | Clears the selected campaign and resets the builder to a new draft. | None | The form is ready for a new campaign record. |
 | `Save Draft` | Button | Creates or updates the campaign in `draft` status. | None | Campaign saves without a schedule. |
@@ -1105,8 +1107,8 @@ Use the main composer when KairyxAI should create a Wynn push campaign directly.
 | `Body` | Text area | Required message body. | `A reward is waiting for you.` | The outbound payload includes `body`. |
 | `Deep Link (optional)` | Text box | Optional deep link metadata for the push request. | `app://promotions/vip` | The outbound payload includes `deep_link`. |
 | `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
-| `Push Data JSON` | Text area | Must be valid JSON object text. | `{"reward_id":"vip_pack"}` | The outbound payload includes `data`. |
-| `Advanced Provider Options` | Disclosure section | Expands the provider-specific editors. | None | The advanced JSON fields become visible. |
+| `Advanced Push Payload` | Disclosure section | Expands push `data`, provider options, and Wynn filter JSON editors. | None | The advanced JSON fields become visible. |
+| `Push Data JSON` | Text area | Advanced fallback. Must be valid JSON object text. | `{"reward_id":"vip_pack"}` | The outbound payload includes `data`. |
 | `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
 | `Wynn Filters JSON` | Text area | Visible when the selected connection is a Wynn Push Provider. Use native Wynn filter keys. | `{"minVIPLevel":5,"platform":"ios"}` | Wynn applies those filters when it resolves campaign recipients. |
 | `Send Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode. | None | Immediate sends create a one-time dispatch. Scheduled and repeated sends create and publish workflows. |
@@ -1217,7 +1219,7 @@ Legacy workflow behavior:
 - Leaving `Provider Connection` blank keeps the simulator path for explicit cohort members.
 - Selecting a Push Provider connection switches the workflow to live push delivery and sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
 - Live push workflows require both `Title` and `Body`.
-- `Push Data JSON` and `Provider Options JSON` must parse as JSON objects before the workflow can be saved.
+- `Push Data JSON` and `Provider Options JSON` live under `Advanced Workflow Payload` and must parse as JSON objects before the workflow can be saved.
 - Editing a published or paused workflow creates a new draft version on that same workflow record.
 
 ### 5.3 Workflow Studio
@@ -1383,7 +1385,8 @@ Delivery detail behavior:
 | --- | --- | --- | --- | --- |
 | Exposures table | Read-only table | Inspect exposure assignments. | None | Exposure list shows group and user rows. |
 | Outcomes table | Read-only table | Inspect recorded outcomes. | None | Outcome list shows outcome name and timestamp. |
-| `Outcome Payload` | Text area | JSON batch of outcomes to ingest. | See sample below | Outcome ingestion request uses this body. |
+| `Advanced Outcome Payload` | Disclosure section | Expands the raw outcome-ingestion payload editor. Ask AI can also ingest outcomes from a prompt with an outcomes JSON payload. | None | The JSON textarea becomes visible. |
+| `Outcome Payload` | Text area | Advanced fallback JSON batch of outcomes to ingest. | See sample below | Outcome ingestion request uses this body. |
 | `Ingest Outcomes` | Button | Writes outcomes into the experiment. | None | Outcome status confirms ingested count. |
 
 #### Sample outcome ingestion input
@@ -1430,19 +1433,26 @@ Delivery detail behavior:
 
 ### 7.1 Global AI Assistant
 
-The bottom-right `Ask AI` bubble is now the primary AI surface. It stays available while you move across `Data Core`, `Audience Engine`, `Action Orchestrator`, `Experiment Hub`, and the manual `Insight Copilot` page.
+The bottom-right `Ask AI` bubble is now the primary operator surface. It stays available while you move across `Data Core`, `Audience Engine`, `Action Orchestrator`, `Experiment Hub`, and `Insight Copilot`. Each major module also includes starter prompt buttons that open the same global session and send common requests such as `Connect Data`, `Fix Mapping`, `Create Cohort`, `Draft SQL`, `Build Campaign`, `Create Workflow`, `Configure Experiment`, `Summarize Health`, and `Inspect Diagnostics`.
 
 The assistant can:
 - answer grounded product-help questions for the page you are currently viewing
 - give sample SQL, JSON payloads, and example prompts
 - summarize the current dashboard
-- set up low-risk draft cohorts, experiment configs, connectors, and provider connections
+- set up draft cohorts, experiment configs, connectors, and provider connections
 - reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
 - select an existing SendGrid template or Braze API campaign and create a draft email campaign
 - create a draft workflow linked to the cohort and optional email campaign
+- apply mapping updates and prepare import reprocessing
+- send one-time push dispatches
+- schedule, send, cancel, and delete email campaigns
+- publish, pause, resume, test-run, archive, and delete workflows
+- ingest experiment outcome payloads
 - stop high-risk actions at explicit confirmation
 
-The drawer now behaves like a normal chat room:
+Credential setup stays outside chat history. Ask AI can initiate and guide connector/provider setup, but API keys, tokens, and BigQuery service account JSON are entered through a secure setup dialog. The secure dialog submits to the agent secure-input endpoint and the chat transcript records only that secure setup details were submitted.
+
+The drawer behaves like a normal chat room:
 - one transcript from top to bottom
 - one message box at the bottom
 - the first message box stays disabled with `Getting Agents Ready...` only until the first session-create call completes
@@ -1452,7 +1462,7 @@ The drawer now behaves like a normal chat room:
 - inline clarification, confirmation, and artifact cards only when they are relevant
 - no persistent side panels for agent workflow state
 
-The `Insight Copilot` page now acts as the advanced/manual fallback for direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` usage.
+The `Insight Copilot` page is now an AI Command Center with starter prompts. Its direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` tools remain available only inside the collapsed `Advanced Manual Copilot Tools` panel.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1465,11 +1475,14 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 | `Send` | Button | Sends the current message to the assistant after the drawer is ready. The button stays disabled only during initial session bootstrap or when workspace access is blocked. | None | The transcript updates with the latest answer or task state. |
 | Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
+| `Open Secure Setup` | Conditional button | Appears when a requested field is sensitive, such as API keys, tokens, or BigQuery service account JSON. Enter those values in the secure dialog instead of chat. | `service_account_json` | The secure endpoint receives the value, the agent merges it into pending setup slots, and the transcript does not contain the secret. |
 | Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
 | `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
 | Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
-| `Open Assistant` on `Insight Copilot` | Button | Opens the same global assistant from the manual Copilot page. | None | You keep the same session and return to the same drawer experience. |
+| `Open Ask AI` on `Insight Copilot` | Button | Opens the same global assistant from the AI Command Center. | None | You keep the same session and return to the same drawer experience. |
+| AI starter prompt buttons | Button | Send the prewritten prompt to the global assistant from the current module. | `Summarize Health` | The drawer opens and Ask AI starts the requested workflow. |
+| `Advanced Manual Copilot Tools` | Disclosure section | Expand only when you need the direct legacy query, explain, recommend, report, or evidence tools. | None | Manual forms become visible without replacing Ask AI as the primary flow. |
 
 #### Supported v1 agent tasks
 
@@ -1477,14 +1490,22 @@ The `Insight Copilot` page now acts as the advanced/manual fallback for direct `
 - `Set up a cohort`
 - `Set up an A/B test`
 - `Set up a connection`
+- `Set up a BigQuery connector`
+- `Set up a SendGrid, Braze, or Push Provider connection`
 - `Run prediction for Source X`
 - `Draft SQL for the high-risk audience`
 - `Set up a draft email campaign with SendGrid or Braze`
 - `Set up a draft workflow`
 - `Set up the whole prediction -> cohort -> email campaign -> workflow flow`
+- `Fix mapping for import imp_...`
+- `Send push notification user_id: ... title: ... body: ...`
+- `Schedule email campaign ec_... schedule_at: ...`
+- `Send / cancel / delete email campaign ec_...`
+- `Publish / pause / resume / test run / archive / delete workflow wf_...`
+- `Ingest experiment outcomes for experiment id: ...`
 - grounded product help such as `How do I use this page?`, `Where do I do X?`, `Give me a sample payload`, or `Why is this failing?`
 
-The v1 agent executes only low-risk reads and draft/setup actions automatically. It does not auto-run destructive deletes. Cohort activation, experiment start/stop, experiment decision logging, and similar risky follow-up actions are held for explicit confirmation.
+The v1 agent executes low-risk reads, drafts, previews, and safe setup actions automatically. Sends, publishes, starts, stops, deletes, archives, activation-style actions, mapping reprocesses, and other live/risky actions are held for explicit confirmation. The legacy direct REST endpoints remain available for compatibility; the primary UI now hides or collapses the manual/code-heavy path.
 
 Prediction-backed flows are asynchronous. If the agent starts a fresh prediction job, the drawer stays on the same session, exposes the prediction job as an artifact, and waits for you to click `Continue` after the prediction completes.
 

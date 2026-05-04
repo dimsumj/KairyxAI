@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.application.cohorts import CohortService
+from app.application.copilot_agent import deterministic_agent_parse
 from app.core import db as db_module
 from app.core.db import session_scope
 from app.main import create_app
@@ -284,6 +285,299 @@ def test_copilot_agent_connection_clarification_loop_and_safe_execution(client):
     turns = client.get(f"/api/v1/copilot/agent/sessions/{session_id}/turns", headers=headers)
     assert turns.status_code == 200
     assert len(turns.json()["items"]) == 2
+
+
+def test_copilot_agent_secure_inputs_create_bigquery_and_push_provider_without_chat_secrets(client):
+    headers = _headers("operator", actor_id="agent_operator")
+    bigquery_session_id = _create_session(client, headers, title="Secure BigQuery Session")
+
+    first_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Set up a BigQuery connector named agent_bigquery_connector with project_id: analytics-prod",
+            "ui_context": {},
+        },
+    )
+    assert first_turn.status_code == 200
+    first_payload = first_turn.json()
+    assert first_payload["session_state"]["status"] == "awaiting_input"
+    clarification_by_key = {item["key"]: item for item in first_payload["clarifications"]}
+    assert clarification_by_key["dataset_id"]["input_type"] == "text"
+    assert clarification_by_key["service_account_json"]["input_type"] == "secure_multiline"
+    assert clarification_by_key["service_account_json"]["metadata"]["secure_input"] is True
+
+    premature_secure_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/secure-inputs",
+        headers=headers,
+        json={
+            "values": {
+                "dataset_id": "game_events",
+                "service_account_json": "{}",
+            },
+            "ui_context": {},
+        },
+    )
+    assert premature_secure_turn.status_code == 409
+    assert "non-sensitive clarification fields first" in premature_secure_turn.json()["detail"]
+
+    dataset_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/messages",
+        headers=headers,
+        json={
+            "message": "dataset_id: game_events",
+            "ui_context": {},
+        },
+    )
+    assert dataset_turn.status_code == 200
+    assert dataset_turn.json()["session_state"]["status"] == "awaiting_input"
+    assert [item["key"] for item in dataset_turn.json()["clarifications"]] == ["service_account_json"]
+
+    service_account_json = (
+        '{"type":"service_account","project_id":"analytics-prod",'
+        '"client_email":"svc@analytics-prod.iam.gserviceaccount.com",'
+        '"private_key":"-----BEGIN PRIVATE KEY-----\\nagent-private-key\\n-----END PRIVATE KEY-----\\n",'
+        '"token_uri":"https://oauth2.googleapis.com/token"}'
+    )
+    invalid_secure_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/secure-inputs",
+        headers=headers,
+        json={
+            "values": {
+                "service_account_json": service_account_json,
+                "name": "audit_bypass_attempt",
+            },
+            "ui_context": {},
+        },
+    )
+    assert invalid_secure_turn.status_code == 400
+    assert "pending secure fields" in invalid_secure_turn.json()["detail"]
+
+    secure_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/secure-inputs",
+        headers=headers,
+        json={
+            "values": {
+                "service_account_json": service_account_json,
+            },
+            "ui_context": {},
+        },
+    )
+    assert secure_turn.status_code == 200, secure_turn.text
+    payload = secure_turn.json()
+    assert payload["session_state"]["status"] == "active"
+    connector_action = next(item for item in payload["completed_actions"] if item["action_type"] == "upsert_connector")
+    assert connector_action["parameters"]["config"]["service_account_json"] is None
+    assert connector_action["parameters"]["config"]["service_account_json_configured"] is True
+    assert connector_action["parameters"]["config"]["dataset_id"] == "game_events"
+
+    turns = client.get(f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/turns", headers=headers)
+    assert turns.status_code == 200
+    transcript = "\n".join(item["user_message"] for item in turns.json()["items"])
+    assert "agent-private-key" not in transcript
+    assert "Secure setup details submitted for: service_account_json." in transcript
+
+    rejected_after_completion = client.post(
+        f"/api/v1/copilot/agent/sessions/{bigquery_session_id}/secure-inputs",
+        headers=headers,
+        json={"values": {"service_account_json": service_account_json}, "ui_context": {}},
+    )
+    assert rejected_after_completion.status_code == 409
+
+    push_provider_session_id = _create_session(client, headers, title="Secure Push Provider Session")
+    push_provider_prompt = client.post(
+        f"/api/v1/copilot/agent/sessions/{push_provider_session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Set up a provider connection for push provider named agent_push_provider with base_url: https://push.example.com",
+            "ui_context": {},
+        },
+    )
+    assert push_provider_prompt.status_code == 200
+    assert push_provider_prompt.json()["session_state"]["status"] == "awaiting_input"
+
+    push_provider_secure = client.post(
+        f"/api/v1/copilot/agent/sessions/{push_provider_session_id}/secure-inputs",
+        headers=headers,
+        json={
+            "values": {
+                "api_token": "push-provider-token",
+            },
+            "ui_context": {},
+        },
+    )
+    assert push_provider_secure.status_code == 200, push_provider_secure.text
+    provider_action = next(item for item in push_provider_secure.json()["completed_actions"] if item["action_type"] == "upsert_provider_connection")
+    assert provider_action["parameters"]["provider"] == "wynn_push_notifier"
+    assert provider_action["parameters"]["config"]["api_token"] is None
+    assert provider_action["parameters"]["config"]["api_token_configured"] is True
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_intent"),
+    [
+        ("Connect a BigQuery data source and open the secure credential dialog.", "setup_connection"),
+        ("Fix the selected import mapping, preview it, and prepare reprocessing for confirmation.", "remap_import"),
+        ("Summarize data health, blocked imports, and mapping diagnostics.", "summarize_dashboard"),
+        ("Create a cohort for high-risk winback users from the latest completed prediction runs.", "setup_cohort"),
+        ("Draft SQL for high-risk users with canonical_user_id and email, then preview it.", "draft_sql_from_prompt"),
+        ("Draft the audience builder state for high-risk churn rescue users and show the preview.", "draft_audience_builder"),
+        ("Build a SendGrid campaign for the selected high-risk cohort and leave it in draft.", "setup_email_campaign"),
+        ("Create a draft workflow for the selected cohort and leave it in draft.", "setup_workflow"),
+        ("Send a one-time push notification after previewing the action and asking for confirmation.", "send_push_dispatch"),
+        ("Configure an A/B experiment for the selected cohort with return_rate as the primary metric.", "setup_experiment"),
+        ("Summarize experiment health, guardrails, measurement gaps, and rollout diagnostics.", "summarize_dashboard"),
+        ("Ingest experiment outcomes for the selected experiment from an outcomes JSON payload.", "ingest_experiment_outcomes"),
+        ("Summarize the dashboard, current risks, blocked imports, active experiments, and recommended next steps.", "summarize_dashboard"),
+        ("Inspect diagnostics across data, audiences, workflows, experiments, and recent Copilot reports.", "summarize_dashboard"),
+        ("Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation.", "setup_operator_flow"),
+    ],
+)
+def test_copilot_agent_primary_starter_prompts_route_to_expected_intents(client, message, expected_intent):
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title=f"Starter {expected_intent}")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": message,
+            "ui_context": {
+                "active_module_id": "insight-copilot",
+                "selected_cohort_id": "cohort_selected",
+                "current_experiment_id": "exp_selected",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["session_state"]["current_intent"] == expected_intent
+
+
+def test_copilot_agent_primary_starter_prompt_slots_are_safe_for_campaign_and_workflow():
+    campaign_prompt = "Build a SendGrid campaign for the selected high-risk cohort and leave it in draft."
+    campaign_parse = deterministic_agent_parse(
+        campaign_prompt,
+        ui_context={"selected_cohort_id": "cohort_selected"},
+    )
+    assert campaign_parse["intent"] == "setup_email_campaign"
+    assert "template_id" not in campaign_parse["slots"]
+    assert campaign_parse["slots"].get("messaging_provider") == "sendgrid"
+
+    workflow_prompt = "Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation."
+    workflow_parse = deterministic_agent_parse(workflow_prompt, ui_context={})
+    assert workflow_parse["intent"] == "setup_operator_flow"
+    assert workflow_parse["slots"]["wants_email_campaign"] is True
+    assert workflow_parse["slots"]["wants_workflow"] is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What is the prediction-to-campaign workflow?",
+        "Explain the prediction-to-campaign workflow.",
+    ],
+)
+def test_copilot_agent_prediction_to_campaign_questions_stay_read_only(client, message):
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title="Read Only Flow Question")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": message,
+            "ui_context": {
+                "selected_cohort_id": "cohort_selected",
+                "current_prediction_job_id": "pred_selected",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["session_state"]["current_intent"] == "help_support"
+    assert payload["completed_actions"] == []
+    assert payload["pending_confirmations"] == []
+
+
+def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmation_gates(client):
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title="Manual Flow Agent Session")
+
+    mapping_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": 'Fix mapping for imp_agentmanual1 with ```json\n{"mapping":{"user_id":"player_id","event_name":"event_type"}}\n```',
+            "ui_context": {},
+        },
+    )
+    assert mapping_turn.status_code == 200
+    mapping_payload = mapping_turn.json()
+    assert mapping_payload["session_state"]["status"] == "awaiting_confirmation"
+    assert mapping_payload["pending_confirmations"][0]["action_type"] == "remap_import"
+
+    push_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Send push notification user_id: u_1 title: Winback body: Return today for a bonus",
+            "ui_context": {},
+        },
+    )
+    assert push_turn.status_code == 200
+    push_payload = push_turn.json()
+    push_action = next(item for item in push_payload["pending_confirmations"] if item["action_type"] == "send_push_dispatch")
+    push_action_id = push_action["action_id"]
+
+    confirmed_push = client.post(
+        f"/api/v1/copilot/agent/actions/{push_action_id}/confirm",
+        headers=headers,
+        json={"note": "Approved simulator push."},
+    )
+    assert confirmed_push.status_code == 200, confirmed_push.text
+    assert confirmed_push.json()["completed_actions"][0]["action_type"] == "send_push_dispatch"
+    assert confirmed_push.json()["completed_actions"][0]["status"] == "completed"
+
+    for message, expected_action in [
+        ("Schedule email campaign ec_agentmanual1 schedule_at: 2026-05-05T10:00:00Z", "schedule_email_campaign"),
+        ("Send email campaign ec_agentmanual1", "send_email_campaign"),
+        ("Cancel email campaign ec_agentmanual1", "cancel_email_campaign"),
+        ("Delete email campaign ec_agentmanual1", "delete_email_campaign"),
+        ("Publish workflow wf_agentmanual1", "publish_workflow"),
+        ("Pause workflow wf_agentmanual1", "pause_workflow"),
+        ("Resume workflow wf_agentmanual1", "resume_workflow"),
+        ("Test run workflow wf_agentmanual1", "test_run_workflow"),
+        ("Archive workflow wf_agentmanual1", "archive_workflow"),
+        ("Delete workflow wf_agentmanual1", "delete_workflow"),
+    ]:
+        response = client.post(
+            f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+            headers=headers,
+            json={"message": message, "ui_context": {}},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["session_state"]["status"] == "awaiting_confirmation"
+        assert any(item["action_type"] == expected_action for item in payload["pending_confirmations"])
+
+    outcomes_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": (
+                "Ingest experiment outcomes for experiment id: agent_outcome_exp "
+                '```json\n{"outcomes":[{"workflow_id":"wf_agentmanual1","cohort_id":"cohort_agentmanual1",'
+                '"experiment_id":"agent_outcome_exp","user_id":"u_1","occurred_at":"2026-05-04T12:00:00Z",'
+                '"outcome_name":"returned"}]}\n```'
+            ),
+            "ui_context": {},
+        },
+    )
+    assert outcomes_turn.status_code == 200
+    outcomes_payload = outcomes_turn.json()
+    assert outcomes_payload["completed_actions"][0]["action_type"] == "ingest_experiment_outcomes"
+    assert outcomes_payload["completed_actions"][0]["status"] == "completed"
+    assert outcomes_payload["completed_actions"][0]["result"]["experiment_outcomes"]["ingested"] == 1
 
 
 def test_copilot_agent_support_answers_with_page_context_and_samples(client):
