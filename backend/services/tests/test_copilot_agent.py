@@ -10,6 +10,7 @@ from app.core.db import session_scope
 from app.main import create_app
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from bigquery_service import clear_shared_bigquery_service_cache, get_shared_bigquery_service
+from secret_manager_service import SecretManagerService
 
 
 @pytest.fixture
@@ -1001,6 +1002,92 @@ def test_copilot_agent_model_profiles_reject_openai_without_api_key_or_base_url(
     )
     assert profile.status_code == 409
     assert profile.json()["detail"] == "OpenAI agent model profiles require api_key or base_url."
+
+
+def test_copilot_agent_model_profiles_allow_secret_refs_in_prod_without_inline_storage(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("CONTROL_PLANE_SECRET_KEY", raising=False)
+    SecretManagerService._get_control_plane_cipher.cache_clear()
+    SecretManagerService._get_invalid_token_error.cache_clear()
+
+    ref_profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Gemini Secret Ref",
+            "provider": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "config": {"api_key_ref": "secret://ask-ai/gemini-api-key"},
+        },
+    )
+    assert ref_profile.status_code == 201, ref_profile.text
+    ref_payload = ref_profile.json()
+    assert ref_payload["config"]["api_key"] is None
+    assert ref_payload["config"]["api_key_configured"] is True
+
+    inline_profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Gemini Inline Secret",
+            "provider": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "config": {"api_key": "inline-prod-key"},
+        },
+    )
+    assert inline_profile.status_code == 409
+    assert (
+        inline_profile.json()["detail"]
+        == "Inline agent model secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
+    )
+
+
+def test_copilot_agent_model_profiles_encrypt_inline_prod_secret_and_replace_it_with_ref(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("CONTROL_PLANE_SECRET_KEY", "test-control-plane-secret-key")
+    SecretManagerService._get_control_plane_cipher.cache_clear()
+    SecretManagerService._get_invalid_token_error.cache_clear()
+
+    inline_profile = client.post(
+        "/api/v1/copilot/agent/model-profiles",
+        headers=headers,
+        json={
+            "name": "Gemini Inline Storage",
+            "provider": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "config": {"api_key": "inline-prod-key"},
+        },
+    )
+    assert inline_profile.status_code == 201, inline_profile.text
+    model_profile_id = inline_profile.json()["model_profile_id"]
+    assert inline_profile.json()["config"]["api_key"] is None
+    assert inline_profile.json()["config"]["api_key_configured"] is True
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        stored = repository.get_resource("agent_model_profile", model_profile_id)
+    stored_config = stored["payload"]["config"]
+    assert "api_key" not in stored_config
+    assert "api_key_encrypted" in stored_config
+
+    updated_profile = client.patch(
+        f"/api/v1/copilot/agent/model-profiles/{model_profile_id}",
+        headers=headers,
+        json={"config": {"api_key_ref": "secret://ask-ai/gemini-api-key"}},
+    )
+    assert updated_profile.status_code == 200, updated_profile.text
+    assert updated_profile.json()["config"]["api_key"] is None
+    assert updated_profile.json()["config"]["api_key_configured"] is True
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        replaced = repository.get_resource("agent_model_profile", model_profile_id)
+    replaced_config = replaced["payload"]["config"]
+    assert replaced_config["api_key_ref"] == "secret://ask-ai/gemini-api-key"
+    assert "api_key" not in replaced_config
+    assert "api_key_encrypted" not in replaced_config
 
 
 def test_copilot_agent_model_profiles_reject_private_openai_base_url_in_prod(client, monkeypatch):

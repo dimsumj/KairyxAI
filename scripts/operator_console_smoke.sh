@@ -243,6 +243,36 @@ assert_bigquery_connector_ui() {
     await connectorsLink.first().click();
     await page.waitForTimeout(700);
 
+    const runtimeButton = page.locator('#add-ai-model-profile-btn');
+    if (await runtimeButton.count() === 0) throw new Error('Missing Connect Ask AI Runtime button');
+    await runtimeButton.first().click();
+    await page.waitForTimeout(250);
+
+    const runtimeSelect = page.locator('#ai-model-profile-runtime-select');
+    const geminiApiKey = page.locator('#ai-model-profile-gemini-api-key-input');
+    const geminiApiKeyRef = page.locator('#ai-model-profile-gemini-api-key-ref-input');
+    if (await runtimeSelect.count() === 0 || await geminiApiKey.count() === 0 || await geminiApiKeyRef.count() === 0) {
+      throw new Error('Missing secure Gemini runtime credential fields');
+    }
+    const geminiPlaceholder = await geminiApiKey.first().getAttribute('placeholder') || '';
+    if (!geminiPlaceholder.includes('CONTROL_PLANE_SECRET_KEY')) {
+      throw new Error('Gemini API key field should explain production inline secret requirements');
+    }
+
+    await runtimeSelect.first().selectOption('openai_compatible');
+    await page.waitForTimeout(250);
+    const openaiApiKey = page.locator('#ai-model-profile-openai-api-key-input');
+    const openaiApiKeyRef = page.locator('#ai-model-profile-openai-api-key-ref-input');
+    if (await openaiApiKey.count() === 0 || await openaiApiKeyRef.count() === 0) {
+      throw new Error('Missing secure OpenAI-compatible runtime credential fields');
+    }
+    const openaiPlaceholder = await openaiApiKey.first().getAttribute('placeholder') || '';
+    if (!openaiPlaceholder.includes('CONTROL_PLANE_SECRET_KEY')) {
+      throw new Error('OpenAI-compatible API key field should explain production inline secret requirements');
+    }
+    await page.locator('#ai-model-profile-cancel-btn').click();
+    await page.waitForTimeout(150);
+
     const connectButton = page.locator('#add-connector-btn');
     if (await connectButton.count() === 0) throw new Error('Missing Connect Data Source button');
     await connectButton.first().click();

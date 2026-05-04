@@ -6834,7 +6834,12 @@ export function initializeOperatorConsole() {
                             </div>
                             <div class="form-group">
                                 <label for="ai-model-profile-gemini-api-key-input">Google API Key</label>
-                                <input type="password" id="ai-model-profile-gemini-api-key-input" placeholder="AIza...">
+                                <input type="password" id="ai-model-profile-gemini-api-key-input" placeholder="Requires CONTROL_PLANE_SECRET_KEY in production">
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-gemini-api-key-ref-input">Google API Key Ref</label>
+                                <input type="text" id="ai-model-profile-gemini-api-key-ref-input" placeholder="secret://ask-ai/gemini-api-key">
+                                <div class="subtle">Use a ref when inline secret storage is not configured.</div>
                             </div>
                         </div>
                     `;
@@ -6859,7 +6864,12 @@ export function initializeOperatorConsole() {
                             </div>
                             <div class="form-group">
                                 <label for="ai-model-profile-openai-api-key-input">${presetLabel} API Key / Token</label>
-                                <input type="password" id="ai-model-profile-openai-api-key-input" value="${escapeHtml(defaultApiKey)}" placeholder="${runtimePreset === 'openai_compatible' ? 'Optional bearer token' : 'Optional when the local server ignores auth'}">
+                                <input type="password" id="ai-model-profile-openai-api-key-input" value="${escapeHtml(defaultApiKey)}" placeholder="${runtimePreset === 'openai_compatible' ? 'Requires CONTROL_PLANE_SECRET_KEY in production' : 'Optional when the local server ignores auth'}">
+                            </div>
+                            <div class="form-group">
+                                <label for="ai-model-profile-openai-api-key-ref-input">${presetLabel} API Key / Token Ref</label>
+                                <input type="text" id="ai-model-profile-openai-api-key-ref-input" placeholder="secret://ask-ai/openai-token">
+                                <div class="subtle">Use a ref when inline secret storage is not configured.</div>
                             </div>
                         </div>
                         <div class="form-group">
@@ -6887,8 +6897,16 @@ export function initializeOperatorConsole() {
                         ? 'ai-model-profile-gemini-api-key-input'
                         : 'ai-model-profile-openai-api-key-input'
                 );
+                const apiKeyRefInput = document.getElementById(
+                    runtimePreset === 'gemini'
+                        ? 'ai-model-profile-gemini-api-key-ref-input'
+                        : 'ai-model-profile-openai-api-key-ref-input'
+                );
                 if (isEditing && apiKeyInput && !String(apiKeyInput.value || '').trim()) {
-                    apiKeyInput.placeholder = 'Stored securely. Enter a new token only if you want to rotate it.';
+                    apiKeyInput.placeholder = 'Stored securely. Enter a new token only to rotate it.';
+                }
+                if (isEditing && apiKeyRefInput && !String(apiKeyRefInput.value || '').trim()) {
+                    apiKeyRefInput.placeholder = 'Leave blank to keep the configured credential.';
                 }
             }
 
@@ -7013,6 +7031,7 @@ export function initializeOperatorConsole() {
                 if (profile.provider === 'gemini') {
                     const modelInput = document.getElementById('ai-model-profile-gemini-model-input');
                     const apiKeyInput = document.getElementById('ai-model-profile-gemini-api-key-input');
+                    const apiKeyRefInput = document.getElementById('ai-model-profile-gemini-api-key-ref-input');
                     if (modelInput) {
                         ensureSelectOption(modelInput, String(profile.model_name || '').trim(), String(profile.model_name || '').trim());
                         modelInput.value = String(profile.model_name || '').trim();
@@ -7020,15 +7039,22 @@ export function initializeOperatorConsole() {
                     if (apiKeyInput) {
                         apiKeyInput.value = '';
                     }
+                    if (apiKeyRefInput) {
+                        apiKeyRefInput.value = '';
+                    }
                 } else if (profile.provider === 'openai') {
                     const modelInput = document.getElementById('ai-model-profile-openai-model-input');
                     const apiKeyInput = document.getElementById('ai-model-profile-openai-api-key-input');
+                    const apiKeyRefInput = document.getElementById('ai-model-profile-openai-api-key-ref-input');
                     const baseUrlInput = document.getElementById('ai-model-profile-openai-base-url-input');
                     if (modelInput) {
                         modelInput.value = String(profile.model_name || '').trim();
                     }
                     if (apiKeyInput) {
                         apiKeyInput.value = '';
+                    }
+                    if (apiKeyRefInput) {
+                        apiKeyRefInput.value = '';
                     }
                     if (baseUrlInput) {
                         baseUrlInput.value = String((profile.config || {}).base_url || '').trim();
@@ -7038,7 +7064,7 @@ export function initializeOperatorConsole() {
                 setInlineStatus(
                     aiModelProfileStatus,
                     Boolean((profile.config || {}).api_key_configured)
-                        ? `Editing ${profile.name}. Leave the API key blank to keep the stored secret.`
+                        ? `Editing ${profile.name}. Leave key and ref fields blank to keep the configured credential.`
                         : `Editing ${profile.name}.`,
                 );
             }
@@ -7052,8 +7078,12 @@ export function initializeOperatorConsole() {
                 if (runtimePreset === 'gemini') {
                     const modelName = String(document.getElementById('ai-model-profile-gemini-model-input')?.value || '').trim();
                     const apiKey = String(document.getElementById('ai-model-profile-gemini-api-key-input')?.value || '').trim();
-                    if (!selectedAiModelProfileId && !apiKey) {
-                        throw new Error('Google API Key is required for a new Gemini runtime.');
+                    const apiKeyRef = String(document.getElementById('ai-model-profile-gemini-api-key-ref-input')?.value || '').trim();
+                    if (apiKey && apiKeyRef) {
+                        throw new Error('Use either the Google API Key or Google API Key Ref, not both.');
+                    }
+                    if (!selectedAiModelProfileId && !apiKey && !apiKeyRef) {
+                        throw new Error('Google API Key or Google API Key Ref is required for a new Gemini runtime.');
                     }
                     return {
                         name,
@@ -7062,17 +7092,22 @@ export function initializeOperatorConsole() {
                         is_default: Boolean(aiModelProfileDefaultCheckbox?.checked),
                         config: {
                             ...(apiKey ? { api_key: apiKey } : {}),
+                            ...(apiKeyRef ? { api_key_ref: apiKeyRef } : {}),
                         },
                     };
                 }
                 const modelName = String(document.getElementById('ai-model-profile-openai-model-input')?.value || '').trim();
                 const apiKey = String(document.getElementById('ai-model-profile-openai-api-key-input')?.value || '').trim();
+                const apiKeyRef = String(document.getElementById('ai-model-profile-openai-api-key-ref-input')?.value || '').trim();
                 const baseUrl = String(document.getElementById('ai-model-profile-openai-base-url-input')?.value || '').trim();
                 if (!modelName) {
                     throw new Error('Model name is required for OpenAI-compatible runtimes.');
                 }
                 if (!baseUrl) {
                     throw new Error('Base URL is required for OpenAI-compatible runtimes.');
+                }
+                if (apiKey && apiKeyRef) {
+                    throw new Error('Use either the API Key / Token or API Key / Token Ref, not both.');
                 }
                 return {
                     name,
@@ -7083,6 +7118,7 @@ export function initializeOperatorConsole() {
                         base_url: baseUrl,
                         runtime_preset: runtimePreset,
                         ...(apiKey ? { api_key: apiKey } : {}),
+                        ...(apiKeyRef ? { api_key_ref: apiKeyRef } : {}),
                     },
                 };
             }
@@ -7308,7 +7344,11 @@ export function initializeOperatorConsole() {
                     await saveAiModelProfile();
                 } catch (error) {
                     console.error('Error saving Ask AI runtime:', error);
-                    setInlineStatus(aiModelProfileStatus, error.message || 'Failed to save the Ask AI runtime.', true);
+                    const message = String(error.message || '');
+                    const friendlyMessage = message.includes('Inline agent model secrets are not allowed in production')
+                        ? 'Direct API key entry requires CONTROL_PLANE_SECRET_KEY in production. Use the key ref field or configure encrypted control-plane secret storage.'
+                        : message || 'Failed to save the Ask AI runtime.';
+                    setInlineStatus(aiModelProfileStatus, friendlyMessage, true);
                 }
             });
 

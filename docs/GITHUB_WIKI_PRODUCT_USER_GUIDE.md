@@ -452,30 +452,32 @@ This page follows the console-wide minimal UI pattern. Section-specific explanat
 | `Runtime Type` | Select | Chooses which Ask AI preset to configure. | `LM Studio` | The preset-specific model and endpoint fields appear. |
 | `Profile Name` | Text box | Sets the label shown in the AI runtime table and Ask AI model selector. | `LM Studio Local` | The runtime is saved under this name. |
 | `Gemini Model` | Select | Appears when `Runtime Type` is `Gemini`. | `gemini-2.5-flash` | The saved runtime targets the selected Gemini model. |
-| `Google API Key` | Password box | Appears when `Runtime Type` is `Gemini`. | `AIza...` | The backend-managed Gemini profile stores the key securely. |
+| `Google API Key` | Password box | Appears when `Runtime Type` is `Gemini`. Use only when `CONTROL_PLANE_SECRET_KEY` is configured for encrypted inline secret storage. | `AIza...` | The backend-managed Gemini profile stores the key securely. |
+| `Google API Key Ref` | Text box | Appears when `Runtime Type` is `Gemini`. Use this in production when the key is stored in an external secret manager instead of browser-entered inline storage. | `secret://ask-ai/gemini-api-key` | The saved profile stores only the secret reference and Ask AI resolves it server-side. |
 | `Model Name` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. | `llama3.1` | Ask AI sends requests to that OpenAI-compatible model name. |
-| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Leave it blank when the local or hosted OpenAI-compatible endpoint does not require bearer auth. | `sk-live-key` | The saved profile sends bearer auth only when a token is configured. |
+| `API Key / Token` | Password box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Leave it blank when the endpoint does not require bearer auth. Use only when `CONTROL_PLANE_SECRET_KEY` is configured for encrypted inline secret storage. | `sk-live-key` | The saved profile sends bearer auth only when a token is configured. |
+| `API Key / Token Ref` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Use this when the bearer token lives in an external secret manager. | `secret://ask-ai/openai-token` | The saved profile stores only the secret reference and sends bearer auth after server-side resolution. |
 | `Base URL` | Text box | Appears for `LM Studio`, `Ollama`, and `Custom OpenAI-compatible`. Base URLs with or without a trailing `/v1` both work, but the endpoint must be reachable from the backend runtime. | `http://127.0.0.1:11434/v1` | Kairyx targets the OpenAI-compatible chat-completions path correctly for that endpoint. |
 | `Use this runtime as the Ask AI default` | Checkbox | Makes the saved runtime the default model profile for new Ask AI sessions. | Checked | Ask AI uses this runtime unless the operator selects another profile for the session. |
-| `Save Runtime` / `Update Runtime` | Button | Saves the runtime. Leave the API key blank while editing if you want to keep the existing secret. | None | The runtime appears in the `AI Agents & Models` table. |
+| `Save Runtime` / `Update Runtime` | Button | Saves the runtime. Leave key and ref fields blank while editing if you want to keep the configured credential. | None | The runtime appears in the `AI Agents & Models` table. |
 | `Refresh` | Button | Reloads the current runtime list. | None | The runtime table refreshes from the control plane. |
 | Runtime row `Edit` | Row button | Loads the saved runtime back into the form. | None | The form switches to update mode. |
 | Runtime row `Set Default` | Row button | Makes a non-default runtime the Ask AI default. | None | New Ask AI sessions use that runtime by default. |
 | Runtime row `Delete` | Row button | Deletes a saved non-system runtime after confirmation. | None | The runtime disappears from the list. |
 
 Credential storage behavior:
-- Browser-entered runtime secrets are accepted on save, encrypted before persistence, and redacted from subsequent API responses.
+- Browser-entered runtime secrets are accepted on save only when encrypted control-plane storage is configured with `CONTROL_PLANE_SECRET_KEY`; they are encrypted before persistence and redacted from subsequent API responses.
 - Runtime reads return `null` for raw secret fields and expose only the matching `*_configured` metadata flag.
-- API clients can still use `*_ref` values when the team prefers an external secret manager instead of control-plane encrypted storage.
+- The runtime setup form and API clients can use `*_ref` values when the team prefers an external secret manager or when production inline secret storage is not configured.
 
 Runtime presets shipped in the current frontend:
 
 | Runtime preset | Backend provider | Fields / behavior | Sample input |
 | --- | --- | --- | --- |
-| `Gemini` | `gemini` | `Google API Key`, `Gemini Model` | `api_key=google_key_123`, `model_name=gemini-2.5-flash` |
-| `LM Studio` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:1234/v1` | `model_name=local-model`, `base_url=http://127.0.0.1:1234/v1` |
-| `Ollama` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` with default `http://127.0.0.1:11434/v1` | `model_name=llama3.1`, `base_url=http://127.0.0.1:11434/v1` |
-| `Custom OpenAI-compatible` | `openai` | `Model Name`, optional `API Key / Token`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com/v1` |
+| `Gemini` | `gemini` | `Google API Key` or `Google API Key Ref`, `Gemini Model` | `api_key_ref=secret://ask-ai/gemini-api-key`, `model_name=gemini-2.5-flash` |
+| `LM Studio` | `openai` | `Model Name`, optional `API Key / Token` or `API Key / Token Ref`, `Base URL` with default `http://127.0.0.1:1234/v1` | `model_name=local-model`, `base_url=http://127.0.0.1:1234/v1` |
+| `Ollama` | `openai` | `Model Name`, optional `API Key / Token` or `API Key / Token Ref`, `Base URL` with default `http://127.0.0.1:11434/v1` | `model_name=llama3.1`, `base_url=http://127.0.0.1:11434/v1` |
+| `Custom OpenAI-compatible` | `openai` | `Model Name`, optional `API Key / Token` or `API Key / Token Ref`, `Base URL` | `model_name=gpt-4.1-mini`, `base_url=https://api.openai.com/v1`, `api_key_ref=secret://ask-ai/openai-token` |
 
 Existing Anthropic profiles still render in the AI runtime list and Ask AI model selector when they were created through the API, but the current Connectors form does not create new Anthropic profiles.
 

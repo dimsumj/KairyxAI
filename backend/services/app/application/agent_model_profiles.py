@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from app.application.ai_runtime_network import normalize_and_validate_runtime_base_url
 from app.application.secret_refs import (
+    SECRET_STORAGE_SUFFIXES,
     SENSITIVE_FIELDS,
     contains_inline_secret,
     materialize_secret_refs,
@@ -146,8 +147,10 @@ class AgentModelProfileService:
         if "model_name" in patch:
             payload["model_name"] = str(patch.get("model_name") or "").strip() or None
         if patch.get("config") is not None:
-            merged_config = dict(payload.get("config") or {})
-            merged_config.update(dict(patch.get("config") or {}))
+            merged_config = self._merge_profile_config(
+                dict(payload.get("config") or {}),
+                dict(patch.get("config") or {}),
+            )
             normalized_config = self._normalize_profile_config(str(payload.get("provider") or ""), merged_config)
             payload["config"] = self._persist_inline_secrets(normalized_config)
         if patch.get("status") is not None:
@@ -268,6 +271,19 @@ class AgentModelProfileService:
             raise
 
     @staticmethod
+    def _merge_profile_config(current_config: Dict[str, Any], patch_config: Dict[str, Any]) -> Dict[str, Any]:
+        merged = dict(current_config or {})
+        incoming = dict(patch_config or {})
+        for field in SENSITIVE_FIELDS:
+            secret_keys = [field, *(f"{field}{suffix}" for suffix in SECRET_STORAGE_SUFFIXES)]
+            if not any(key in incoming for key in secret_keys):
+                continue
+            for key in secret_keys:
+                merged.pop(key, None)
+        merged.update(incoming)
+        return merged
+
+    @staticmethod
     def _validate_profile(*, provider: str, model_name: str | None, config: Dict[str, Any]) -> None:
         normalized_provider = str(provider or "").strip().lower()
         if normalized_provider not in SUPPORTED_AGENT_MODEL_PROVIDERS:
@@ -290,7 +306,11 @@ class AgentModelProfileService:
                 allow_private_network_hosts=get_settings().app_env != "prod",
             )
         settings = get_settings()
-        if settings.app_env == "prod" and contains_inline_secret(payload, secret_fields=SENSITIVE_FIELDS):
+        if (
+            settings.app_env == "prod"
+            and contains_inline_secret(payload, secret_fields=SENSITIVE_FIELDS)
+            and not str(os.getenv("CONTROL_PLANE_SECRET_KEY") or "").strip()
+        ):
             raise ValueError(
                 "Inline agent model secrets are not allowed in production; configure CONTROL_PLANE_SECRET_KEY or use *_ref fields."
             )
