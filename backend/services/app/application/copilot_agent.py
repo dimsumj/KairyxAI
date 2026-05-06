@@ -354,6 +354,29 @@ ACTION_REGISTRY: Dict[str, AgentActionSpec] = {
     ),
 }
 
+GUIDANCE_ONLY_ACTION_TYPES = {
+    "remap_import",
+    "send_push_dispatch",
+    "schedule_email_campaign",
+    "send_email_campaign",
+    "cancel_email_campaign",
+    "delete_email_campaign",
+    "publish_workflow",
+    "pause_workflow",
+    "resume_workflow",
+    "test_run_workflow",
+    "archive_workflow",
+    "delete_workflow",
+    "ingest_experiment_outcomes",
+    "activate_cohort",
+    "pause_cohort",
+    "archive_cohort",
+    "restore_cohort",
+    "start_experiment",
+    "stop_experiment",
+    "record_experiment_decision",
+}
+
 
 class CopilotAgentModelAdapter(Protocol):
     def parse_message(
@@ -817,7 +840,7 @@ def deterministic_agent_message(payload: Dict[str, Any]) -> str:
         return f"I can handle this, but I still need: {questions}."
     if pending_confirmations:
         action = pending_confirmations[0]
-        return f"I prepared the action `{action.get('title')}` and held it for confirmation because it is high risk."
+        return f"I found the prepared action `{action.get('title')}`. Open the relevant module to review and finish it."
     if completed_actions:
         action = completed_actions[-1]
         summary = str(action.get("summary") or "").strip()
@@ -892,6 +915,7 @@ class CopilotAgentService:
         }
 
     def get_session(self, session_id: str) -> Dict[str, Any]:
+        self._normalize_guidance_only_pending_actions(session_id)
         payload = self._decorate_session_async_state(self._get_session_payload(session_id))
         turns = self.list_turns(session_id)["items"]
         return {
@@ -1190,6 +1214,13 @@ class CopilotAgentService:
         if action_record is None:
             raise KeyError(action_id)
         action_payload = dict(action_record.get("payload") or {})
+        if str(action_payload.get("action_type") or "") in GUIDANCE_ONLY_ACTION_TYPES:
+            prepared_payload = action_payload_as_manual_handoff(action_payload)
+            self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_id, status="prepared", name=prepared_payload.get("title"), payload=prepared_payload)
+            self._retire_confirmation_request(prepared_payload)
+            self._sync_session_pending_confirmation_count(str(prepared_payload.get("session_id") or ""))
+            self._append_session_latest_artifacts(str(prepared_payload.get("session_id") or ""), prepared_payload.get("artifacts") or [])
+            raise ValueError("This agent action is now a module handoff and cannot execute from chat.")
         if str(action_payload.get("status") or "") != "awaiting_confirmation":
             raise ValueError(f"Agent action '{action_id}' is not awaiting confirmation.")
         session_id = str(action_payload.get("session_id") or "")
@@ -2165,14 +2196,15 @@ class CopilotAgentService:
         steps = []
         for item in actions:
             spec = ACTION_REGISTRY[item["action_type"]]
+            guidance_only = spec.action_type in GUIDANCE_ONLY_ACTION_TYPES
             steps.append(
                 {
                     "action_id": "",
                     "action_type": spec.action_type,
                     "title": item.get("title") or spec.title,
                     "summary": preview_step_summary(spec.action_type, item.get("parameters") or {}),
-                    "status": "awaiting_confirmation" if spec.requires_confirmation else ("pending" if not clarifications else "blocked"),
-                    "requires_confirmation": spec.requires_confirmation,
+                    "status": "prepared" if guidance_only else ("awaiting_confirmation" if spec.requires_confirmation else ("pending" if not clarifications else "blocked")),
+                    "requires_confirmation": False if guidance_only else spec.requires_confirmation,
                     "risk_level": spec.risk_level,
                 }
             )
@@ -2220,8 +2252,46 @@ class CopilotAgentService:
         for planned_action in plan["actions"]:
             action_type = str(planned_action["action_type"])
             parameters = dict(planned_action.get("parameters") or {})
-            action_payload = self._create_action_run(session_id, action_type, planned_action.get("title") or ACTION_REGISTRY[action_type].title, parameters)
             spec = ACTION_REGISTRY[action_type]
+            guidance_only = action_type in GUIDANCE_ONLY_ACTION_TYPES
+            action_payload = self._create_action_run(
+                session_id,
+                action_type,
+                planned_action.get("title") or spec.title,
+                parameters,
+                guidance_only=guidance_only,
+            )
+            if guidance_only:
+                try:
+                    ensure_permissions_for_action(action_type, context)
+                    action_payload = action_payload_as_manual_handoff(action_payload)
+                    self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_payload["action_id"], status="prepared", name=action_payload["title"], payload=action_payload)
+                    self.repository.record_action(
+                        "copilot_agent_action_guidance_prepared",
+                        ACTION_RESOURCE_TYPE,
+                        action_payload["action_id"],
+                        {
+                            "action_type": action_type,
+                            "parameters": sanitize_action_parameters(parameters),
+                            "next_steps": action_payload["result"]["next_steps"],
+                        },
+                    )
+                    completed_actions.append(action_payload)
+                    artifacts.extend(action_payload["artifacts"])
+                    continue
+                except HTTPException as exc:
+                    action_payload.update(
+                        {
+                            "status": "blocked",
+                            "summary": str(exc.detail),
+                            "result": {"error": str(exc.detail), "status_code": exc.status_code},
+                            "updated_at": datetime.utcnow().isoformat(),
+                        }
+                    )
+                    self.repository.upsert_resource(ACTION_RESOURCE_TYPE, action_payload["action_id"], status="blocked", name=action_payload["title"], payload=action_payload)
+                    completed_actions.append(action_payload)
+                    session_status = "active"
+                    break
             if spec.requires_confirmation:
                 ensure_permissions_for_action(action_type, context)
                 pending_confirmations.append(action_payload)
@@ -2311,16 +2381,25 @@ class CopilotAgentService:
             "pending_flow": pending_flow,
         }
 
-    def _create_action_run(self, session_id: str, action_type: str, title: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_action_run(
+        self,
+        session_id: str,
+        action_type: str,
+        title: str,
+        parameters: Dict[str, Any],
+        *,
+        guidance_only: bool = False,
+    ) -> Dict[str, Any]:
         spec = ACTION_REGISTRY[action_type]
+        requires_confirmation = spec.requires_confirmation and not guidance_only
         action_id = f"cpaa_{uuid.uuid4().hex[:20]}"
         payload = {
             "action_id": action_id,
             "session_id": session_id,
             "action_type": action_type,
             "title": title,
-            "status": "awaiting_confirmation" if spec.requires_confirmation else "running",
-            "requires_confirmation": spec.requires_confirmation,
+            "status": "prepared" if guidance_only else ("awaiting_confirmation" if requires_confirmation else "running"),
+            "requires_confirmation": requires_confirmation,
             "risk_level": spec.risk_level,
             "parameters": sanitize_action_parameters(parameters),
             "result": {},
@@ -2332,7 +2411,7 @@ class CopilotAgentService:
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         }
-        if spec.requires_confirmation:
+        if requires_confirmation:
             confirmation_id = f"cpac_{uuid.uuid4().hex[:20]}"
             payload["confirmation_id"] = confirmation_id
             self.repository.upsert_resource(
@@ -2357,7 +2436,7 @@ class CopilotAgentService:
             {
                 "action_type": action_type,
                 "parameters": sanitize_action_parameters(parameters),
-                "requires_confirmation": spec.requires_confirmation,
+                "requires_confirmation": requires_confirmation,
             },
         )
         return payload
@@ -3336,6 +3415,7 @@ class CopilotAgentService:
         }
 
     def _pending_confirmation_actions(self, session_id: str) -> List[Dict[str, Any]]:
+        self._normalize_guidance_only_pending_actions(session_id)
         items = [
             self._action_from_record(record)
             for record in self.repository.list_resources(ACTION_RESOURCE_TYPE)
@@ -3344,6 +3424,97 @@ class CopilotAgentService:
         ]
         items.sort(key=lambda item: str(item.get("created_at") or ""))
         return items
+
+    def _normalize_guidance_only_pending_actions(self, session_id: str) -> None:
+        changed = False
+        remaining_pending = 0
+        handoff_artifacts: List[Dict[str, Any]] = []
+        for record in self.repository.list_resources(ACTION_RESOURCE_TYPE):
+            action_payload = dict(record.get("payload") or {})
+            if str(action_payload.get("session_id") or "") != session_id:
+                continue
+            if str(action_payload.get("status") or "") != "awaiting_confirmation":
+                continue
+            action_type = str(action_payload.get("action_type") or "")
+            if action_type not in GUIDANCE_ONLY_ACTION_TYPES:
+                remaining_pending += 1
+                continue
+            prepared_payload = action_payload_as_manual_handoff(action_payload)
+            self.repository.upsert_resource(
+                ACTION_RESOURCE_TYPE,
+                str(prepared_payload.get("action_id") or ""),
+                status="prepared",
+                name=prepared_payload.get("title"),
+                payload=prepared_payload,
+            )
+            self._retire_confirmation_request(prepared_payload)
+            handoff_artifacts.extend(prepared_payload.get("artifacts") or [])
+            self.repository.record_action(
+                "copilot_agent_action_guidance_retired_confirmation",
+                ACTION_RESOURCE_TYPE,
+                str(prepared_payload.get("action_id") or ""),
+                {
+                    "action_type": action_type,
+                    "parameters": prepared_payload.get("parameters") or {},
+                    "next_steps": (prepared_payload.get("result") or {}).get("next_steps") or [],
+                },
+            )
+            changed = True
+        if not changed:
+            return
+        self._sync_session_pending_confirmation_count(session_id)
+        self._append_session_latest_artifacts(session_id, handoff_artifacts)
+
+    def _append_session_latest_artifacts(self, session_id: str, artifacts: List[Dict[str, Any]]) -> None:
+        if not session_id or not artifacts:
+            return
+        session_payload = self._get_session_payload(session_id)
+        session_payload.update(
+            {
+                "latest_artifacts": dedupe_artifacts([*(session_payload.get("latest_artifacts") or []), *artifacts]),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status=session_payload.get("status") or "active", name=session_payload.get("title"), payload=session_payload)
+
+    def _sync_session_pending_confirmation_count(self, session_id: str) -> None:
+        if not session_id:
+            return
+        remaining_pending = sum(
+            1
+            for record in self.repository.list_resources(ACTION_RESOURCE_TYPE)
+            if str((record.get("payload") or {}).get("session_id") or "") == session_id
+            and str((record.get("payload") or {}).get("status") or "") == "awaiting_confirmation"
+        )
+        session_payload = self._get_session_payload(session_id)
+        next_status = session_payload.get("status") or "active"
+        if str(next_status) == "awaiting_confirmation" and remaining_pending == 0:
+            next_status = "active"
+        session_payload.update(
+            {
+                "status": next_status,
+                "pending_confirmation_count": remaining_pending,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        self.repository.upsert_resource(SESSION_RESOURCE_TYPE, session_id, status=session_payload["status"], name=session_payload.get("title"), payload=session_payload)
+
+    def _retire_confirmation_request(self, action_payload: Dict[str, Any]) -> None:
+        confirmation_id = str(action_payload.get("confirmation_id") or "")
+        if not confirmation_id:
+            return
+        confirmation_record = self.repository.get_resource(CONFIRMATION_RESOURCE_TYPE, confirmation_id)
+        if confirmation_record is None:
+            return
+        confirmation_payload = dict(confirmation_record.get("payload") or {})
+        confirmation_payload.update(
+            {
+                "status": "retired",
+                "retired_reason": "converted_to_module_handoff",
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        )
+        self.repository.upsert_resource(CONFIRMATION_RESOURCE_TYPE, confirmation_id, status="retired", name=confirmation_payload.get("title"), payload=confirmation_payload)
 
     def _get_session_payload(self, session_id: str) -> Dict[str, Any]:
         record = self.repository.get_resource(SESSION_RESOURCE_TYPE, session_id)
@@ -3364,6 +3535,92 @@ def ensure_permissions_for_action(action_type: str, context: GovernanceContext) 
     spec = ACTION_REGISTRY[action_type]
     for permission in spec.permissions:
         ensure_permission(context, permission)
+
+
+def manual_handoff_next_steps(action_type: str, parameters: Dict[str, Any]) -> List[str]:
+    if action_type == "remap_import":
+        return [
+            f"Open Data Core -> Imports and select import `{parameters.get('import_job_id')}`.",
+            "Review the mapping preview, then run reprocess from the import tools when ready.",
+        ]
+    if action_type == "send_push_dispatch":
+        return [
+            "Open Action Orchestrator -> Push Notifications.",
+            "Review the provider, audience, title, body, and deeplink before dispatching from the composer.",
+        ]
+    if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
+        return [
+            f"Open Action Orchestrator -> Workflow Studio or Email Campaigns and select campaign `{parameters.get('email_campaign_id')}`.",
+            "Review the campaign state, schedule, provider, and audience before using the module action button.",
+        ]
+    if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
+        return [
+            f"Open Action Orchestrator -> Workflow Studio and select workflow `{parameters.get('workflow_id')}`.",
+            "Review the workflow definition, trigger, channel, and diagnostics before using the module action button.",
+        ]
+    if action_type == "ingest_experiment_outcomes":
+        return [
+            f"Open Experiment Hub and select experiment `{parameters.get('experiment_id')}`.",
+            "Review the outcome payload, then ingest it from the experiment outcome tools.",
+        ]
+    if action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
+        return [
+            f"Open Audience Engine and select cohort `{parameters.get('cohort_id')}`.",
+            "Review membership, definition, and version history before applying the lifecycle action.",
+        ]
+    if action_type in {"start_experiment", "stop_experiment", "record_experiment_decision"}:
+        return [
+            f"Open Experiment Hub and select experiment `{parameters.get('experiment_id')}`.",
+            "Review the configuration, guardrails, and results before applying the experiment action.",
+        ]
+    return ["Open the relevant module, review the prepared values, and apply the action from the module UI."]
+
+
+def manual_handoff_summary(action_type: str, parameters: Dict[str, Any]) -> str:
+    title = ACTION_REGISTRY[action_type].title
+    if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
+        return f"I prepared `{title}` for campaign `{parameters.get('email_campaign_id')}` as a module handoff. I did not change the campaign."
+    if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
+        return f"I prepared `{title}` for workflow `{parameters.get('workflow_id')}` as a module handoff. I did not change the workflow."
+    if action_type == "remap_import":
+        return f"I prepared the mapping handoff for import `{parameters.get('import_job_id')}`. I did not reprocess the import."
+    if action_type == "send_push_dispatch":
+        return "I prepared the push dispatch handoff. I did not send the notification."
+    if action_type == "ingest_experiment_outcomes":
+        return f"I prepared the outcome-ingestion handoff for experiment `{parameters.get('experiment_id')}`. I did not ingest outcomes."
+    if action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
+        return f"I prepared `{title}` for cohort `{parameters.get('cohort_id')}` as a module handoff. I did not change the cohort."
+    if action_type in {"start_experiment", "stop_experiment", "record_experiment_decision"}:
+        return f"I prepared `{title}` for experiment `{parameters.get('experiment_id')}` as a module handoff. I did not change the experiment."
+    return f"I prepared `{title}` as a module handoff and did not execute it from chat."
+
+
+def action_payload_as_manual_handoff(action_payload: Dict[str, Any]) -> Dict[str, Any]:
+    action_type = str(action_payload.get("action_type") or "")
+    parameters = sanitize_action_parameters(dict(action_payload.get("parameters") or {}))
+    result = dict(action_payload.get("result") or {})
+    next_steps = list(result.get("next_steps") or manual_handoff_next_steps(action_type, parameters))
+    payload = {
+        **dict(action_payload),
+        "status": "prepared",
+        "requires_confirmation": False,
+        "parameters": parameters,
+        "result": {
+            **result,
+            "manual_handoff": True,
+            "next_steps": next_steps,
+            "parameters": parameters,
+        },
+        "summary": manual_handoff_summary(action_type, parameters),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    artifacts = [
+        item
+        for item in (payload.get("artifacts") or [])
+        if str(item.get("resource_type") or "") != "action_handoff"
+    ]
+    payload["artifacts"] = dedupe_artifacts([*artifacts, artifact_for_action_handoff(payload)])
+    return payload
 
 
 def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
@@ -3394,19 +3651,19 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
     if action_type == "save_experiment_config":
         return f"Save experiment `{parameters.get('experiment_id')}` in a non-running state."
     if action_type == "remap_import":
-        return f"Apply mapping to import `{parameters.get('import_job_id')}` and queue reprocessing after confirmation."
+        return f"Prepare mapping and reprocess next steps for import `{parameters.get('import_job_id')}` without running reprocess from chat."
     if action_type == "send_push_dispatch":
-        return "Send a one-time push notification after confirmation."
+        return "Prepare a one-time push dispatch handoff without sending from chat."
     if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
-        return f"Apply `{action_type}` to email campaign `{parameters.get('email_campaign_id')}` after confirmation."
+        return f"Prepare `{action_type}` next steps for email campaign `{parameters.get('email_campaign_id')}` without changing it from chat."
     if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
-        return f"Apply `{action_type}` to workflow `{parameters.get('workflow_id')}` after confirmation."
+        return f"Prepare `{action_type}` next steps for workflow `{parameters.get('workflow_id')}` without changing it from chat."
     if action_type == "ingest_experiment_outcomes":
-        return f"Ingest {len(parameters.get('outcomes') or [])} outcome(s) into experiment `{parameters.get('experiment_id')}`."
+        return f"Prepare {len(parameters.get('outcomes') or [])} outcome(s) for experiment `{parameters.get('experiment_id')}` without ingesting from chat."
     if action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
-        return f"Apply `{action_type}` to cohort `{parameters.get('cohort_id')}` after confirmation."
+        return f"Prepare `{action_type}` next steps for cohort `{parameters.get('cohort_id')}` without changing it from chat."
     if action_type in {"start_experiment", "stop_experiment", "record_experiment_decision"}:
-        return f"Apply `{action_type}` to experiment `{parameters.get('experiment_id')}` after confirmation."
+        return f"Prepare `{action_type}` next steps for experiment `{parameters.get('experiment_id')}` without changing it from chat."
     return "Execute the requested control-plane action."
 
 
@@ -3435,10 +3692,10 @@ def preview_summary(intent: str, clarifications: List[Dict[str, Any]], notes: Li
         return "Build the prediction-to-campaign draft flow with prediction, SQL, cohort, email campaign, and optional workflow steps."
     if intent == "setup_experiment":
         return "Save the experiment config in a non-running state and leave start as a separate confirmed action."
-    if intent in {"remap_import", "send_push_dispatch", "schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign", "publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
-        return "Prepare the requested live operation and hold it for explicit confirmation."
     if intent == "ingest_experiment_outcomes":
-        return "Record experiment outcomes through the agent while keeping the original outcome payload as an artifact-backed action result."
+        return "Prepare the outcome payload for module review without ingesting it from chat."
+    if intent in GUIDANCE_ONLY_ACTION_TYPES:
+        return "Prepare the requested live operation as a module handoff without executing it from chat."
     if notes:
         return notes[0]
     return "Prepare the requested control-plane change."
@@ -3927,6 +4184,45 @@ def artifact_for_push_dispatch(dispatch: Dict[str, Any]) -> Dict[str, Any]:
         "api_path": f"/api/v1/push-dispatches/{quote(dispatch_id)}" if dispatch_id else "",
         "focus": {"push_dispatch_id": dispatch_id},
         "status": str(dispatch.get("status") or ""),
+    }
+
+
+def artifact_for_action_handoff(action_payload: Dict[str, Any]) -> Dict[str, Any]:
+    action_type = str(action_payload.get("action_type") or "")
+    parameters = dict(action_payload.get("parameters") or {})
+    result = dict(action_payload.get("result") or {})
+    module_id = "action-orchestrator"
+    page_id = "action-orchestrator"
+    target_id = "workflow-studio-section"
+    if action_type == "send_push_dispatch":
+        target_id = "push-notifications-section"
+    elif action_type == "remap_import":
+        module_id = "data-core"
+        page_id = "data-sandbox"
+        target_id = "data-sandbox"
+    elif action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
+        module_id = "audience-engine"
+        page_id = "audience-engine"
+        target_id = "audience-engine-cohorts"
+    elif action_type in {"ingest_experiment_outcomes", "start_experiment", "stop_experiment", "record_experiment_decision"}:
+        module_id = "experiment-hub"
+        page_id = "experiment-hub"
+        target_id = "experiment-hub-summary"
+    return {
+        "resource_type": "action_handoff",
+        "resource_id": str(action_payload.get("action_id") or ""),
+        "label": str(action_payload.get("title") or ACTION_REGISTRY.get(action_type, AgentActionSpec(action_type=action_type, title="Action Handoff")).title),
+        "module_id": module_id,
+        "page_id": page_id,
+        "api_path": "",
+        "focus": {
+            "action_type": action_type,
+            "parameters": parameters,
+            "next_steps": result.get("next_steps") or manual_handoff_next_steps(action_type, parameters),
+            "target_id": target_id,
+        },
+        "status": "prepared",
+        "status_detail": str(action_payload.get("summary") or manual_handoff_summary(action_type, parameters)),
     }
 
 

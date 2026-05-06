@@ -49,7 +49,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and operate workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and hold live actions for confirmation. Open the collapsed advanced manual panels only when you need raw SQL, JSON payloads, member lists, or legacy direct tools.
+9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and prepare workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and prepare live actions as module handoffs without sending, publishing, deleting, or ingesting directly from chat. Open the collapsed advanced manual panels only when you need raw SQL, JSON payloads, member lists, or legacy direct tools.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
 ### 2.3 Deployment Surface Notes
@@ -596,7 +596,7 @@ Teams that keep warehouse credentials in Secret Manager can still use:
 ```
 
 ### 3.4 Mappings
-Use Ask AI or the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize. The prompt-first path can prepare mapping fixes and reprocessing for confirmation; the manual JSON editors remain collapsed under `Advanced JSON Editors`.
+Use Ask AI or the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize. The prompt-first path can prepare mapping fixes and reprocessing handoffs, but reprocessing itself is finished from the module UI; the manual JSON editors remain collapsed under `Advanced JSON Editors`.
 
 The Mapping Sandbox now keeps the page action-first: persistent helper paragraphs were removed, section-level guidance moved into `?` help beside the headings and labels, and each guided-field or saved-memory card exposes its detail through a per-card `?` tooltip instead of always-visible multi-line helper text.
 
@@ -1231,9 +1231,9 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Refresh` | Button | Reloads email campaigns, push workflows, and the selected detail panel. | None | The studio list and detail state refresh. |
-| `All` / `Email Campaigns` / `Push Workflows` / `Scheduled` / `Archived` | Filter buttons | Narrow the studio table to the relevant resource set. | `Scheduled` | Only scheduled email campaigns and published push workflows remain visible. |
+| `Scheduled` / `Sent` / `Archived` / `All` | Filter buttons | Narrow the studio table by operational state. | `Scheduled` | Scheduled email campaigns and published push workflows remain visible. |
 | `Name` | Table column | Read-only. Shows the resource name plus the underlying id. | `daily_churn_rescue_push` | Operators can identify the exact campaign or workflow record. |
-| `Type` | Table column | Read-only. Distinguishes `Email Campaign` from `Push Workflow`. | `Push Workflow` | The operator can see which builder to use for edits. |
+| `Channel` | Table column | Read-only. Shows whether the row is `Email` or `Push`. | `Push` | Operators can see the delivery channel without scanning provider details. |
 | `Provider` | Table column | Read-only. Shows SendGrid, Braze, Push Provider, simulator, or workflow channel fallback. | `Push Provider` | The delivery target is visible from the list. |
 | `Status` | Table column | Read-only. Shows draft, scheduled, published, paused, sent, failed, cancelled, or archived state. | `archived` | The lifecycle state is visible from the list. |
 | `Last Run` | Table column | Read-only. Uses workflow `runtime_summary.last_run_at` or campaign send timestamps. | `2026-03-10 10:15` | Operators can see the last live execution time. |
@@ -1244,18 +1244,19 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 | `Schedule Email Campaign` | Date/time picker | Visible only when an email campaign is selected. Sets the campaign schedule directly from Workflow Studio. | `2026-04-20 09:30` | The selected email campaign moves to `scheduled`. |
 | Email item `View` | Row or detail button | Loads the selected email campaign into the detail panel. | None | Campaign detail JSON appears. |
 | Email item `Edit` | Row or detail button | Opens the campaign in `Email Campaigns`. | None | The email builder loads the selected campaign. |
-| Email item `Schedule` | Row or detail button | Uses the detail-panel schedule picker to create or update `schedule_at`. | None | The email campaign becomes scheduled. |
-| Email item `Send Now` | Row or detail button | Executes the selected draft or scheduled campaign immediately. | None | Campaign runs and records result counts. |
-| Email item `Cancel` | Row or detail button | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
-| Email item `Delete` | Row or detail button | Deletes a draft campaign. | None | Draft campaign is removed. |
+| More actions | Row or detail menu | Keeps secondary actions behind `More` so each row shows only the two primary buttons. | None | `Schedule`, `Send Now`, `Cancel`, `Delete`, `Publish`, `Pause`, `Resume`, `Test Run`, and archive/delete actions appear only when relevant. |
+| Email item `Schedule` | More action | Uses the detail-panel schedule picker to create or update `schedule_at`. | None | The email campaign becomes scheduled. |
+| Email item `Send Now` | More action | Executes the selected draft or scheduled campaign immediately. | None | Campaign runs and records result counts. |
+| Email item `Cancel` | More action | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
+| Email item `Delete` | More action | Deletes a draft campaign. | None | Draft campaign is removed. |
 | Push item `View` | Row or detail button | Loads the selected workflow into the detail panel. | None | Workflow detail JSON appears. |
 | Push item `Edit` | Row or detail button | Opens the workflow in `Push Notifications`. | None | The push builder loads the selected workflow. |
-| Push item `Publish` | Row or detail button | Publishes a draft workflow after preflight checks. | None | Workflow status becomes `published`. |
-| Push item `Pause` | Row or detail button | Pauses a published workflow. | None | Workflow status becomes `paused`. |
-| Push item `Resume` | Row or detail button | Resumes a paused workflow. | None | Workflow status becomes `published`. |
-| Push item `Test Run` | Row or detail button | Runs the workflow in sandbox mode. | None | Test-run output appears in the runtime output panel and `last_test_run_at` updates after refresh. |
-| Push item `Archive` | Row or detail button | Archives a non-draft workflow so it remains visible but cannot run again. | None | Workflow status becomes `archived`. |
-| Push item `Delete` | Row or detail button | Deletes a draft workflow only. | None | Draft workflow is removed. |
+| Push item `Publish` | More action | Publishes a draft workflow after preflight checks. | None | Workflow status becomes `published`. |
+| Push item `Pause` | More action | Pauses a published workflow. | None | Workflow status becomes `paused`. |
+| Push item `Resume` | More action | Resumes a paused workflow. | None | Workflow status becomes `published`. |
+| Push item `Test Run` | More action | Runs the workflow in sandbox mode. | None | Test-run output appears in the runtime output panel and `last_test_run_at` updates after refresh. |
+| Push item `Archive` | More action | Archives a non-draft workflow so it remains visible but cannot run again. | None | Workflow status becomes `archived`. |
+| Push item `Delete` | More action | Deletes a draft workflow only. | None | Draft workflow is removed. |
 
 Workflow Studio behavior:
 - Archived workflows remain visible in the `Archived` filter and in historical detail views, but they are excluded from due-run execution, resume, publish, and test-run actions.
@@ -1445,12 +1446,11 @@ The assistant can:
 - reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
 - select an existing SendGrid template or Braze API campaign and create a draft email campaign
 - create a draft workflow linked to the cohort and optional email campaign
-- apply mapping updates and prepare import reprocessing
-- send one-time push dispatches
-- schedule, send, cancel, and delete email campaigns
-- publish, pause, resume, test-run, archive, and delete workflows
-- ingest experiment outcome payloads
-- stop high-risk actions at explicit confirmation
+- prepare mapping updates and import reprocessing handoffs
+- prepare one-time push dispatch handoffs without sending
+- prepare email campaign schedule, send, cancel, and delete handoffs without changing the campaign from chat
+- prepare workflow publish, pause, resume, test-run, archive, and delete handoffs without changing the workflow from chat
+- prepare experiment outcome payloads for module review without ingesting them from chat
 
 Credential setup stays outside chat history. Ask AI can initiate and guide connector/provider setup, but API keys, tokens, and BigQuery service account JSON are entered through a secure setup dialog. The secure dialog submits to the agent secure-input endpoint and the chat transcript records only that secure setup details were submitted.
 
@@ -1461,7 +1461,7 @@ The drawer behaves like a normal chat room:
 - reopening the drawer keeps the existing session usable while the transcript refreshes in the background
 - the user message appears immediately after send
 - the assistant shows a thinking animation until the answer or next required action is ready
-- inline clarification, confirmation, and artifact cards only when they are relevant
+- inline clarification, prepared handoff, and artifact cards only when they are relevant
 - no persistent side panels for agent workflow state
 
 The `Insight Copilot` page is now an AI Command Center with starter prompts. Its direct `Query`, `Explain`, `Recommend`, `Report`, and `Evidence & Logs` tools remain available only inside the collapsed `Advanced Manual Copilot Tools` panel.
@@ -1478,8 +1478,8 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 | Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | `Open Secure Setup` | Conditional button | Appears when a requested field is sensitive, such as API keys, tokens, or BigQuery service account JSON. Enter those values in the secure dialog instead of chat. | `service_account_json` | The secure endpoint receives the value, the agent merges it into pending setup slots, and the transcript does not contain the secret. |
-| Inline confirmation card | Conditional action card | Review high-risk actions that were prepared but not executed automatically. | `Start experiment` | A confirm button appears inline instead of auto-running the action. |
-| `Confirm Action` | Button | Explicitly approves a risky prepared action from the inline confirmation card. | None | The held action executes and the conversation updates. |
+| Prepared handoff card | Conditional action card | Review the next steps and sanitized values for a live action that Ask AI prepared but did not execute. | `Prepare push notification user_id: u_1 title: Winback body: Come back` | The card shows module next steps and an `Open Module` button instead of a confirmation button. |
+| `Open Module` | Button | Opens the relevant module and preloads the prepared values when the target UI supports it. | None | Push handoffs load into `Push Notifications`; email and workflow handoffs open `Workflow Studio`; mapping, cohort, and experiment handoffs open their review surfaces. |
 | Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Ask AI` on `Insight Copilot` | Button | Opens the same global assistant from the AI Command Center. | None | You keep the same session and return to the same drawer experience. |
@@ -1500,14 +1500,14 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 - `Set up a draft workflow`
 - `Set up the whole prediction -> cohort -> email campaign -> workflow flow`
 - `Fix mapping for import imp_...`
-- `Send push notification user_id: ... title: ... body: ...`
-- `Schedule email campaign ec_... schedule_at: ...`
-- `Send / cancel / delete email campaign ec_...`
-- `Publish / pause / resume / test run / archive / delete workflow wf_...`
-- `Ingest experiment outcomes for experiment id: ...`
+- `Prepare push notification user_id: ... title: ... body: ...`
+- `Prepare schedule for email campaign ec_... schedule_at: ...`
+- `Prepare send / cancel / delete handoffs for email campaign ec_...`
+- `Prepare publish / pause / resume / test run / archive / delete handoffs for workflow wf_...`
+- `Prepare experiment outcomes for experiment id: ...`
 - grounded product help such as `How do I use this page?`, `Where do I do X?`, `Give me a sample payload`, or `Why is this failing?`
 
-The v1 agent executes low-risk reads, drafts, previews, and safe setup actions automatically. Sends, publishes, starts, stops, deletes, archives, activation-style actions, mapping reprocesses, and other live/risky actions are held for explicit confirmation. The legacy direct REST endpoints remain available for compatibility; the primary UI now hides or collapses the manual/code-heavy path.
+The v1 agent executes low-risk reads, drafts, previews, and safe setup actions automatically. Sends, publishes, starts, stops, deletes, archives, activation-style actions, mapping reprocesses, outcome ingestion, and other live/risky actions become prepared module handoffs instead of chat confirmations. The legacy direct REST endpoints remain available for compatibility; the primary UI now hides or collapses the manual/code-heavy path.
 
 Prediction-backed flows are asynchronous. If the agent starts a fresh prediction job, the drawer stays on the same session, exposes the prediction job as an artifact, and waits for you to click `Continue` after the prediction completes.
 

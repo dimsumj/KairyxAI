@@ -16,7 +16,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 - Workflow lifecycle controls: archive for non-draft workflows and delete for draft workflows
 - Execution logs: send, fail, retry, skip reasons
 - Audience export jobs for Braze / SendGrid / Webhook, including export status, retry, and diagnostics
-- Safety mechanisms: manual confirmation, Kill Switch, budget thresholds, and frequency guardrails
+- Safety mechanisms: module-level review, Kill Switch, budget thresholds, and frequency guardrails
 - Shared studio summaries for `last_run_at`, `last_test_run_at`, `next_run_at`, `last_result`, and cumulative totals
 
 ### 2.2 Out of Scope
@@ -35,8 +35,9 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 - `Push Notifications` becomes the dedicated builder for provider-backed push workflows and simulator fallback
 - The push builder reuses the existing workflow contract with cohort, experiment, trigger, policy, provider connection, campaign name, title, body, deep link, deep-link token, JSON data, and provider options
 - `Workflow Studio` becomes the shared operating surface for email campaigns and push workflows
-- Workflow Studio shows `Name`, `Type`, `Provider`, `Status`, `Last Run`, `Next Run`, `Last Results`, `Total Results`, and actions
-- Workflow Studio provides filters for `All`, `Email Campaigns`, `Push Workflows`, `Scheduled`, and `Archived`
+- Workflow Studio shows `Name`, `Channel`, `Provider`, `Status`, `Last Run`, `Next Run`, `Last Results`, `Total Results`, and actions
+- Workflow Studio provides filters for `Scheduled`, `Sent`, `Archived`, and `All`
+- Workflow Studio rows keep `View` and `Edit` visible and collapse less common actions into `More`
 - Editing a push workflow reloads it into the `Push Notifications` builder and writes the next save as a new draft version on the same workflow resource
 - Non-draft workflows can be archived; only draft workflows can be deleted
 - Archived workflows remain visible for history and audit but cannot publish, resume, test-run, or execute on due-run
@@ -102,7 +103,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 - Cooldown window: minimum interval between similar actions
 - Blacklist / sensitive-audience exclusion
 - Kill Switch: one-click global stop for new sends
-- Manual confirmation for high-risk actions
+- Module-level review for high-risk actions prepared by Ask AI
 - Three-layer frequency policy (P0 mandatory):
   1. global cap per user per day
   2. per-channel cap for push/email
@@ -117,7 +118,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 ### DoD
 1. Frequency and cooldown rules are enforced by default
 2. Kill Switch takes effect within 1 minute
-3. High-risk actions always produce confirmation records
+3. High-risk Ask AI requests prepare module handoffs instead of executing from chat
 
 ---
 
@@ -233,7 +234,7 @@ Workflow response additions:
 ## 8. Current Gap Register (Based on the 2026-03 Repository State Review)
 
 ### 8.1 Already Implemented
-- Workflow, trigger, policy, budget, confirmation, and Kill Switch already exist
+- Workflow, trigger, policy, budget, module review, and Kill Switch already exist
 - Delivery diagnostics, provider callbacks, policy counters, and event/threshold triggers already exist
 - The minimal closed loop with Audience and Experiment is already connected
 - `audience export job` already exists as an independent `/api/v1/exports` resource with an `export-worker` entrypoint
@@ -300,4 +301,4 @@ Workflow response additions:
 3. `Credentials and Boundary Productionization`
    - Complete provider credentials, formal auth, environment isolation, and tenant boundaries
 4. `Outcome-Driven Policy Optimization`
-   - Gradually support rollout, retry, and policy-tuning recommendations with manual confirmation still required
+   - Gradually support rollout, retry, and policy-tuning recommendations with module review still required

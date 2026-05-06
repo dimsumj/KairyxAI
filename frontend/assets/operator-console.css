@@ -940,12 +940,44 @@
         .table-actions {
             display: flex;
             flex-wrap: wrap;
+            align-items: flex-start;
             gap: 0.5rem;
         }
 
         .table-actions button {
             padding: 0.45rem 0.75rem;
             font-size: 0.8rem;
+        }
+
+        .table-action-more {
+            display: inline-block;
+        }
+
+        .table-action-more summary {
+            list-style: none;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.45rem 0.75rem;
+            font-size: 0.8rem;
+            line-height: 1;
+            background: var(--white);
+            color: var(--main-text);
+        }
+
+        .table-action-more summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .table-action-more-menu {
+            display: grid;
+            gap: 0.4rem;
+            margin-top: 0.45rem;
+            min-width: 7.5rem;
+        }
+
+        .table-action-more-menu button {
+            width: 100%;
         }
 
         .help-card ul,

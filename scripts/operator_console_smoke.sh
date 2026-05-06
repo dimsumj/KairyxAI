@@ -369,6 +369,20 @@ assert_email_campaign_ui() {
     await orchestratorLink.first().click();
     await page.waitForTimeout(700);
 
+    const workflowFilters = await page.locator('#workflow-studio-filters [data-workflow-studio-filter]').evaluateAll((elements) => elements.map((element) => ({
+      filter: element.getAttribute('data-workflow-studio-filter'),
+      text: element.textContent.trim(),
+      active: element.classList.contains('active'),
+    })));
+    const expectedWorkflowFilters = ['scheduled:Scheduled', 'sent:Sent', 'archived:Archived', 'all:All'];
+    const actualWorkflowFilters = workflowFilters.map((item) => `${item.filter}:${item.text}`);
+    if (JSON.stringify(actualWorkflowFilters) !== JSON.stringify(expectedWorkflowFilters)) {
+      throw new Error(`Unexpected Workflow Studio filters: ${actualWorkflowFilters.join(', ')}`);
+    }
+    if (workflowFilters.find((item) => item.filter === 'email_campaign' || item.filter === 'workflow')) {
+      throw new Error('Workflow Studio still exposes type-specific filter tabs');
+    }
+
     const campaignProviderType = page.locator('#email-campaign-provider-type-select');
     const campaignProvider = page.locator('#email-campaign-provider-select');
     const campaignTemplate = page.locator('#email-campaign-template-select');
@@ -537,10 +551,19 @@ exercise_copilot_agent() {
     await sendButton.click();
     await page.waitForTimeout(900);
 
-    const confirmations = await page.locator('#copilot-agent-thread').textContent() || '';
+    const pushHandoff = await page.locator('#copilot-agent-thread').textContent() || '';
     const confirmationButton = page.locator('[data-copilot-agent-confirm]');
-    if (!confirmations.toLowerCase().includes('one-time push') || await confirmationButton.count() === 0) {
-      throw new Error('Expected pending confirmation for push send');
+    const handoffButton = page.locator('[data-copilot-agent-handoff-index]');
+    if (!pushHandoff.toLowerCase().includes('did not send') || await confirmationButton.count() !== 0 || await handoffButton.count() === 0) {
+      throw new Error('Expected push handoff without a chat confirmation button');
+    }
+    await handoffButton.first().click();
+    await page.waitForTimeout(700);
+    const preparedPushTitle = await page.locator('#push-dispatch-title-input').inputValue();
+    const preparedPushBody = await page.locator('#push-dispatch-body-input').inputValue();
+    const preparedPushUserIds = await page.locator('#push-dispatch-user-id-input').inputValue();
+    if (preparedPushTitle !== 'Smoke' || preparedPushBody !== 'Test message' || !preparedPushUserIds.includes('smoke_user')) {
+      throw new Error('Prepared push handoff did not load into Push Notifications');
     }
 
     const closeDrawerButton = page.locator('#copilot-agent-close-btn');
@@ -556,10 +579,10 @@ exercise_copilot_agent() {
     await launcher.first().click();
     await page.waitForTimeout(500);
 
-    const persistedConfirmations = await page.locator('#copilot-agent-thread').textContent() || '';
+    const persistedPushHandoff = await page.locator('#copilot-agent-thread').textContent() || '';
     const persistedConfirmationButton = page.locator('[data-copilot-agent-confirm]');
-    if (!persistedConfirmations.toLowerCase().includes('one-time push') || await persistedConfirmationButton.count() === 0) {
-      throw new Error('Expected pending confirmation to persist across navigation');
+    if (!persistedPushHandoff.toLowerCase().includes('did not send') || await persistedConfirmationButton.count() !== 0) {
+      throw new Error('Expected push handoff to persist without a chat confirmation button');
     }
 
     return {
@@ -568,8 +591,8 @@ exercise_copilot_agent() {
       threadAfterHelp,
       clarifications,
       artifacts,
-      confirmations,
-      persistedConfirmations,
+      pushHandoff,
+      persistedPushHandoff,
     };
   }"
 }

@@ -760,7 +760,7 @@
                 </div>
                 <div class="ai-starter-actions">
                     <button type="button" data-agent-starter-message="Connect a BigQuery data source and open the secure credential dialog.">Connect Data</button>
-                    <button type="button" data-agent-starter-message="Fix the selected import mapping, preview it, and prepare reprocessing for confirmation.">Fix Mapping</button>
+                    <button type="button" data-agent-starter-message="Fix the selected import mapping, preview it, and prepare reprocessing for module review.">Fix Mapping</button>
                     <button type="button" data-agent-starter-message="Summarize data health, blocked imports, and mapping diagnostics.">Inspect Diagnostics</button>
                 </div>
             </div>
@@ -1229,12 +1229,12 @@ WHERE predicted_churn_risk = 'high'
             <div class="ai-starter-panel" data-ai-command-center="action-orchestrator">
                 <div>
                     <h2>Ask AI For Actions</h2>
-                    <p class="subtle">Build, schedule, send, publish, pause, and test operator actions through confirmation-gated prompts.</p>
+                    <p class="subtle">Build drafts, prepare schedules, and review operator actions through AI-guided handoffs.</p>
                 </div>
                 <div class="ai-starter-actions">
                     <button type="button" data-agent-starter-message="Build a SendGrid campaign for the selected high-risk cohort and leave it in draft.">Build Campaign</button>
                     <button type="button" data-agent-starter-message="Create a draft workflow for the selected cohort and leave it in draft.">Create Workflow</button>
-                    <button type="button" data-agent-starter-message="Send a one-time push notification after previewing the action and asking for confirmation.">Send Push</button>
+                    <button type="button" data-agent-starter-message="Prepare a one-time push notification for module review without sending it from chat.">Prepare Push</button>
                 </div>
             </div>
             <div id="email-campaigns-section" class="card">
@@ -1666,11 +1666,10 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                 </div>
                 <div class="inline-actions" id="workflow-studio-filters" style="margin-bottom: 1rem;">
-                    <button type="button" data-workflow-studio-filter="all">All</button>
-                    <button type="button" data-workflow-studio-filter="email_campaign">Email Campaigns</button>
-                    <button type="button" data-workflow-studio-filter="workflow">Push Workflows</button>
                     <button type="button" data-workflow-studio-filter="scheduled">Scheduled</button>
+                    <button type="button" data-workflow-studio-filter="sent">Sent</button>
                     <button type="button" data-workflow-studio-filter="archived">Archived</button>
+                    <button type="button" data-workflow-studio-filter="all">All</button>
                 </div>
                 <div id="workflow-studio-list"></div>
             </div>
@@ -1776,7 +1775,7 @@ WHERE predicted_churn_risk = 'high'
             <div class="ai-starter-panel" data-ai-command-center="experiment-hub">
                 <div>
                     <h2>Ask AI For Experiments</h2>
-                    <p class="subtle">Configure tests, summarize integrity, start or stop runs with confirmation, and ingest outcomes from prompts.</p>
+                    <p class="subtle">Configure tests, summarize integrity, and prepare run or outcome handoffs from prompts.</p>
                 </div>
                 <div class="ai-starter-actions">
                     <button type="button" data-agent-starter-message="Configure an A/B experiment for the selected cohort with return_rate as the primary metric.">Configure Experiment</button>
@@ -1900,13 +1899,13 @@ WHERE predicted_churn_risk = 'high'
                 <div class="ai-command-center-copy">
                     <span class="pill">Primary Workflow</span>
                     <h2>AI Command Center</h2>
-                    <p class="subtle">Ask AI creates plans, previews execution, opens artifacts, collects confirmations, and keeps evidence in the session history. Credential prompts open secure setup dialogs instead of chat.</p>
+                    <p class="subtle">Ask AI creates plans, previews setup, opens artifacts, and keeps evidence in the session history. Credential prompts open secure setup dialogs instead of chat.</p>
                 </div>
                 <div class="ai-starter-actions">
                     <button id="copilot-open-global-agent-btn" type="button">Open Ask AI</button>
                     <button type="button" data-agent-starter-message="Summarize the dashboard, current risks, blocked imports, active experiments, and recommended next steps.">Summarize Health</button>
                     <button type="button" data-agent-starter-message="Inspect diagnostics across data, audiences, workflows, experiments, and recent Copilot reports.">Inspect Diagnostics</button>
-                    <button type="button" data-agent-starter-message="Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation.">Build Workflow</button>
+                    <button type="button" data-agent-starter-message="Build the next prediction-to-campaign workflow as drafts and leave live actions for module review.">Build Workflow</button>
                 </div>
             </div>
             <details id="copilot-manual-tools-panel" class="builder-advanced-panel copilot-manual-tools-panel">

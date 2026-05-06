@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.application.cohorts import CohortService
-from app.application.copilot_agent import deterministic_agent_parse
+from app.application.copilot_agent import ACTION_RESOURCE_TYPE, CONFIRMATION_RESOURCE_TYPE, deterministic_agent_parse
 from app.core import db as db_module
 from app.core.db import session_scope
 from app.main import create_app
@@ -418,20 +418,20 @@ def test_copilot_agent_secure_inputs_create_bigquery_and_push_provider_without_c
     ("message", "expected_intent"),
     [
         ("Connect a BigQuery data source and open the secure credential dialog.", "setup_connection"),
-        ("Fix the selected import mapping, preview it, and prepare reprocessing for confirmation.", "remap_import"),
+        ("Fix the selected import mapping, preview it, and prepare reprocessing for module review.", "remap_import"),
         ("Summarize data health, blocked imports, and mapping diagnostics.", "summarize_dashboard"),
         ("Create a cohort for high-risk winback users from the latest completed prediction runs.", "setup_cohort"),
         ("Draft SQL for high-risk users with canonical_user_id and email, then preview it.", "draft_sql_from_prompt"),
         ("Draft the audience builder state for high-risk churn rescue users and show the preview.", "draft_audience_builder"),
         ("Build a SendGrid campaign for the selected high-risk cohort and leave it in draft.", "setup_email_campaign"),
         ("Create a draft workflow for the selected cohort and leave it in draft.", "setup_workflow"),
-        ("Send a one-time push notification after previewing the action and asking for confirmation.", "send_push_dispatch"),
+        ("Prepare a one-time push notification for module review without sending it from chat.", "send_push_dispatch"),
         ("Configure an A/B experiment for the selected cohort with return_rate as the primary metric.", "setup_experiment"),
         ("Summarize experiment health, guardrails, measurement gaps, and rollout diagnostics.", "summarize_dashboard"),
         ("Ingest experiment outcomes for the selected experiment from an outcomes JSON payload.", "ingest_experiment_outcomes"),
         ("Summarize the dashboard, current risks, blocked imports, active experiments, and recommended next steps.", "summarize_dashboard"),
         ("Inspect diagnostics across data, audiences, workflows, experiments, and recent Copilot reports.", "summarize_dashboard"),
-        ("Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation.", "setup_operator_flow"),
+        ("Build the next prediction-to-campaign workflow as drafts and leave live actions for module review.", "setup_operator_flow"),
     ],
 )
 def test_copilot_agent_primary_starter_prompts_route_to_expected_intents(client, message, expected_intent):
@@ -464,7 +464,7 @@ def test_copilot_agent_primary_starter_prompt_slots_are_safe_for_campaign_and_wo
     assert "template_id" not in campaign_parse["slots"]
     assert campaign_parse["slots"].get("messaging_provider") == "sendgrid"
 
-    workflow_prompt = "Build the next prediction-to-campaign workflow as drafts and hold live actions for confirmation."
+    workflow_prompt = "Build the next prediction-to-campaign workflow as drafts and leave live actions for module review."
     workflow_parse = deterministic_agent_parse(workflow_prompt, ui_context={})
     assert workflow_parse["intent"] == "setup_operator_flow"
     assert workflow_parse["slots"]["wants_email_campaign"] is True
@@ -500,9 +500,20 @@ def test_copilot_agent_prediction_to_campaign_questions_stay_read_only(client, m
     assert payload["pending_confirmations"] == []
 
 
-def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmation_gates(client):
+def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_handoffs(client):
     headers = _headers("operator", actor_id="agent_operator")
     session_id = _create_session(client, headers, title="Manual Flow Agent Session")
+
+    def assert_guidance_handoff(payload, expected_action):
+        assert payload["session_state"]["status"] == "active"
+        assert payload["pending_confirmations"] == []
+        action = next(item for item in payload["completed_actions"] if item["action_type"] == expected_action)
+        assert action["status"] == "prepared"
+        assert action["requires_confirmation"] is False
+        assert action["result"]["manual_handoff"] is True
+        assert action["result"]["next_steps"]
+        assert action["artifacts"][0]["resource_type"] == "action_handoff"
+        return action
 
     mapping_turn = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -514,8 +525,7 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmati
     )
     assert mapping_turn.status_code == 200
     mapping_payload = mapping_turn.json()
-    assert mapping_payload["session_state"]["status"] == "awaiting_confirmation"
-    assert mapping_payload["pending_confirmations"][0]["action_type"] == "remap_import"
+    assert_guidance_handoff(mapping_payload, "remap_import")
 
     push_turn = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -527,17 +537,7 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmati
     )
     assert push_turn.status_code == 200
     push_payload = push_turn.json()
-    push_action = next(item for item in push_payload["pending_confirmations"] if item["action_type"] == "send_push_dispatch")
-    push_action_id = push_action["action_id"]
-
-    confirmed_push = client.post(
-        f"/api/v1/copilot/agent/actions/{push_action_id}/confirm",
-        headers=headers,
-        json={"note": "Approved simulator push."},
-    )
-    assert confirmed_push.status_code == 200, confirmed_push.text
-    assert confirmed_push.json()["completed_actions"][0]["action_type"] == "send_push_dispatch"
-    assert confirmed_push.json()["completed_actions"][0]["status"] == "completed"
+    assert_guidance_handoff(push_payload, "send_push_dispatch")
 
     for message, expected_action in [
         ("Schedule email campaign ec_agentmanual1 schedule_at: 2026-05-05T10:00:00Z", "schedule_email_campaign"),
@@ -558,8 +558,7 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmati
         )
         assert response.status_code == 200
         payload = response.json()
-        assert payload["session_state"]["status"] == "awaiting_confirmation"
-        assert any(item["action_type"] == expected_action for item in payload["pending_confirmations"])
+        assert_guidance_handoff(payload, expected_action)
 
     outcomes_turn = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -576,9 +575,7 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_and_confirmati
     )
     assert outcomes_turn.status_code == 200
     outcomes_payload = outcomes_turn.json()
-    assert outcomes_payload["completed_actions"][0]["action_type"] == "ingest_experiment_outcomes"
-    assert outcomes_payload["completed_actions"][0]["status"] == "completed"
-    assert outcomes_payload["completed_actions"][0]["result"]["experiment_outcomes"]["ingested"] == 1
+    assert_guidance_handoff(outcomes_payload, "ingest_experiment_outcomes")
 
 
 def test_copilot_agent_support_answers_with_page_context_and_samples(client):
@@ -684,6 +681,123 @@ def test_copilot_agent_creates_sql_cohort_and_disabled_experiment(client):
     assert experiment["b_variant_pct"] == 0.4
 
 
+def test_copilot_agent_retires_legacy_pending_confirmation_as_handoff(client):
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title="Legacy Confirmation Session")
+    action_id = "cpaa_legacy_pending"
+    confirmation_id = "cpac_legacy_pending"
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        action_payload = {
+            "action_id": action_id,
+            "session_id": session_id,
+            "action_type": "send_push_dispatch",
+            "title": "Send one-time push",
+            "status": "awaiting_confirmation",
+            "requires_confirmation": True,
+            "risk_level": "high",
+            "parameters": {
+                "user_id": "legacy_user",
+                "title": "Legacy",
+                "body": "Review this message",
+            },
+            "result": {},
+            "summary": "Waiting for confirmation.",
+            "artifacts": [],
+            "confirmation_id": confirmation_id,
+            "confirmation_note": "",
+            "is_async": False,
+            "status_detail": "",
+            "created_at": "2026-05-05T10:00:00",
+            "updated_at": "2026-05-05T10:00:00",
+        }
+        repository.upsert_resource(ACTION_RESOURCE_TYPE, action_id, status="awaiting_confirmation", name="Send one-time push", payload=action_payload)
+        repository.upsert_resource(
+            CONFIRMATION_RESOURCE_TYPE,
+            confirmation_id,
+            status="pending",
+            name="Send one-time push",
+            payload={"confirmation_id": confirmation_id, "session_id": session_id, "action_id": action_id, "status": "pending"},
+        )
+        session.commit()
+
+    session_payload = client.get(f"/api/v1/copilot/agent/sessions/{session_id}", headers=headers)
+    assert session_payload.status_code == 200
+    assert session_payload.json()["pending_confirmations"] == []
+    assert session_payload.json()["session_state"]["pending_confirmation_count"] == 0
+    assert session_payload.json()["session_state"]["latest_artifacts"][0]["resource_type"] == "action_handoff"
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        action = repository.get_resource(ACTION_RESOURCE_TYPE, action_id)["payload"]
+        confirmation = repository.get_resource(CONFIRMATION_RESOURCE_TYPE, confirmation_id)["payload"]
+    assert action["status"] == "prepared"
+    assert action["requires_confirmation"] is False
+    assert action["result"]["manual_handoff"] is True
+    assert action["artifacts"][0]["resource_type"] == "action_handoff"
+    assert confirmation["status"] == "retired"
+
+    confirm_response = client.post(
+        f"/api/v1/copilot/agent/actions/{action_id}/confirm",
+        headers=headers,
+        json={"note": "Try old confirm path."},
+    )
+    assert confirm_response.status_code == 409
+    assert "module handoff" in confirm_response.json()["detail"]
+
+
+def test_copilot_agent_confirm_path_retires_legacy_handoff_with_session_artifact(client):
+    headers = _headers("operator", actor_id="agent_operator")
+    session_id = _create_session(client, headers, title="Legacy Confirm Path Session")
+    action_id = "cpaa_legacy_confirm_path"
+    confirmation_id = "cpac_legacy_confirm_path"
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        action_payload = {
+            "action_id": action_id,
+            "session_id": session_id,
+            "action_type": "send_push_dispatch",
+            "title": "Send one-time push",
+            "status": "awaiting_confirmation",
+            "requires_confirmation": True,
+            "risk_level": "high",
+            "parameters": {"user_id": "legacy_user", "title": "Legacy", "body": "Review this message"},
+            "result": {},
+            "summary": "Waiting for confirmation.",
+            "artifacts": [],
+            "confirmation_id": confirmation_id,
+            "confirmation_note": "",
+            "is_async": False,
+            "status_detail": "",
+            "created_at": "2026-05-05T10:00:00",
+            "updated_at": "2026-05-05T10:00:00",
+        }
+        repository.upsert_resource(ACTION_RESOURCE_TYPE, action_id, status="awaiting_confirmation", name="Send one-time push", payload=action_payload)
+        repository.upsert_resource(
+            CONFIRMATION_RESOURCE_TYPE,
+            confirmation_id,
+            status="pending",
+            name="Send one-time push",
+            payload={"confirmation_id": confirmation_id, "session_id": session_id, "action_id": action_id, "status": "pending"},
+        )
+        session.commit()
+
+    confirm_response = client.post(
+        f"/api/v1/copilot/agent/actions/{action_id}/confirm",
+        headers=headers,
+        json={"note": "Try old confirm path first."},
+    )
+    assert confirm_response.status_code == 409
+
+    session_payload = client.get(f"/api/v1/copilot/agent/sessions/{session_id}", headers=headers)
+    assert session_payload.status_code == 200
+    assert session_payload.json()["pending_confirmations"] == []
+    assert session_payload.json()["session_state"]["latest_artifacts"][0]["resource_type"] == "action_handoff"
+    assert session_payload.json()["session_state"]["latest_artifacts"][0]["focus"]["parameters"]["body"] == "Review this message"
+
+
 def test_copilot_agent_drafts_audience_builder_state_artifact(client):
     headers = _headers("operator", actor_id="agent_builder_operator")
     _seed_completed_prediction_job(
@@ -743,9 +857,9 @@ def test_copilot_agent_drafts_audience_builder_state_artifact(client):
     assert builder_state["preview"]["member_count"] == 2
 
 
-def test_copilot_agent_confirmation_gate_for_risky_action(client):
+def test_copilot_agent_guidance_handoff_for_risky_action(client):
     headers = _headers("operator", actor_id="agent_operator")
-    session_id = _create_session(client, headers, title="Agent Confirmation Session")
+    session_id = _create_session(client, headers, title="Agent Handoff Session")
 
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
@@ -759,30 +873,25 @@ def test_copilot_agent_confirmation_gate_for_risky_action(client):
         session.commit()
     cohort_id = cohort["cohort_id"]
 
-    pending = client.post(
+    handoff = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
         headers=headers,
         json={"message": f"Activate cohort {cohort_id}", "ui_context": {}},
     )
-    assert pending.status_code == 200
-    pending_payload = pending.json()
-    assert pending_payload["session_state"]["status"] == "awaiting_confirmation"
-    assert pending_payload["pending_confirmations"][0]["action_type"] == "activate_cohort"
-    action_id = pending_payload["pending_confirmations"][0]["action_id"]
-
-    confirmed = client.post(
-        f"/api/v1/copilot/agent/actions/{action_id}/confirm",
-        headers=headers,
-        json={"note": "Approved for activation."},
-    )
-    assert confirmed.status_code == 200
-    confirmed_payload = confirmed.json()
-    assert confirmed_payload["completed_actions"][0]["action_type"] == "activate_cohort"
-    assert confirmed_payload["completed_actions"][0]["status"] == "completed"
+    assert handoff.status_code == 200
+    handoff_payload = handoff.json()
+    assert handoff_payload["session_state"]["status"] == "active"
+    assert handoff_payload["pending_confirmations"] == []
+    action = handoff_payload["completed_actions"][0]
+    assert action["action_type"] == "activate_cohort"
+    assert action["status"] == "prepared"
+    assert action["requires_confirmation"] is False
+    assert action["result"]["manual_handoff"] is True
+    assert "did not change the cohort" in handoff_payload["assistant_message"]
 
     cohort_detail = client.get(f"/api/v1/cohorts/{cohort_id}", headers=headers)
     assert cohort_detail.status_code == 200
-    assert cohort_detail.json()["status"] == "active"
+    assert cohort_detail.json()["status"] == "draft"
 
 
 def test_copilot_agent_blocks_write_for_analyst_and_scopes_sessions_by_project(client):

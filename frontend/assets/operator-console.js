@@ -10896,7 +10896,7 @@ export function initializeOperatorConsole() {
             let audienceBuilderConnectorTables = [];
             let selectedWorkflowId = null;
             let selectedWorkflowBuilderId = null;
-            let selectedWorkflowStudioType = 'all';
+            let selectedWorkflowStudioType = 'scheduled';
             let selectedWorkflowStudioResourceType = null;
             let selectedWorkflowStudioResourceId = null;
             let selectedTemplateId = null;
@@ -12744,6 +12744,25 @@ export function initializeOperatorConsole() {
                 });
             }
 
+            function renderTableActionMenu(buttons = []) {
+                const validButtons = buttons.filter(Boolean);
+                if (!validButtons.length) {
+                    return '';
+                }
+                return `
+                    <details class="table-action-more">
+                        <summary>More</summary>
+                        <div class="table-action-more-menu">
+                            ${validButtons.join('')}
+                        </div>
+                    </details>
+                `;
+            }
+
+            function renderEmailCampaignActionButton(action, campaignId, label) {
+                return `<button type="button" data-email-campaign-action="${escapeHtml(action)}" data-email-campaign-id="${escapeHtml(campaignId)}">${escapeHtml(label)}</button>`;
+            }
+
             function renderEmailCampaignLists(items = cachedEmailCampaigns) {
                 const campaigns = Array.isArray(items) ? items : [];
                 const upcomingItems = campaigns.filter((item) => ['draft', 'scheduled'].includes(String(item.status || '').toLowerCase()));
@@ -12760,13 +12779,20 @@ export function initializeOperatorConsole() {
                             label: 'Actions',
                             render: (item) => {
                                 const status = String(item.status || '').toLowerCase();
+                                const campaignId = item.email_campaign_id;
+                                const visibleButtons = [
+                                    renderEmailCampaignActionButton('edit', campaignId, 'Edit'),
+                                    renderEmailCampaignActionButton('send-now', campaignId, 'Send Now'),
+                                ];
+                                const moreButtons = [
+                                    status === 'scheduled'
+                                        ? renderEmailCampaignActionButton('cancel', campaignId, 'Cancel')
+                                        : renderEmailCampaignActionButton('delete', campaignId, 'Delete'),
+                                ];
                                 return `
                                     <div class="table-actions">
-                                        <button type="button" data-email-campaign-action="edit" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Edit</button>
-                                        <button type="button" data-email-campaign-action="send-now" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Send Now</button>
-                                        ${status === 'scheduled'
-                                            ? `<button type="button" data-email-campaign-action="cancel" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Cancel</button>`
-                                            : `<button type="button" data-email-campaign-action="delete" data-email-campaign-id="${escapeHtml(item.email_campaign_id)}">Delete</button>`}
+                                        ${visibleButtons.join('')}
+                                        ${renderTableActionMenu(moreButtons)}
                                     </div>
                                 `;
                             },
@@ -14119,14 +14145,14 @@ export function initializeOperatorConsole() {
             function getFilteredWorkflowStudioItems() {
                 const filter = String(selectedWorkflowStudioType || 'all').trim().toLowerCase() || 'all';
                 const items = getWorkflowStudioItems();
-                if (filter === 'email_campaign') {
-                    return items.filter((item) => item.studio_type === 'email_campaign');
-                }
-                if (filter === 'workflow') {
-                    return items.filter((item) => item.studio_type === 'workflow');
-                }
                 if (filter === 'scheduled') {
                     return items.filter((item) => ['scheduled', 'published'].includes(String(item.status || '').toLowerCase()));
+                }
+                if (filter === 'sent') {
+                    return items.filter((item) => {
+                        const status = String(item.status || '').toLowerCase();
+                        return ['sent', 'sent_with_errors', 'failed'].includes(status) || Boolean(item.last_run_at);
+                    });
                 }
                 if (filter === 'archived') {
                     return items.filter((item) => String(item.status || '').toLowerCase() === 'archived');
@@ -14142,15 +14168,15 @@ export function initializeOperatorConsole() {
                 });
             }
 
-            function formatWorkflowStudioType(item) {
+            function formatWorkflowStudioChannel(item) {
                 if (item.studio_type === 'email_campaign') {
-                    return 'Email Campaign';
+                    return 'Email';
                 }
                 const channel = String(((item.resource || {}).channel_config || {}).channel || '').trim().toLowerCase();
                 if (channel === 'email') {
-                    return 'Email Workflow';
+                    return 'Email';
                 }
-                return 'Push Workflow';
+                return 'Push';
             }
 
             function formatWorkflowStudioLastResults(item) {
@@ -14171,36 +14197,48 @@ export function initializeOperatorConsole() {
                 return `runs ${totals.runs || 0} · success ${totals.success || 0}`;
             }
 
+            function renderWorkflowStudioActionButton(item, action, label) {
+                return `<button type="button" data-workflow-studio-action="${escapeHtml(action)}" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">${escapeHtml(label)}</button>`;
+            }
+
             function renderWorkflowStudioActions(item) {
                 const status = String(item.status || '').toLowerCase();
+                const visibleButtons = [
+                    renderWorkflowStudioActionButton(item, 'view', 'View'),
+                    renderWorkflowStudioActionButton(item, 'edit', 'Edit'),
+                ];
                 if (item.studio_type === 'email_campaign') {
+                    const moreButtons = [
+                        status !== 'scheduled' ? renderWorkflowStudioActionButton(item, 'schedule', 'Schedule') : '',
+                        ['draft', 'scheduled'].includes(status) ? renderWorkflowStudioActionButton(item, 'send-now', 'Send Now') : '',
+                        status === 'scheduled'
+                            ? renderWorkflowStudioActionButton(item, 'cancel', 'Cancel')
+                            : status === 'draft'
+                                ? renderWorkflowStudioActionButton(item, 'delete', 'Delete')
+                                : '',
+                    ];
                     return `
                         <div class="table-actions">
-                            <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
-                            <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
-                            ${status !== 'scheduled' ? `<button type="button" data-workflow-studio-action="schedule" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Schedule</button>` : ''}
-                            ${['draft', 'scheduled'].includes(status) ? `<button type="button" data-workflow-studio-action="send-now" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Send Now</button>` : ''}
-                            ${status === 'scheduled'
-                                ? `<button type="button" data-workflow-studio-action="cancel" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Cancel</button>`
-                                : status === 'draft'
-                                    ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
-                                    : ''}
+                            ${visibleButtons.join('')}
+                            ${renderTableActionMenu(moreButtons)}
                         </div>
                     `;
                 }
+                const moreButtons = [
+                    status === 'draft' ? renderWorkflowStudioActionButton(item, 'publish', 'Publish') : '',
+                    status === 'published' ? renderWorkflowStudioActionButton(item, 'pause', 'Pause') : '',
+                    status === 'paused' ? renderWorkflowStudioActionButton(item, 'resume', 'Resume') : '',
+                    status !== 'archived' ? renderWorkflowStudioActionButton(item, 'test-run', 'Test Run') : '',
+                    status === 'draft'
+                        ? renderWorkflowStudioActionButton(item, 'delete', 'Delete')
+                        : status !== 'archived'
+                            ? renderWorkflowStudioActionButton(item, 'archive', 'Archive')
+                            : '',
+                ];
                 return `
                     <div class="table-actions">
-                        <button type="button" data-workflow-studio-action="view" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">View</button>
-                        <button type="button" data-workflow-studio-action="edit" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Edit</button>
-                        ${status === 'draft' ? `<button type="button" data-workflow-studio-action="publish" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Publish</button>` : ''}
-                        ${status === 'published' ? `<button type="button" data-workflow-studio-action="pause" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Pause</button>` : ''}
-                        ${status === 'paused' ? `<button type="button" data-workflow-studio-action="resume" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Resume</button>` : ''}
-                        ${status !== 'archived' ? `<button type="button" data-workflow-studio-action="test-run" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Test Run</button>` : ''}
-                        ${status === 'draft'
-                            ? `<button type="button" data-workflow-studio-action="delete" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Delete</button>`
-                            : status !== 'archived'
-                                ? `<button type="button" data-workflow-studio-action="archive" data-workflow-studio-type="${escapeHtml(item.studio_type)}" data-workflow-studio-id="${escapeHtml(item.studio_id)}">Archive</button>`
-                                : ''}
+                        ${visibleButtons.join('')}
+                        ${renderTableActionMenu(moreButtons)}
                     </div>
                 `;
             }
@@ -14212,7 +14250,7 @@ export function initializeOperatorConsole() {
                     workflowStudioList,
                     [
                         { label: 'Name', render: (item) => `<strong>${escapeHtml(item.name || '-')}</strong><div class="subtle">${escapeHtml(item.studio_id || '-')}</div>` },
-                        { label: 'Type', render: (item) => `<span class="pill">${escapeHtml(formatWorkflowStudioType(item))}</span>` },
+                        { label: 'Channel', render: (item) => `<span class="pill">${escapeHtml(formatWorkflowStudioChannel(item))}</span>` },
                         { label: 'Provider', render: (item) => `<span class="pill">${escapeHtml(formatConnectorLabel(item.provider || '-'))}</span>` },
                         { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(String(item.status || '-').replace(/[_-]+/g, ' '))}</span>` },
                         { label: 'Last Run', render: (item) => escapeHtml(formatDateTime(item.last_run_at)) },
@@ -14222,7 +14260,13 @@ export function initializeOperatorConsole() {
                         { label: 'Actions', render: (item) => renderWorkflowStudioActions(item) },
                     ],
                     items,
-                    'No scheduled email campaigns or push workflows yet.',
+                    selectedWorkflowStudioType === 'sent'
+                        ? 'No sent email or push items yet.'
+                        : selectedWorkflowStudioType === 'archived'
+                            ? 'No archived email or push items yet.'
+                            : selectedWorkflowStudioType === 'all'
+                                ? 'No email or push items yet.'
+                                : 'No scheduled email or push items yet.',
                 );
                 bindWorkflowStudioActionButtons(workflowStudioList);
             }
@@ -15068,7 +15112,63 @@ export function initializeOperatorConsole() {
                 }).join('');
             }
 
-            function renderCopilotAgentInlineCards({ clarifications = [], confirmations = [], artifacts = [] } = {}) {
+            function isCopilotAgentHandoffAction(action) {
+                return Boolean((action?.result || {}).manual_handoff);
+            }
+
+            function getCopilotAgentHandoffArtifact(action) {
+                const artifact = (action?.artifacts || []).find((item) => String(item?.resource_type || '') === 'action_handoff');
+                if (artifact) {
+                    return artifact;
+                }
+                const result = action?.result || {};
+                return {
+                    resource_type: 'action_handoff',
+                    resource_id: action?.action_id || '',
+                    label: action?.title || action?.action_type || 'Prepared Handoff',
+                    focus: {
+                        action_type: action?.action_type || '',
+                        parameters: result.parameters || action?.parameters || {},
+                        next_steps: result.next_steps || [],
+                    },
+                    status: action?.status || 'prepared',
+                    status_detail: action?.summary || '',
+                };
+            }
+
+            function getCopilotAgentHandoffFromArtifact(artifact) {
+                const focus = artifact?.focus || {};
+                const parameters = focus.parameters || {};
+                const nextSteps = Array.isArray(focus.next_steps) ? focus.next_steps : [];
+                return {
+                    action_id: artifact?.resource_id || '',
+                    action_type: focus.action_type || 'action_handoff',
+                    title: artifact?.label || 'Prepared Handoff',
+                    status: artifact?.status || 'prepared',
+                    risk_level: 'review',
+                    parameters,
+                    result: {
+                        manual_handoff: true,
+                        next_steps: nextSteps,
+                        parameters,
+                    },
+                    summary: artifact?.status_detail || 'Prepared for module review.',
+                    artifacts: [artifact],
+                };
+            }
+
+            function renderCopilotAgentHandoffParameters(parameters = {}) {
+                const rows = Object.entries(parameters)
+                    .filter(([, value]) => value !== null && value !== undefined && String(typeof value === 'object' ? JSON.stringify(value) : value).trim())
+                    .slice(0, 6)
+                    .map(([key, value]) => {
+                        const displayValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                        return `<span class="pill">${escapeHtml(key)}: ${escapeHtml(displayValue.length > 48 ? `${displayValue.slice(0, 45)}...` : displayValue)}</span>`;
+                    });
+                return rows.length ? `<div class="copilot-agent-inline-meta">${rows.join('')}</div>` : '';
+            }
+
+            function renderCopilotAgentInlineCards({ clarifications = [], handoffs = [], artifacts = [] } = {}) {
                 const cards = [];
                 if (clarifications.length) {
                     cards.push(`
@@ -15096,26 +15196,34 @@ export function initializeOperatorConsole() {
                         </div>
                     `);
                 }
-                if (confirmations.length) {
+                if (handoffs.length) {
                     cards.push(`
-                        <div class="copilot-agent-inline-card is-warning">
+                        <div class="copilot-agent-inline-card">
                             <div class="copilot-agent-inline-meta">
-                                <span class="copilot-agent-inline-card-title">Ready To Confirm</span>
-                                <span class="pill">High Risk</span>
+                                <span class="copilot-agent-inline-card-title">Prepared Handoff</span>
+                                <span class="pill">${escapeHtml(String(handoffs.length))}</span>
                             </div>
                             <div class="copilot-agent-inline-card-items">
-                                ${confirmations.map((item) => `
-                                    <div class="copilot-agent-confirmation-item">
-                                        <div class="copilot-agent-inline-meta">
-                                            <span class="copilot-agent-confirmation-title">${escapeHtml(item.title || item.action_type || 'Confirmation')}</span>
-                                            <span class="pill">${escapeHtml(item.risk_level || 'high')}</span>
+                                ${handoffs.map((item, index) => {
+                                    const result = item.result || {};
+                                    const nextSteps = Array.isArray(result.next_steps) ? result.next_steps : [];
+                                    const parameters = result.parameters || item.parameters || {};
+                                    return `
+                                        <div class="copilot-agent-artifact-item">
+                                            <div class="copilot-agent-inline-meta">
+                                                <span class="copilot-agent-artifact-title">${escapeHtml(item.title || item.action_type || 'Prepared Handoff')}</span>
+                                                <span class="pill">${escapeHtml(item.status || 'prepared')}</span>
+                                                <span class="pill">${escapeHtml(item.risk_level || 'review')}</span>
+                                            </div>
+                                            <div>${escapeHtml(item.summary || 'Prepared for module review.')}</div>
+                                            ${nextSteps.length ? `<ol>${nextSteps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>` : ''}
+                                            ${renderCopilotAgentHandoffParameters(parameters)}
+                                            <div class="copilot-agent-artifact-actions">
+                                                <button type="button" data-copilot-agent-handoff-index="${index}">Open Module</button>
+                                            </div>
                                         </div>
-                                        <div>${escapeHtml(item.summary || 'This action is waiting for confirmation.')}</div>
-                                        <div class="copilot-agent-confirmation-actions">
-                                            <button type="button" data-copilot-agent-confirm="${escapeHtml(item.action_id || '')}">Confirm Action</button>
-                                        </div>
-                                    </div>
-                                `).join('')}
+                                    `;
+                                }).join('')}
                             </div>
                         </div>
                     `);
@@ -15152,7 +15260,7 @@ export function initializeOperatorConsole() {
                 return cards.join('');
             }
 
-            function bindCopilotAgentThreadActions(artifacts = []) {
+            function bindCopilotAgentThreadActions(artifacts = [], handoffs = []) {
                 copilotAgentThread?.querySelectorAll('[data-copilot-copy-code]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         const code = decodeURIComponent(button.dataset.copilotCopyCode || '');
@@ -15170,15 +15278,16 @@ export function initializeOperatorConsole() {
                         }
                     });
                 });
-                copilotAgentThread?.querySelectorAll('[data-copilot-agent-confirm]').forEach((button) => {
-                    button.addEventListener('click', async () => {
-                        await confirmCopilotAgentAction(button.dataset.copilotAgentConfirm);
-                    });
-                });
                 copilotAgentThread?.querySelectorAll('[data-copilot-agent-artifact-index]').forEach((button) => {
                     button.addEventListener('click', async () => {
                         const artifact = artifacts[Number(button.dataset.copilotAgentArtifactIndex)];
                         await openCopilotAgentArtifact(artifact);
+                    });
+                });
+                copilotAgentThread?.querySelectorAll('[data-copilot-agent-handoff-index]').forEach((button) => {
+                    button.addEventListener('click', async () => {
+                        const handoff = handoffs[Number(button.dataset.copilotAgentHandoffIndex)];
+                        await openCopilotAgentArtifact(getCopilotAgentHandoffArtifact(handoff));
                     });
                 });
                 copilotAgentThread?.querySelectorAll('[data-copilot-agent-resume-index]').forEach((button) => {
@@ -15282,7 +15391,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 copilotAgentThread.innerHTML = rows.join('');
-                bindCopilotAgentThreadActions(extras.artifacts || []);
+                bindCopilotAgentThreadActions(extras.artifacts || [], extras.handoffs || []);
                 copilotAgentThread.scrollTop = copilotAgentThread.scrollHeight;
             }
 
@@ -15326,6 +15435,115 @@ export function initializeOperatorConsole() {
                 if (resourceType === 'prediction_job') {
                     activateModule('data-core', 'data-core-churn-rescue');
                     await loadReadyImportsForOperatorHub();
+                    return;
+                }
+                if (resourceType === 'action_handoff') {
+                    const actionType = String(artifact.focus?.action_type || '').trim();
+                    const parameters = artifact.focus?.parameters || {};
+                    if (actionType === 'send_push_dispatch') {
+                        activateModule('action-orchestrator', 'action-orchestrator-push', {
+                            targetId: 'push-notifications-section',
+                        });
+                        await loadActionOrchestrator();
+                        resetPushDispatchForm({ preserveProviderConnection: false });
+                        if (pushDispatchProviderConnectionSelect && parameters.provider_connection_id) {
+                            pushDispatchProviderConnectionSelect.value = String(parameters.provider_connection_id || '');
+                        }
+                        if (pushDispatchCampaignNameInput) {
+                            pushDispatchCampaignNameInput.value = parameters.campaign_name || parameters.name || '';
+                        }
+                        const userIds = Array.isArray(parameters.user_ids) && parameters.user_ids.length
+                            ? parameters.user_ids
+                            : (parameters.user_id ? [parameters.user_id] : []);
+                        if (pushDispatchUserIdInput) {
+                            pushDispatchUserIdInput.value = userIds.join(', ');
+                        }
+                        if (pushDispatchTitleInput) {
+                            pushDispatchTitleInput.value = parameters.title || '';
+                        }
+                        if (pushDispatchBodyInput) {
+                            pushDispatchBodyInput.value = parameters.body || '';
+                        }
+                        if (pushDispatchDeepLinkInput) {
+                            pushDispatchDeepLinkInput.value = parameters.deep_link || '';
+                        }
+                        if (pushDispatchDataInput) {
+                            pushDispatchDataInput.value = JSON.stringify(parameters.data || {}, null, 2);
+                        }
+                        if (pushDispatchProviderOptionsInput) {
+                            pushDispatchProviderOptionsInput.value = JSON.stringify(parameters.provider_options || {}, null, 2);
+                        }
+                        syncPushDispatchComposerFields();
+                        setInlineStatus(pushDispatchStatus, artifact.status_detail || 'Prepared push handoff loaded for review.');
+                        return;
+                    }
+                    if (['schedule_email_campaign', 'send_email_campaign', 'cancel_email_campaign', 'delete_email_campaign'].includes(actionType)) {
+                        activateModule('action-orchestrator', 'action-orchestrator-studio', {
+                            targetId: 'workflow-studio-section',
+                        });
+                        await loadActionOrchestrator();
+                        if (parameters.email_campaign_id) {
+                            await loadWorkflowStudioSelection('email_campaign', parameters.email_campaign_id);
+                        }
+                        if (workflowStudioEmailScheduleInput && parameters.schedule_at) {
+                            workflowStudioEmailScheduleInput.value = fromIsoToLocalDateTimeInput(parameters.schedule_at);
+                        }
+                        setInlineStatus(workflowStudioStatus, artifact.status_detail || 'Prepared email handoff loaded for review.');
+                        return;
+                    }
+                    if (['publish_workflow', 'pause_workflow', 'resume_workflow', 'test_run_workflow', 'archive_workflow', 'delete_workflow'].includes(actionType)) {
+                        activateModule('action-orchestrator', 'action-orchestrator-studio', {
+                            targetId: 'workflow-studio-section',
+                        });
+                        await loadActionOrchestrator();
+                        if (parameters.workflow_id) {
+                            await loadWorkflowStudioSelection('workflow', parameters.workflow_id);
+                        }
+                        setInlineStatus(workflowStudioStatus, artifact.status_detail || 'Prepared workflow handoff loaded for review.');
+                        return;
+                    }
+                    if (actionType === 'remap_import') {
+                        activateModule('data-core', 'data-core-mappings');
+                        await loadDataSandboxMappingControls();
+                        if (parameters.import_job_id && dataSandboxAwaitingJobSelect) {
+                            const targetJob = dataSandboxAwaitingJobs.find((job) => String(job.id || '') === String(parameters.import_job_id));
+                            if (targetJob) {
+                                dataSandboxAwaitingJobSelect.value = targetJob.id;
+                                const source = targetJob.source_stats?.[0]?.source || '';
+                                if (source && dataSandboxMappingConnectorSelect) {
+                                    dataSandboxMappingConnectorSelect.value = source;
+                                }
+                            }
+                        }
+                        if (parameters.mapping) {
+                            setDataSandboxMappingJsonValue(parameters.mapping);
+                            renderDataSandboxGuidedMapping();
+                        }
+                        setDataSandboxMappingStatus(artifact.status_detail || 'Prepared mapping handoff loaded for review.');
+                        return;
+                    }
+                    if (['activate_cohort', 'pause_cohort', 'archive_cohort', 'restore_cohort'].includes(actionType)) {
+                        activateModule('audience-engine', 'audience-engine-cohorts');
+                        await loadAudienceEngine();
+                        if (parameters.cohort_id) {
+                            await loadAudienceCohortDetails(parameters.cohort_id);
+                        }
+                        return;
+                    }
+                    if (['ingest_experiment_outcomes', 'start_experiment', 'stop_experiment', 'record_experiment_decision'].includes(actionType)) {
+                        if (parameters.experiment_id) {
+                            document.getElementById('experiment-id-input').value = parameters.experiment_id;
+                        }
+                        activateModule('experiment-hub', actionType === 'ingest_experiment_outcomes' ? 'experiment-hub-ingestion' : 'experiment-hub-summary');
+                        await loadExperimentWorkspace();
+                        const outcomesInput = document.getElementById('experiment-outcomes-json');
+                        if (outcomesInput && Array.isArray(parameters.outcomes)) {
+                            outcomesInput.value = JSON.stringify({ outcomes: parameters.outcomes }, null, 2);
+                        }
+                        setInlineStatus(experimentIngestStatus, artifact.status_detail || 'Prepared experiment handoff loaded for review.');
+                        return;
+                    }
+                    activateModule(artifact.module_id || 'action-orchestrator', artifact.page_id || 'action-orchestrator');
                     return;
                 }
                 if (resourceType === 'email_campaign') {
@@ -15414,6 +15632,23 @@ export function initializeOperatorConsole() {
                 copilotAgentPendingTurn = null;
                 copilotAgentLastTurns = Array.isArray(turns) ? turns : [];
                 const sessionState = payload.session_state || {};
+                const latestTurn = [...copilotAgentLastTurns].reverse().find((turn) => Array.isArray(turn.completed_actions) && turn.completed_actions.length) || {};
+                const hasResponseActions = Array.isArray(payload.completed_actions);
+                const sourceActions = hasResponseActions ? payload.completed_actions : (latestTurn.completed_actions || []);
+                const sourceArtifacts = payload.artifacts || sessionState.latest_artifacts || latestTurn.artifacts || [];
+                const actionHandoffArtifacts = (sourceArtifacts || []).filter((item) => String(item?.resource_type || '') === 'action_handoff');
+                const handoffsById = new Map();
+                sourceActions.filter(isCopilotAgentHandoffAction).forEach((item) => {
+                    handoffsById.set(String(item.action_id || item.action_type || handoffsById.size), item);
+                });
+                actionHandoffArtifacts.map(getCopilotAgentHandoffFromArtifact).forEach((item) => {
+                    const key = String(item.action_id || item.action_type || handoffsById.size);
+                    if (!handoffsById.has(key)) {
+                        handoffsById.set(key, item);
+                    }
+                });
+                const handoffs = Array.from(handoffsById.values());
+                const visibleArtifacts = (sourceArtifacts || []).filter((item) => String(item?.resource_type || '') !== 'action_handoff');
                 copilotAgentSessionId = sessionState.session_id || copilotAgentSessionId;
                 if (sessionState.model_profile_id && copilotAgentModelSelect) {
                     copilotAgentSelectedModelProfileId = String(sessionState.model_profile_id || '');
@@ -15440,11 +15675,11 @@ export function initializeOperatorConsole() {
                 setInlineStatus(copilotAgentSendStatus, '');
                 renderCopilotAgentThread(copilotAgentLastTurns, {
                     clarifications: payload.clarifications || sessionState.latest_clarifications || [],
-                    confirmations: payload.pending_confirmations || [],
-                    artifacts: payload.artifacts || sessionState.latest_artifacts || [],
+                    handoffs,
+                    artifacts: visibleArtifacts,
                 });
                 setCopilotAgentComposerReady(true);
-                syncCopilotAgentLauncherBadge(sessionState.pending_confirmation_count || 0);
+                syncCopilotAgentLauncherBadge(0);
             }
 
             async function ensureCopilotAgentSession(forceNew = false) {
