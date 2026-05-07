@@ -102,6 +102,94 @@ def test_ai_evaluation_records_summary_and_export(client):
     assert export_payload["evaluation"]["evaluation_id"] == evaluation_id
 
 
+def test_ai_evaluation_auto_grader_records_retrieval_generation_and_artifact_scores(client):
+    graded = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "analyst"},
+        json={
+            "target_type": "push_copy_draft",
+            "target_id": "draft_push_123",
+            "prompt": "Draft a winback push with a saved checkpoint reward and schedule handoff.",
+            "response": "Title: Your checkpoint is waiting. Body: Come back for your saved reward. Evidence: [C1].",
+            "citations": [
+                {
+                    "citation_id": "C1",
+                    "score": 2.4,
+                    "snippet": "Winback push should mention saved checkpoints, returning rewards, and low-friction play.",
+                }
+            ],
+            "artifacts": [
+                {"resource_type": "knowledge_retrieval", "resource_id": "kret_auto_123"},
+                {"resource_type": "workflow", "resource_id": "wf_draft_123"},
+            ],
+            "expected_artifact_type": "workflow",
+            "generated_title": "Your checkpoint is waiting",
+            "generated_body": "Come back for your saved reward and keep playing from where you left off.",
+            "metadata": {"channel": "push"},
+        },
+    )
+    assert graded.status_code == 201, graded.text
+    payload = graded.json()
+    assert payload["grading_id"].startswith("aigrade_")
+    assert payload["target_type"] == "push_copy_draft"
+    assert payload["summary"]["average_score"] > 0.65
+    assert payload["export"]["format"] == "ai_evaluation_grading.v1"
+
+    by_type = {item["evaluation_type"]: item for item in payload["evaluations"]}
+    assert set(by_type) == {
+        "answer_relevance",
+        "campaign_copy_usefulness",
+        "citation_coverage",
+        "prompt_to_artifact_completion",
+        "retrieval_quality",
+    }
+    assert by_type["retrieval_quality"]["source"] == "auto_grader"
+    assert by_type["retrieval_quality"]["evaluated_by"] == "deterministic_ai_grader_v1"
+    assert by_type["retrieval_quality"]["metadata"]["grading_id"] == payload["grading_id"]
+    assert by_type["citation_coverage"]["dimensions"]["citation_coverage"] == 1.0
+    assert by_type["answer_relevance"]["dimensions"]["hallucination_risk"] < 0.5
+    assert by_type["prompt_to_artifact_completion"]["score"] == 1.0
+    assert by_type["campaign_copy_usefulness"]["citation_ids"] == ["C1"]
+    assert by_type["campaign_copy_usefulness"]["artifact_ids"] == ["kret_auto_123", "wf_draft_123"]
+
+    listed = client.get(
+        "/api/v1/experiments/ai-evaluations?target_id=draft_push_123",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert listed.status_code == 200
+    assert len(listed.json()["items"]) == 5
+
+    summary = client.get(
+        "/api/v1/experiments/ai-evaluations/summary?target_type=push_copy_draft",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["total_records"] == 5
+    assert summary_payload["dimension_averages"]["citation_coverage"] == 1.0
+
+
+def test_ai_evaluation_auto_grader_requires_meaningful_prompt_and_response(client):
+    missing_prompt = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "operator"},
+        json={"target_type": "knowledge_retrieval", "response": "Evidence: [C1]."},
+    )
+    assert missing_prompt.status_code == 400
+    assert "prompt" in missing_prompt.json()["detail"]
+
+    denied = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "invalid"},
+        json={
+            "target_type": "knowledge_retrieval",
+            "prompt": "Find winback evidence.",
+            "response": "Evidence: [C1].",
+        },
+    )
+    assert denied.status_code == 403
+
+
 def test_ai_evaluation_validation_permissions_and_project_scope(client):
     invalid_type = client.post(
         "/api/v1/experiments/ai-evaluations",

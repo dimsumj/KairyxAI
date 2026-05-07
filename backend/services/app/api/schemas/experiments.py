@@ -106,6 +106,20 @@ class AIEvaluationRequest(BaseModel):
     evaluated_by: str | None = None
 
 
+class AIEvaluationAutoGradeRequest(BaseModel):
+    target_type: str
+    target_id: str | None = None
+    prompt: str | None = None
+    response: str | None = None
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    expected_artifact_type: str | None = None
+    generated_title: str | None = None
+    generated_body: str | None = None
+    source: str = "auto_grader"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class AIEvaluationResponse(BaseModel):
     tenant_id: str | None = None
     project_id: str | None = None
@@ -172,6 +186,20 @@ class AIEvaluationExportResponse(BaseModel):
     masked_fields: List[str] = Field(default_factory=list)
     format: str
     evaluation: AIEvaluationResponse
+
+
+class AIEvaluationAutoGradeResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    grading_id: str
+    target_type: str
+    target_id: str = ""
+    evaluations: List[AIEvaluationResponse] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    export: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AIFeedbackRequest(BaseModel):

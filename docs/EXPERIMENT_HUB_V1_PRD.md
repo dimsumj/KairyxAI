@@ -10,13 +10,13 @@ Current capabilities to preserve:
 - deterministic assignments, exposure records, outcome ingestion, summaries, SRM/integrity checks, and decision logs
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
-- AI/RAG evaluation records and summaries for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
+- AI/RAG evaluation records, summaries, and deterministic auto-grading for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
 - AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking
 
 ### Future Growth RAG Plan
 Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
 - store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
-- expand the delivered evaluation telemetry API into automated evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
+- expand the delivered deterministic evaluation grader into model-judge and offline evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
 - expand delivered feedback records and deterministic retrieval boosts into stronger prompt-context and ranking signals
 - cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
 
@@ -25,6 +25,12 @@ Delivered evaluation-registry acceptance criteria:
 2. Records normalize supported evaluation types, outcomes, scores, citations, artifacts, dimensions, and operator comments.
 3. Summaries expose average score, positive/negative/edited rates, outcome counts, target-type counts, and dimension averages.
 4. Evaluation records are auditable and exportable as `.json` artifacts instead of relying on raw JSON text fields.
+
+Delivered deterministic auto-grader acceptance criteria:
+1. API clients can submit a prompt, response, citations, artifacts, expected artifact type, and generated copy to `/api/v1/experiments/ai-evaluations/grade`.
+2. The grader records normalized evaluation events for retrieval quality, citation coverage, answer relevance, prompt-to-artifact completion, and campaign-copy usefulness when copy is present.
+3. Auto-grader dimensions include citation relevance, citation coverage, citation support, hallucination-risk proxy, artifact completion, and copy shape/action clarity.
+4. The grading response exposes a `.json` export descriptor instead of requiring a raw JSON output text area.
 
 Delivered feedback-loop acceptance criteria:
 1. Tenant/project-scoped feedback records can be created, listed, summarized, read, and exported.
@@ -35,7 +41,7 @@ Delivered feedback-loop acceptance criteria:
 Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
 2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
-3. Automated graders and monitoring jobs can score retrieval/generation quality without requiring manual operator feedback every time.
+3. Model-judge graders, offline eval runs, and monitoring jobs can complement deterministic scores without requiring manual operator feedback every time.
 4. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
 
 ---

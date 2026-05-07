@@ -29,6 +29,40 @@ ALLOWED_OUTCOMES = {
 POSITIVE_OUTCOMES = {"accepted", "completed", "useful"}
 NEGATIVE_OUTCOMES = {"failed", "not_useful", "rejected"}
 MAX_LIST_LIMIT = 500
+MAX_AUTO_GRADE_TEXT_CHARS = 4000
+AUTO_GRADER_NAME = "deterministic_ai_grader_v1"
+AUTO_GRADER_EXPORT_FORMAT = "ai_evaluation_grading.v1"
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "of",
+    "on",
+    "or",
+    "our",
+    "should",
+    "the",
+    "this",
+    "to",
+    "we",
+    "with",
+    "you",
+}
+CAMPAIGN_COPY_TARGET_HINTS = {"campaign", "copy", "email", "push", "message", "workflow"}
+CAMPAIGN_ACTION_TERMS = {"back", "claim", "come", "continue", "play", "return", "reward", "save", "saved", "start"}
 
 
 class AIEvaluationService:
@@ -104,6 +138,90 @@ class AIEvaluationService:
             },
         )
         return self._resource_to_evaluation(record)
+
+    def auto_grade(
+        self,
+        *,
+        target_type: str,
+        target_id: str | None = None,
+        prompt: str,
+        response: str,
+        citations: list[Dict[str, Any]] | None = None,
+        artifacts: list[Dict[str, Any]] | None = None,
+        expected_artifact_type: str | None = None,
+        generated_title: str | None = None,
+        generated_body: str | None = None,
+        source: str = "auto_grader",
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_target_type = _normalize_token(target_type, "target_type", max_length=80)
+        normalized_target_id = _clean_text(target_id, max_length=140)
+        normalized_prompt = _required_text(prompt, "prompt", max_length=MAX_AUTO_GRADE_TEXT_CHARS)
+        normalized_response = _required_text(response, "response", max_length=MAX_AUTO_GRADE_TEXT_CHARS)
+        normalized_citations = _normalize_evidence_items(citations or [])
+        normalized_artifacts = _normalize_artifact_items(artifacts or [])
+        normalized_expected_artifact = _clean_text(expected_artifact_type, max_length=80)
+        normalized_title = _clean_text(generated_title, max_length=240)
+        normalized_body = _clean_text(generated_body, max_length=2000)
+        normalized_source = _normalize_token(source or "auto_grader", "source", max_length=40)
+        normalized_metadata = _normalize_metadata(metadata or {})
+        grading_id = f"aigrade_{uuid.uuid4().hex[:20]}"
+        artifact_ids = [item["resource_id"] for item in normalized_artifacts if item.get("resource_id")]
+        citation_ids = [item["citation_id"] for item in normalized_citations if item.get("citation_id")]
+        base_metadata = {
+            **normalized_metadata,
+            "grading_id": grading_id,
+            "grader": AUTO_GRADER_NAME,
+            "expected_artifact_type": normalized_expected_artifact,
+        }
+        grade_specs = [
+            _retrieval_quality_grade(normalized_prompt, normalized_response, normalized_citations),
+            _citation_coverage_grade(normalized_response, normalized_citations),
+            _answer_relevance_grade(normalized_prompt, normalized_response, normalized_citations),
+            _prompt_to_artifact_grade(normalized_expected_artifact, normalized_artifacts),
+        ]
+        if _should_grade_campaign_copy(normalized_target_type, normalized_title, normalized_body):
+            grade_specs.append(_campaign_copy_grade(normalized_title, normalized_body or normalized_response, normalized_citations))
+        evaluations = [
+            self.record_evaluation(
+                evaluation_type=spec["evaluation_type"],
+                target_type=normalized_target_type,
+                target_id=normalized_target_id,
+                outcome=_outcome_for_score(float(spec["score"])),
+                score=float(spec["score"]),
+                dimensions=dict(spec.get("dimensions") or {}),
+                citation_ids=citation_ids,
+                artifact_ids=artifact_ids,
+                prompt_summary=normalized_prompt,
+                response_summary=normalized_response,
+                comments=str(spec.get("comments") or ""),
+                source=normalized_source,
+                metadata={**base_metadata, **dict(spec.get("metadata") or {})},
+                evaluated_by=AUTO_GRADER_NAME,
+            )
+            for spec in grade_specs
+        ]
+        scores = [float(item["score"]) for item in evaluations if item.get("score") is not None]
+        type_counts: Dict[str, int] = {}
+        for item in evaluations:
+            evaluation_type = str(item.get("evaluation_type") or "unknown")
+            type_counts[evaluation_type] = type_counts.get(evaluation_type, 0) + 1
+        return {
+            "grading_id": grading_id,
+            "target_type": normalized_target_type,
+            "target_id": normalized_target_id,
+            "evaluations": evaluations,
+            "summary": {
+                "evaluation_count": len(evaluations),
+                "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+                "evaluation_type_counts": type_counts,
+            },
+            "export": {
+                "format": AUTO_GRADER_EXPORT_FORMAT,
+                "resource_id": grading_id,
+                "includes": ["evaluations", "summary", "citations", "artifacts"],
+            },
+        }
 
     def list_evaluations(
         self,
@@ -236,6 +354,13 @@ def _clean_text(value: str | None, *, max_length: int) -> str:
     return normalized[:max_length]
 
 
+def _required_text(value: str | None, field_name: str, *, max_length: int) -> str:
+    normalized = _clean_text(value, max_length=max_length)
+    if not normalized:
+        raise ValueError(f"{field_name} is required.")
+    return normalized
+
+
 def _normalize_ids(values: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -255,6 +380,59 @@ def _normalize_dimensions(dimensions: Dict[str, Any]) -> Dict[str, float]:
         normalized_value = _normalize_score_value(value, field_name=f"dimensions.{normalized_key}")
         normalized[normalized_key] = normalized_value
     return dict(sorted(normalized.items()))
+
+
+def _normalize_evidence_items(values: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    normalized: list[Dict[str, Any]] = []
+    for value in values[:20]:
+        if not isinstance(value, dict):
+            continue
+        citation_id = _clean_text(value.get("citation_id") or value.get("citation"), max_length=80)
+        text = _clean_text(
+            " ".join(
+                [
+                    str(value.get("snippet") or ""),
+                    str(value.get("summary") or ""),
+                    str(value.get("text") or ""),
+                ]
+            ),
+            max_length=1200,
+        )
+        if not citation_id and not text:
+            continue
+        normalized.append(
+            {
+                "citation_id": citation_id,
+                "text": text,
+                "score": _coerce_optional_float(value.get("score")),
+            }
+        )
+    return normalized
+
+
+def _normalize_artifact_items(values: list[Dict[str, Any]]) -> list[Dict[str, str]]:
+    normalized: list[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for value in values[:20]:
+        if not isinstance(value, dict):
+            continue
+        resource_type = _clean_text(value.get("resource_type"), max_length=80)
+        resource_id = _clean_text(value.get("resource_id") or value.get("artifact_id"), max_length=140)
+        if not resource_type and not resource_id:
+            continue
+        key = (resource_type, resource_id)
+        if key in seen:
+            continue
+        normalized.append({"resource_type": resource_type, "resource_id": resource_id})
+        seen.add(key)
+    return normalized
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -282,6 +460,148 @@ def _resolve_score(score: float | None, dimensions: Dict[str, float], outcome: s
     if outcome == "edited":
         return 0.5, "outcome"
     return None, "none"
+
+
+def _retrieval_quality_grade(prompt: str, response: str, citations: list[Dict[str, Any]]) -> Dict[str, Any]:
+    citation_relevance = _average(
+        [_term_overlap_score(prompt, str(item.get("text") or "")) for item in citations if item.get("text")]
+    )
+    citation_score = _average([min(max(float(item.get("score") or 0.0) / 3.0, 0.0), 1.0) for item in citations])
+    response_support = _term_overlap_score(response, " ".join(str(item.get("text") or "") for item in citations))
+    retrieval_quality = round((citation_relevance * 0.55) + (citation_score * 0.25) + (response_support * 0.20), 4)
+    if citations and retrieval_quality == 0:
+        retrieval_quality = 0.25
+    return {
+        "evaluation_type": "retrieval_quality",
+        "score": retrieval_quality,
+        "dimensions": {
+            "retrieval_quality": retrieval_quality,
+            "citation_relevance": citation_relevance,
+            "citation_rank_quality": citation_score,
+            "response_support": response_support,
+        },
+        "comments": "Deterministic retrieval grade from prompt/citation overlap, citation score, and response support.",
+    }
+
+
+def _citation_coverage_grade(response: str, citations: list[Dict[str, Any]]) -> Dict[str, Any]:
+    if not citations:
+        coverage = 0.0
+    else:
+        cited_count = sum(1 for item in citations if _response_references_citation(response, str(item.get("citation_id") or "")))
+        coverage = round(cited_count / len(citations), 4)
+    return {
+        "evaluation_type": "citation_coverage",
+        "score": coverage,
+        "dimensions": {
+            "citation_coverage": coverage,
+            "citation_count": min(float(len(citations)) / 5.0, 1.0),
+        },
+        "comments": "Deterministic citation coverage grade from cited evidence ids found in the response.",
+    }
+
+
+def _answer_relevance_grade(prompt: str, response: str, citations: list[Dict[str, Any]]) -> Dict[str, Any]:
+    prompt_overlap = _term_overlap_score(prompt, response)
+    support = _term_overlap_score(response, " ".join(str(item.get("text") or "") for item in citations))
+    citation_reference_score = 1.0 if any(_response_references_citation(response, str(item.get("citation_id") or "")) for item in citations) else 0.0
+    hallucination_risk = round(max(0.0, 1.0 - max(prompt_overlap, support) - (citation_reference_score * 0.35)), 4)
+    score = round((prompt_overlap * 0.7) + (support * 0.3), 4)
+    return {
+        "evaluation_type": "answer_relevance",
+        "score": score,
+        "dimensions": {
+            "answer_relevance": score,
+            "prompt_overlap": prompt_overlap,
+            "citation_support": support,
+            "citation_reference": citation_reference_score,
+            "hallucination_risk": hallucination_risk,
+        },
+        "comments": "Deterministic answer grade from prompt overlap and citation support.",
+    }
+
+
+def _prompt_to_artifact_grade(expected_artifact_type: str, artifacts: list[Dict[str, str]]) -> Dict[str, Any]:
+    artifact_types = {str(item.get("resource_type") or "") for item in artifacts}
+    if expected_artifact_type:
+        completion = 1.0 if expected_artifact_type in artifact_types else 0.0
+    else:
+        completion = 1.0 if artifacts else 0.0
+    return {
+        "evaluation_type": "prompt_to_artifact_completion",
+        "score": completion,
+        "dimensions": {
+            "prompt_to_artifact_completion": completion,
+            "artifact_presence": 1.0 if artifacts else 0.0,
+        },
+        "comments": "Deterministic artifact grade from expected artifact type presence.",
+    }
+
+
+def _campaign_copy_grade(title: str, body: str, citations: list[Dict[str, Any]]) -> Dict[str, Any]:
+    normalized_title = _clean_text(title, max_length=240)
+    normalized_body = _clean_text(body, max_length=2000)
+    title_score = 1.0 if 8 <= len(normalized_title) <= 80 else 0.35 if normalized_title else 0.0
+    body_score = 1.0 if 20 <= len(normalized_body) <= 240 else 0.5 if normalized_body else 0.0
+    body_terms = _terms(f"{normalized_title} {normalized_body}")
+    action_score = 1.0 if body_terms.intersection(CAMPAIGN_ACTION_TERMS) else 0.0
+    evidence_support = _term_overlap_score(f"{normalized_title} {normalized_body}", " ".join(str(item.get("text") or "") for item in citations))
+    copy_score = round((title_score * 0.25) + (body_score * 0.35) + (action_score * 0.2) + (evidence_support * 0.2), 4)
+    return {
+        "evaluation_type": "campaign_copy_usefulness",
+        "score": copy_score,
+        "dimensions": {
+            "campaign_copy_usefulness": copy_score,
+            "title_quality": title_score,
+            "body_quality": body_score,
+            "action_clarity": action_score,
+            "evidence_support": evidence_support,
+        },
+        "comments": "Deterministic copy grade from title/body shape, action clarity, and evidence support.",
+    }
+
+
+def _should_grade_campaign_copy(target_type: str, title: str, body: str) -> bool:
+    target_terms = set(target_type.split("_"))
+    return bool(title or body or target_terms.intersection(CAMPAIGN_COPY_TARGET_HINTS))
+
+
+def _response_references_citation(response: str, citation_id: str) -> bool:
+    if not citation_id:
+        return False
+    normalized_response = str(response or "").lower()
+    normalized_id = citation_id.lower()
+    return normalized_id in normalized_response or f"[{normalized_id}]" in normalized_response
+
+
+def _term_overlap_score(source: str, target: str) -> float:
+    source_terms = _terms(source)
+    if not source_terms:
+        return 0.0
+    target_terms = _terms(target)
+    if not target_terms:
+        return 0.0
+    return round(len(source_terms.intersection(target_terms)) / len(source_terms), 4)
+
+
+def _terms(value: str) -> set[str]:
+    return {
+        term
+        for term in re.findall(r"[a-zA-Z0-9_]+", str(value or "").lower())
+        if len(term) > 1 and term not in STOP_WORDS
+    }
+
+
+def _average(values: list[float]) -> float:
+    return round(sum(values) / len(values), 4) if values else 0.0
+
+
+def _outcome_for_score(score: float) -> str:
+    if score >= 0.75:
+        return "useful"
+    if score <= 0.35:
+        return "not_useful"
+    return "neutral"
 
 
 def _normalize_score_value(value: Any, *, field_name: str) -> float:

@@ -31,7 +31,7 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 - `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles; knowledge documents and cited retrieval evidence packs
 - `Audience Engine`: guided cohort builder; SQL/rule/list cohort support behind marketer-first flows; prediction-backed audience creation; cohort versions, members, refresh, metrics, and AI-drafted builder-state artifacts
 - `Action Orchestrator`: provider connections for SendGrid, Braze, webhook, simulator, and push provider paths; email campaign drafts; push notification drafts; Workflow Studio; scheduled/sent/archived workflow management; JSON artifacts exported through buttons instead of primary text fields
-- `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, decision logging, AI/RAG evaluation telemetry, and AI feedback records with Ask AI handoffs for setup and diagnostics
+- `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, decision logging, AI/RAG evaluation telemetry, deterministic auto-grading, and AI feedback records with Ask AI handoffs for setup and diagnostics
 - `Insight Copilot`: global Ask AI session; starter actions; secure inputs outside chat; backend-managed model profiles; artifact cards; module handoffs for risky actions; AI copy drafting for email/push titles and bodies before operator approval and scheduling
 - `Production Readiness`: Google login and organization/project routing; tenant-scoped resources; secret references; worker topology; Cloud Run/GCP deployment assets; runbooks for operations and incident response
 
@@ -39,7 +39,7 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 1. `PRD Regeneration Baseline`: keep all current features and planned gaps aligned across the master PRD and module PRDs before additional implementation.
 2. `Knowledge Ingestion`: add first-class growth knowledge resources for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
 3. `Retrieval And Citations`: expand the delivered knowledge retrieval evidence-pack API into Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, semantic/vector retrieval, optional rerank metadata, and citation-backed context packs.
-4. `Evaluation And Monitoring`: expand the delivered AI/RAG evaluation telemetry API into automated retrieval/generation grading, monitoring views, and alerting for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
+4. `Evaluation And Monitoring`: expand the delivered AI/RAG evaluation telemetry and deterministic grading APIs into monitoring views, model-judge/offline evals, and alerting for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
 5. `Feedback Loop`: expand the delivered feedback records and retrieval-ranking boosts into model-based learning from approvals, edits, sends, workflow results, experiment outcomes, and operator ratings.
 6. `No-Code Console Hardening`: continue removing raw JSON/code text fields from primary operator surfaces, replacing them with guided controls, artifact cards, and `Export .json` buttons for inspectable setup payloads.
 
@@ -413,8 +413,8 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
    - Delivered lexical knowledge evidence packs, local semantic-vector metadata, `hybrid_v1` semantic/reranked retrieval, and Ask AI citation attachment for relevant setup, diagnostics, audience, workflow, experiment, and copy-drafting turns
    - Next, extend the local semantic path into provider-grade vector retrieval over structured artifacts and richer module handoff cards
 3. `Evaluation And Monitoring`
-   - Delivered AI/RAG evaluation telemetry records and summaries for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
-   - Add operator-visible diagnostics for stale sources, missing evidence, and unsupported prompts
+   - Delivered AI/RAG evaluation telemetry records, summaries, and deterministic auto-grading for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
+   - Next, add operator-visible diagnostics for stale sources, missing evidence, unsupported prompts, and model-judge/offline eval drift
 4. `Feedback Loop`
    - Delivered AI feedback records for copy edits, approvals, sends, delivery results, experiment outcomes, and operator ratings, with deterministic ranking boosts for knowledge chunks and documents
    - Keep automated optimization disabled; AI prepares recommendations and module-owned setup, while live execution remains product-controlled

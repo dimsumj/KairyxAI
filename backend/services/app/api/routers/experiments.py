@@ -8,6 +8,8 @@ from app.api.schemas.experiments import (
     AIFeedbackRequest,
     AIFeedbackResponse,
     AIFeedbackSummaryResponse,
+    AIEvaluationAutoGradeRequest,
+    AIEvaluationAutoGradeResponse,
     AIEvaluationExportResponse,
     AIEvaluationListResponse,
     AIEvaluationRequest,
@@ -214,6 +216,28 @@ def record_ai_evaluation(
         action_type="ai_evaluation_recorded",
         resource_type="ai_evaluation_record",
         resource_id=payload["evaluation_id"],
+        payload=payload,
+    )
+
+
+@router.post("/ai-evaluations/grade", response_model=AIEvaluationAutoGradeResponse, status_code=201)
+def grade_ai_evaluation(
+    request: AIEvaluationAutoGradeRequest,
+    http_request: Request,
+    service: AIEvaluationService = Depends(get_ai_evaluation_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.evaluations.write")
+    try:
+        payload = service.auto_grade(**request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_evaluations_auto_graded",
+        resource_type="ai_evaluation_record",
+        resource_id=payload["grading_id"],
         payload=payload,
     )
 

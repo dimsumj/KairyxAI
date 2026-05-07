@@ -59,7 +59,7 @@ KairyxAI is already moving toward the target AI growth platform shape: `Data Cor
 Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
 2. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
-3. Expand the new AI evaluation API into automated retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
+3. Expand the delivered deterministic AI auto-grader into model-judge evaluation, offline eval runs, recall probes, and monitoring alerts.
 4. Expand the new AI feedback API and retrieval-ranking boosts into automatic prompt context, semantic reranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
@@ -1460,11 +1460,12 @@ Delivery detail behavior:
 
 ### 6.3 AI/RAG Evaluation Telemetry API
 
-Experiment Hub owns AI quality telemetry for retrieval, citations, generated copy, and prompt-to-artifact completion. The current surface is API-first so Ask AI, module UIs, and QA jobs can record whether evidence and drafts were useful without exposing raw JSON editors.
+Experiment Hub owns AI quality telemetry for retrieval, citations, generated copy, and prompt-to-artifact completion. The current surface is API-first so Ask AI, module UIs, and QA jobs can record whether evidence and drafts were useful without exposing raw JSON editors. A deterministic auto-grader can also score prompt/response/citation/artifact bundles without waiting for manual operator feedback.
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `POST /api/v1/experiments/ai-evaluations` | Record one AI/RAG quality event. | Supported evaluation types are `retrieval_quality`, `citation_coverage`, `answer_relevance`, `campaign_copy_usefulness`, and `prompt_to_artifact_completion`. |
+| `POST /api/v1/experiments/ai-evaluations/grade` | Auto-grade one prompt/response/citation/artifact bundle. | Records deterministic evaluation events for retrieval quality, citation coverage, answer relevance, prompt-to-artifact completion, and campaign-copy usefulness when generated copy is present. |
 | `GET /api/v1/experiments/ai-evaluations` | List recorded evaluation events. | Optional filters include evaluation type, target type, target id, and limit. |
 | `GET /api/v1/experiments/ai-evaluations/summary` | Summarize AI/RAG quality. | Returns total records, score average, positive/negative/edited rates, outcome counts, target counts, and dimension averages. |
 | `GET /api/v1/experiments/ai-evaluations/{evaluation_id}` | Read one evaluation record. | Records include normalized outcome, score, citations, artifacts, summaries, comments, and metadata. |
