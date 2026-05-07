@@ -122,6 +122,8 @@ def create_knowledge_retrieval(
             tags=request.tags,
             source_types=request.source_types,
             document_ids=request.document_ids,
+            include_product_artifacts=request.include_product_artifacts,
+            artifact_types=request.artifact_types,
             include_archived=request.include_archived,
         )
     except ValueError as exc:

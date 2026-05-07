@@ -3157,6 +3157,7 @@ export function initializeOperatorConsole() {
             const knowledgeDocumentList = document.getElementById('knowledge-document-list');
             const knowledgeRetrievalQueryInput = document.getElementById('knowledge-retrieval-query-input');
             const knowledgeRetrievalTopKSelect = document.getElementById('knowledge-retrieval-top-k-select');
+            const knowledgeRetrievalArtifactsCheckbox = document.getElementById('knowledge-retrieval-artifacts-checkbox');
             const knowledgeRetrievalRunBtn = document.getElementById('knowledge-retrieval-run-btn');
             const knowledgeRetrievalExportBtn = document.getElementById('knowledge-retrieval-export-btn');
             const knowledgeRetrievalStatus = document.getElementById('knowledge-retrieval-status');
@@ -7071,6 +7072,8 @@ export function initializeOperatorConsole() {
                         <p>${escapeHtml(citation.snippet || citation.summary || citation.text || '')}</p>
                         <div class="table-badge-row">
                             <span class="pill">${escapeHtml(formatKnowledgeSourceType(citation.source_type))}</span>
+                            ${citation.resource_type && citation.resource_type !== 'knowledge_chunk' ? `<span class="pill">${escapeHtml(formatMonitorLabel(citation.resource_type))}</span>` : ''}
+                            ${citation.artifact_type ? `<span class="pill">${escapeHtml(formatMonitorLabel(citation.artifact_type))}</span>` : ''}
                             <span class="pill">Score ${Number(citation.score || 0).toFixed(2)}</span>
                         </div>
                     </article>
@@ -7098,6 +7101,8 @@ export function initializeOperatorConsole() {
                             query,
                             top_k: Number(knowledgeRetrievalTopKSelect?.value || 3),
                             retrieval_mode: 'hybrid_v1',
+                            include_product_artifacts: Boolean(knowledgeRetrievalArtifactsCheckbox?.checked),
+                            artifact_types: knowledgeRetrievalArtifactsCheckbox?.checked ? ['saved_query'] : [],
                         },
                     });
                     latestKnowledgeRetrievalExport = payload;
@@ -16267,6 +16272,35 @@ export function initializeOperatorConsole() {
                     await loadReadyImportsForOperatorHub();
                     return;
                 }
+                if (resourceType === 'knowledge_retrieval') {
+                    activateModule('data-core', 'data-core-knowledge');
+                    await loadKnowledgeLibrary();
+                    await loadKnowledgeVectorIndexes();
+                    const retrievalId = artifact.focus?.retrieval_id || artifact.resource_id;
+                    if (retrievalId) {
+                        try {
+                            const payload = await apiRequest(`/knowledge/retrievals/${encodeURIComponent(retrievalId)}`);
+                            latestKnowledgeRetrievalExport = payload;
+                            if (knowledgeRetrievalQueryInput) {
+                                knowledgeRetrievalQueryInput.value = payload.query || '';
+                            }
+                            if (knowledgeRetrievalTopKSelect && payload.top_k) {
+                                knowledgeRetrievalTopKSelect.value = String(payload.top_k);
+                            }
+                            if (knowledgeRetrievalArtifactsCheckbox) {
+                                knowledgeRetrievalArtifactsCheckbox.checked = Boolean(payload.filters?.include_product_artifacts);
+                            }
+                            renderKnowledgeRetrieval(payload);
+                            if (knowledgeRetrievalExportBtn) {
+                                knowledgeRetrievalExportBtn.disabled = false;
+                            }
+                            setInlineStatus(knowledgeRetrievalStatus, artifact.status_detail || 'Evidence pack loaded.');
+                        } catch (error) {
+                            setInlineStatus(knowledgeRetrievalStatus, error.message || 'Failed to load evidence pack.', true);
+                        }
+                    }
+                    return;
+                }
                 if (resourceType === 'action_handoff') {
                     const actionType = String(artifact.focus?.action_type || '').trim();
                     const parameters = artifact.focus?.parameters || {};
@@ -17072,6 +17106,11 @@ export function initializeOperatorConsole() {
                 }
             });
             knowledgeRetrievalTopKSelect?.addEventListener('change', () => {
+                if (latestKnowledgeRetrievalExport) {
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                }
+            });
+            knowledgeRetrievalArtifactsCheckbox?.addEventListener('change', () => {
                 if (latestKnowledgeRetrievalExport) {
                     resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
                 }

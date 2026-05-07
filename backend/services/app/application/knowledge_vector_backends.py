@@ -70,7 +70,10 @@ class ManagedExternalVectorBackend(KnowledgeVectorBackend):
 
     @property
     def capabilities(self) -> list[str]:
-        return ["upsert", "query", "archive", "export_shadow", "secret_ref_required"]
+        capabilities = ["upsert", "query", "archive", "export_shadow", "secret_ref_required"]
+        if str(self.config.get("vector_store") or "").strip().lower() == "pgvector":
+            capabilities.append("live_sync")
+        return capabilities
 
     def vector_ref(self, *, vector_hash: str) -> str:
         namespace = str(self.config.get("vector_namespace") or "default").strip() or "default"

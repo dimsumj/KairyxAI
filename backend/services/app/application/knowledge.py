@@ -13,6 +13,7 @@ from app.application.knowledge_vector_backends import (
     archived_adapter_receipt,
     build_knowledge_vector_backend,
 )
+from app.application.knowledge_vector_live_sync import sync_knowledge_vector_record
 
 
 KNOWLEDGE_DOCUMENT_RESOURCE_TYPE = "knowledge_document"
@@ -22,6 +23,7 @@ KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE = "knowledge_retrieval"
 KNOWLEDGE_SOURCE_RESOURCE_TYPE = "knowledge_source"
 KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE = "knowledge_vector_index"
 KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE = "knowledge_vector_record"
+SAVED_QUERY_RESOURCE_TYPE = "saved_query"
 
 MAX_CHUNK_CHARS = 1600
 MAX_DOCUMENT_CHARS = 250_000
@@ -278,6 +280,8 @@ class KnowledgeService:
         tags: list[str] | None = None,
         source_types: list[str] | None = None,
         document_ids: list[str] | None = None,
+        include_product_artifacts: bool = False,
+        artifact_types: list[str] | None = None,
         include_archived: bool = False,
     ) -> Dict[str, Any]:
         normalized_query = _required_text(query, "query", max_length=MAX_RETRIEVAL_QUERY_CHARS)
@@ -286,6 +290,8 @@ class KnowledgeService:
         normalized_tags = _normalize_tags(tags or [])
         normalized_source_types = [_normalize_source_type(item) for item in source_types or []]
         normalized_document_ids = _normalize_id_filters(document_ids or [])
+        normalized_artifact_types = _normalize_artifact_types(artifact_types or [])
+        include_artifacts = bool(include_product_artifacts or normalized_artifact_types)
         query_terms = _query_terms(normalized_query)
         if not query_terms:
             raise ValueError("query must include at least one searchable term.")
@@ -310,8 +316,20 @@ class KnowledgeService:
                 active_vector_index_id=self.vector_backend["index_id"],
             ))
         ]
+        artifact_matches = (
+            self._score_product_artifacts(
+                query=normalized_query,
+                query_vector=query_vector,
+                query_terms=query_terms,
+                retrieval_mode=normalized_retrieval_mode,
+                artifact_types=normalized_artifact_types,
+                include_archived=include_archived,
+            )
+            if include_artifacts
+            else []
+        )
         ranked = sorted(
-            scored,
+            [*scored, *artifact_matches],
             key=lambda item: (
                 -float(item["score"]),
                 str(item["document_title"]).lower(),
@@ -347,6 +365,8 @@ class KnowledgeService:
                 "tags": normalized_tags,
                 "source_types": normalized_source_types,
                 "document_ids": normalized_document_ids,
+                "include_product_artifacts": include_artifacts,
+                "artifact_types": normalized_artifact_types,
                 "include_archived": bool(include_archived),
             },
             "vector_index": self._retrieval_vector_index_summary(citations),
@@ -376,6 +396,32 @@ class KnowledgeService:
             },
         )
         return self._resource_to_retrieval(record)
+
+    def _score_product_artifacts(
+        self,
+        *,
+        query: str,
+        query_vector: list[float],
+        query_terms: list[str],
+        retrieval_mode: str,
+        artifact_types: list[str],
+        include_archived: bool,
+    ) -> list[Dict[str, Any]]:
+        allowed_types = artifact_types or ["saved_query"]
+        matches: list[Dict[str, Any]] = []
+        if "saved_query" in allowed_types:
+            for record in self.repository.list_resources(SAVED_QUERY_RESOURCE_TYPE):
+                candidate = _score_saved_query_artifact(
+                    self._resource_to_saved_query(record),
+                    query=query,
+                    query_vector=query_vector,
+                    query_terms=query_terms,
+                    retrieval_mode=retrieval_mode,
+                    include_archived=include_archived,
+                )
+                if candidate:
+                    matches.append(candidate)
+        return matches
 
     def list_retrievals(self) -> list[Dict[str, Any]]:
         return [self._resource_to_retrieval(record) for record in self.repository.list_resources(KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE)]
@@ -599,6 +645,14 @@ class KnowledgeService:
             "adapter": dict(embedding.get("adapter") or {}),
             "materialized_at": embedding["materialized_at"],
         }
+        payload = _apply_adapter_receipt_patch(
+            payload,
+            sync_knowledge_vector_record(
+                self.vector_backend,
+                operation="upsert",
+                vector_record=payload,
+            ),
+        )
         self._ensure_vector_index()
         record = self.repository.upsert_resource(
             KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE,
@@ -686,6 +740,14 @@ class KnowledgeService:
                 "adapter": archived_adapter_receipt(dict(record.get("embedding") or {}), archived_at=archived_at),
             }
             payload = {**record, "status": "archived", "archived_at": archived_at, "embedding": embedding, "adapter": embedding["adapter"]}
+            payload = _apply_adapter_receipt_patch(
+                payload,
+                sync_knowledge_vector_record(
+                    _vector_backend_config_for_record(payload, self.vector_backend),
+                    operation="archive",
+                    vector_record=payload,
+                ),
+            )
             self.repository.upsert_resource(
                 KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE,
                 str(record.get("vector_record_id") or current.get("resource_id")),
@@ -802,6 +864,22 @@ class KnowledgeService:
             "project_id": record.get("project_id") or payload.get("project_id"),
         }
 
+    @staticmethod
+    def _resource_to_saved_query(record: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(record.get("payload") or {})
+        return {
+            **payload,
+            "query_id": payload.get("query_id") or record.get("resource_id"),
+            "name": payload.get("name") or record.get("name") or "",
+            "description": payload.get("description") or "",
+            "sql": payload.get("sql") or "",
+            "status": payload.get("status") or record.get("status") or "active",
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+            "project_id": record.get("project_id") or payload.get("project_id"),
+        }
+
 
 def _required_text(value: str, field_name: str, *, max_length: int) -> str:
     normalized = str(value or "").strip()
@@ -846,6 +924,21 @@ def _normalize_retrieval_mode(value: str) -> str:
     if normalized not in allowed:
         raise ValueError(f"retrieval_mode must be one of: {', '.join(sorted(allowed))}.")
     return normalized
+
+
+def _normalize_artifact_types(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    allowed = {"saved_query"}
+    for value in values:
+        cleaned = str(value or "").strip().lower().replace("-", "_")
+        if not cleaned or cleaned in seen:
+            continue
+        if cleaned not in allowed:
+            raise ValueError(f"artifact_types must contain only: {', '.join(sorted(allowed))}.")
+        normalized.append(cleaned)
+        seen.add(cleaned)
+    return normalized[:10]
 
 
 def _normalize_tags(tags: list[str]) -> list[str]:
@@ -941,6 +1034,7 @@ def _vector_backend_config(settings=None) -> Dict[str, Any]:
         "index_id": index_id,
         "vector_namespace": namespace,
         "secret_ref_configured": bool(secret_ref),
+        "secret_ref": secret_ref,
         "storage_mode": storage_mode,
     }
 
@@ -973,6 +1067,44 @@ def _vector_index_payload(config: Dict[str, Any], *, record_count: int = 0, docu
         "secret_ref_configured": bool(config.get("secret_ref_configured")),
         **adapter.index_payload_patch(),
         "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _vector_backend_config_for_record(record: Dict[str, Any], runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    embedding = dict(record.get("embedding") or {})
+    config = _adapter_config_from_payload({**record, **embedding})
+    if str(config.get("vector_store") or "") == str(runtime_config.get("vector_store") or ""):
+        secret_ref = str(runtime_config.get("secret_ref") or "").strip()
+        return {
+            **config,
+            "secret_ref": secret_ref,
+            "secret_ref_configured": bool(secret_ref) or bool(config.get("secret_ref_configured")),
+        }
+    return config
+
+
+def _apply_adapter_receipt_patch(payload: Dict[str, Any], patch: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not patch:
+        return payload
+    embedding = dict(payload.get("embedding") or {})
+    adapter = {
+        **dict(embedding.get("adapter") or payload.get("adapter") or {}),
+        **dict(patch or {}),
+    }
+    adapter.pop("secret_ref", None)
+    readiness_status = str(adapter.get("readiness_status") or "").strip()
+    next_embedding = {
+        **embedding,
+        "adapter": adapter,
+    }
+    if readiness_status in {"ready", "ready_for_live_sync", "live_synced"}:
+        next_embedding["status"] = "ready"
+    elif readiness_status == "needs_secret_ref":
+        next_embedding["status"] = "needs_secret_ref"
+    return {
+        **payload,
+        "embedding": next_embedding,
+        "adapter": adapter,
     }
 
 
@@ -1395,6 +1527,13 @@ def _score_chunk(
     else:
         score = round(max(0.0, lexical_score + feedback_boost), 4)
     return {
+        "resource_type": "knowledge_chunk",
+        "artifact_type": "",
+        "artifact_id": "",
+        "module_id": "data-core",
+        "page_id": "data-core-knowledge",
+        "api_path": f"/api/v1/knowledge/documents/{chunk.get('document_id') or ''}",
+        "structured_summary": {},
         "chunk_id": chunk.get("chunk_id"),
         "document_id": chunk.get("document_id"),
         "document_title": chunk.get("source_title") or chunk.get("document_id") or "",
@@ -1426,6 +1565,102 @@ def _score_chunk(
         "text": text,
         "summary": chunk.get("summary") or _preview(text, max_length=180),
         "tags": list(chunk.get("tags") or []),
+    }
+
+
+def _score_saved_query_artifact(
+    saved_query: Dict[str, Any],
+    *,
+    query: str,
+    query_vector: list[float],
+    query_terms: list[str],
+    retrieval_mode: str,
+    include_archived: bool,
+) -> Dict[str, Any] | None:
+    if not include_archived and saved_query.get("status") == "archived":
+        return None
+    query_id = str(saved_query.get("query_id") or "").strip()
+    if not query_id:
+        return None
+    name = str(saved_query.get("name") or query_id)
+    description = str(saved_query.get("description") or "")
+    sql = str(saved_query.get("sql") or "")
+    search_text = " ".join(
+        [
+            name,
+            description,
+            "saved query",
+            "sql",
+            "audience",
+            "cohort",
+            sql,
+        ]
+    )
+    text_tokens = Counter(re.findall(r"[a-zA-Z0-9_]+", search_text.lower()))
+    match_terms: list[str] = []
+    lexical_score = 0.0
+    for term in query_terms:
+        frequency = text_tokens.get(term, 0)
+        if frequency:
+            match_terms.append(term)
+            lexical_score += min(float(frequency), 5.0)
+    normalized_query = re.sub(r"\s+", " ", query.lower()).strip()
+    normalized_text = re.sub(r"\s+", " ", search_text.lower()).strip()
+    if normalized_query and normalized_query in normalized_text:
+        lexical_score += 5.0
+    lexical_score = round(lexical_score / max(float(len(query_terms)), 1.0), 4) if lexical_score > 0 else 0.0
+    semantic_score = 0.0
+    vector_status = "not_used"
+    if retrieval_mode == HYBRID_RETRIEVAL_MODE:
+        semantic_score = _semantic_similarity_from_vectors(query_vector, _semantic_vector(search_text)) if query_vector else _semantic_similarity(query, search_text)
+        vector_status = "structured_artifact"
+        if lexical_score <= 0 and semantic_score < HYBRID_MIN_SEMANTIC_SCORE:
+            return None
+    elif lexical_score <= 0:
+        return None
+    score = (
+        round(max(0.0, (lexical_score * 0.65) + (semantic_score * 4.0)), 4)
+        if retrieval_mode == HYBRID_RETRIEVAL_MODE
+        else round(max(0.0, lexical_score), 4)
+    )
+    summary_text = description or _preview(sql, max_length=220)
+    snippet_text = _snippet(search_text, match_terms, max_length=420)
+    return {
+        "resource_type": "saved_query",
+        "artifact_type": "saved_query",
+        "artifact_id": query_id,
+        "module_id": "audience-engine",
+        "page_id": "audience-engine-sql",
+        "api_path": "/api/v1/sql-workspace/queries",
+        "structured_summary": {
+            "query_id": query_id,
+            "name": name,
+            "description": description,
+            "has_sql": bool(sql.strip()),
+        },
+        "chunk_id": f"saved_query:{query_id}",
+        "document_id": query_id,
+        "document_title": name,
+        "source_id": "saved_query",
+        "source_name": "SQL Workspace",
+        "source_type": "saved_query",
+        "ordinal": 0,
+        "score": score,
+        "feedback_boost": 0.0,
+        "ranking_signals": {
+            "retrieval_mode": retrieval_mode,
+            "lexical_score": lexical_score,
+            "semantic_score": semantic_score,
+            "feedback_boost": 0.0,
+            "rerank_score": score,
+            "vector_status": vector_status,
+            "artifact_type": "saved_query",
+        },
+        "match_terms": match_terms,
+        "snippet": snippet_text or summary_text,
+        "text": summary_text,
+        "summary": summary_text,
+        "tags": ["saved_query"],
     }
 
 
@@ -1464,6 +1699,9 @@ def _build_context_pack(
             {
                 "citation_id": citation["citation_id"],
                 "citation": citation["citation"],
+                "resource_type": citation.get("resource_type") or "knowledge_chunk",
+                "artifact_type": citation.get("artifact_type") or "",
+                "artifact_id": citation.get("artifact_id") or "",
                 "heading": citation["document_title"],
                 "source": {
                     "document_id": citation["document_id"],
@@ -1472,6 +1710,7 @@ def _build_context_pack(
                     "source_type": citation["source_type"],
                     "ordinal": citation["ordinal"],
                 },
+                "structured_summary": dict(citation.get("structured_summary") or {}),
                 "text": citation["text"],
             }
             for citation in citations

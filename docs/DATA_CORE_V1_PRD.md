@@ -9,7 +9,7 @@ Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
 - secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
 - import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
-- no-code knowledge document ingestion and retrieval through `Data Core -> Knowledge` plus `/api/v1/knowledge`, with file-first text/markdown intake, deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, config-driven embedding/vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, persisted/exportable `knowledge_evidence_pack.v1` retrieval artifacts, and exportable `knowledge_vector_index.v1` shadow indexes for provider-backed deployments
+- no-code knowledge document ingestion and retrieval through `Data Core -> Knowledge` plus `/api/v1/knowledge`, with file-first text/markdown intake, deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, config-driven embedding/vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, optional saved-query artifact citations, pgvector live-sync receipts for configured PostgreSQL vector targets, exportable `knowledge_document.v1` artifacts, persisted/exportable `knowledge_evidence_pack.v1` retrieval artifacts, and exportable `knowledge_vector_index.v1` artifacts for provider-backed deployments
 - SQL workspace and query-to-cohort behavior as analyst/advanced paths
 - local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
 - backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
@@ -57,11 +57,11 @@ Delivered provider/vector acceptance criteria:
 2. Hybrid retrieval reads persisted vector records, exposes vector status, provider/store ranking signals, adapter kind, sync status, and readiness status, and falls back to deterministic local recompute only when a record is unavailable.
 3. Vector index metadata is listable and exportable as `knowledge_vector_index.v1` without exposing raw vector arrays.
 4. External embedding/vector provider configuration is secret-reference gated for production.
-5. Managed vector stores produce adapter receipts for upsert/archive readiness while preserving the shadow-index export contract.
+5. pgvector produces live-sync receipts for upsert/archive when the secret reference resolves to a PostgreSQL target; other managed vector stores produce adapter receipts for upsert/archive readiness while preserving the export contract.
 
 Remaining acceptance criteria:
-1. Add provider-specific live vector sync implementations beyond the current managed shadow-adapter receipts.
-2. Broaden retrieval into structured product-artifact retrieval.
+1. Add provider-specific live vector sync and provider-native query implementations beyond the current pgvector live-sync path.
+2. Broaden retrieval into structured product-artifact families beyond saved queries.
 3. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
 
 ---
@@ -1052,8 +1052,8 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
   - `Data Core -> Knowledge` gives operators file-first source intake, evidence checks, source cards, archive controls, and `Export .json` artifact review without primary JSON/code text fields
   - Ask AI can retrieve cited `hybrid_v1` evidence packs from active knowledge chunks
 - Remaining work:
-  - Move beyond deterministic local semantic vectors into provider-grade embedding/vector storage
-  - Add structured product-artifact retrieval alongside uploaded documents
+  - Expand provider-grade embedding/vector storage beyond pgvector live sync into additional managed stores and provider-native query paths
+  - Add structured product-artifact retrieval beyond saved queries for cohorts, workflows, campaigns, experiments, and diagnostics
 
 #### Gap-D1 Manifest-Driven Processing Is Not Yet the Default Path
 - Current state:
@@ -1117,8 +1117,8 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 
 #### P0 Finish-Up
 1. `Managed Vector Adapter Hardening`
-   - Delivered managed vector-adapter receipts behind the vector-index contract
-   - Next, add provider-specific live vector sync while preserving provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
+   - Delivered managed vector-adapter receipts behind the vector-index contract plus pgvector live-sync receipts for configured PostgreSQL vector targets
+   - Next, add more provider-specific live sync/query implementations while preserving provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
 2. `Manifest-Driven Default Path`
    - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic
    - Reduce the degree to which application-layer job orchestration dominates the main path

@@ -704,6 +704,8 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
     assert evidence_artifact["focus"]["citation_count"] >= 1
     assert evidence_artifact["focus"]["retrieval_mode"] == "hybrid_v1"
     assert evidence_artifact["focus"]["citations"][0]["document_title"] == "VIP Winback Playbook"
+    assert evidence_artifact["module_id"] == "data-core"
+    assert evidence_artifact["page_id"] == "data-core-knowledge"
     assert "Evidence: [C1]" in payload["assistant_message"]
 
 
@@ -750,6 +752,7 @@ def test_copilot_agent_knowledge_grounding_uses_configured_vector_index(monkeypa
         action = next(item for item in payload["completed_actions"] if item["action_type"] == "send_push_dispatch")
         evidence_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "knowledge_retrieval")
         assert action["parameters"]["provider_connection_id"] == push_provider_connection_id
+        assert evidence_artifact["page_id"] == "data-core-knowledge"
 
         retrieval = client.get(
             f"/api/v1/knowledge/retrievals/{evidence_artifact['resource_id']}",
@@ -761,6 +764,67 @@ def test_copilot_agent_knowledge_grounding_uses_configured_vector_index(monkeypa
         assert retrieval_payload["vector_index"]["embedding_provider"] == "openai"
         assert retrieval_payload["citations"][0]["ranking_signals"]["vector_status"] == "ready"
         assert retrieval_payload["citations"][0]["ranking_signals"]["embedding_provider"] == "openai"
+
+
+def test_copilot_agent_knowledge_grounding_includes_saved_query_without_documents(client):
+    headers = _headers("operator", actor_id="agent_saved_query_grounding")
+    _seed_completed_prediction_job(
+        "pred_saved_query_grounding",
+        source_name="Amplitude 1",
+        rows=[
+            {
+                "prediction_job_id": "pred_saved_query_grounding",
+                "user_id": "u_1",
+                "canonical_user_id": "u_1",
+                "email": "u1@example.com",
+                "predicted_churn_risk": "high",
+                "churn_state": "active",
+                "prediction_source": "local",
+                "suggested_action": "push_notification",
+                "completed_at": "2026-03-10T10:00:00+00:00",
+            }
+        ],
+    )
+    saved_query = client.post(
+        "/api/v1/sql-workspace/queries",
+        headers=headers,
+        json={
+            "name": "High Value Winback Audience",
+            "description": "Saved query for lapsed high-value players ready for a winback campaign.",
+            "sql": "SELECT canonical_user_id FROM prediction_results WHERE predicted_churn_risk = 'high'",
+        },
+    )
+    assert saved_query.status_code == 201, saved_query.text
+    session_id = _create_session(client, headers, title="Saved Query Grounding")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Draft the audience builder state for high value winback users from Amplitude 1 and the saved query.",
+            "ui_context": {"active_module_id": "audience-engine", "active_page_id": "audience-engine"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    evidence_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "knowledge_retrieval")
+    action = next(item for item in payload["completed_actions"] if item["action_type"] == "draft_audience_builder")
+
+    assert action["status"] == "completed"
+    assert evidence_artifact["module_id"] == "data-core"
+    assert evidence_artifact["page_id"] == "data-core-knowledge"
+
+    retrieval = client.get(
+        f"/api/v1/knowledge/retrievals/{evidence_artifact['resource_id']}",
+        headers=headers,
+    )
+    assert retrieval.status_code == 200, retrieval.text
+    retrieval_payload = retrieval.json()
+    saved_query_citation = next(item for item in retrieval_payload["citations"] if item["resource_type"] == "saved_query")
+    assert saved_query_citation["artifact_id"] == saved_query.json()["query_id"]
+    assert saved_query_citation["structured_summary"]["name"] == "High Value Winback Audience"
+    assert retrieval_payload["filters"]["include_product_artifacts"] is True
+    assert retrieval_payload["filters"]["artifact_types"] == ["saved_query"]
 
 
 def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monkeypatch):

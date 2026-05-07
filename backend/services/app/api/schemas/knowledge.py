@@ -25,6 +25,8 @@ class KnowledgeRetrievalRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     source_types: list[str] = Field(default_factory=list)
     document_ids: list[str] = Field(default_factory=list)
+    include_product_artifacts: bool = False
+    artifact_types: list[str] = Field(default_factory=list)
     include_archived: bool = False
 
 
@@ -68,6 +70,13 @@ class KnowledgeChunkResponse(BaseModel):
 
 
 class KnowledgeCitationResponse(BaseModel):
+    resource_type: str = "knowledge_chunk"
+    artifact_type: str = ""
+    artifact_id: str = ""
+    module_id: str = ""
+    page_id: str = ""
+    api_path: str = ""
+    structured_summary: Dict[str, Any] = Field(default_factory=dict)
     citation_id: str
     citation: str
     rank: int

@@ -232,6 +232,7 @@ assert_knowledge_library_ui() {
       '#knowledge-retrieval-query-input',
       '#knowledge-retrieval-run-btn',
       '#knowledge-retrieval-export-btn',
+      '#knowledge-retrieval-artifacts-checkbox',
       '#knowledge-document-list',
       '#knowledge-vector-section',
       '#knowledge-vector-refresh-btn',

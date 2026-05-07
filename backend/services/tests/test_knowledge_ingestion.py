@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 
 import pytest
@@ -11,6 +12,7 @@ from app.core.db import session_scope
 from app.main import create_app
 from app.core.settings import Settings, validate_runtime_settings
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
+from app.application import knowledge_vector_live_sync
 
 
 @pytest.fixture
@@ -582,6 +584,229 @@ def test_knowledge_vector_index_reports_mixed_provider_when_config_reuses_index(
         assert payload["index"]["vector_store"] == "pgvector"
         assert payload["index"]["record_count"] == 2
         assert {record["embedding"]["provider"] for record in payload["records"]} == {"openai", "voyage"}
+
+
+def test_knowledge_pgvector_live_sync_receipts_without_persisting_secret(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_upsert(target, config, vector_record):
+        calls.append(("upsert", target.table_ref, vector_record["vector_record_id"]))
+        assert target.table_ref == "marketing.knowledge_vectors"
+        assert target.dsn == "postgresql://user:password@db.example.com/kairyx"
+        assert config["secret_ref"] == "env://PGVECTOR_SYNC_TARGET"
+        assert vector_record["vector"]
+        return 1
+
+    def fake_archive(target, vector_record):
+        calls.append(("archive", target.table_ref, vector_record["vector_record_id"]))
+        assert target.table_ref == "marketing.knowledge_vectors"
+        return 1
+
+    monkeypatch.setattr(knowledge_vector_live_sync, "_upsert_pgvector_record", fake_upsert)
+    monkeypatch.setattr(knowledge_vector_live_sync, "_archive_pgvector_record", fake_archive)
+    monkeypatch.setenv(
+        "PGVECTOR_SYNC_TARGET",
+        json.dumps(
+            {
+                "dsn": "postgresql://user:password@db.example.com/kairyx",
+                "schema": "marketing",
+                "table": "knowledge_vectors",
+            }
+        ),
+    )
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="pgvector",
+        KNOWLEDGE_VECTOR_INDEX="live_playbooks",
+        KNOWLEDGE_VECTOR_NAMESPACE="lifecycle",
+        KNOWLEDGE_VECTOR_SECRET_REF="env://PGVECTOR_SYNC_TARGET",
+    ) as client:
+        created = client.post(
+            "/api/v1/knowledge/documents",
+            headers={"x-actor-role": "operator"},
+            json={
+                "title": "Live Sync Playbook",
+                "content": "Live pgvector sync should preserve local retrieval while writing provider vectors.",
+                "source_type": "playbook",
+                "tags": ["push"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        document = created.json()
+        adapter = document["chunks"][0]["embedding"]["adapter"]
+        assert adapter["sync_status"] == "live_synced"
+        assert adapter["readiness_status"] == "live_synced"
+        assert adapter["live_sync"]["status"] == "synced"
+        assert adapter["live_sync"]["table"] == "marketing.knowledge_vectors"
+        assert adapter["live_sync"]["rows_affected"] == 1
+        assert "password" not in json.dumps(adapter)
+        assert "env://PGVECTOR_SYNC_TARGET" not in json.dumps(adapter)
+
+        exported = client.get("/api/v1/knowledge/vector-indexes/live_playbooks/export", headers={"x-actor-role": "analyst"})
+        assert exported.status_code == 200, exported.text
+        index = exported.json()["index"]
+        assert index["sync_status"] == "live_synced"
+        assert index["readiness_status"] == "live_synced"
+        assert "live_sync" in index["capabilities"]
+        assert exported.json()["records"][0]["adapter"]["live_sync"]["status"] == "synced"
+
+        archived = client.post(f"/api/v1/knowledge/documents/{document['document_id']}/archive", headers={"x-actor-role": "operator"})
+        assert archived.status_code == 200, archived.text
+        exported_after_archive = client.get("/api/v1/knowledge/vector-indexes/live_playbooks/export", headers={"x-actor-role": "analyst"})
+        assert exported_after_archive.status_code == 200
+        assert exported_after_archive.json()["index"]["last_adapter_operation"]["operation"] == "archive"
+        assert exported_after_archive.json()["index"]["last_adapter_operation"]["sync_status"] == "live_archive_synced"
+        assert exported_after_archive.json()["index"]["last_adapter_operation"]["readiness_status"] == "archived"
+        assert [item[0] for item in calls] == ["upsert", "archive"]
+
+
+def test_knowledge_pgvector_live_sync_failure_keeps_local_retrieval(monkeypatch, tmp_path):
+    def fake_upsert(target, config, vector_record):
+        raise RuntimeError("password=s3cr3t failed for postgresql://user:s3cr3t@db.example.com/kairyx")
+
+    monkeypatch.setattr(knowledge_vector_live_sync, "_upsert_pgvector_record", fake_upsert)
+    monkeypatch.setenv("PGVECTOR_SYNC_TARGET", "postgresql://user:s3cr3t@db.example.com/kairyx")
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="pgvector",
+        KNOWLEDGE_VECTOR_INDEX="live_failure_playbooks",
+        KNOWLEDGE_VECTOR_NAMESPACE="lifecycle",
+        KNOWLEDGE_VECTOR_SECRET_REF="env://PGVECTOR_SYNC_TARGET",
+    ) as client:
+        created = client.post(
+            "/api/v1/knowledge/documents",
+            headers={"x-actor-role": "operator"},
+            json={
+                "title": "Live Failure Playbook",
+                "content": "Provider sync failure should still allow local hybrid retrieval for return path copy.",
+                "source_type": "playbook",
+                "tags": ["push"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        adapter = created.json()["chunks"][0]["embedding"]["adapter"]
+        assert adapter["sync_status"] == "live_sync_failed"
+        assert adapter["readiness_status"] == "ready_for_live_sync"
+        assert adapter["live_sync"]["status"] == "failed"
+        serialized = json.dumps(adapter)
+        assert "s3cr3t" not in serialized
+        assert "user:s3cr3t" not in serialized
+        assert "local control-plane retrieval remains available" in adapter["warnings"][0]
+
+        retrieval = client.post(
+            "/api/v1/knowledge/retrievals",
+            headers={"x-actor-role": "analyst"},
+            json={"query": "return path copy", "retrieval_mode": "hybrid_v1"},
+        )
+        assert retrieval.status_code == 201, retrieval.text
+        assert retrieval.json()["result_count"] == 1
+        signals = retrieval.json()["citations"][0]["ranking_signals"]
+        assert signals["vector_status"] == "ready"
+        assert signals["vector_sync_status"] == "live_sync_failed"
+
+
+def test_knowledge_pgvector_live_sync_resolution_failure_is_best_effort(monkeypatch, tmp_path):
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="pgvector",
+        KNOWLEDGE_VECTOR_INDEX="missing_secret_playbooks",
+        KNOWLEDGE_VECTOR_NAMESPACE="lifecycle",
+        KNOWLEDGE_VECTOR_SECRET_REF="env://MISSING_PGVECTOR_SYNC_TARGET",
+    ) as client:
+        created = client.post(
+            "/api/v1/knowledge/documents",
+            headers={"x-actor-role": "operator"},
+            json={
+                "title": "Missing Secret Playbook",
+                "content": "Missing provider credentials should not prevent local retrieval from working.",
+                "source_type": "playbook",
+                "tags": ["push"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        adapter = created.json()["chunks"][0]["embedding"]["adapter"]
+        assert adapter["sync_status"] == "live_sync_failed"
+        assert adapter["readiness_status"] == "ready_for_live_sync"
+        assert adapter["live_sync"]["status"] == "failed"
+        assert adapter["live_sync"]["provider"] == "pgvector"
+        assert "table" not in adapter["live_sync"]
+        assert "env://MISSING_PGVECTOR_SYNC_TARGET" not in json.dumps(adapter)
+
+        retrieval = client.post(
+            "/api/v1/knowledge/retrievals",
+            headers={"x-actor-role": "analyst"},
+            json={"query": "local retrieval working", "retrieval_mode": "hybrid_v1"},
+        )
+        assert retrieval.status_code == 201, retrieval.text
+        assert retrieval.json()["result_count"] == 1
+
+
+def test_knowledge_retrieval_can_include_structured_saved_query_artifacts(client):
+    document = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json={
+            "title": "Winback Query Playbook",
+            "content": "Winback saved-query cohorts should focus on lapsed players with recent high-value activity.",
+            "source_type": "playbook",
+            "tags": ["winback", "cohort"],
+        },
+    )
+    assert document.status_code == 201, document.text
+    saved_query = client.post(
+        "/api/v1/sql-workspace/queries",
+        headers={"x-actor-role": "operator"},
+        json={
+            "name": "High Value Winback Audience",
+            "description": "Saved query for lapsed high-value players who should receive a winback campaign.",
+            "sql": "SELECT canonical_user_id FROM prediction_results WHERE risk_score >= 0.8",
+        },
+    )
+    assert saved_query.status_code == 201, saved_query.text
+
+    document_only = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={"query": "high value winback saved query cohort", "retrieval_mode": "hybrid_v1", "top_k": 5},
+    )
+    assert document_only.status_code == 201, document_only.text
+    assert {item["resource_type"] for item in document_only.json()["citations"]} == {"knowledge_chunk"}
+
+    with_artifacts = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={
+            "query": "high value winback saved query cohort",
+            "retrieval_mode": "hybrid_v1",
+            "top_k": 5,
+            "include_product_artifacts": True,
+            "artifact_types": ["saved_query"],
+        },
+    )
+    assert with_artifacts.status_code == 201, with_artifacts.text
+    payload = with_artifacts.json()
+    resource_types = {item["resource_type"] for item in payload["citations"]}
+    assert {"knowledge_chunk", "saved_query"} <= resource_types
+    artifact = next(item for item in payload["citations"] if item["resource_type"] == "saved_query")
+    assert artifact["artifact_type"] == "saved_query"
+    assert artifact["artifact_id"] == saved_query.json()["query_id"]
+    assert artifact["module_id"] == "audience-engine"
+    assert artifact["page_id"] == "audience-engine-sql"
+    assert artifact["structured_summary"]["name"] == "High Value Winback Audience"
+    assert artifact["ranking_signals"]["vector_status"] == "structured_artifact"
+    section = next(item for item in payload["context_pack"]["sections"] if item["resource_type"] == "saved_query")
+    assert section["structured_summary"]["query_id"] == saved_query.json()["query_id"]
+    assert payload["filters"]["include_product_artifacts"] is True
+    assert payload["filters"]["artifact_types"] == ["saved_query"]
 
 
 def test_prod_external_knowledge_vector_backend_requires_secret_ref():

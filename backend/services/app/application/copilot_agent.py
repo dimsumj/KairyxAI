@@ -2458,13 +2458,16 @@ class CopilotAgentService:
     def _retrieve_knowledge_context(self, *, message: str, plan: Dict[str, Any]) -> Dict[str, Any]:
         if not should_retrieve_knowledge_context(message, plan):
             return {}
-        if not self.knowledge.list_documents(include_archived=False):
+        include_artifacts = _saved_query_artifact_context_available(message, plan, self.knowledge.repository)
+        if not include_artifacts and not self.knowledge.list_documents(include_archived=False):
             return {}
         try:
             retrieval = self.knowledge.retrieve(
                 query=build_knowledge_query(message, plan),
                 top_k=3,
                 retrieval_mode="hybrid_v1",
+                include_product_artifacts=include_artifacts,
+                artifact_types=["saved_query"] if include_artifacts else [],
             )
         except Exception:
             return {}
@@ -4432,6 +4435,19 @@ def should_retrieve_knowledge_context(message: str, plan: Dict[str, Any]) -> boo
     )
 
 
+def _saved_query_artifact_context_available(message: str, plan: Dict[str, Any], repository) -> bool:
+    intent = str(plan.get("intent") or "").strip()
+    lower = str(message or "").lower()
+    if intent in {"draft_sql_from_prompt", "draft_audience_builder", "setup_cohort", "setup_operator_flow"}:
+        pass
+    elif not any(term in lower for term in ("saved query", "sql", "cohort", "audience", "segment")):
+        return False
+    try:
+        return bool(repository.list_resources("saved_query"))
+    except Exception:
+        return False
+
+
 def build_knowledge_query(message: str, plan: Dict[str, Any]) -> str:
     slots = dict(plan.get("slots") or {})
     parts = [
@@ -4518,6 +4534,13 @@ def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "citation_id": citation_id,
                 "citation": citation_label,
+                "resource_type": str(citation.get("resource_type") or "knowledge_chunk"),
+                "artifact_type": str(citation.get("artifact_type") or ""),
+                "artifact_id": str(citation.get("artifact_id") or ""),
+                "module_id": str(citation.get("module_id") or ""),
+                "page_id": str(citation.get("page_id") or ""),
+                "api_path": str(citation.get("api_path") or ""),
+                "structured_summary": dict(citation.get("structured_summary") or {}),
                 "document_id": str(citation.get("document_id") or ""),
                 "chunk_id": str(citation.get("chunk_id") or ""),
                 "document_title": str(citation.get("document_title") or citation.get("heading") or ""),
@@ -4536,6 +4559,9 @@ def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:
         {
             "citation_id": item["citation_id"],
             "citation": item["citation"],
+            "resource_type": item["resource_type"],
+            "artifact_type": item["artifact_type"],
+            "artifact_id": item["artifact_id"],
             "heading": item["document_title"],
             "text": item["snippet"],
             "source": {
@@ -4544,6 +4570,7 @@ def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:
                 "source_name": item["source_name"],
                 "source_type": item["source_type"],
             },
+            "structured_summary": dict(item.get("structured_summary") or {}),
         }
         for item in citations
     ]
@@ -4667,7 +4694,7 @@ def artifact_for_knowledge_retrieval(retrieval: Dict[str, Any]) -> Dict[str, Any
         "resource_id": retrieval_id,
         "label": "Knowledge Evidence Pack",
         "module_id": "data-core",
-        "page_id": "connectors",
+        "page_id": "data-core-knowledge",
         "api_path": f"/api/v1/knowledge/retrievals/{quote(retrieval_id)}" if retrieval_id else "",
         "focus": {
             "retrieval_id": retrieval_id,

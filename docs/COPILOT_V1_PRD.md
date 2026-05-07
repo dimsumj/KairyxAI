@@ -6,7 +6,7 @@
 KairyxAI is moving from a manual configuration console toward an AI-native growth marketing workspace. The operator workflow still has too many manual steps between "understand the current state" and "prepare the next controlled action":
 - Operators need to move across Data Core, Audience Engine, Experiment Hub, workflow health, and Copilot reporting to build a single tenant-level picture
 - Low-risk setup work such as connector configuration, cohort draft creation, and experiment draft creation still requires form-by-form navigation
-- Growth knowledge such as campaign briefs, SOPs, historical analyses, and playbooks is now retrievable as cited `hybrid_v1` evidence for recommendations and campaign drafting, with config-driven vector-index shadow records and managed vector-adapter receipts delivered, while provider-specific live vector sync plus structured artifact retrieval remain planned
+- Growth knowledge such as campaign briefs, SOPs, historical analyses, playbooks, and SQL Workspace saved-query artifacts is now retrievable as cited `hybrid_v1` evidence for recommendations and campaign drafting, with config-driven vector-index records, managed vector-adapter receipts, pgvector live-sync receipts, and first structured artifact retrieval delivered while broader provider-native query paths and additional artifact families remain planned
 
 ### 1.2 Goal (v1)
 Upgrade `Insight Copilot` into a constrained prompt-first growth agent that can:
@@ -39,12 +39,12 @@ Current features to preserve:
 - backend-managed model profiles for Gemini, OpenAI-compatible local runtimes, OpenAI, and Anthropic
 - draft email and push copy generation so operators can approve, edit, and schedule in Action Orchestrator
 - artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
-- Data Core retrieval evidence-pack API wired into Ask AI with `hybrid_v1` semantic/reranked citations for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
+- Data Core retrieval evidence-pack API wired into Ask AI with `hybrid_v1` semantic/reranked citations and saved-query artifact citations for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
 - Experiment Hub AI evaluation telemetry, deterministic auto-grading API, model-judge/offline evaluation run adapters, scheduled quality alert checks, and AI Quality Monitor for recording and reviewing retrieval quality, citation coverage, answer relevance, copy usefulness, prompt-to-artifact completion, feedback diagnostics, and judge-readiness lanes
 - Experiment Hub AI feedback API that records approvals, edits, ratings, sends, workflow results, and experiment outcomes, with knowledge feedback already influencing retrieval ranking and compact feedback-learning profiles feeding Ask AI copy-drafting context
 
 Future feature plan:
-1. Expand the delivered managed vector-adapter receipts into provider-specific live vector sync and structured product-artifact retrieval.
+1. Expand the delivered pgvector live-sync receipts and saved-query artifact retrieval into additional provider-native vector sync/query paths and structured product-artifact families.
 2. Broaden citation-backed context packs from Ask AI turns into every module handoff card that prepares recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
 3. Wire more Ask AI and module UIs into deterministic, model-judge, offline evaluation runs, and scheduled quality checks automatically, then add recall probes and external alert-routing jobs that feed the delivered AI Quality Monitor.
 4. Expand delivered feedback-learning prompt context into model-based reranking and trained optimization.
