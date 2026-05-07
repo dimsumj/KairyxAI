@@ -31,7 +31,7 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 - `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles; knowledge documents and cited retrieval evidence packs
 - `Audience Engine`: guided cohort builder; SQL/rule/list cohort support behind marketer-first flows; prediction-backed audience creation; cohort versions, members, refresh, metrics, and AI-drafted builder-state artifacts
 - `Action Orchestrator`: provider connections for SendGrid, Braze, webhook, simulator, and push provider paths; email campaign drafts; push notification drafts; Workflow Studio; scheduled/sent/archived workflow management; JSON artifacts exported through buttons instead of primary text fields
-- `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, and decision logging with Ask AI handoffs for setup and diagnostics
+- `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, decision logging, and AI/RAG evaluation telemetry with Ask AI handoffs for setup and diagnostics
 - `Insight Copilot`: global Ask AI session; starter actions; secure inputs outside chat; backend-managed model profiles; artifact cards; module handoffs for risky actions; AI copy drafting for email/push titles and bodies before operator approval and scheduling
 - `Production Readiness`: Google login and organization/project routing; tenant-scoped resources; secret references; worker topology; Cloud Run/GCP deployment assets; runbooks for operations and incident response
 
@@ -39,7 +39,7 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 1. `PRD Regeneration Baseline`: keep all current features and planned gaps aligned across the master PRD and module PRDs before additional implementation.
 2. `Knowledge Ingestion`: add first-class growth knowledge resources for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
 3. `Retrieval And Citations`: expand the delivered knowledge retrieval evidence-pack API into Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, semantic/vector retrieval, optional rerank metadata, and citation-backed context packs.
-4. `Evaluation And Monitoring`: measure retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
+4. `Evaluation And Monitoring`: expand the delivered AI/RAG evaluation telemetry API into automated retrieval/generation grading, monitoring views, and alerting for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
 5. `Feedback Loop`: feed approvals, edits, sends, workflow results, experiment outcomes, and operator feedback back into playbooks, retrieval ranking, and future recommendation prompts.
 6. `No-Code Console Hardening`: continue removing raw JSON/code text fields from primary operator surfaces, replacing them with guided controls, artifact cards, and `Export .json` buttons for inspectable setup payloads.
 
@@ -407,13 +407,13 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 ### 13.1 P0 Finish-Up
 1. `Knowledge Ingestion`
-   - Add tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks
-   - Preserve source metadata, permissions, content hash, lifecycle state, and exportable setup payloads
+   - Delivered API-first tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks
+   - Preserve source metadata, permissions, content hash, lifecycle state, and exportable setup payloads as the UI layer matures
 2. `Retrieval And Citations`
-   - Give Ask AI a retrieval path over knowledge chunks and structured artifacts
+   - Delivered lexical knowledge evidence packs; next, give Ask AI a semantic retrieval path over knowledge chunks and structured artifacts
    - Return cited evidence packs for recommendations, copy drafts, cohort ideas, workflow setup, diagnostics, and experiment guidance
 3. `Evaluation And Monitoring`
-   - Track retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
+   - Delivered AI/RAG evaluation telemetry records and summaries for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
    - Add operator-visible diagnostics for stale sources, missing evidence, and unsupported prompts
 4. `Feedback Loop`
    - Feed copy edits, approvals, sends, delivery results, experiment outcomes, and operator ratings into future retrieval and prompt context

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.application.audit import AuditService
 from app.application.agent_model_profiles import AgentModelProfileService
+from app.application.ai_evaluations import AIEvaluationService
 from app.application.braze_provider import BrazeProviderService
 from app.application.cohorts import CohortService
 from app.application.copilot import CopilotService
@@ -82,6 +83,12 @@ def get_experiment_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> ExperimentConfigService:
     return ExperimentConfigService(repository)
+
+
+def get_ai_evaluation_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> AIEvaluationService:
+    return AIEvaluationService(repository)
 
 
 def get_cohort_service(

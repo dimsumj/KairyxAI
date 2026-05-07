@@ -10,18 +10,25 @@ Current capabilities to preserve:
 - deterministic assignments, exposure records, outcome ingestion, summaries, SRM/integrity checks, and decision logs
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
+- AI/RAG evaluation records and summaries for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
 
 ### Future Growth RAG Plan
 Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
 - store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
-- support evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
+- expand the delivered evaluation telemetry API into automated evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
 - connect send outcomes, cohort performance, and experiment conclusions back to Copilot feedback loops
 - cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
 
-Initial acceptance criteria:
+Delivered evaluation-registry acceptance criteria:
+1. Tenant/project-scoped AI evaluation records can be created, listed, summarized, read, and exported.
+2. Records normalize supported evaluation types, outcomes, scores, citations, artifacts, dimensions, and operator comments.
+3. Summaries expose average score, positive/negative/edited rates, outcome counts, target-type counts, and dimension averages.
+4. Evaluation records are auditable and exportable as `.json` artifacts instead of relying on raw JSON text fields.
+
+Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
 2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
-3. Evaluation telemetry can record whether retrieved evidence was useful, accepted, rejected, or edited.
+3. Automated graders and monitoring jobs can score retrieval/generation quality without requiring manual operator feedback every time.
 4. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
 
 ---
@@ -143,6 +150,7 @@ Provide a reusable experimentation framework for strategy and audience decisions
 - `experiment_outcome`
 - `experiment_summary`
 - `experiment_decision_log`
+- `ai_evaluation_record`
 
 ---
 
@@ -155,6 +163,10 @@ Provide a reusable experimentation framework for strategy and audience decisions
 - `GET /experiments/{id}/exposures`
 - `GET /experiments/{id}/outcomes`
 - `POST /experiments/{id}/decision`
+- `POST /experiments/ai-evaluations`
+- `GET /experiments/ai-evaluations`
+- `GET /experiments/ai-evaluations/summary`
+- `GET /experiments/ai-evaluations/{id}/export`
 
 ---
 
@@ -199,9 +211,9 @@ Provide a reusable experimentation framework for strategy and audience decisions
 #### Gap-E0 Evaluation Registry For AI/RAG Is Not Yet Complete
 - Current state:
   - Experiment summaries and decisions exist for growth experiments
-  - Retrieval quality, citation coverage, AI copy usefulness, and recommendation acceptance are not yet tracked as first-class evaluation signals
+  - Retrieval quality, citation coverage, AI copy usefulness, and recommendation acceptance are now tracked through first-class evaluation records and summary APIs
 - Remaining work:
-  - Add evaluation records for retrieval/generation/campaign-copy quality
+  - Add automated/offline evaluation runs for retrieval/generation/campaign-copy quality
   - Make experiment decisions and integrity warnings retrievable as cited evidence for future Ask AI recommendations
 
 #### Gap-E1 Outcome robustness still depends on Action and provider maturity

@@ -87,3 +87,88 @@ class ExperimentDecisionResponse(BaseModel):
 class ExperimentOptimizerRunRequest(BaseModel):
     reference_time: str | None = None
     apply_changes: bool = True
+
+
+class AIEvaluationRequest(BaseModel):
+    evaluation_type: str
+    target_type: str
+    target_id: str | None = None
+    outcome: str = "neutral"
+    score: float | None = Field(default=None, ge=0, le=1)
+    dimensions: Dict[str, Any] = Field(default_factory=dict)
+    citation_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    prompt_summary: str | None = None
+    response_summary: str | None = None
+    comments: str | None = None
+    source: str = "operator"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    evaluated_by: str | None = None
+
+
+class AIEvaluationResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    evaluation_id: str
+    evaluation_type: str
+    target_type: str
+    target_id: str = ""
+    outcome: str = "neutral"
+    score: float | None = None
+    score_source: str = "none"
+    dimensions: Dict[str, float] = Field(default_factory=dict)
+    citation_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    prompt_summary: str = ""
+    response_summary: str = ""
+    comments: str = ""
+    source: str = "operator"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    evaluated_by: str = "system"
+    status: str = "recorded"
+    recorded_at: str = ""
+    export: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+
+
+class AIEvaluationListResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    items: List[AIEvaluationResponse] = Field(default_factory=list)
+
+
+class AIEvaluationSummaryResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    total_records: int = 0
+    average_score: float | None = None
+    positive_rate: float = 0.0
+    negative_rate: float = 0.0
+    edited_rate: float = 0.0
+    outcome_counts: Dict[str, int] = Field(default_factory=dict)
+    evaluation_type_counts: Dict[str, int] = Field(default_factory=dict)
+    target_type_counts: Dict[str, int] = Field(default_factory=dict)
+    dimension_averages: Dict[str, float] = Field(default_factory=dict)
+    latest_recorded_at: str = ""
+
+
+class AIEvaluationExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    format: str
+    evaluation: AIEvaluationResponse

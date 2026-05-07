@@ -59,7 +59,7 @@ KairyxAI is already moving toward the target AI growth platform shape: `Data Cor
 Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
 2. Add semantic/vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
-3. Add retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
+3. Expand the new AI evaluation API into automated retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
 4. Close the feedback loop from operator approvals, sends, experiment outcomes, and campaign performance back into prompts, retrieval ranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
@@ -1457,6 +1457,18 @@ Delivery detail behavior:
   "guardrails_ok": true
 }
 ```
+
+### 6.3 AI/RAG Evaluation Telemetry API
+
+Experiment Hub owns AI quality telemetry for retrieval, citations, generated copy, and prompt-to-artifact completion. The current surface is API-first so Ask AI, module UIs, and QA jobs can record whether evidence and drafts were useful without exposing raw JSON editors.
+
+| Endpoint | Purpose | Notes |
+| --- | --- | --- |
+| `POST /api/v1/experiments/ai-evaluations` | Record one AI/RAG quality event. | Supported evaluation types are `retrieval_quality`, `citation_coverage`, `answer_relevance`, `campaign_copy_usefulness`, and `prompt_to_artifact_completion`. |
+| `GET /api/v1/experiments/ai-evaluations` | List recorded evaluation events. | Optional filters include evaluation type, target type, target id, and limit. |
+| `GET /api/v1/experiments/ai-evaluations/summary` | Summarize AI/RAG quality. | Returns total records, score average, positive/negative/edited rates, outcome counts, target counts, and dimension averages. |
+| `GET /api/v1/experiments/ai-evaluations/{evaluation_id}` | Read one evaluation record. | Records include normalized outcome, score, citations, artifacts, summaries, comments, and metadata. |
+| `GET /api/v1/experiments/ai-evaluations/{evaluation_id}/export` | Export the evaluation artifact. | Returns `ai_evaluation_record.v1` for `.json` download instead of a raw JSON text area. |
 
 ---
 

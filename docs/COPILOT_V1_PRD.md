@@ -40,12 +40,13 @@ Current features to preserve:
 - draft email and push copy generation so operators can approve, edit, and schedule in Action Orchestrator
 - artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
 - Data Core retrieval evidence-pack API that can provide cited knowledge chunks for future Ask AI grounding
+- Experiment Hub AI evaluation telemetry API for recording retrieval quality, citation coverage, answer relevance, copy usefulness, and prompt-to-artifact completion
 
 Future feature plan:
 1. Wire the Data Core retrieval evidence-pack API into Ask AI before answering strategy, setup, diagnostics, or copywriting prompts.
 2. Expand retrieval from lexical knowledge chunks into semantic/vector retrieval over knowledge documents and structured product artifacts.
 3. Return citations and evidence packs for recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
-4. Track retrieval quality, answer relevance, citation coverage, and accepted/rejected copy edits.
+4. Wire Ask AI and module UIs into the AI evaluation telemetry API automatically.
 5. Feed approvals, operator edits, send results, experiment outcomes, and ratings back into prompt context and ranking.
 6. Keep live sends, publishes, starts/stops, destructive actions, and archive/delete flows out of chat execution.
 
