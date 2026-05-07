@@ -1,5 +1,31 @@
 # KairyxAI Experiment Hub v1 PRD
 
+## 0. Regenerated 2026-05 Baseline And RAG Extension Plan
+
+### Current Feature Baseline
+Experiment Hub provides the measurement layer for growth decisions. It already supports experiment configuration, stable assignment, exposure/outcome logging, summaries, integrity checks, and decision records. Ask AI may prepare experiment drafts and diagnostics, but starts, stops, rollout decisions, and Action sync remain module-owned approval flows.
+
+Current capabilities to preserve:
+- A/B and holdout configuration with primary and guardrail metrics
+- deterministic assignments, exposure records, outcome ingestion, summaries, SRM/integrity checks, and decision logs
+- integration with Audience Engine, Action Orchestrator, and Insight Copilot
+- experiment recommendations that stay recommendation-only until reviewed in the owning module
+
+### Future Growth RAG Plan
+Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
+- store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
+- support evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
+- connect send outcomes, cohort performance, and experiment conclusions back to Copilot feedback loops
+- cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
+
+Initial acceptance criteria:
+1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
+2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
+3. Evaluation telemetry can record whether retrieved evidence was useful, accepted, rejected, or edited.
+4. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
+
+---
+
 ## 1. Module Goal
 Provide a reusable experimentation framework for strategy and audience decisions through A/B/Holdout flows, enabling a growth experiment loop that is verifiable, attributable, and decision-ready.
 
@@ -100,7 +126,7 @@ Provide a reusable experimentation framework for strategy and audience decisions
 ### Functionality
 - Output recommendations such as continue experiment / increase rollout gradually / stop
 - Show risk signals such as low sample size, unstable result, and group imbalance
-- One-click sync to Action Orchestrator after manual confirmation
+- One-click handoff to Action Orchestrator for module-owned approval and execution
 
 ### DoD
 1. A next-step recommendation is generated after a conclusion is produced
@@ -140,7 +166,7 @@ Provide a reusable experimentation framework for strategy and audience decisions
 5. Minimum sample size and minimum runtime gates are enforced, so no `winner` is produced early
 6. SRM detection is active and alertable
 7. Conclusions can flow back into Copilot and Action
-8. High-risk recommendations require manual confirmation by default
+8. High-risk recommendations require module-owned approval by default
 
 ---
 
@@ -170,6 +196,14 @@ Provide a reusable experimentation framework for strategy and audience decisions
 
 ### 9.2 Remaining Gaps
 
+#### Gap-E0 Evaluation Registry For AI/RAG Is Not Yet Complete
+- Current state:
+  - Experiment summaries and decisions exist for growth experiments
+  - Retrieval quality, citation coverage, AI copy usefulness, and recommendation acceptance are not yet tracked as first-class evaluation signals
+- Remaining work:
+  - Add evaluation records for retrieval/generation/campaign-copy quality
+  - Make experiment decisions and integrity warnings retrievable as cited evidence for future Ask AI recommendations
+
 #### Gap-E1 Outcome robustness still depends on Action and provider maturity
 - Current state:
   - Outcome ingest, callback-to-outcome flow, summary, and decision already exist
@@ -196,14 +230,13 @@ Provide a reusable experimentation framework for strategy and audience decisions
   - The system can already output rollout suggestions
 - Remaining work:
   - There is still no controlled rollout controller driven directly by Experiment
-  - Expansion and stop decisions still require Action-layer execution plus manual confirmation
+  - Expansion and stop decisions still require Action-layer execution plus module-owned approval
 
 #### Gap-E5 Production-grade permissions and boundaries are not complete
 - Current state:
-  - Minimal RBAC, audit, and high-risk confirmation chains already exist
+  - Google login, tenant-scoped resources, RBAC, audit, and high-risk approval boundaries already exist
 - Remaining work:
-  - Formal authN, tenant boundaries, and secret isolation are still missing
-  - The current Experiment Hub cannot yet be treated as a production-grade experiment platform
+  - Tenant-boundary validation, production staging coverage, and secret isolation drills are not yet complete enough to treat Experiment Hub as production-grade
 
 ### 9.3 Next-Phase Ownership Held by This Document
 - Real outcome and summary integrity under `Phase 4 Activation And Measurement`
@@ -213,10 +246,13 @@ Provide a reusable experimentation framework for strategy and audience decisions
 ### 9.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Outcome Robustness`
+1. `AI/RAG Evaluation Registry`
+   - Track retrieval quality, citation coverage, answer relevance, and generated-copy usefulness
+   - Make experiment decisions retrievable as evidence for future recommendations
+2. `Outcome Robustness`
    - Improve completeness and delay handling for return, conversion, and downstream engagement signals
    - Make summary and decision more consistently grounded in real feedback
-2. `Measurement Integrity Tooling`
+3. `Measurement Integrity Tooling`
    - Strengthen monitoring and alerting for outcome lag, missing data, and measurement drift
    - Build an operator triage workflow for experiment health
 

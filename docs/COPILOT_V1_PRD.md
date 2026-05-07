@@ -3,32 +3,49 @@
 ## 1. Background and Goals
 
 ### 1.1 Background
-The operator workflow in KairyxAI still has too many manual steps between "understand the current state" and "prepare the next controlled action":
+KairyxAI is moving from a manual configuration console toward an AI-native growth marketing workspace. The operator workflow still has too many manual steps between "understand the current state" and "prepare the next controlled action":
 - Operators need to move across Data Core, Audience Engine, Experiment Hub, workflow health, and Copilot reporting to build a single tenant-level picture
 - Low-risk setup work such as connector configuration, cohort draft creation, and experiment draft creation still requires form-by-form navigation
-- The existing Copilot `query / explain / recommend / report` flows help with analysis, but they do not collect missing inputs or complete safe control-plane work
+- Growth knowledge such as campaign briefs, SOPs, historical analyses, and playbooks is not yet retrievable as cited evidence for recommendations and campaign drafting
 
 ### 1.2 Goal (v1)
-Upgrade `Insight Copilot` into a constrained `chat-plus-preview operator agent` that can:
+Upgrade `Insight Copilot` into a constrained prompt-first growth agent that can:
 - summarize the current workspace state across modules
-- answer grounded product-help questions and return sample payloads for the current page
+- answer grounded product-help questions with cited context and exportable artifacts when structured payload review is needed
 - collect missing inputs through structured clarifications
-- preview the exact control-plane actions it plans to take
-- execute low-risk setup work on behalf of the operator
-- hold high-risk actions behind explicit confirmation
+- preview or draft the exact control-plane setup it plans to prepare
+- execute safe setup work on behalf of the operator
+- hand off live/risky actions to the owning module for approval, scheduling, publishing, deletion, archive, or send
 
 The v1 closed loop becomes:
 
-**operator request -> intent + slot extraction -> clarifications -> execution preview -> safe action execution -> artifact handoff**
+**operator request -> intent + slot extraction -> retrieval context -> clarifications -> draft/setup preview -> safe setup execution -> artifact/module handoff**
 
-This upgrade does not replace the existing analytical tools. It adds an operator agent above them while keeping the manual `query / explain / recommend / report` controls available.
+This upgrade does not delete analytical capabilities. It moves them behind the primary Ask AI experience and keeps manual/query-style controls only as advanced fallbacks.
 
 ### 1.3 Non-Goals (Not Included in v1)
-- Autonomous execution of high-risk operational actions without confirmation
+- Autonomous execution of high-risk operational actions from chat
 - Destructive delete flows, even where the underlying APIs already exist
 - Workflow publish, workflow run, live sends, or any action that can directly trigger downstream delivery
 - A general-purpose browser-driving agent or DOM automation layer
 - Full BI replacement or open-ended autonomous analysis outside the supported action registry
+
+### 1.4 Regenerated 2026-05 RAG And Prompt-First Baseline
+
+Current features to preserve:
+- global Ask AI session across the operator console
+- starter actions and module-level prompts for connectors, mappings, cohorts, SQL drafts, campaigns, workflows, experiments, diagnostics, and health summaries
+- secure input flow for API keys, tokens, and service-account files outside the chat transcript
+- backend-managed model profiles for Gemini, OpenAI-compatible local runtimes, OpenAI, and Anthropic
+- draft email and push copy generation so operators can approve, edit, and schedule in Action Orchestrator
+- artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
+
+Future feature plan:
+1. Retrieve from Data Core knowledge documents and structured product artifacts before answering strategy, setup, diagnostics, or copywriting prompts.
+2. Return citations and evidence packs for recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
+3. Track retrieval quality, answer relevance, citation coverage, and accepted/rejected copy edits.
+4. Feed approvals, operator edits, send results, experiment outcomes, and ratings back into prompt context and ranking.
+5. Keep live sends, publishes, starts/stops, destructive actions, and archive/delete flows out of chat execution.
 
 ---
 
@@ -45,7 +62,7 @@ This upgrade does not replace the existing analytical tools. It adds an operator
 2. Set up an upstream connector or downstream provider connection with only the missing fields requested
 3. Set up a draft cohort using SQL, rules, or a supplied member list
 4. Set up a draft A/B test linked to a cohort and guardrail metrics
-5. Prepare a risky follow-up such as cohort activation or experiment start, then stop at confirmation
+5. Prepare a risky follow-up such as cohort activation or experiment start, then hand off to the owning module for approval
 6. Run or reuse a churn prediction job from a source or import and continue after it completes
 7. Draft SQL from a prompt, preview it, save it, and turn it into a draft cohort
 8. Select an existing SendGrid template or Braze API campaign, create a draft email campaign, and optionally create a linked draft workflow
@@ -64,9 +81,9 @@ The primary Copilot surface is now a global chat-first assistant with:
 - reuse of the existing session on drawer reopen so transcript refresh does not block the composer
 - optimistic user-message rendering plus an inline assistant thinking state after send
 - inline clarification cards that appear only when required
-- inline confirmation and artifact cards inside the transcript instead of side panels
+- inline artifact and module handoff cards inside the transcript instead of side panels
 
-The assistant is available from every app page after workspace resolution and keeps one shared session alive across SPA navigation. The existing manual `query / explain / recommend / report` tools remain on the Insight Copilot page as the advanced/manual fallback.
+The assistant is available from every app page after workspace resolution and keeps one shared session alive across SPA navigation. Manual `query / explain / recommend / report` controls may remain as collapsed advanced fallbacks, but they are not the primary Copilot experience.
 
 ### 3.2 Deterministic Agent Loop
 Every agent turn follows the same constrained lifecycle:
@@ -104,13 +121,13 @@ The output must include:
 The agent supports read-only `help_support` behavior for questions such as:
 - `How do I use this page?`
 - `Where do I do X?`
-- `Give me a sample payload`
+- `Export the setup payload`
 - `Why is this failing?`
 
 Behavior:
 - use current module/page context plus selected resource ids when present
 - answer from a structured help catalog instead of open-ended freeform generation
-- return inline SQL, JSON, or prompt samples when relevant
+- return guided steps and artifact exports instead of large inline SQL/JSON blocks when structured setup review is needed
 - fall back to product-help guidance when an unsupported request is not actionable
 
 ### 3.5 Connection Setup
@@ -144,7 +161,7 @@ The agent supports `set up a cohort` for:
 
 Behavior:
 - request `cohort_type` if missing
-- collect SQL, rule definition JSON, or member list JSON depending on the chosen type
+- collect cohort intent through guided fields, file upload, selected artifacts, or advanced fallbacks depending on cohort type
 - for SQL cohorts, run a SQL preview first
 - save the supporting query when applicable
 - create the cohort in `draft` by default
@@ -167,7 +184,7 @@ Behavior:
 - require a linked cohort
 - save the experiment config through the existing Experiment Hub service
 - persist it in a non-running state
-- keep experiment start as a separate confirmed action
+- keep experiment start as a separate module-owned action
 
 ### 3.8 Prompt-Driven Prediction To Campaign Setup
 The agent supports a constrained prompt-driven operator flow for requests such as:
@@ -212,13 +229,13 @@ Behavior:
 - if the prediction fails or stops, the session returns to an active state and explains why the flow could not continue
 
 ### 3.11 Retained Manual Copilot Tools
-The analytical Copilot endpoints remain in scope and visible in the UI:
+The analytical Copilot endpoints remain in scope as collapsed advanced fallbacks:
 - natural-language metric query
 - anomaly explanation
 - action recommendation drafts
 - daily and weekly reports
 
-These manual tools remain valuable for open analytical work that is broader than the operator agent's constrained setup scope.
+These tools remain valuable for debugging and open analytical work that is broader than the operator agent's constrained setup scope. They should not reintroduce primary code/JSON text fields where artifact exports or guided controls can carry the same review function.
 
 ---
 
@@ -231,7 +248,7 @@ Every agent message response returns a structured payload with:
 - `clarifications`
 - `execution_preview`
 - `completed_actions`
-- `pending_confirmations`
+- `pending_confirmations` (legacy compatibility only; new risky flows should be represented as module handoffs)
 - `artifacts`
 
 ### 4.2 Session State
@@ -245,7 +262,7 @@ The session state must expose:
 - `latest_execution_preview`
 - `latest_artifacts`
 - `latest_clarifications`
-- `pending_confirmation_count`
+- `pending_confirmation_count` (legacy compatibility only)
 - `model_profile_id`
 - `effective_provider`
 - `effective_model_name`
@@ -263,7 +280,7 @@ The execution preview must show:
 - readiness
 - missing fields
 - blockers
-- ordered preview steps with action type, title, summary, confirmation flag, and status
+- ordered preview steps with action type, title, summary, module-approval requirement, and status
 
 The backend still returns execution preview metadata for control-plane readiness and auditability, but the simplified chat drawer does not render a dedicated preview section.
 
@@ -303,13 +320,16 @@ The operator agent reuses the existing control-plane services instead of introdu
 - `SendGridProviderService`
 - `BrazeProviderService`
 - `AgentModelProfileService`
+- `KnowledgeService` (planned Data Core owner for documents, chunks, and provenance)
+- `RetrievalService` (planned Copilot owner for context packs, citations, and ranking metadata)
+- `EvaluationService` (planned Experiment/Copilot owner for retrieval and generation quality telemetry)
 
 ### 5.2 Resource Persistence
 Agent state is persisted in the generic control-plane resource store with dedicated resource types:
 - `copilot_agent_session`
 - `copilot_agent_turn`
 - `copilot_agent_action_run`
-- `copilot_agent_confirmation_request`
+- `copilot_agent_confirmation_request` (legacy compatibility for older prepared-action flows)
 
 This keeps the agent aligned with existing persistence, audit, tenant scoping, and project scoping rules.
 
@@ -336,7 +356,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 1. The agent must use the explicit action registry and must not execute arbitrary code paths.
 2. Low-risk actions may auto-execute only after all required fields are present.
-3. High-risk actions must stop in `awaiting_confirmation` until the operator confirms them.
+3. High-risk actions must become module handoffs instead of chat confirmations.
 4. Tenant and project scope must be enforced through the existing governance context and control-plane repository boundaries.
 5. RBAC failures must fail closed and explain which permission blocked the step.
 6. Secrets included in connection setup must be redacted from action parameters stored in the session history.
@@ -361,7 +381,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 - `update_cohort_definition`
 - `save_experiment_config`
 
-### 6.2 Confirmation-Gated Actions
+### 6.2 Module-Handoff Actions
 - `activate_cohort`
 - `pause_cohort`
 - `archive_cohort`
@@ -372,7 +392,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 ### 6.3 Current Role Expectations
 - `admin` can execute the full scope
-- `operator` can run the operator agent plus the supported setup and confirmation actions
+- `operator` can run the operator agent plus supported setup and module-handoff actions
 - `analyst` can use read-oriented agent flows such as dashboard summary, but write actions remain blocked by permission checks
 
 ---
@@ -408,7 +428,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
   - accepts optional `model_profile_id`
 
 - `GET /api/v1/copilot/agent/sessions/{session_id}`
-  - read the current session state, latest turn, and pending confirmations
+  - read the current session state, latest turn, legacy pending confirmations, and module handoff artifacts
 
 - `GET /api/v1/copilot/agent/sessions/{session_id}/turns`
   - list all recorded turns for the session
@@ -417,7 +437,7 @@ This lets the agent narrow scope without forcing the user to restate context tha
   - send a new message into the agent loop
 
 - `POST /api/v1/copilot/agent/actions/{action_id}/confirm`
-  - confirm and execute a prepared high-risk action
+  - legacy compatibility endpoint for older prepared high-risk action flows; new product UX should prefer module handoff and approval inside the owning module
 
 - `GET /api/v1/copilot/agent/model-profiles`
   - list backend-managed model profiles for the operator agent
@@ -448,13 +468,13 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 ## 9. Acceptance Criteria (DoD)
 
-1. Operators can start a Copilot agent session and the backend persists session, turn, action, and confirmation resources.
+1. Operators can start a Copilot agent session and the backend persists session, turn, action, artifact, and legacy confirmation resources.
 2. When a request is missing required fields, the agent returns structured clarifications instead of making up values.
 3. `Summarize dashboard` returns a tenant-and-project-scoped summary with counts, risks, and next steps.
 4. Connection setup can create a connector or provider connection and return a linked artifact.
 5. SQL cohort setup previews SQL, saves the supporting query, and creates a draft cohort without auto-activation.
 6. Experiment setup saves a non-running config linked to a cohort and returns a linked artifact.
-7. Risky actions such as cohort activation and experiment start stop at confirmation and only execute after an explicit confirm call.
+7. Risky actions such as cohort activation and experiment start return module handoff artifacts and do not execute from the chat window.
 8. Permission failures do not bypass governance, and cross-project session access is denied.
 9. Operators can select a backend-managed Gemini, OpenAI, or Anthropic model profile for the agent, and deterministic fallback still keeps the session usable when the selected provider is unavailable.
 10. Prediction-backed operator flows can resume in the same session after the prediction job completes.
@@ -471,12 +491,12 @@ This lets the agent narrow scope without forcing the user to restate context tha
 **Delivered Scope**
 1. Session creation and retrieval
 2. Turn persistence with user message, assistant message, preview, clarifications, and artifacts
-3. Action-run persistence and confirmation-request persistence
+3. Action-run persistence, artifact persistence, and legacy confirmation-request persistence
 4. Session state updates after each turn
 
 **Acceptance Criteria (DoD)**
 - Each turn is replayable from the resource store
-- Pending confirmations are discoverable from the session
+- Pending module handoffs and legacy confirmations are discoverable from the session
 - Session state reflects the latest preview and unresolved clarifications
 
 ---
@@ -485,10 +505,10 @@ This lets the agent narrow scope without forcing the user to restate context tha
 **Goal**: keep the agent deterministic and governable.
 
 **Delivered Scope**
-1. Intent parsing for dashboard summary, grounded help support, cohort setup, experiment setup, connection setup, and specific confirmation-gated follow-ups
-2. Structured slot extraction from natural language, named fields, JSON blocks, SQL blocks, and UI context
+1. Intent parsing for dashboard summary, grounded help support, cohort setup, experiment setup, connection setup, copy drafting, retrieval-backed recommendations, and module-handoff follow-ups
+2. Structured slot extraction from natural language, named fields, advanced SQL/code blocks when present, uploaded/selected artifacts, and UI context
 3. Explicit action registry with fixed permission requirements and risk levels
-4. Runtime help catalog for grounded product guidance, sample payloads, and troubleshooting notes
+4. Runtime help catalog for grounded product guidance, exportable setup payloads, and troubleshooting notes
 5. Gemini-backed parsing and composition with deterministic fallback
 6. Backend-managed model profile selection for Gemini, OpenAI, and Anthropic
 
@@ -518,17 +538,17 @@ This lets the agent narrow scope without forcing the user to restate context tha
 
 ---
 
-### P0-4 Confirmation Gating And Governance
-**Goal**: preserve operator control for risky actions.
+### P0-4 Module Handoff And Governance
+**Goal**: preserve operator control for risky actions while removing chat-window confirmation prompts from the primary workflow.
 
 **Delivered Scope**
-1. Prepared high-risk actions stored in `awaiting_confirmation`
-2. Explicit confirm endpoint for risky execution
-3. Permission checks on both prepare and confirm paths
+1. Prepared high-risk actions represented as module handoff artifacts
+2. Legacy confirm endpoint retained for backwards compatibility, but not used as the primary chat UX
+3. Permission checks on both preparation and module-owned execution paths
 4. Tenant and project scoping through the existing governance model
 
 **Acceptance Criteria (DoD)**
-- High-risk actions do not execute before confirmation
+- High-risk actions do not execute from the chat window
 - Cross-project access to another session returns not found
 - Roles without write permissions can still use read-safe agent flows while blocked from writes
 
@@ -545,15 +565,15 @@ This lets the agent narrow scope without forcing the user to restate context tha
 5. Session status showing effective provider / model and async continuation state
 6. Structured clarification rendering
 7. Execution preview rendering
-8. Pending confirmation rendering
+8. Module handoff rendering, with legacy pending confirmation rendering only for compatibility
 9. Artifact deep links into the relevant module
 10. `Continue` actions on async prediction artifacts
-11. Retained manual `query / explain / recommend / report` controls on the Insight Copilot page
+11. Collapsed advanced access to retained `query / explain / recommend / report` controls on the Insight Copilot page
 12. Removal of the static Help module from visible navigation
 
 **Acceptance Criteria (DoD)**
 - The user can ask for help, samples, or safe setup work without leaving the current module
-- The user can see what the agent plans to do before execution
+- The user can see what the agent plans to set up before draft creation or module handoff
 - Manual analytical tools remain available for broader Copilot workflows
 
 ---

@@ -1,5 +1,32 @@
 # KairyxAI Audience Engine v1 PRD
 
+## 0. Regenerated 2026-05 Baseline And RAG Extension Plan
+
+### Current Feature Baseline
+Audience Engine converts Data Core assets and Copilot intent into reusable cohort assets. The current product direction is marketer-first: guided builders, prediction/source selectors, previews, status, metrics, and artifact handoffs are primary; SQL, rule JSON, and manual member-list configuration remain advanced fallback paths.
+
+Current capabilities to preserve:
+- guided cohort builder with source/prediction selection and preview-before-create
+- Rule, SQL, and List cohort support with lifecycle, versions, restore/archive, member pagination, refresh jobs, metrics, and compare
+- AI-assisted cohort drafting that produces builder-state artifacts before draft cohort creation
+- downstream consumption by Action Orchestrator, Experiment Hub, and Insight Copilot
+- auditability for create, update, refresh, activate, archive, restore, and delete paths
+
+### Future Growth RAG Plan
+Audience recommendations should become evidence-backed by Data Core knowledge and historical performance:
+- retrieve lifecycle playbooks, campaign briefs, historical cohort definitions, and experiment outcomes before suggesting segments
+- cite the evidence used for cohort recommendations, risk notes, exclusion suggestions, and guardrail choices
+- export cohort setup payloads through `.json` artifact buttons rather than exposing primary JSON text fields
+- feed cohort version performance, activation results, and operator edits back into future audience suggestions
+
+Initial acceptance criteria:
+1. Ask AI can propose cohort definitions from business goals using cited knowledge/playbook context.
+2. Draft cohort artifacts remain editable in the guided builder before creation or activation.
+3. SQL/rule/member-list details are inspectable through advanced controls or export artifacts, not primary manual fields.
+4. Audience performance feeds the RAG feedback loop without enabling automatic self-optimization.
+
+---
+
 ## 1. Module Goal
 Convert data insights into reusable, executable, and traceable audience assets that support operational outreach, experiment assignment, and model strategy.
 
@@ -142,7 +169,7 @@ Convert data insights into reusable, executable, and traceable audience assets t
 ---
 
 ## 6. Relationship to the Master PRD
-This document is the detailed design for Audience Engine. The master PRD (`DATA_CORE_V1_PRD.md`) keeps high-level goals and acceptance gates, while this document is used for implementation planning and sequencing.
+This document is the detailed design for Audience Engine. The master PRD (`KAIRYXAI_V1_MASTER_PRD.md`) keeps high-level goals and acceptance gates, while this document is used for implementation planning and sequencing.
 
 ---
 
@@ -155,6 +182,14 @@ This document is the detailed design for Audience Engine. The master PRD (`DATA_
 - Guided cohort builder endpoints, builder provenance, multi-source prediction preview/create, and AI builder-state drafting now exist in the operator stack
 
 ### 7.2 Remaining Gaps
+
+#### Gap-A0 RAG-Grounded Audience Suggestions Are Not Yet Complete
+- Current state:
+  - Ask AI can draft builder-state artifacts for cohorts
+  - Audience suggestions do not yet retrieve and cite playbooks, historical results, or experiment evidence
+- Remaining work:
+  - Ground cohort recommendations in retrieved knowledge and structured performance evidence
+  - Capture operator edits and audience performance as feedback signals for future recommendations
 
 #### Gap-A1 Feedback still depends on downstream measurement maturity
 - Current state:
@@ -179,9 +214,9 @@ This document is the detailed design for Audience Engine. The master PRD (`DATA_
 
 #### Gap-A4 Production-grade permissions and tenant boundaries are not complete
 - Current state:
-  - Minimal RBAC and audit already exist
+  - Google login, tenant-scoped resources, RBAC, and audit already exist
 - Remaining work:
-  - Cross-tenant isolation, formal authentication, and high-risk cohort action boundaries are still incomplete
+  - Tenant-boundary validation, production staging coverage, and high-risk cohort action approvals still need stronger end-to-end proof
 
 ### 7.3 Next-Phase Ownership Held by This Document
 - Cohort UI / metrics / compare contracts under `Phase 1 Frontend Hardening`
@@ -191,10 +226,13 @@ This document is the detailed design for Audience Engine. The master PRD (`DATA_
 ### 7.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Feedback Loop Stabilization`
+1. `RAG-Grounded Audience Suggestions`
+   - Ground cohort ideas in retrieved playbooks, reports, and experiment evidence
+   - Return citations and editable guided-builder artifacts instead of raw SQL/rule JSON by default
+2. `Feedback Loop Stabilization`
    - Move cohort metrics onto more stable provider delivery, outcome, and conversion signals
    - Reduce the sensitivity of Audience feedback to downstream measurement volatility
-2. `Audience View Model Tightening`
+3. `Audience View Model Tightening`
    - Add more stable aggregated interfaces for metrics, compare, and refresh-history operator views
    - Reduce frontend assembly logic based on generic resources
 

@@ -1,5 +1,36 @@
 # KairyxAI Data Core v1 PRD
 
+## 0. Regenerated 2026-05 Baseline And RAG Extension Plan
+
+### Current Feature Baseline
+Data Core already owns the growth data entry layer for connector setup, import execution, mapping, warehouse query, prediction readiness, and AI runtime profile setup. The primary console direction is guided and prompt-first: selectors, previews, status badges, artifact buttons, and secure credential dialogs stay visible; raw SQL and JSON/code editors remain advanced fallbacks.
+
+Current capabilities to preserve:
+- connector management for event, attribution, Google, and BigQuery-style sources
+- secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
+- import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
+- SQL workspace and query-to-cohort behavior as analyst/advanced paths
+- local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
+- backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
+
+### Future Knowledge Ingestion Scope
+Data Core will also become the control-plane owner for growth knowledge assets used by the Copilot RAG loop. This includes marketing SOPs, campaign briefs, lifecycle playbooks, product docs, historical analysis reports, FAQs, creative notes, and other operator-approved reference material.
+
+Planned resource model:
+- `knowledge_source`: logical source grouping, owner, visibility, tags, freshness policy, and ingestion configuration
+- `knowledge_document`: source document metadata, title, source type, provenance, content hash, lifecycle status, permissions, and latest ingestion state
+- `knowledge_chunk`: bounded text chunk with ordinal, summary/title metadata, source pointer, token/character counts, content hash, permission tags, and future embedding metadata
+- `knowledge_ingestion_job`: ingestion state, chunk count, rejected section count, warnings, errors, and reprocess metadata
+
+Initial acceptance criteria:
+1. Operators can add tenant/project-scoped text or markdown knowledge documents through guided UI/API flow.
+2. The backend chunks documents deterministically and preserves provenance for each chunk.
+3. Knowledge resources are listable, auditable, archiveable, and exportable as `.json` artifacts for review.
+4. No raw JSON/code input field is required for normal knowledge ingestion.
+5. Future embedding/vector metadata can attach to chunks without changing the document ownership boundary.
+
+---
+
 ## 4.0 Connector Management (Ownership Clarification)
 
 ### Goal
@@ -33,7 +64,7 @@ After connecting a Data Lake or database such as BigQuery, allow users to query 
 - Support configuring and validating BigQuery connections, with Snowflake and Redshift as future expansion targets
 - Support selecting project, dataset, and table or view
 - Support read-only mode with least privilege
-- BigQuery browser setup must accept tenant-provided service account credentials via upload or paste instead of assuming shared backend credentials for connector reads
+- BigQuery browser setup must accept tenant-provided service account credentials through secure file upload or server-side secret references instead of assuming shared backend credentials or showing a service-account JSON paste field
 
 #### FR-4.1.2 SQL Query Workspace
 - Provide an executable SQL workspace with templates and parameters
@@ -979,6 +1010,14 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 
 ### 6.2 Remaining Gaps
 
+#### Gap-D0 Growth Knowledge Ingestion Does Not Yet Exist
+- Current state:
+  - Data Core owns structured ingestion and mapping for event/warehouse data
+  - Product knowledge, SOPs, reports, briefs, and playbooks are not yet first-class Data Core resources
+- Remaining work:
+  - Add tenant/project-scoped knowledge documents, chunks, ingestion jobs, provenance, lifecycle, and export support
+  - Keep embedding/vector metadata attachable without forcing a storage migration in the first implementation pass
+
 #### Gap-D1 Manifest-Driven Processing Is Not Yet the Default Path
 - Current state:
   - The import main path already has raw-shard, standardized, and unified structure
@@ -1020,10 +1059,11 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 
 #### Gap-D6 Secret and Access Boundary Is Not Production-Grade Yet
 - Current state:
-  - Connector and warehouse access still rely mainly on local config and environment variables
+  - Connector and warehouse access now supports secret-reference patterns and secure browser upload flows
+  - Some local/demo paths still rely on local config and environment variables
 - Remaining work:
-  - A formal secret manager is still missing
-  - Production-grade access boundaries and credential-rotation strategy for warehouse and data connectors are still missing
+  - Production secret-manager resolution, rotation drills, and access-boundary validation are not yet fully proven for warehouse and data connectors
+  - Knowledge ingestion and embedding providers must reuse the same secret-reference boundary
 
 #### Gap-D7 Data Core Console and Contract Hardening Is Not Complete
 - Current state:
@@ -1039,16 +1079,19 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 ### 6.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Manifest-Driven Default Path`
+1. `Growth Knowledge Ingestion`
+   - Add first-class knowledge document and chunk resources for RAG context
+   - Preserve provenance, lifecycle, permissions, content hashes, and `.json` export support
+2. `Manifest-Driven Default Path`
    - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic
    - Reduce the degree to which application-layer job orchestration dominates the main path
-2. `Replay / Backfill Tooling`
+3. `Replay / Backfill Tooling`
    - Complete raw-shard backfill and replay across source, date, and job-range dimensions
    - Support bulk replay without refetching from source
-3. `Warehouse Schema Contract`
+4. `Warehouse Schema Contract`
    - Formalize schema versions and compatibility gates for `events_staging / events_curated / player_latest_state / player_churn_features`
    - Define explicit upstream write, downstream consumption, and change-review rules
-4. `Dead-Letter / Quality Remediation`
+5. `Dead-Letter / Quality Remediation`
    - Provide an operator-facing dead-letter remediation flow
    - Deliver stable dashboards and escalation alerts for freshness, quality gate, dead-letter, and lag
 

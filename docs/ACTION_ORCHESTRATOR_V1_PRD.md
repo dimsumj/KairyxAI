@@ -1,5 +1,33 @@
 # KairyxAI Action Orchestrator v1 PRD
 
+## 0. Regenerated 2026-05 Baseline And RAG Extension Plan
+
+### Current Feature Baseline
+Action Orchestrator is the module-owned execution layer for email, push, webhook, simulator, and future channel operations. Ask AI may prepare drafts, schedules, copy, and setup artifacts, but live sends, publishes, starts/stops, archives, and deletes remain approved and executed in Action Orchestrator surfaces.
+
+Current capabilities to preserve:
+- provider connections for SendGrid, Braze, webhook/simulator, and push-provider paths
+- email campaign builder and push notification composer with AI-assisted title/body drafting
+- Workflow Studio with `Scheduled`, `Sent`, `Archived`, and `All` filters plus compact visible row actions
+- draft workflow/campaign creation from Copilot and normal module editing before approval
+- runtime controls, policy guardrails, delivery diagnostics, callbacks, exports, and kill-switch behavior
+- compact review surfaces with `.json` export buttons instead of primary JSON/code text fields
+
+### Future Growth RAG Plan
+Action Orchestrator should use retrieved growth knowledge to improve campaign setup while preserving human approval:
+- retrieve campaign briefs, lifecycle playbooks, brand/voice guidance, past winning copy, and experiment learnings before drafting email or push content
+- cite evidence behind message strategy, channel choice, audience fit, schedule choice, and risk notes
+- track operator edits, approvals, schedule changes, sends, delivery metrics, and experiment outcomes as feedback signals
+- expose generated setup as editable UI state and export artifacts, not raw JSON text output
+
+Initial acceptance criteria:
+1. Ask AI can draft email/push title, body, audience targeting notes, and schedule recommendations for operator approval.
+2. Generated campaigns/workflows remain in draft until approved or scheduled from Action Orchestrator.
+3. Risky actions never execute directly from chat.
+4. Delivery and outcome feedback can be attached to future RAG evaluation and playbook updates.
+
+---
+
 ## 1. Module Goal
 Turn audiences and strategy outputs from Audience and Copilot into controllable, auditable, and reversible execution flows across Push / Email / In-App / Webhook.
 
@@ -33,7 +61,7 @@ Turn audiences and strategy outputs from Audience and Copilot into controllable,
 ### Functionality
 - `Email Campaigns` remains the dedicated builder for one-time SendGrid and Braze lifecycle sends
 - `Push Notifications` becomes the dedicated builder for provider-backed push workflows and simulator fallback
-- The push builder reuses the existing workflow contract with cohort, experiment, trigger, policy, provider connection, campaign name, title, body, deep link, deep-link token, JSON data, and provider options
+- The push builder reuses the existing workflow contract with cohort, experiment, trigger, policy, provider connection, campaign name, title, body, deep link, deep-link token, and advanced/exported payload metadata for provider-specific data and options
 - `Workflow Studio` becomes the shared operating surface for email campaigns and push workflows
 - Workflow Studio shows `Name`, `Channel`, `Provider`, `Status`, `Last Run`, `Next Run`, `Last Results`, `Total Results`, and actions
 - Workflow Studio provides filters for `Scheduled`, `Sent`, `Archived`, and `All`
@@ -241,6 +269,14 @@ Workflow response additions:
 
 ### 8.2 Remaining Gaps
 
+#### Gap-O0 RAG-Grounded Campaign Drafting Is Not Yet Complete
+- Current state:
+  - Ask AI can prepare draft email/push setup and copy for operator approval
+  - Drafting does not yet retrieve and cite briefs, brand guidance, lifecycle playbooks, prior winners, or experiment evidence
+- Remaining work:
+  - Ground campaign and workflow drafts in retrieved evidence
+  - Capture operator edits, approvals, schedules, sends, and outcomes as feedback for future recommendations
+
 #### Gap-O1 Delivery Engine still leans toward a demo / simulator shape
 - Current state:
   - Push, email, and Braze adapters plus execution logs already exist
@@ -264,10 +300,9 @@ Workflow response additions:
 
 #### Gap-O4 Provider credentials and runtime boundaries are not yet productionized
 - Current state:
-  - Minimal governance, audit, and header-based role boundaries already exist
+  - Provider connections, secret-reference patterns, secure credential dialogs, governance, and audit already exist
 - Remaining work:
-  - Formal secret management is still missing
-  - Provider-level authentication, environment isolation, and tenant boundaries are still incomplete
+  - Production secret resolution, provider credential rotation drills, environment isolation, and tenant-boundary validation are still incomplete
 
 #### Gap-O5 Automated optimization is not yet open
 - Current state:
@@ -284,10 +319,13 @@ Workflow response additions:
 ### 8.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Provider-Grade Delivery Stabilization`
+1. `RAG-Grounded Campaign Drafting`
+   - Retrieve briefs, playbooks, past copy, brand guidance, and experiment outcomes before drafting email/push content
+   - Return cited, editable title/body/schedule artifacts instead of raw payload fields
+2. `Provider-Grade Delivery Stabilization`
    - Strengthen callback normalization, failure classification, delayed feedback handling, and retry / fallback contracts
    - Feed real engagement outcomes back more reliably into execution and experiment layers
-2. `Reduce Simulator Dependence`
+3. `Reduce Simulator Dependence`
    - Move the main push/email path farther away from simulator semantics
    - Ensure production channels have consistent execution, diagnostics, and receipt contracts
 

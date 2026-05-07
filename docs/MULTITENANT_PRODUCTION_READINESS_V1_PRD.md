@@ -22,6 +22,21 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 
 ---
 
+## 2.2 Regenerated 2026-05 RAG Production Baseline
+
+The AI-native growth marketing roadmap adds knowledge ingestion, retrieval, citations, evaluation telemetry, and feedback-loop storage to the production-readiness boundary. These capabilities are tenant-sensitive because uploaded playbooks, reports, campaign briefs, and generated recommendations can contain proprietary business strategy and regulated customer data.
+
+Additional production requirements:
+- knowledge documents, chunks, retrieval indexes, citations, evaluation runs, and feedback records must be tenant/project scoped by default
+- retrieval must never cross tenant boundaries, including fallback search, diagnostics, previews, and export artifacts
+- vector or embedding storage must preserve source provenance, permission tags, lifecycle state, and deletion/archive behavior from the control plane
+- embedding/model provider credentials must use the existing secret-reference path and must not be stored in chat transcripts or browser local storage
+- evaluation telemetry must avoid storing raw secrets, full credential payloads, or unnecessary customer PII
+- operator-facing `.json` exports must be access-controlled and auditable like other control-plane artifacts
+- staging validation must include knowledge ingestion, retrieval, citation rendering, no-code JSON export, feedback capture, and tenant-isolation tests before production rollout
+
+---
+
 ## 3) Scope
 
 ### 3.1 In Scope
@@ -36,6 +51,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Structured observability, correlation IDs, worker replay paths, and operational runbooks
 - Minimum dependency guards and upstream-readiness rules required to keep tenant-scoped execution safe
 - Tenant-aware repository, storage, warehouse, and provider callback contracts
+- Tenant-scoped knowledge storage, vector/embedding metadata governance, retrieval isolation, citation auditability, and evaluation telemetry retention
 
 ### 3.2 Out Of Scope
 - A streaming rewrite or real-time control-plane redesign
@@ -212,7 +228,11 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
    - Signed callbacks are accepted only when signatures validate.
    - Invalid signatures are rejected.
    - Delayed callbacks still reconcile against the correct tenant-scoped delivery and experiment state.
-7. `Operational readiness`
+7. `RAG and knowledge isolation`
+   - Knowledge documents, chunks, citations, vector/embedding metadata, evaluation telemetry, and feedback records are isolated by tenant and project.
+   - Retrieval diagnostics and `.json` exports cannot expose cross-tenant content.
+   - Archive/delete behavior for knowledge resources propagates to retrieval indexes and evidence packs.
+8. `Operational readiness`
    - Runbooks have been rehearsed in staging.
    - Alert policies are active and routed.
    - Backup and restore has been validated in an isolated environment.
@@ -229,6 +249,7 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
 - Stand up the full Cloud Run worker topology in staging.
 - Run migration and bootstrap tenant setup.
 - Execute the launch-gate validation matrix with real IdP tokens and provider test credentials.
+- Validate knowledge ingestion, retrieval isolation, citation rendering, evaluation telemetry, feedback capture, and `.json` artifact export under tenant-scoped staging data.
 
 ### 8.3 Phase 3: Limited Production Pilot
 - Onboard an internal or controlled pilot tenant.
@@ -249,6 +270,8 @@ Take the current `/api/v1` control plane and module stack from a local/demo-capa
   - The multi-tenant schema rollout changes keys, metadata, and query scoping across the control plane, so migration verification is a release-critical dependency.
 - `Provider variance`
   - Callback payloads, retry semantics, and signature rules vary by provider and can create reconciliation gaps if not tested per integration.
+- `Knowledge and retrieval leakage`
+  - Uploaded playbooks and reports can contain proprietary strategy or customer context, so retrieval isolation and export permissions are release-critical.
 - `Operational discipline`
   - Shared SaaS increases the blast radius of configuration mistakes, so runbooks, alert routing, and replay controls are part of the product requirement, not just an operations detail.
 

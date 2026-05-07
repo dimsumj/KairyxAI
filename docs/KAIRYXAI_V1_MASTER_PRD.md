@@ -1,7 +1,7 @@
 # KairyxAI v1 Master PRD
 
 ## 1) Product Positioning (One Line)
-Upgrade growth operations from an analysis tool into a closed-loop growth engine with real-time data, AI decisioning, and automated execution.
+Upgrade growth operations into an AI-native growth marketing RAG platform where operators ask for outcomes, the system retrieves trusted data and playbooks, drafts executable setup, and keeps live action approval inside the product modules.
 
 ---
 
@@ -19,6 +19,32 @@ Upgrade growth operations from an analysis tool into a closed-loop growth engine
 - No real-time streaming decision engine
 - No fully automated high-risk closed-loop optimization
 - No frontend stack rewrite as a goal for the current phase
+
+---
+
+## 1.3) Regenerated 2026-05 Growth-Marketing RAG Baseline
+
+### Product Direction
+KairyxAI is now specified as a prompt-first growth marketing operating system, not a code-first analytics console. `Ask AI` is the primary entry point for Data Core setup, audience drafting, campaign/workflow preparation, experiment planning, diagnostics, and growth insight synthesis. Manual controls remain available only where they support review, compact selection, advanced debugging, export, or secure credential entry.
+
+### Current Shipped Baseline To Preserve
+- `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles
+- `Audience Engine`: guided cohort builder; SQL/rule/list cohort support behind marketer-first flows; prediction-backed audience creation; cohort versions, members, refresh, metrics, and AI-drafted builder-state artifacts
+- `Action Orchestrator`: provider connections for SendGrid, Braze, webhook, simulator, and push provider paths; email campaign drafts; push notification drafts; Workflow Studio; scheduled/sent/archived workflow management; JSON artifacts exported through buttons instead of primary text fields
+- `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, and decision logging with Ask AI handoffs for setup and diagnostics
+- `Insight Copilot`: global Ask AI session; starter actions; secure inputs outside chat; backend-managed model profiles; artifact cards; module handoffs for risky actions; AI copy drafting for email/push titles and bodies before operator approval and scheduling
+- `Production Readiness`: Google login and organization/project routing; tenant-scoped resources; secret references; worker topology; Cloud Run/GCP deployment assets; runbooks for operations and incident response
+
+### Priority Roadmap
+1. `PRD Regeneration Baseline`: keep all current features and planned gaps aligned across the master PRD and module PRDs before additional implementation.
+2. `Knowledge Ingestion`: add first-class growth knowledge resources for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
+3. `Retrieval And Citations`: add Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, top-K retrieval, optional rerank metadata, and citation-backed context packs.
+4. `Evaluation And Monitoring`: measure retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
+5. `Feedback Loop`: feed approvals, edits, sends, workflow results, experiment outcomes, and operator feedback back into playbooks, retrieval ranking, and future recommendation prompts.
+6. `No-Code Console Hardening`: continue removing raw JSON/code text fields from primary operator surfaces, replacing them with guided controls, artifact cards, and `Export .json` buttons for inspectable setup payloads.
+
+### Commit And Rollout Policy
+Each priority feature must ship in its own commit and be pushed independently. A feature is complete only when the code, targeted tests, and relevant PRD/user documentation are updated together.
 
 ---
 
@@ -185,10 +211,11 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 - Results without a control group count only as observations and not revenue attribution
 
 ### 6.3 Human in the Loop
-**Principle**: high-risk actions require manual confirmation by default to avoid uncontrolled automation.
+**Principle**: high-risk actions are prepared by AI but approved and executed only from their owning product module.
 
 **Execution requirements**
-- High-risk actions, such as broad outreach, sensitive cohorts, and over-budget sends, require manual confirmation
+- High-risk actions, such as broad outreach, sensitive cohorts, over-budget sends, publishing, deletion, archive, and start/stop decisions, must become module handoffs rather than chat-executed actions
+- Ask AI may collect setup information, draft copy, prepare schedules, and produce artifacts, but it must not execute live sends, publishes, destructive changes, or activation-style operations from the chat window
 - Kill Switch must stop new sends within 1 minute
 - Frequency caps, cooldowns, and quiet hours are enabled by default
 - Test runs must be sandboxed and must never reach real users
@@ -297,7 +324,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 1. Data Core quality gates meet thresholds for coverage, canonical identity, and reject rate
 2. Audience dynamic refresh is stable
 3. Copilot output includes evidence chain and metric-definition explanation
-4. Action execution supports manual confirmation and auditability
+4. Action execution supports module-owned approval and auditability
 5. Experiment can output readable conclusions and feed them back downstream
 
 ---
@@ -363,7 +390,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
   - Action Orchestrator: action policy auto-tuning is not yet open
   - Experiment Hub: conclusions still provide recommendations only and do not directly drive a rollout controller
 - Exit criteria:
-  - automated optimization remains manually confirmed by default
+  - automated optimization remains module-approved by default
   - every recommendation is backed by real measurement evidence
 
 #### Gap-M4 Gap-Document Ownership Rules
@@ -379,26 +406,26 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 ## 13) V1 Backlog (Prioritized)
 
 ### 13.1 P0 Finish-Up
-1. `Operator Console Hardening`
-   - Complete critical operator flows for Data Core, Audience, Action, Experiment, and Copilot
-   - Add module-level Playwright / E2E regression coverage
-2. `Production Readiness Baseline`
-   - Complete the remaining launch gates in `MULTITENANT_PRODUCTION_READINESS_V1_PRD.md`
-   - Finish production alerting, staged rollout validation, and enforcement of non-demo runtime settings
-3. `Real Activation and Measurement Stabilization`
-   - Establish stable provider contracts for delivery, callback, outcome, return, and conversion
-   - Move the Audience, Experiment, and Copilot evidence loop onto real feedback instead of mixed simulation and partial manual handling
-4. `Human-in-the-loop Optimization Boundary`
-   - Keep automated optimization disabled by default
-   - Require all recommendations, rollout decisions, and strategy changes to bind to real measurement evidence and a manual confirmation chain
+1. `Knowledge Ingestion`
+   - Add tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks
+   - Preserve source metadata, permissions, content hash, lifecycle state, and exportable setup payloads
+2. `Retrieval And Citations`
+   - Give Ask AI a retrieval path over knowledge chunks and structured artifacts
+   - Return cited evidence packs for recommendations, copy drafts, cohort ideas, workflow setup, diagnostics, and experiment guidance
+3. `Evaluation And Monitoring`
+   - Track retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
+   - Add operator-visible diagnostics for stale sources, missing evidence, and unsupported prompts
+4. `Feedback Loop`
+   - Feed copy edits, approvals, sends, delivery results, experiment outcomes, and operator ratings into future retrieval and prompt context
+   - Keep automated optimization disabled; AI prepares recommendations and module-owned setup, while live execution remains product-controlled
 
 ### 13.2 P1
-1. `Controlled Closed-Loop Optimization`
-   - Let Copilot, Experiment, and Action form a controlled rollout controller under manual confirmation
-   - Support outcome-driven recommendation refresh and strategy iteration
-2. `Module Console Productization`
-   - Evolve the single-page console into a more stable module-oriented operator console with dedicated backend view models
-   - Reduce frontend-side assembly of generic resources
+1. `No-Code Console Hardening`
+   - Continue collapsing raw code/JSON/manual configuration fields behind advanced fallbacks
+   - Prefer guided selectors, AI draft artifacts, secure credential dialogs, and `Export .json` buttons
+2. `Provider-Grade Activation And Measurement`
+   - Stabilize delivery, callback, outcome, return, and conversion contracts across email, push, webhook, and future channels
+   - Move the Audience, Experiment, and Copilot evidence loop onto real feedback instead of mixed simulation
 3. `Production-Grade Deployment Model`
-   - Complete stronger monitoring, alerting, tenant isolation validation, credential rotation drills, and runbooks on the shared SaaS topology
+   - Complete monitoring, alerting, tenant isolation validation, credential rotation drills, vector/knowledge storage governance, and runbooks on the shared SaaS topology
    - Remove any remaining production dependence on demo-only auth paths or API-process scheduling
