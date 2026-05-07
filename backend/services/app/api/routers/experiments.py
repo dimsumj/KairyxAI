@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.schemas.experiments import (
     AIFeedbackExportResponse,
+    AIFeedbackLearningResponse,
     AIFeedbackListResponse,
     AIFeedbackRequest,
     AIFeedbackResponse,
@@ -123,6 +124,28 @@ def summarize_ai_feedback(
         action_type="ai_feedback_summarized",
         resource_type="ai_feedback_record",
         resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/ai-feedback/learning", response_model=AIFeedbackLearningResponse)
+def get_ai_feedback_learning(
+    http_request: Request,
+    target_type: str | None = None,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.read")
+    try:
+        payload = service.learning_profile(target_type=target_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_learning_read",
+        resource_type="ai_feedback_record",
+        resource_id=payload["profile_id"],
         payload=payload,
     )
 

@@ -60,7 +60,7 @@ Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
 2. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
 3. Expand the delivered deterministic AI auto-grader into model-judge evaluation, offline eval runs, recall probes, and monitoring alerts.
-4. Expand the new AI feedback API and retrieval-ranking boosts into automatic prompt context, semantic reranking, and playbook suggestions.
+4. Expand delivered feedback-learning profiles into trained optimization, richer semantic reranking, and structured playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
 ### 2.4 Deployment Surface Notes
@@ -1473,13 +1473,14 @@ Experiment Hub owns AI quality telemetry for retrieval, citations, generated cop
 
 ### 6.4 AI Feedback Loop API
 
-Experiment Hub also stores feedback signals from operator approvals, edits, ratings, retrieval clicks, sends, workflow results, and experiment outcomes. Feedback on a knowledge chunk or document feeds back into Data Core retrieval ranking as a bounded boost, and each retrieval citation exposes the feedback boost in its ranking signals.
+Experiment Hub also stores feedback signals from operator approvals, edits, ratings, retrieval clicks, sends, workflow results, and experiment outcomes. Feedback on a knowledge chunk or document feeds back into Data Core retrieval ranking as a bounded boost, and each retrieval citation exposes the feedback boost in its ranking signals. Feedback-learning profiles summarize preferred and avoided targets into redacted prompt context that Ask AI can use when preparing future copy and setup handoffs.
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `POST /api/v1/experiments/ai-feedback` | Record one feedback event. | Supported feedback types are `operator_approval`, `operator_edit`, `rating`, `retrieval_click`, `send_result`, `workflow_result`, and `experiment_outcome`. |
 | `GET /api/v1/experiments/ai-feedback` | List feedback events. | Optional filters include feedback type, target type, target id, and limit. |
 | `GET /api/v1/experiments/ai-feedback/summary` | Summarize feedback signals. | Returns positive/negative rates, feedback-type counts, target weight scores, and outcome metric averages. |
+| `GET /api/v1/experiments/ai-feedback/learning` | Build a feedback-learning profile. | Returns redacted top positive/negative target labels, recommendations, prompt context, and an `ai_feedback_learning.v1` export descriptor; accepts optional `target_type`. |
 | `GET /api/v1/experiments/ai-feedback/{feedback_id}` | Read one feedback record. | Records include sentiment, weight, rating, target, citations, artifacts, change summary, outcome metrics, and comments. |
 | `GET /api/v1/experiments/ai-feedback/{feedback_id}/export` | Export the feedback artifact. | Returns `ai_feedback_record.v1` for `.json` download instead of a raw JSON text area. |
 

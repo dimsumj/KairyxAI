@@ -41,13 +41,13 @@ Current features to preserve:
 - artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
 - Data Core retrieval evidence-pack API wired into Ask AI with `hybrid_v1` semantic/reranked citations for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
 - Experiment Hub AI evaluation telemetry and deterministic auto-grading API for recording retrieval quality, citation coverage, answer relevance, copy usefulness, and prompt-to-artifact completion
-- Experiment Hub AI feedback API that records approvals, edits, ratings, sends, workflow results, and experiment outcomes, with knowledge feedback already influencing retrieval ranking
+- Experiment Hub AI feedback API that records approvals, edits, ratings, sends, workflow results, and experiment outcomes, with knowledge feedback already influencing retrieval ranking and compact feedback-learning profiles feeding Ask AI copy-drafting context
 
 Future feature plan:
 1. Expand local semantic retrieval from knowledge chunks into provider-grade embedding/vector retrieval over knowledge documents and structured product artifacts.
 2. Broaden citation-backed context packs from Ask AI turns into every module handoff card that prepares recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
 3. Wire Ask AI and module UIs into the deterministic AI auto-grader automatically, then add model-judge/offline eval runs.
-4. Wire Ask AI and module UIs into the AI feedback API automatically, then use feedback summaries in prompt context and model-based reranking.
+4. Expand delivered feedback-learning prompt context into model-based reranking and trained optimization.
 5. Keep live sends, publishes, starts/stops, destructive actions, and archive/delete flows out of chat execution.
 
 ---

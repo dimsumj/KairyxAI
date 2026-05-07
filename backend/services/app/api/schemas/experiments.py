@@ -285,3 +285,19 @@ class AIFeedbackExportResponse(BaseModel):
     masked_fields: List[str] = Field(default_factory=list)
     format: str
     feedback: AIFeedbackResponse
+
+
+class AIFeedbackLearningResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    profile_id: str
+    target_type: str = ""
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    top_positive_targets: List[Dict[str, Any]] = Field(default_factory=list)
+    top_negative_targets: List[Dict[str, Any]] = Field(default_factory=list)
+    recommendations: List[str] = Field(default_factory=list)
+    prompt_context: str = ""
+    export: Dict[str, Any] = Field(default_factory=dict)

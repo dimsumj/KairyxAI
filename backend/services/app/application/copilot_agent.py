@@ -26,6 +26,7 @@ from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
 from app.application.copilot_help_catalog import build_help_support_answer
 from app.application.health_monitor import HealthMonitorService
+from app.application.ai_feedback import AIFeedbackService
 from app.application.knowledge import KnowledgeService
 from app.application.provider_connections import ProviderConnectionService
 from app.application.secret_refs import redact_secret_values
@@ -626,6 +627,7 @@ class ConfiguredCopilotAgentModel:
                 "For email, provide subject and body. Keep the email body short enough for a lifecycle campaign intro.",
                 "Do not invent concrete rewards, balances, or deadlines unless the prompt explicitly provides them.",
                 "Use hint.knowledge_context for brand/playbook guidance when it is present, but do not quote long source text.",
+                "Use hint.feedback_learning to prefer approved patterns and avoid patterns operators edited or rejected.",
             ],
             "response_contract": {
                 "title": "string",
@@ -1037,6 +1039,7 @@ class CopilotAgentService:
         self.sql_workspace = SqlWorkspaceService(repository, settings, self.bigquery_service)
         self.health_monitor = HealthMonitorService(repository, self.bigquery_service)
         self.knowledge = KnowledgeService(repository)
+        self.ai_feedback = AIFeedbackService(repository)
         self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.workflows = WorkflowService(repository)
         self.imports = ImportService(repository, settings, self.bigquery_service)
@@ -1181,11 +1184,13 @@ class CopilotAgentService:
         else:
             response_payload["assistant_message"] = append_knowledge_citation_summary(
                 model_adapter.compose_message(
-                    {
-                        **response_payload,
-                        "knowledge_context": knowledge_context,
-                        "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
-                    }
+                    strip_feedback_learning_for_model(
+                        {
+                            **response_payload,
+                            "knowledge_context": knowledge_context,
+                            "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
+                        }
+                    )
                 ),
                 knowledge_context,
             )
@@ -1316,10 +1321,12 @@ class CopilotAgentService:
             "artifacts": artifacts or collect_artifacts_from_actions(completed_actions, pending_confirmations),
         }
         response_payload["assistant_message"] = model_adapter.compose_message(
-            {
-                **response_payload,
-                "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
-            }
+            strip_feedback_learning_for_model(
+                {
+                    **response_payload,
+                    "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
+                }
+            )
         )
 
         turn_payload = {
@@ -1466,12 +1473,14 @@ class CopilotAgentService:
 
         model_adapter = self._model_adapter_for_session(session)
         assistant_message = model_adapter.compose_message(
-            {
-                "completed_actions": [action_payload],
-                "pending_confirmations": [],
-                "clarifications": [],
-                "execution_preview": self._preview_from_actions([action_payload]),
-            }
+            strip_feedback_learning_for_model(
+                {
+                    "completed_actions": [action_payload],
+                    "pending_confirmations": [],
+                    "clarifications": [],
+                    "execution_preview": self._preview_from_actions([action_payload]),
+                }
+            )
         )
         turn_payload = {
             "turn_id": f"cpat_{uuid.uuid4().hex[:20]}",
@@ -2461,6 +2470,16 @@ class CopilotAgentService:
             return {}
         return compact_knowledge_context(retrieval)
 
+    def _retrieve_feedback_learning_context(self, *, channel: str) -> Dict[str, Any]:
+        target_type = feedback_target_type_for_copy_channel(channel)
+        if not target_type:
+            return {}
+        try:
+            profile = self.ai_feedback.learning_profile(target_type=target_type)
+        except Exception:
+            return {}
+        return compact_feedback_learning_context(profile)
+
     def _execute_plan(
         self,
         *,
@@ -2682,6 +2701,7 @@ class CopilotAgentService:
             return prepared
         source_message = str(prepared.get("source_message") or session.get("last_user_message") or "").strip()
         knowledge_context = compact_knowledge_context(ui_context.get("knowledge_context") or {})
+        feedback_learning = self._retrieve_feedback_learning_context(channel=channel)
         drafted = model_adapter.draft_message_copy(
             source_message,
             session_state=session,
@@ -2692,6 +2712,7 @@ class CopilotAgentService:
                 "existing_title": title,
                 "existing_body": body,
                 "knowledge_context": knowledge_context,
+                "feedback_learning": feedback_learning,
             },
         )
         drafted = normalize_message_copy_payload(drafted, channel=channel)
@@ -2715,6 +2736,17 @@ class CopilotAgentService:
                 "retrieval_id": str(knowledge_context.get("retrieval_id") or ""),
                 "retrieval_mode": str(knowledge_context.get("retrieval_mode") or "hybrid_v1"),
                 "citation_count": int(knowledge_context.get("citation_count") or len(knowledge_context.get("citations") or [])),
+            }
+        if feedback_learning:
+            prepared["copy_draft"]["feedback_learning"] = {
+                "profile_id": str(feedback_learning.get("profile_id") or ""),
+                "target_type": str(feedback_learning.get("target_type") or ""),
+                "prompt_context": str(feedback_learning.get("prompt_context") or ""),
+            }
+            prepared["feedback_learning"] = {
+                "profile_id": str(feedback_learning.get("profile_id") or ""),
+                "target_type": str(feedback_learning.get("target_type") or ""),
+                "prompt_context": str(feedback_learning.get("prompt_context") or ""),
             }
         prepared["needs_operator_copy_approval"] = True
         prepared.pop("needs_copy_draft", None)
@@ -3594,12 +3626,14 @@ class CopilotAgentService:
             payload=action_payload,
         )
         assistant_message = model_adapter.compose_message(
-            {
-                "completed_actions": [action_payload],
-                "pending_confirmations": [],
-                "clarifications": [],
-                "execution_preview": self._preview_from_actions([action_payload]),
-            }
+            strip_feedback_learning_for_model(
+                {
+                    "completed_actions": [action_payload],
+                    "pending_confirmations": [],
+                    "clarifications": [],
+                    "execution_preview": self._preview_from_actions([action_payload]),
+                }
+            )
         )
         response = self._persist_async_follow_up_turn(
             session=session,
@@ -4409,6 +4443,64 @@ def build_knowledge_query(message: str, plan: Dict[str, Any]) -> str:
     ]
     compact = re.sub(r"\s+", " ", " ".join(part for part in parts if part).strip())
     return compact[:500].strip() or str(plan.get("intent") or "growth marketing")
+
+
+def feedback_target_type_for_copy_channel(channel: str) -> str:
+    normalized = str(channel or "").strip().lower()
+    if normalized == "push":
+        return "push_copy_draft"
+    if normalized == "email":
+        return "email_copy_draft"
+    return ""
+
+
+def compact_feedback_learning_context(value: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    summary = dict(value.get("summary") or {})
+    if int(summary.get("total_records") or 0) <= 0:
+        return {}
+    return {
+        "profile_id": str(value.get("profile_id") or ""),
+        "target_type": str(value.get("target_type") or ""),
+        "prompt_context": compact_text(str(value.get("prompt_context") or ""), max_length=700),
+        "summary": {
+            "total_records": int(summary.get("total_records") or 0),
+            "positive_rate": summary.get("positive_rate"),
+            "negative_rate": summary.get("negative_rate"),
+        },
+        "top_positive_targets": [
+            {
+                "target_id": str(item.get("target_id") or ""),
+                "score": item.get("score"),
+                "latest_comment": compact_text(str(item.get("latest_comment") or ""), max_length=180),
+            }
+            for item in list(value.get("top_positive_targets") or [])[:3]
+            if isinstance(item, dict)
+        ],
+        "top_negative_targets": [
+            {
+                "target_id": str(item.get("target_id") or ""),
+                "score": item.get("score"),
+                "latest_comment": compact_text(str(item.get("latest_comment") or ""), max_length=180),
+            }
+            for item in list(value.get("top_negative_targets") or [])[:3]
+            if isinstance(item, dict)
+        ],
+        "recommendations": [str(item) for item in list(value.get("recommendations") or [])[:3]],
+    }
+
+
+def strip_feedback_learning_for_model(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: strip_feedback_learning_for_model(item)
+            for key, item in value.items()
+            if key != "feedback_learning"
+        }
+    if isinstance(value, list):
+        return [strip_feedback_learning_for_model(item) for item in value]
+    return value
 
 
 def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:

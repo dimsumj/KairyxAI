@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 AI_FEEDBACK_RESOURCE_TYPE = "ai_feedback_record"
 AI_FEEDBACK_EXPORT_FORMAT = "ai_feedback_record.v1"
+AI_FEEDBACK_LEARNING_EXPORT_FORMAT = "ai_feedback_learning.v1"
 
 ALLOWED_FEEDBACK_TYPES = {
     "experiment_outcome",
@@ -22,6 +23,13 @@ ALLOWED_SENTIMENTS = {"negative", "neutral", "positive"}
 POSITIVE_FEEDBACK = {"operator_approval", "retrieval_click", "send_result", "workflow_result"}
 NEGATIVE_FEEDBACK = {"operator_edit"}
 MAX_LIST_LIMIT = 500
+EMAIL_REDACTION_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+PHONE_REDACTION_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)")
+SECRET_REDACTION_PATTERN = re.compile(
+    r"\b(?:api[_-]?key|api[_-]?token|token|secret|password|bearer)\s*[:=]\s*['\"]?[^'\"\s,;]+",
+    re.IGNORECASE,
+)
+OPAQUE_TOKEN_REDACTION_PATTERN = re.compile(r"\b[A-Za-z0-9_-]{32,}\b")
 
 
 class AIFeedbackService:
@@ -174,6 +182,72 @@ class AIFeedbackService:
             "latest_recorded_at": max((str(item.get("recorded_at") or "") for item in items), default=""),
         }
 
+    def learning_profile(self, *, target_type: str | None = None, limit: int = MAX_LIST_LIMIT) -> Dict[str, Any]:
+        normalized_target_type = _normalize_optional_token(target_type, max_length=80)
+        items = self.list_feedback(target_type=normalized_target_type or None, limit=limit)
+        summary = _redact_learning_summary(self.summarize(target_type=normalized_target_type or None))
+        target_rows: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            raw_target_type = str(item.get("target_type") or "unknown")
+            raw_target_id = str(item.get("target_id") or "")
+            target_key = f"{raw_target_type}:{raw_target_id}"
+            safe_target_id = _redact_feedback_prompt_text(raw_target_id, max_length=140)
+            safe_target_key = f"{raw_target_type}:{safe_target_id}" if safe_target_id else f"{raw_target_type}:"
+            row = target_rows.setdefault(
+                target_key,
+                {
+                    "target_key": safe_target_key,
+                    "target_type": raw_target_type,
+                    "target_id": safe_target_id,
+                    "score": 0.0,
+                    "feedback_count": 0,
+                    "latest_comment": "",
+                    "latest_feedback_type": "",
+                    "latest_recorded_at": "",
+                },
+            )
+            row["score"] = round(float(row["score"]) + float(item.get("weight") or 0.0), 4)
+            row["feedback_count"] = int(row["feedback_count"]) + 1
+            recorded_at = str(item.get("recorded_at") or "")
+            latest_recorded_at = str(row.get("latest_recorded_at") or "")
+            if not latest_recorded_at or recorded_at > latest_recorded_at:
+                comment = _redact_feedback_prompt_text(
+                    str(item.get("comments") or item.get("change_summary") or ""),
+                    max_length=240,
+                )
+                row["latest_comment"] = comment
+                row["latest_feedback_type"] = str(item.get("feedback_type") or "")
+                row["latest_recorded_at"] = recorded_at
+        sorted_rows = sorted(
+            target_rows.values(),
+            key=lambda row: (-abs(float(row.get("score") or 0.0)), str(row.get("target_key") or "")),
+        )
+        positive_targets = [row for row in sorted_rows if float(row.get("score") or 0.0) > 0][:5]
+        negative_targets = [row for row in sorted_rows if float(row.get("score") or 0.0) < 0][:5]
+        recommendations = _learning_recommendations(positive_targets, negative_targets)
+        prompt_context = _learning_prompt_context(
+            target_type=normalized_target_type,
+            summary=summary,
+            positive_targets=positive_targets,
+            negative_targets=negative_targets,
+            recommendations=recommendations,
+        )
+        profile_id = f"aiflearn_{uuid.uuid4().hex[:20]}"
+        return {
+            "profile_id": profile_id,
+            "target_type": normalized_target_type,
+            "summary": summary,
+            "top_positive_targets": positive_targets,
+            "top_negative_targets": negative_targets,
+            "recommendations": recommendations,
+            "prompt_context": prompt_context,
+            "export": {
+                "format": AI_FEEDBACK_LEARNING_EXPORT_FORMAT,
+                "resource_id": profile_id,
+                "includes": ["summary", "top_positive_targets", "top_negative_targets", "recommendations", "prompt_context"],
+            },
+        }
+
     @staticmethod
     def _resource_to_feedback(record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
@@ -281,6 +355,90 @@ def _normalize_metrics(metrics: Dict[str, Any]) -> Dict[str, float]:
         normalized_key = _normalize_token(str(key), "metric", max_length=80)
         normalized[normalized_key] = _normalize_number(value, field_name=f"outcome_metrics.{normalized_key}")
     return dict(sorted(normalized.items()))
+
+
+def _learning_recommendations(positive_targets: list[Dict[str, Any]], negative_targets: list[Dict[str, Any]]) -> list[str]:
+    recommendations: list[str] = []
+    if positive_targets:
+        top = positive_targets[0]
+        target_label = _redact_feedback_prompt_text(
+            str(top.get("target_id") or top.get("target_key") or ""),
+            max_length=140,
+        )
+        recommendations.append(
+            f"Prefer patterns like {target_label} when drafting similar growth work."
+        )
+    if negative_targets:
+        top = negative_targets[0]
+        target_label = _redact_feedback_prompt_text(
+            str(top.get("target_id") or top.get("target_key") or ""),
+            max_length=140,
+        )
+        recommendations.append(
+            f"Avoid patterns like {target_label} unless the operator explicitly asks for them."
+        )
+    if not recommendations:
+        recommendations.append("Collect more approvals, edits, sends, and outcomes before changing prompt guidance.")
+    return recommendations
+
+
+def _learning_prompt_context(
+    *,
+    target_type: str,
+    summary: Dict[str, Any],
+    positive_targets: list[Dict[str, Any]],
+    negative_targets: list[Dict[str, Any]],
+    recommendations: list[str],
+) -> str:
+    lines = [
+        (
+            f"Feedback learning for {target_type or 'all AI work'}: "
+            f"{int(summary.get('total_records') or 0)} record(s), "
+            f"positive rate {float(summary.get('positive_rate') or 0.0):.2f}, "
+            f"negative rate {float(summary.get('negative_rate') or 0.0):.2f}."
+        )
+    ]
+    for row in positive_targets[:3]:
+        comment = str(row.get("latest_comment") or "").strip()
+        suffix = f": {comment}" if comment else "."
+        target_label = _redact_feedback_prompt_text(str(row.get("target_id") or row.get("target_key") or ""), max_length=140)
+        lines.append(f"Prefer {target_label} (score {float(row.get('score') or 0.0):.2f}){suffix}")
+    for row in negative_targets[:3]:
+        comment = str(row.get("latest_comment") or "").strip()
+        suffix = f": {comment}" if comment else "."
+        target_label = _redact_feedback_prompt_text(str(row.get("target_id") or row.get("target_key") or ""), max_length=140)
+        lines.append(f"Avoid {target_label} (score {float(row.get('score') or 0.0):.2f}){suffix}")
+    lines.extend(recommendations[:3])
+    return " ".join(lines)[:1200]
+
+
+def _redact_learning_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    redacted = dict(summary or {})
+    for key in ("target_counts", "target_weight_scores"):
+        values = dict(redacted.get(key) or {})
+        redacted[key] = {
+            _redact_feedback_target_key(str(target_key)): value
+            for target_key, value in values.items()
+        }
+    return redacted
+
+
+def _redact_feedback_target_key(value: str) -> str:
+    target_type, separator, target_id = str(value or "").partition(":")
+    if not separator:
+        return _redact_feedback_prompt_text(target_type, max_length=180)
+    return f"{target_type}:{_redact_feedback_prompt_text(target_id, max_length=140)}"
+
+
+def _redact_feedback_prompt_text(value: str, *, max_length: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    text = SECRET_REDACTION_PATTERN.sub("[redacted secret]", text)
+    text = EMAIL_REDACTION_PATTERN.sub("[redacted email]", text)
+    text = PHONE_REDACTION_PATTERN.sub("[redacted phone]", text)
+    text = OPAQUE_TOKEN_REDACTION_PATTERN.sub("[redacted token]", text)
+    return _clean_text(text, max_length=max_length)
 
 
 def _normalize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:

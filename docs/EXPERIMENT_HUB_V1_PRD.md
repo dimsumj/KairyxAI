@@ -11,13 +11,13 @@ Current capabilities to preserve:
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
 - AI/RAG evaluation records, summaries, and deterministic auto-grading for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
-- AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking
+- AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking and feedback-learning profiles available to Ask AI prompt context
 
 ### Future Growth RAG Plan
 Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
 - store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
 - expand the delivered deterministic evaluation grader into model-judge and offline evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
-- expand delivered feedback records and deterministic retrieval boosts into stronger prompt-context and ranking signals
+- expand delivered feedback records, deterministic retrieval boosts, and feedback-learning profiles into trained optimization and richer prompt/ranking signals
 - cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
 
 Delivered evaluation-registry acceptance criteria:
@@ -35,14 +35,21 @@ Delivered deterministic auto-grader acceptance criteria:
 Delivered feedback-loop acceptance criteria:
 1. Tenant/project-scoped feedback records can be created, listed, summarized, read, and exported.
 2. Feedback captures approvals, edits, ratings, clicks, sends, workflow results, experiment outcomes, citations, artifacts, and outcome metrics.
-3. Positive or negative feedback on knowledge chunks/documents changes future lexical retrieval ranking through bounded deterministic boosts.
+3. Positive or negative feedback on knowledge chunks/documents changes future retrieval ranking through bounded deterministic boosts.
 4. Feedback records remain auditable and exportable as `.json` artifacts instead of raw JSON text fields.
+
+Delivered feedback-learning acceptance criteria:
+1. API clients can request a feedback-learning profile from `/api/v1/experiments/ai-feedback/learning`.
+2. Profiles summarize positive and negative target weights, redacted target labels, redacted comments, recommendations, outcome rates, and a compact prompt-context string.
+3. Ask AI includes the compact profile in copy-drafting context so approved patterns are preferred and edited/rejected patterns are avoided.
+4. Learning profiles expose an `ai_feedback_learning.v1` export descriptor instead of raw JSON output fields.
 
 Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
 2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
 3. Model-judge graders, offline eval runs, and monitoring jobs can complement deterministic scores without requiring manual operator feedback every time.
-4. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
+4. Trained optimization can improve beyond deterministic feedback profiles while remaining module-owned and non-autonomous for live actions.
+5. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
 
 ---
 
@@ -239,7 +246,7 @@ Provide a reusable experimentation framework for strategy and audience decisions
   - Feedback records capture operator approval, edit, rating, send, workflow, retrieval-click, and experiment-outcome signals
   - Feedback for knowledge chunks and documents influences deterministic retrieval ranking through bounded boosts
 - Remaining work:
-  - Feed feedback summaries into Ask AI prompt context automatically
+  - Delivered feedback-learning profiles feed compact preference context into Ask AI copy-drafting prompts
   - Replace deterministic boosts with evaluated semantic reranking once vector retrieval is available
 
 #### Gap-E1 Outcome robustness still depends on Action and provider maturity

@@ -641,6 +641,18 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
         },
     )
     assert document.status_code == 201, document.text
+    feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers=headers,
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "vip_saved_checkpoint_copy",
+            "weight": 0.7,
+            "comments": "Favor concise saved checkpoint language for VIP winback pushes.",
+        },
+    )
+    assert feedback.status_code == 201, feedback.text
     session_id = _create_session(client, headers, title="Grounded Push Copy Session")
 
     response = client.post(
@@ -663,6 +675,8 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
     assert action["parameters"]["provider_connection_id"] == push_provider_connection_id
     assert action["parameters"]["copy_draft"]["channel"] == "push"
     assert action["parameters"]["copy_draft"]["citations"][0]["citation_id"] == "C1"
+    assert action["parameters"]["copy_draft"]["feedback_learning"]["profile_id"].startswith("aiflearn_")
+    assert "saved checkpoint" in action["parameters"]["feedback_learning"]["prompt_context"]
     assert action["parameters"]["knowledge_context"]["retrieval_id"] == evidence_artifact["resource_id"]
     assert action["parameters"]["knowledge_context"]["retrieval_mode"] == "hybrid_v1"
     assert evidence_artifact["focus"]["citation_count"] >= 1
@@ -674,6 +688,30 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
 def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monkeypatch):
     headers = _headers("operator", actor_id="agent_operator")
     provider_connection_id = _create_sendgrid_provider_connection(client, headers, name="Agent Copy SendGrid")
+    email_feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers=headers,
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "email_copy_draft",
+            "target_id": "saved_progress_email",
+            "weight": 0.7,
+            "comments": "Prefer saved progress lifecycle email copy. Customer note: player@example.com.",
+        },
+    )
+    assert email_feedback.status_code == 201, email_feedback.text
+    push_feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers=headers,
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "push_only_checkpoint_copy",
+            "weight": 0.9,
+            "comments": "Push-only checkpoint copy should not guide email drafts.",
+        },
+    )
+    assert push_feedback.status_code == 201, push_feedback.text
     prediction_job_id = "pred_email_copy"
     _seed_completed_prediction_job(
         prediction_job_id,
@@ -698,6 +736,16 @@ def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monk
     monkeypatch.setattr(
         "app.application.sendgrid_provider.SendGridProviderService.get_template_summary",
         lambda self, provider_connection_id, template_id: _template_detail_payload(template_id),
+    )
+    compose_payloads = []
+
+    def _capture_compose_message(self, payload):
+        compose_payloads.append(payload)
+        return "Prepared draft for operator review."
+
+    monkeypatch.setattr(
+        "app.application.copilot_agent.ConfiguredCopilotAgentModel.compose_message",
+        _capture_compose_message,
     )
 
     session_id = _create_session(client, headers, title="Agent Email Copy Session")
@@ -731,6 +779,12 @@ def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monk
     email_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "email_campaign")
     assert email_artifact["focus"]["schedule_at"] == "2026-05-05T10:00:00Z"
     assert action["parameters"]["copy_draft"]["channel"] == "email"
+    assert action["parameters"]["copy_draft"]["feedback_learning"]["target_type"] == "email_copy_draft"
+    assert "saved progress" in action["parameters"]["feedback_learning"]["prompt_context"]
+    assert "player@example.com" not in action["parameters"]["feedback_learning"]["prompt_context"]
+    assert "push_only_checkpoint_copy" not in action["parameters"]["feedback_learning"]["prompt_context"]
+    assert compose_payloads
+    assert all("feedback_learning" not in str(payload) for payload in compose_payloads)
 
 
 def test_copilot_agent_support_answers_with_page_context_and_samples(client):

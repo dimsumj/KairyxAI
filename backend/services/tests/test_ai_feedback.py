@@ -103,6 +103,127 @@ def test_ai_feedback_records_summary_export_and_boosts_knowledge_retrieval(clien
     assert exported.json()["format"] == "ai_feedback_record.v1"
 
 
+def test_ai_feedback_learning_profile_summarizes_prompt_context_and_targets(client):
+    positive = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "saved_checkpoint_copy",
+            "weight": 0.8,
+            "comments": "Keep the saved checkpoint reward framing for lapsed players.",
+            "outcome_metrics": {"copy_acceptance_rate": 0.92},
+        },
+    )
+    assert positive.status_code == 201
+    latest_positive = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "saved_checkpoint_copy",
+            "weight": 0.2,
+            "comments": f"Latest saved checkpoint note {'x' * 205} jane@example.com with api_key=secret123.",
+        },
+    )
+    assert latest_positive.status_code == 201
+    stale_comment = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "empty_latest_comment_copy",
+            "weight": 0.1,
+            "comments": "This stale comment should clear when a newer blank record arrives.",
+        },
+    )
+    assert stale_comment.status_code == 201
+    empty_latest = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "empty_latest_comment_copy",
+            "weight": 0.1,
+        },
+    )
+    assert empty_latest.status_code == 201
+    negative = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_edit",
+            "target_type": "push_copy_draft",
+            "target_id": "pressure_copy",
+            "comments": "Avoid pressure language and fake urgency in winback pushes.",
+        },
+    )
+    assert negative.status_code == 201
+
+    profile = client.get(
+        "/api/v1/experiments/ai-feedback/learning?target_type=push_copy_draft",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert profile.status_code == 200
+    payload = profile.json()
+    assert payload["profile_id"].startswith("aiflearn_")
+    assert payload["summary"]["total_records"] == 5
+    assert payload["summary"]["positive_rate"] == 0.8
+    assert payload["export"]["format"] == "ai_feedback_learning.v1"
+    assert payload["top_positive_targets"][0]["target_id"] == "saved_checkpoint_copy"
+    assert payload["top_positive_targets"][0]["latest_comment"].startswith("Latest saved checkpoint note")
+    empty_latest_row = next(item for item in payload["top_positive_targets"] if item["target_id"] == "empty_latest_comment_copy")
+    assert empty_latest_row["latest_comment"] == ""
+    assert "jane@example.com" not in payload["top_positive_targets"][0]["latest_comment"]
+    assert "jane@" not in payload["top_positive_targets"][0]["latest_comment"]
+    assert "secret123" not in payload["top_positive_targets"][0]["latest_comment"]
+    assert payload["top_negative_targets"][0]["target_id"] == "pressure_copy"
+    assert "Latest saved checkpoint note" in payload["prompt_context"]
+    assert "Avoid pressure language" in payload["prompt_context"]
+    assert "jane@example.com" not in payload["prompt_context"]
+    assert "jane@" not in payload["prompt_context"]
+    assert "secret123" not in payload["prompt_context"]
+    assert "This stale comment should clear" not in payload["prompt_context"]
+    assert payload["recommendations"][0].startswith("Prefer")
+
+
+def test_ai_feedback_learning_profile_redacts_target_ids_and_rejects_invalid_filter(client):
+    feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_approval",
+            "target_type": "push_copy_draft",
+            "target_id": "player@example.com",
+            "weight": 0.8,
+            "comments": "Use this pattern only as a redacted target-label regression test.",
+        },
+    )
+    assert feedback.status_code == 201
+
+    profile = client.get(
+        "/api/v1/experiments/ai-feedback/learning?target_type=push_copy_draft",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert profile.status_code == 200
+    payload = profile.json()
+    assert payload["top_positive_targets"][0]["target_id"] == "[redacted email]"
+    assert "player@example.com" not in payload["top_positive_targets"][0]["target_key"]
+    assert "player@example.com" not in payload["prompt_context"]
+    assert all("player@example.com" not in key for key in payload["summary"]["target_counts"])
+    assert all("player@example.com" not in key for key in payload["summary"]["target_weight_scores"])
+
+    invalid = client.get(
+        "/api/v1/experiments/ai-feedback/learning?target_type=!!!",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert invalid.status_code == 400
+
+
 def test_ai_feedback_validation_and_project_scope(client):
     invalid = client.post(
         "/api/v1/experiments/ai-feedback",
