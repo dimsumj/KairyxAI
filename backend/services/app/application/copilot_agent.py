@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Protocol
 from urllib.parse import quote
 
@@ -397,6 +397,9 @@ class CopilotAgentModelAdapter(Protocol):
     def draft_builder(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
         ...
 
+    def draft_message_copy(self, prompt: str, *, session_state: Dict[str, Any], ui_context: Dict[str, Any], hint: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
 
 class ConfiguredCopilotAgentModel:
     def __init__(self, profile: Dict[str, Any] | None):
@@ -584,6 +587,54 @@ class ConfiguredCopilotAgentModel:
         except Exception:
             return fallback
 
+    def draft_message_copy(
+        self,
+        prompt: str,
+        *,
+        session_state: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        hint: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        fallback = heuristic_message_copy_from_prompt(prompt, hint=hint)
+        if not self._is_ai_enabled():
+            return fallback
+        payload = {
+            "task": "Draft concise lifecycle campaign copy for operator approval.",
+            "instructions": [
+                "Return JSON only.",
+                "Draft copy for review only; do not imply the send has happened.",
+                "Keep push title under 48 characters and push body under 160 characters.",
+                "For email, provide subject and body. Keep the email body short enough for a lifecycle campaign intro.",
+                "Do not invent concrete rewards, balances, or deadlines unless the prompt explicitly provides them.",
+            ],
+            "response_contract": {
+                "title": "string",
+                "subject": "string",
+                "body": "string",
+            },
+            "session_state": {
+                "status": session_state.get("status"),
+                "current_intent": session_state.get("current_intent"),
+            },
+            "ui_context": ui_context,
+            "hint": hint,
+            "message": prompt,
+            "fallback": fallback,
+        }
+        try:
+            raw = self._request_text(payload)
+            parsed = extract_json_object(raw)
+            if not isinstance(parsed, dict):
+                return fallback
+            merged = dict(fallback)
+            for key in ("title", "subject", "body"):
+                value = str(parsed.get(key) or "").strip()
+                if value:
+                    merged[key] = value
+            return normalize_message_copy_payload(merged, channel=str(hint.get("channel") or "push"))
+        except Exception:
+            return fallback
+
     def _is_ai_enabled(self) -> bool:
         return self.runtime.is_enabled()
 
@@ -605,11 +656,98 @@ def extract_json_object(raw_response: Any) -> Any:
     return {}
 
 
+def message_requests_copy_draft(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "draft",
+            "compose",
+            "write",
+            "design",
+            "suggest",
+            "generate",
+            "copy",
+            "headline",
+            "call players back",
+            "bring players back",
+            "winback",
+            "win back",
+        )
+    )
+
+
+def parse_relative_schedule_at(message: str) -> str:
+    lowered = str(message or "").lower()
+    minutes: int | None = None
+    if re.search(r"\bhalf\s+an?\s+hour\b|\bhalf\s+hour\b", lowered):
+        minutes = 30
+    minutes_match = re.search(r"\bin\s+(\d{1,4})\s*(?:m|min|mins|minute|minutes)\b", lowered)
+    if minutes_match:
+        minutes = int(minutes_match.group(1))
+    hours_match = re.search(r"\bin\s+(\d{1,3})\s*(?:h|hr|hrs|hour|hours)\b", lowered)
+    if hours_match:
+        minutes = int(hours_match.group(1)) * 60
+    if minutes is None:
+        return ""
+    scheduled_at = (datetime.now(timezone.utc) + timedelta(minutes=max(1, minutes))).replace(microsecond=0)
+    return scheduled_at.isoformat().replace("+00:00", "Z")
+
+
+def normalize_message_copy_payload(copy: Dict[str, Any], *, channel: str) -> Dict[str, str]:
+    normalized_channel = str(channel or "").strip().lower()
+    body = str(copy.get("body") or "").strip()
+    title = str(copy.get("title") or "").strip()
+    subject = str(copy.get("subject") or title).strip()
+    if normalized_channel == "push":
+        title = (title or subject or "Come Back Today")[:48].strip()
+        body = (body or "Your game is waiting. Return today and pick up where you left off.")[:160].strip()
+        return {"title": title, "subject": subject or title, "body": body}
+    subject = subject or title or "Your game is waiting"
+    body = body or "We saved your spot. Come back today to continue where you left off and see what is new."
+    return {"title": title or subject, "subject": subject, "body": body}
+
+
+def heuristic_message_copy_from_prompt(prompt: str, *, hint: Dict[str, Any]) -> Dict[str, str]:
+    lowered = str(prompt or "").lower()
+    channel = str(hint.get("channel") or "push").strip().lower()
+    if any(token in lowered for token in ("reward", "bonus", "offer", "gift", "pack")):
+        copy = {
+            "title": "Come Back For A Reward",
+            "subject": "Come back for a reward",
+            "body": "A reward is waiting. Return today to pick up where you left off.",
+        }
+    elif any(token in lowered for token in ("call players back", "bring players back", "back to the game", "winback", "win back", "come back")):
+        copy = {
+            "title": "Your Game Is Waiting",
+            "subject": "Your game is waiting",
+            "body": "Jump back in today and pick up where you left off.",
+        }
+    elif any(token in lowered for token in ("vip", "high value", "high-value")):
+        copy = {
+            "title": "Your VIP Session Awaits",
+            "subject": "Your VIP session awaits",
+            "body": "Return today to continue your VIP run and see what is waiting in-game.",
+        }
+    else:
+        copy = {
+            "title": "We Miss You",
+            "subject": "We miss you",
+            "body": "Come back today and pick up where you left off.",
+        }
+    return normalize_message_copy_payload(copy, channel=channel)
+
+
 def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
     normalized = str(message or "").strip()
     lowered = normalized.lower()
     slots: Dict[str, Any] = {}
     slots.update(parse_named_fields(normalized))
+    relative_schedule_at = parse_relative_schedule_at(normalized)
+    if relative_schedule_at and not str(slots.get("schedule_at") or "").strip():
+        slots["schedule_at"] = relative_schedule_at
+    if message_requests_copy_draft(normalized):
+        slots["needs_copy_draft"] = True
     slots.update(parse_json_blocks(normalized))
     sql = extract_sql_block(normalized)
     if sql:
@@ -666,8 +804,19 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         return {"intent": "remap_import", "slots": slots}
     if is_help_support_request:
         return {"intent": "help_support", "slots": slots}
-    if any(token in lowered for token in ("push dispatch", "one-time push", "one time push", "send push", "push notification")) and any(
-        token in lowered for token in ("send", "dispatch", "deliver")
+    if any(token in lowered for token in ("write sql", "draft sql", "generate sql", "query for", "build sql")):
+        return {"intent": "draft_sql_from_prompt", "slots": slots}
+    if "push" in lowered and message_requests_copy_draft(normalized):
+        return {"intent": "send_push_dispatch", "slots": slots}
+    if "email" in lowered and message_requests_copy_draft(normalized):
+        if re.search(r"\bschedule\b", lowered) and slots.get("email_campaign_id"):
+            return {"intent": "schedule_email_campaign", "slots": slots}
+        return {"intent": "setup_email_campaign", "slots": slots}
+    if (
+        any(token in lowered for token in ("push dispatch", "one-time push", "one time push", "send push", "single push", "push notification"))
+        or ("push" in lowered and any(token in lowered for token in ("send", "schedule", "dispatch", "deliver", "prepare")))
+    ) and any(
+        token in lowered for token in ("send", "schedule", "dispatch", "deliver", "prepare")
     ):
         return {"intent": "send_push_dispatch", "slots": slots}
     if "email campaign" in lowered or slots.get("email_campaign_id"):
@@ -749,8 +898,6 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
         token in lowered for token in ("draft", "builder", "populate", "prefill")
     ):
         return {"intent": "draft_audience_builder", "slots": slots}
-    if any(token in lowered for token in ("write sql", "draft sql", "generate sql", "query for", "build sql")):
-        return {"intent": "draft_sql_from_prompt", "slots": slots}
     if any(token in lowered for token in ("email campaign", "sendgrid", "braze", "template")) and any(
         token in lowered for token in ("set up", "setup", "create", "configure", "draft")
     ):
@@ -1200,7 +1347,13 @@ class CopilotAgentService:
         session_status = str(session.get("status") or "").strip().lower()
         draft_slots = dict(session.get("draft_slots") or {})
 
-        if session_status == "awaiting_input" and session_intent and incoming_intent in {"", "unsupported", session_intent}:
+        continue_copy_draft = (
+            session_status == "awaiting_input"
+            and session_intent in {"send_push_dispatch", "setup_email_campaign", "schedule_email_campaign", "send_email_campaign"}
+            and incoming_intent == "help_support"
+            and message_requests_copy_draft(message)
+        )
+        if session_status == "awaiting_input" and session_intent and (incoming_intent in {"", "unsupported", session_intent} or continue_copy_draft):
             normalized["intent"] = session_intent
             normalized["slots"] = merge_slots(draft_slots, incoming_slots)
         else:
@@ -1410,7 +1563,7 @@ class CopilotAgentService:
         elif intent == "send_push_dispatch":
             clarifications.extend(self._push_dispatch_clarifications(slots))
             if not clarifications:
-                actions.append(self._push_dispatch_action(slots))
+                actions.append(self._push_dispatch_action(slots, ui_context=ui_context))
         elif intent in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
             clarifications.extend(self._email_campaign_lifecycle_clarifications(intent, slots))
             if not clarifications:
@@ -1868,8 +2021,12 @@ class CopilotAgentService:
                 "cohort_id": str(slots.get("cohort_id") or ui_context.get("selected_cohort_id") or ""),
                 "prediction_job_id": str(slots.get("prediction_job_id") or ""),
                 "campaign_name": str(slots.get("campaign_name") or slots.get("name") or ""),
+                "subject": str(slots.get("subject") or slots.get("title") or ""),
+                "body": str(slots.get("body") or ""),
                 "schedule_at": slots.get("schedule_at"),
                 "include_risks": list(slots.get("include_risks") or ["high"]),
+                "needs_copy_draft": bool(slots.get("needs_copy_draft")) or not str(slots.get("subject") or slots.get("title") or slots.get("body") or "").strip(),
+                "source_message": str(slots.get("source_message") or ""),
             },
         }
 
@@ -1983,33 +2140,29 @@ class CopilotAgentService:
         }
 
     def _push_dispatch_clarifications(self, slots: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if str(slots.get("body") or "").strip():
+        if str(slots.get("body") or "").strip() or bool(slots.get("needs_copy_draft")):
             return []
-        return [
-            {
-                "key": "body",
-                "label": "Push Body",
-                "question": "What push body should I send?",
-                "required": True,
-                "input_type": "text",
-            }
-        ]
+        return []
 
-    def _push_dispatch_action(self, slots: Dict[str, Any]) -> Dict[str, Any]:
+    def _push_dispatch_action(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any]:
+        provider_connection = self._resolve_push_provider_connection_candidate(slots, ui_context=ui_context)
         return {
             "action_type": "send_push_dispatch",
             "title": ACTION_REGISTRY["send_push_dispatch"].title,
             "parameters": {
                 "name": str(slots.get("name") or slots.get("campaign_name") or ""),
-                "provider_connection_id": str(slots.get("provider_connection_id") or ""),
+                "provider_connection_id": str((provider_connection or {}).get("provider_connection_id") or slots.get("provider_connection_id") or ""),
                 "campaign_name": str(slots.get("campaign_name") or slots.get("name") or ""),
                 "user_id": str(slots.get("user_id") or ""),
                 "user_ids": list(slots.get("user_ids") or []),
                 "title": str(slots.get("title") or ""),
                 "body": str(slots.get("body") or ""),
+                "schedule_at": str(slots.get("schedule_at") or ""),
                 "deep_link": str(slots.get("deep_link") or ""),
                 "data": dict(slots.get("data") or {}),
                 "provider_options": dict(slots.get("provider_options") or {}),
+                "needs_copy_draft": bool(slots.get("needs_copy_draft")) or not str(slots.get("body") or "").strip(),
+                "source_message": str(slots.get("source_message") or ""),
             },
         }
 
@@ -2042,6 +2195,17 @@ class CopilotAgentService:
             "email_campaign_id": str(slots.get("email_campaign_id") or ""),
             "schedule_at": str(slots.get("schedule_at") or ""),
         }
+        copy_requested = bool(slots.get("needs_copy_draft"))
+        copy_provided = bool(str(slots.get("subject") or slots.get("title") or slots.get("body") or "").strip())
+        if intent in {"schedule_email_campaign", "send_email_campaign"} and (copy_requested or copy_provided):
+            parameters.update(
+                {
+                    "subject": str(slots.get("subject") or slots.get("title") or ""),
+                    "body": str(slots.get("body") or ""),
+                    "needs_copy_draft": copy_requested,
+                    "source_message": str(slots.get("source_message") or ""),
+                }
+            )
         return {
             "action_type": intent,
             "title": ACTION_REGISTRY[intent].title,
@@ -2163,6 +2327,20 @@ class CopilotAgentService:
             return connections[0]
         return None
 
+    def _resolve_push_provider_connection_candidate(self, slots: Dict[str, Any], *, ui_context: Dict[str, Any]) -> Dict[str, Any] | None:
+        requested_id = str(slots.get("provider_connection_id") or ui_context.get("selected_push_provider_connection_id") or "").strip()
+        if requested_id:
+            return self.provider_connections.get_connection(requested_id)
+        connections = [
+            item
+            for item in self.provider_connections.list_connections()
+            if str(item.get("status") or "").lower() == "active"
+            and str(item.get("provider") or "").lower() == "wynn_push_notifier"
+        ]
+        if len(connections) == 1:
+            return connections[0]
+        return None
+
     def _list_provider_assets(self, provider_connection_id: str) -> List[Dict[str, Any]]:
         connection = self.provider_connections.get_connection(provider_connection_id)
         if connection is None:
@@ -2251,8 +2429,14 @@ class CopilotAgentService:
         pending_flow = None
         for planned_action in plan["actions"]:
             action_type = str(planned_action["action_type"])
-            parameters = dict(planned_action.get("parameters") or {})
             spec = ACTION_REGISTRY[action_type]
+            parameters = self._prepare_action_parameters(
+                action_type,
+                dict(planned_action.get("parameters") or {}),
+                session=session,
+                ui_context=ui_context,
+                model_adapter=model_adapter,
+            )
             guidance_only = action_type in GUIDANCE_ONLY_ACTION_TYPES
             action_payload = self._create_action_run(
                 session_id,
@@ -2380,6 +2564,100 @@ class CopilotAgentService:
             "waiting_for_resource_id": waiting_for_resource_id,
             "pending_flow": pending_flow,
         }
+
+    def _prepare_action_parameters(
+        self,
+        action_type: str,
+        parameters: Dict[str, Any],
+        *,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        prepared = dict(parameters or {})
+        if action_type == "send_push_dispatch":
+            if not str(prepared.get("provider_connection_id") or "").strip():
+                provider_connection = self._resolve_push_provider_connection_candidate(prepared, ui_context=ui_context)
+                if provider_connection is not None:
+                    prepared["provider_connection_id"] = str(provider_connection.get("provider_connection_id") or "")
+            return self._prepare_message_copy_parameters(
+                prepared,
+                channel="push",
+                title_key="title",
+                session=session,
+                ui_context=ui_context,
+                model_adapter=model_adapter,
+            )
+        if action_type == "setup_email_campaign":
+            return self._prepare_message_copy_parameters(
+                prepared,
+                channel="email",
+                title_key="subject",
+                session=session,
+                ui_context=ui_context,
+                model_adapter=model_adapter,
+            )
+        if action_type in {"schedule_email_campaign", "send_email_campaign"}:
+            has_copy_input = any(str(prepared.get(key) or "").strip() for key in ("subject", "title", "body"))
+            if bool(prepared.get("needs_copy_draft")) or has_copy_input:
+                return self._prepare_message_copy_parameters(
+                    prepared,
+                    channel="email",
+                    title_key="subject",
+                    session=session,
+                    ui_context=ui_context,
+                    model_adapter=model_adapter,
+                )
+            prepared.pop("needs_copy_draft", None)
+            return prepared
+        return prepared
+
+    def _prepare_message_copy_parameters(
+        self,
+        parameters: Dict[str, Any],
+        *,
+        channel: str,
+        title_key: str,
+        session: Dict[str, Any],
+        ui_context: Dict[str, Any],
+        model_adapter: CopilotAgentModelAdapter,
+    ) -> Dict[str, Any]:
+        prepared = dict(parameters or {})
+        body = str(prepared.get("body") or "").strip()
+        title = str(prepared.get(title_key) or prepared.get("title") or "").strip()
+        needs_copy_draft = bool(prepared.get("needs_copy_draft")) or not body or not title
+        if not needs_copy_draft:
+            return prepared
+        source_message = str(prepared.get("source_message") or session.get("last_user_message") or "").strip()
+        drafted = model_adapter.draft_message_copy(
+            source_message,
+            session_state=session,
+            ui_context=ui_context,
+            hint={
+                "channel": channel,
+                "schedule_at": prepared.get("schedule_at"),
+                "existing_title": title,
+                "existing_body": body,
+            },
+        )
+        drafted = normalize_message_copy_payload(drafted, channel=channel)
+        if channel == "push":
+            prepared["title"] = title or drafted["title"]
+            prepared["body"] = body or drafted["body"]
+        else:
+            prepared["subject"] = title or drafted["subject"] or drafted["title"]
+            prepared["title"] = prepared["subject"]
+            prepared["body"] = body or drafted["body"]
+        prepared["copy_draft"] = {
+            "channel": channel,
+            "title": prepared.get("title") or prepared.get("subject") or "",
+            "subject": prepared.get("subject") or prepared.get("title") or "",
+            "body": prepared.get("body") or "",
+            "source_message": source_message,
+        }
+        prepared["needs_operator_copy_approval"] = True
+        prepared.pop("needs_copy_draft", None)
+        return prepared
 
     def _create_action_run(
         self,
@@ -2856,6 +3134,7 @@ class CopilotAgentService:
     def _execute_email_campaign_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         provider_connection_id = str(parameters.get("provider_connection_id") or "").strip()
         resolved_asset = self._resolve_provider_asset(provider_connection_id, str(parameters.get("template_id") or "").strip())
+        requested_schedule_at = str(parameters.get("schedule_at") or "").strip()
         audience: Dict[str, Any]
         cohort_id = str(parameters.get("cohort_id") or "").strip()
         if cohort_id:
@@ -2874,14 +3153,19 @@ class CopilotAgentService:
                 "name": str(parameters.get("campaign_name") or default_named_resource(prefix="agent", suffix="email_campaign")),
                 "provider_connection_id": provider_connection_id,
                 "template_id": str(resolved_asset.get("asset_id") or ""),
+                "subject": str(parameters.get("subject") or parameters.get("title") or "").strip() or None,
+                "body": str(parameters.get("body") or "").strip() or None,
                 "audience": audience,
-                "schedule_at": parameters.get("schedule_at"),
             }
         )
+        artifact = artifact_for_email_campaign(campaign)
+        if requested_schedule_at:
+            artifact["focus"] = {**dict(artifact.get("focus") or {}), "schedule_at": requested_schedule_at}
+            artifact["status_detail"] = "Requested schedule is preloaded for operator approval."
         return {
             "summary": f"Created draft email campaign `{campaign['name']}`.",
-            "result": {"email_campaign": campaign},
-            "artifacts": [artifact_for_email_campaign(campaign)],
+            "result": {"email_campaign": campaign, "requested_schedule_at": requested_schedule_at},
+            "artifacts": [artifact],
         }
 
     def _execute_workflow_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -3544,15 +3828,21 @@ def manual_handoff_next_steps(action_type: str, parameters: Dict[str, Any]) -> L
             "Review the mapping preview, then run reprocess from the import tools when ready.",
         ]
     if action_type == "send_push_dispatch":
-        return [
+        steps = [
             "Open Action Orchestrator -> Push Notifications.",
-            "Review the provider, audience, title, body, and deeplink before dispatching from the composer.",
+            "Review the provider, audience, title/body copy, and deeplink before dispatching from the composer.",
         ]
+        if str(parameters.get("schedule_at") or "").strip():
+            steps.append("Review the one-time schedule before using the Push Composer schedule action.")
+        return steps
     if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
-        return [
-            f"Open Action Orchestrator -> Workflow Studio or Email Campaigns and select campaign `{parameters.get('email_campaign_id')}`.",
+        steps = [
+            f"Open Action Orchestrator -> Email Campaigns and select campaign `{parameters.get('email_campaign_id')}`.",
             "Review the campaign state, schedule, provider, and audience before using the module action button.",
         ]
+        if parameters.get("copy_draft") or str(parameters.get("subject") or parameters.get("body") or "").strip():
+            steps.insert(1, "Review the drafted subject/body before applying it in the campaign builder.")
+        return steps
     if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
         return [
             f"Open Action Orchestrator -> Workflow Studio and select workflow `{parameters.get('workflow_id')}`.",
@@ -3579,13 +3869,16 @@ def manual_handoff_next_steps(action_type: str, parameters: Dict[str, Any]) -> L
 def manual_handoff_summary(action_type: str, parameters: Dict[str, Any]) -> str:
     title = ACTION_REGISTRY[action_type].title
     if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
-        return f"I prepared `{title}` for campaign `{parameters.get('email_campaign_id')}` as a module handoff. I did not change the campaign."
+        suffix = " with drafted copy" if parameters.get("copy_draft") else ""
+        return f"I prepared `{title}` for campaign `{parameters.get('email_campaign_id')}`{suffix} as a module handoff. I did not change the campaign."
     if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
         return f"I prepared `{title}` for workflow `{parameters.get('workflow_id')}` as a module handoff. I did not change the workflow."
     if action_type == "remap_import":
         return f"I prepared the mapping handoff for import `{parameters.get('import_job_id')}`. I did not reprocess the import."
     if action_type == "send_push_dispatch":
-        return "I prepared the push dispatch handoff. I did not send the notification."
+        suffix = " with drafted copy" if parameters.get("copy_draft") else ""
+        schedule_suffix = f" for `{parameters.get('schedule_at')}`" if str(parameters.get("schedule_at") or "").strip() else ""
+        return f"I prepared the push dispatch handoff{suffix}{schedule_suffix}. I did not send the notification."
     if action_type == "ingest_experiment_outcomes":
         return f"I prepared the outcome-ingestion handoff for experiment `{parameters.get('experiment_id')}`. I did not ingest outcomes."
     if action_type in {"activate_cohort", "pause_cohort", "archive_cohort", "restore_cohort"}:
@@ -3653,9 +3946,11 @@ def preview_step_summary(action_type: str, parameters: Dict[str, Any]) -> str:
     if action_type == "remap_import":
         return f"Prepare mapping and reprocess next steps for import `{parameters.get('import_job_id')}` without running reprocess from chat."
     if action_type == "send_push_dispatch":
-        return "Prepare a one-time push dispatch handoff without sending from chat."
+        if str(parameters.get("schedule_at") or "").strip():
+            return "Draft push copy and prepare a one-time scheduled push handoff without sending from chat."
+        return "Draft push copy and prepare a one-time push dispatch handoff without sending from chat."
     if action_type in {"schedule_email_campaign", "send_email_campaign", "cancel_email_campaign", "delete_email_campaign"}:
-        return f"Prepare `{action_type}` next steps for email campaign `{parameters.get('email_campaign_id')}` without changing it from chat."
+        return f"Prepare `{action_type}` next steps and drafted email copy for campaign `{parameters.get('email_campaign_id')}` without changing it from chat."
     if action_type in {"publish_workflow", "pause_workflow", "resume_workflow", "test_run_workflow", "archive_workflow", "delete_workflow"}:
         return f"Prepare `{action_type}` next steps for workflow `{parameters.get('workflow_id')}` without changing it from chat."
     if action_type == "ingest_experiment_outcomes":
@@ -3750,19 +4045,19 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
             continue
         slots["cohort_id"] = candidate
         break
-    prediction_job_match = re.search(r"\b(pred_[A-Za-z0-9]+)\b", message)
+    prediction_job_match = re.search(r"\b(pred_[A-Za-z0-9_.\-]+)\b", message)
     if prediction_job_match:
         slots["prediction_job_id"] = prediction_job_match.group(1).strip()
-    provider_connection_match = re.search(r"\b(pc_[A-Za-z0-9]+)\b", message)
+    provider_connection_match = re.search(r"\b(pc_[A-Za-z0-9_.\-]+)\b", message)
     if provider_connection_match:
         slots["provider_connection_id"] = provider_connection_match.group(1).strip()
-    import_job_match = re.search(r"\b(imp_[A-Za-z0-9]+)\b", message)
+    import_job_match = re.search(r"\b(imp_[A-Za-z0-9_.\-]+)\b", message)
     if import_job_match:
         slots["import_job_id"] = import_job_match.group(1).strip()
-    workflow_match = re.search(r"\b(wf_[A-Za-z0-9]+|workflow_[A-Za-z0-9]+)\b", message)
+    workflow_match = re.search(r"\b(wf_[A-Za-z0-9_.\-]+|workflow_[A-Za-z0-9_.\-]+)\b", message)
     if workflow_match:
         slots["workflow_id"] = workflow_match.group(1).strip()
-    email_campaign_id_match = re.search(r"\b(ec_[A-Za-z0-9]+|email_campaign_[A-Za-z0-9]+)\b", message)
+    email_campaign_id_match = re.search(r"\b(ec_[A-Za-z0-9_.\-]+|email_campaign_[A-Za-z0-9_.\-]+)\b", message)
     if email_campaign_id_match:
         slots["email_campaign_id"] = email_campaign_id_match.group(1).strip()
     primary_metric_match = re.search(r"\bprimary metric(?: is|=|:)?\s*([A-Za-z0-9_.\-]+)", message, flags=re.IGNORECASE)
@@ -3786,7 +4081,7 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     source_name_match = re.search(r"\bsource(?:[_ ]name)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
     if source_name_match:
         slots["source_name"] = source_name_match.group(1).strip()
-    template_match = re.search(r"\btemplate(?: id)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
+    template_match = re.search(r"\btemplate(?:[_ ]id)?(?: is|=|:)?\s*[\"']?([^\"'\n,]+)[\"']?", message, flags=re.IGNORECASE)
     if template_match:
         template_value = template_match.group(1).strip()
         slots["template_id"] = template_value
@@ -3812,6 +4107,9 @@ def parse_named_fields(message: str) -> Dict[str, Any]:
     title_match = re.search(r"\btitle(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
     if title_match:
         slots["title"] = title_match.group(1).strip()
+    subject_match = re.search(r"\bsubject(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
+    if subject_match:
+        slots["subject"] = subject_match.group(1).strip()
     body_match = re.search(r"\bbody(?: is|=|:)?\s*[\"']?([^\"'\n]+)[\"']?", message, flags=re.IGNORECASE)
     if body_match:
         slots["body"] = body_match.group(1).strip()

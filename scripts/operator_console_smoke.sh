@@ -547,23 +547,25 @@ exercise_copilot_agent() {
       throw new Error('Artifact navigation did not return to Data Core');
     }
 
-    await textarea.fill('Send push notification user_id: smoke_user title: Smoke body: Test message');
+    await textarea.fill('Schedule a single push notification to user_id: smoke_user in half an hour from now. Draft copy to call players back to the game.');
     await sendButton.click();
     await page.waitForTimeout(900);
 
     const pushHandoff = await page.locator('#copilot-agent-thread').textContent() || '';
     const confirmationButton = page.locator('[data-copilot-agent-confirm]');
     const handoffButton = page.locator('[data-copilot-agent-handoff-index]');
-    if (!pushHandoff.toLowerCase().includes('did not send') || await confirmationButton.count() !== 0 || await handoffButton.count() === 0) {
-      throw new Error('Expected push handoff without a chat confirmation button');
+    if (!pushHandoff.toLowerCase().includes('did not send') || !pushHandoff.toLowerCase().includes('draft') || await confirmationButton.count() !== 0 || await handoffButton.count() === 0) {
+      throw new Error('Expected drafted push handoff without a chat confirmation button');
     }
     await handoffButton.first().click();
     await page.waitForTimeout(700);
     const preparedPushTitle = await page.locator('#push-dispatch-title-input').inputValue();
     const preparedPushBody = await page.locator('#push-dispatch-body-input').inputValue();
     const preparedPushUserIds = await page.locator('#push-dispatch-user-id-input').inputValue();
-    if (preparedPushTitle !== 'Smoke' || preparedPushBody !== 'Test message' || !preparedPushUserIds.includes('smoke_user')) {
-      throw new Error('Prepared push handoff did not load into Push Notifications');
+    const preparedPushTiming = await page.locator('#push-dispatch-single-timing-select').inputValue();
+    const preparedPushSchedule = await page.locator('#push-dispatch-schedule-once-input').inputValue();
+    if (!preparedPushTitle || !preparedPushBody || !preparedPushUserIds.includes('smoke_user') || preparedPushTiming !== 'schedule_once' || !preparedPushSchedule) {
+      throw new Error('Prepared push copy handoff did not load into scheduled Push Notifications');
     }
 
     const closeDrawerButton = page.locator('#copilot-agent-close-btn');

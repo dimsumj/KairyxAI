@@ -68,6 +68,26 @@ def _create_sendgrid_provider_connection(client: TestClient, headers: dict[str, 
     return payload["provider_connection_id"]
 
 
+def _create_push_provider_connection(client: TestClient, headers: dict[str, str], *, name: str = "Agent Push Provider") -> str:
+    response = client.post(
+        "/api/v1/provider-connections",
+        headers=headers,
+        json={
+            "name": name,
+            "provider": "wynn_push_notifier",
+            "config": {
+                "api_token": "push-test-token",
+                "base_url": "https://push.example.test",
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["config"]["api_token"] is None
+    assert payload["config"]["api_token_configured"] is True
+    return payload["provider_connection_id"]
+
+
 def _seed_completed_import_job(job_id: str, *, source_name: str = "Amplitude 1") -> None:
     with session_scope() as session:
         repository = SqlAlchemyControlPlaneRepository(session)
@@ -502,6 +522,7 @@ def test_copilot_agent_prediction_to_campaign_questions_stay_read_only(client, m
 
 def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_handoffs(client):
     headers = _headers("operator", actor_id="agent_operator")
+    push_provider_connection_id = _create_push_provider_connection(client, headers, name="Agent Manual Push")
     session_id = _create_session(client, headers, title="Manual Flow Agent Session")
 
     def assert_guidance_handoff(payload, expected_action):
@@ -539,6 +560,25 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_ha
     push_payload = push_turn.json()
     assert_guidance_handoff(push_payload, "send_push_dispatch")
 
+    draft_push_turn = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "Schedule a single push through the connected push channel to all users in half an hour from now. Help me design the copy to call players back to the game.",
+            "ui_context": {},
+        },
+    )
+    assert draft_push_turn.status_code == 200
+    draft_push_payload = draft_push_turn.json()
+    draft_push_action = assert_guidance_handoff(draft_push_payload, "send_push_dispatch")
+    assert draft_push_payload["clarifications"] == []
+    assert draft_push_action["parameters"]["title"]
+    assert "back" in draft_push_action["parameters"]["body"].lower() or "game" in draft_push_action["parameters"]["body"].lower()
+    assert draft_push_action["parameters"]["schedule_at"]
+    assert draft_push_action["parameters"]["schedule_at"].endswith("Z")
+    assert draft_push_action["parameters"]["provider_connection_id"] == push_provider_connection_id
+    assert draft_push_action["parameters"]["copy_draft"]["channel"] == "push"
+
     for message, expected_action in [
         ("Schedule email campaign ec_agentmanual1 schedule_at: 2026-05-05T10:00:00Z", "schedule_email_campaign"),
         ("Send email campaign ec_agentmanual1", "send_email_campaign"),
@@ -558,7 +598,11 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_ha
         )
         assert response.status_code == 200
         payload = response.json()
-        assert_guidance_handoff(payload, expected_action)
+        action = assert_guidance_handoff(payload, expected_action)
+        if expected_action in {"schedule_email_campaign", "send_email_campaign"}:
+            assert "copy_draft" not in action["parameters"]
+            assert "subject" not in action["parameters"]
+            assert "body" not in action["parameters"]
 
     outcomes_turn = client.post(
         f"/api/v1/copilot/agent/sessions/{session_id}/messages",
@@ -576,6 +620,68 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_ha
     assert outcomes_turn.status_code == 200
     outcomes_payload = outcomes_turn.json()
     assert_guidance_handoff(outcomes_payload, "ingest_experiment_outcomes")
+
+
+def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monkeypatch):
+    headers = _headers("operator", actor_id="agent_operator")
+    provider_connection_id = _create_sendgrid_provider_connection(client, headers, name="Agent Copy SendGrid")
+    prediction_job_id = "pred_email_copy"
+    _seed_completed_prediction_job(
+        prediction_job_id,
+        rows=[
+            {
+                "prediction_job_id": prediction_job_id,
+                "user_id": "u_1",
+                "canonical_user_id": "u_1",
+                "email": "u1@example.com",
+                "churn_state": "active",
+                "predicted_churn_risk": "high",
+                "prediction_source": "local",
+                "suggested_action": "email",
+                "completed_at": "2026-03-09T10:00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.SendGridProviderService.list_dynamic_templates",
+        lambda self, provider_connection_id: [{"id": "tmpl_winback", "name": "Winback Template"}],
+    )
+    monkeypatch.setattr(
+        "app.application.sendgrid_provider.SendGridProviderService.get_template_summary",
+        lambda self, provider_connection_id, template_id: _template_detail_payload(template_id),
+    )
+
+    session_id = _create_session(client, headers, title="Agent Email Copy Session")
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": "\n".join(
+                [
+                    "Build a SendGrid campaign and draft email copy to call players back to the game.",
+                    f"provider_connection_id: {provider_connection_id}",
+                    "template_id: tmpl_winback",
+                    f"prediction_job_id: {prediction_job_id}",
+                    "schedule_at: 2026-05-05T10:00:00Z",
+                    "campaign_name: agent_email_copy",
+                ]
+            ),
+            "ui_context": {},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    action = payload["completed_actions"][0]
+    assert action["action_type"] == "setup_email_campaign"
+    campaign = action["result"]["email_campaign"]
+    assert campaign["subject"]
+    assert "game" in campaign["body"].lower() or "back" in campaign["body"].lower()
+    assert campaign["status"] == "draft"
+    assert campaign["schedule_at"] is None
+    assert action["result"]["requested_schedule_at"] == "2026-05-05T10:00:00Z"
+    email_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "email_campaign")
+    assert email_artifact["focus"]["schedule_at"] == "2026-05-05T10:00:00Z"
+    assert action["parameters"]["copy_draft"]["channel"] == "email"
 
 
 def test_copilot_agent_support_answers_with_page_context_and_samples(client):
@@ -599,6 +705,32 @@ def test_copilot_agent_support_answers_with_page_context_and_samples(client):
     assert "Data Core -> Connectors" in payload["assistant_message"]
     assert "demo_api_key" in payload["assistant_message"]
     assert "```json" in payload["assistant_message"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "How do I write an email subject/body here?",
+        "How do I write a push title/body here?",
+    ],
+)
+def test_copilot_agent_copy_help_prompts_stay_support_only(client, message):
+    headers = _headers("analyst", actor_id="agent_copy_help")
+    session_id = _create_session(client, headers, title="Copy Help Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": message,
+            "ui_context": {"active_module_id": "action-orchestrator", "active_page_id": "action-orchestrator"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["session_state"]["current_intent"] == "help_support"
+    assert payload["completed_actions"] == []
+    assert payload["pending_confirmations"] == []
 
 
 def test_copilot_agent_unsupported_requests_fall_back_to_grounded_help(client):

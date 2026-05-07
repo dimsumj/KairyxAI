@@ -14,6 +14,7 @@ class EmailCampaignCreateRequest(BaseModel):
     from_email: str | None = None
     from_name: str | None = None
     subject: str | None = None
+    body: str | None = None
     provider: str | None = None
     recipient_email_field: str | None = "email"
     recipient_external_id_field: str | None = None
@@ -32,6 +33,7 @@ class EmailCampaignUpdateRequest(BaseModel):
     from_email: str | None = None
     from_name: str | None = None
     subject: str | None = None
+    body: str | None = None
     provider: str | None = None
     recipient_email_field: str | None = None
     recipient_external_id_field: str | None = None
@@ -52,6 +54,7 @@ class EmailCampaignResponse(BaseModel):
     from_email: str | None = None
     from_name: str | None = None
     subject: str | None = None
+    body: str | None = None
     audience: Dict[str, Any] = Field(default_factory=dict)
     recipient_email_field: str | None = "email"
     recipient_external_id_field: str | None = None

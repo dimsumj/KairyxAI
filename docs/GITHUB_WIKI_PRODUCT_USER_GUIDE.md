@@ -975,6 +975,8 @@ Provider behavior:
 | `Provider Connection` | Select | Chooses which saved SendGrid or Braze account to use. | `Lifecycle Braze` | Asset browsing and send execution use that provider connection. |
 | `Dynamic Template` / `Braze API Campaign` | Select | Chooses the provider-specific messaging asset. SendGrid loads dynamic templates; Braze loads API-triggered campaigns only. | `Winback Reward` | The campaign stores the selected `template_id` plus an asset summary snapshot. |
 | `Refresh Assets` | Button | Reloads templates or Braze campaigns for the selected provider connection. | None | The asset select refreshes from the current provider account. |
+| `Subject` | Text box | Optional reviewed subject line. Ask AI can draft this field before the operator saves or schedules. | `Your game is waiting` | SendGrid can use it as a subject override; Braze keeps its campaign-side subject. |
+| `Body Draft` | Text area | Optional reviewed body copy. Ask AI can draft this field and Kairyx also sends it as `body` and `email_body` merge values for templates that use those variables. | `Jump back in today and pick up where you left off.` | The copy is stored on the campaign for approval and template merge usage. |
 | `Audience Source` | Select | Switches the audience input between prediction jobs and saved cohorts. | `Cohort` | The builder shows the matching audience selector and payload shape. |
 | `Prediction Audience` | Select | Chooses the prediction job that provides recipient rows. The label now prefers the prediction audience label or resolved import name instead of the raw job id. | `High Risk Winback Import (completed)` | Campaign execution resolves recipients from that prediction job at send time. |
 | `Cohort Audience` | Select | Chooses a saved cohort whose latest members already contain identifiers such as `user_id`, `canonical_user_id`, or `email`. Warehouse-backed cohorts now show source badges such as `Managed Warehouse` or `BigQuery Connector` directly in the selector label. | `VIP Returners (active) · Managed Warehouse` | Campaign execution resolves recipients from that cohort at send time. |
@@ -1005,6 +1007,8 @@ Audience behavior:
   "provider": "sendgrid",
   "provider_connection_id": "pc_1234567890abcdef",
   "template_id": "d-1234567890abcdef1234567890abcdef",
+  "subject": "Your game is waiting",
+  "body": "Jump back in today and pick up where you left off.",
   "audience": {
     "prediction_job_id": "pred_20260410_0900",
     "include_risks": ["high", "medium"],
@@ -1053,6 +1057,8 @@ Audience behavior:
   "provider": "sendgrid",
   "provider_connection_id": "pc_1234567890abcdef",
   "template_id": "d-1234567890abcdef1234567890abcdef",
+  "subject": "Your game is waiting",
+  "body": "Jump back in today and pick up where you left off.",
   "template_summary": {
     "id": "d-1234567890abcdef1234567890abcdef",
     "name": "Winback Reward",
@@ -1119,6 +1125,7 @@ Use the main composer when KairyxAI should create a Wynn push campaign directly.
 Push Composer behavior:
 - Leaving `User IDs` blank means `all players`, but that broadcast path requires a live Wynn Push Provider connection.
 - Entering one or more `User IDs` means Kairyx sends one Wynn campaign targeting exactly those ids.
+- Ask AI can draft the push `Title` and `Body`, parse relative schedule requests such as `in half an hour`, and preload the composer for approval without sending from chat.
 - Immediate sends use `POST /api/v1/push-dispatches/send-now`.
 - `Schedule once` and `Repeated send` create and publish `provider_campaign` workflows that later appear in `Workflow Studio`.
 - Live Wynn sends require both `Title` and `Body`.
@@ -1445,6 +1452,7 @@ The assistant can:
 - set up draft cohorts, experiment configs, connectors, and provider connections
 - reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
 - select an existing SendGrid template or Braze API campaign and create a draft email campaign
+- draft push titles/bodies and email subjects/bodies for review before scheduling or sending
 - create a draft workflow linked to the cohort and optional email campaign
 - prepare mapping updates and import reprocessing handoffs
 - prepare one-time push dispatch handoffs without sending
@@ -1478,8 +1486,8 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 | Inline thinking row | Temporary status row | Appears after you send a message and disappears when the assistant responds. | None | Shows that the agent is working before the final answer or next action appears. |
 | Inline clarification card | Conditional form | Fill only the missing inputs requested by the agent directly in the transcript. | `connection_scope: connector` | The agent continues the task without restarting the session. |
 | `Open Secure Setup` | Conditional button | Appears when a requested field is sensitive, such as API keys, tokens, or BigQuery service account JSON. Enter those values in the secure dialog instead of chat. | `service_account_json` | The secure endpoint receives the value, the agent merges it into pending setup slots, and the transcript does not contain the secret. |
-| Prepared handoff card | Conditional action card | Review the next steps and sanitized values for a live action that Ask AI prepared but did not execute. | `Prepare push notification user_id: u_1 title: Winback body: Come back` | The card shows module next steps and an `Open Module` button instead of a confirmation button. |
-| `Open Module` | Button | Opens the relevant module and preloads the prepared values when the target UI supports it. | None | Push handoffs load into `Push Notifications`; email and workflow handoffs open `Workflow Studio`; mapping, cohort, and experiment handoffs open their review surfaces. |
+| Prepared handoff card | Conditional action card | Review the next steps and sanitized values for a live action that Ask AI prepared but did not execute. | `Schedule a single push in half an hour and draft copy to call players back` | The card shows drafted copy, schedule values, module next steps, and an `Open Module` button instead of a confirmation button. |
+| `Open Module` | Button | Opens the relevant module and preloads the prepared values when the target UI supports it. | None | Push handoffs load drafted title/body and schedule into `Push Notifications`; email handoffs load drafted subject/body into `Email Campaigns`; workflow handoffs open `Workflow Studio`; mapping, cohort, and experiment handoffs open their review surfaces. |
 | Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Ask AI` on `Insight Copilot` | Button | Opens the same global assistant from the AI Command Center. | None | You keep the same session and return to the same drawer experience. |
@@ -1497,10 +1505,12 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 - `Run prediction for Source X`
 - `Draft SQL for the high-risk audience`
 - `Set up a draft email campaign with SendGrid or Braze`
+- `Draft email subject/body copy for a campaign before scheduling`
 - `Set up a draft workflow`
 - `Set up the whole prediction -> cohort -> email campaign -> workflow flow`
 - `Fix mapping for import imp_...`
 - `Prepare push notification user_id: ... title: ... body: ...`
+- `Schedule a single push in half an hour and draft copy to call players back`
 - `Prepare schedule for email campaign ec_... schedule_at: ...`
 - `Prepare send / cancel / delete handoffs for email campaign ec_...`
 - `Prepare publish / pause / resume / test run / archive / delete handoffs for workflow wf_...`

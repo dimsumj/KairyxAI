@@ -10828,6 +10828,8 @@ export function initializeOperatorConsole() {
             const emailCampaignTemplateLabel = document.getElementById('email-campaign-template-label');
             const emailCampaignTemplateSelect = document.getElementById('email-campaign-template-select');
             const emailCampaignTemplateRefreshBtn = document.getElementById('email-campaign-template-refresh-btn');
+            const emailCampaignSubjectInput = document.getElementById('email-campaign-subject-input');
+            const emailCampaignBodyInput = document.getElementById('email-campaign-body-input');
             const emailCampaignAudienceTypeSelect = document.getElementById('email-campaign-audience-type-select');
             const emailCampaignPredictionJobGroup = document.getElementById('email-campaign-prediction-job-group');
             const emailCampaignPredictionJobSelect = document.getElementById('email-campaign-prediction-job-select');
@@ -12545,6 +12547,12 @@ export function initializeOperatorConsole() {
                 syncEmailCampaignAudienceSourceFields();
                 syncEmailCampaignProviderFields({ preferredProviderConnectionId: campaign.provider_connection_id });
                 emailCampaignNameInput.value = campaign.name || '';
+                if (emailCampaignSubjectInput) {
+                    emailCampaignSubjectInput.value = campaign.subject || '';
+                }
+                if (emailCampaignBodyInput) {
+                    emailCampaignBodyInput.value = campaign.body || '';
+                }
                 emailCampaignRiskFiltersInput.value = Array.isArray(audience.include_risks) ? audience.include_risks.join(',') : '';
                 emailCampaignIncludeChurnedCheckbox.checked = Boolean(audience.include_churned);
                 emailCampaignDeeplinkTemplateFieldInput.value = campaign.deeplink_template_field || 'deeplink_url';
@@ -12600,6 +12608,12 @@ export function initializeOperatorConsole() {
             function resetEmailCampaignForm() {
                 selectedEmailCampaignId = null;
                 emailCampaignNameInput.value = '';
+                if (emailCampaignSubjectInput) {
+                    emailCampaignSubjectInput.value = '';
+                }
+                if (emailCampaignBodyInput) {
+                    emailCampaignBodyInput.value = '';
+                }
                 emailCampaignAudienceTypeSelect.value = 'prediction';
                 emailCampaignPredictionJobSelect.value = '';
                 emailCampaignCohortSelect.value = '';
@@ -12646,6 +12660,8 @@ export function initializeOperatorConsole() {
                     provider,
                     provider_connection_id: providerConnectionId,
                     template_id: templateId,
+                    subject: String(emailCampaignSubjectInput?.value || '').trim() || null,
+                    body: String(emailCampaignBodyInput?.value || '').trim() || null,
                     audience: audienceType === 'cohort'
                         ? {
                             cohort_id: cohortId,
@@ -14940,6 +14956,7 @@ export function initializeOperatorConsole() {
                     selected_email_provider_connection_id: String(emailCampaignProviderSelect?.value || '').trim() || null,
                     selected_email_provider_type: getCurrentEmailCampaignProviderType(),
                     selected_email_template_id: String(emailCampaignTemplateSelect?.value || '').trim() || null,
+                    selected_push_provider_connection_id: String(pushDispatchProviderConnectionSelect?.value || workflowPushProviderConnectionSelect?.value || '').trim() || null,
                 };
             }
 
@@ -15473,22 +15490,43 @@ export function initializeOperatorConsole() {
                         if (pushDispatchProviderOptionsInput) {
                             pushDispatchProviderOptionsInput.value = JSON.stringify(parameters.provider_options || {}, null, 2);
                         }
+                        if (parameters.schedule_at) {
+                            if (pushDispatchModeSelect) {
+                                pushDispatchModeSelect.value = 'single';
+                            }
+                            if (pushDispatchSingleTimingSelect) {
+                                pushDispatchSingleTimingSelect.value = 'schedule_once';
+                            }
+                            if (pushDispatchScheduleOnceInput) {
+                                pushDispatchScheduleOnceInput.value = fromIsoToLocalDateTimeInput(parameters.schedule_at);
+                            }
+                        }
                         syncPushDispatchComposerFields();
                         setInlineStatus(pushDispatchStatus, artifact.status_detail || 'Prepared push handoff loaded for review.');
                         return;
                     }
                     if (['schedule_email_campaign', 'send_email_campaign', 'cancel_email_campaign', 'delete_email_campaign'].includes(actionType)) {
-                        activateModule('action-orchestrator', 'action-orchestrator-studio', {
-                            targetId: 'workflow-studio-section',
+                        activateModule('action-orchestrator', 'action-orchestrator-email-campaigns', {
+                            targetId: 'email-campaigns-section',
                         });
                         await loadActionOrchestrator();
                         if (parameters.email_campaign_id) {
-                            await loadWorkflowStudioSelection('email_campaign', parameters.email_campaign_id);
+                            await loadEmailCampaignDetail(parameters.email_campaign_id);
                         }
                         if (workflowStudioEmailScheduleInput && parameters.schedule_at) {
                             workflowStudioEmailScheduleInput.value = fromIsoToLocalDateTimeInput(parameters.schedule_at);
                         }
+                        if (emailCampaignScheduleAtInput && parameters.schedule_at) {
+                            emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(parameters.schedule_at);
+                        }
+                        if (emailCampaignSubjectInput && (parameters.subject || parameters.title)) {
+                            emailCampaignSubjectInput.value = parameters.subject || parameters.title || '';
+                        }
+                        if (emailCampaignBodyInput && parameters.body) {
+                            emailCampaignBodyInput.value = parameters.body || '';
+                        }
                         setInlineStatus(workflowStudioStatus, artifact.status_detail || 'Prepared email handoff loaded for review.');
+                        setInlineStatus(emailCampaignStatus, artifact.status_detail || 'Prepared email handoff loaded for review.');
                         return;
                     }
                     if (['publish_workflow', 'pause_workflow', 'resume_workflow', 'test_run_workflow', 'archive_workflow', 'delete_workflow'].includes(actionType)) {
@@ -15551,6 +15589,15 @@ export function initializeOperatorConsole() {
                         targetId: 'email-campaigns-section',
                     });
                     await loadActionOrchestrator();
+                    const emailCampaignId = artifact.focus?.email_campaign_id || artifact.resource_id;
+                    if (emailCampaignId) {
+                        await loadEmailCampaignDetail(emailCampaignId);
+                    }
+                    const requestedScheduleAt = artifact.focus?.schedule_at || artifact.focus?.requested_schedule_at || '';
+                    if (emailCampaignScheduleAtInput && requestedScheduleAt) {
+                        emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(requestedScheduleAt);
+                        setInlineStatus(emailCampaignStatus, artifact.status_detail || 'Requested schedule loaded for review.');
+                    }
                     return;
                 }
                 if (resourceType === 'workflow') {

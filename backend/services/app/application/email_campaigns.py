@@ -310,6 +310,7 @@ class EmailCampaignService:
         from_email = self._optional_text(payload.get("from_email"))
         from_name = self._optional_text(payload.get("from_name"))
         subject = self._optional_text(payload.get("subject"))
+        body = self._optional_text(payload.get("body"))
         existing_payload = dict(existing or {})
         recipient_email_field = self._optional_text(payload.get("recipient_email_field")) or self._optional_text(existing_payload.get("recipient_email_field"))
         recipient_external_id_field = self._optional_text(payload.get("recipient_external_id_field")) or self._optional_text(
@@ -347,6 +348,7 @@ class EmailCampaignService:
             "from_email": from_email,
             "from_name": from_name,
             "subject": subject,
+            "body": body,
             "audience": audience,
             "recipient_email_field": recipient_email_field,
             "recipient_external_id_field": recipient_external_id_field,
@@ -465,6 +467,10 @@ class EmailCampaignService:
                 payload[template_var] = value
                 continue
             payload[template_var] = self._lookup_row_value(row, value)
+        body = self._optional_text(campaign.get("body"))
+        if body:
+            payload.setdefault("body", body)
+            payload.setdefault("email_body", body)
 
         deeplink_url = self._resolve_deeplink_url(row, campaign)
         if deeplink_url:
@@ -614,6 +620,7 @@ class EmailCampaignService:
             "from_email": payload.get("from_email"),
             "from_name": payload.get("from_name"),
             "subject": payload.get("subject"),
+            "body": payload.get("body"),
             "audience": dict(payload.get("audience") or {}),
             "recipient_email_field": payload.get("recipient_email_field") or "email",
             "recipient_external_id_field": payload.get("recipient_external_id_field"),
