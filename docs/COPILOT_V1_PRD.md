@@ -40,13 +40,13 @@ Current features to preserve:
 - draft email and push copy generation so operators can approve, edit, and schedule in Action Orchestrator
 - artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
 - Data Core retrieval evidence-pack API wired into Ask AI with `hybrid_v1` semantic/reranked citations for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
-- Experiment Hub AI evaluation telemetry, deterministic auto-grading API, and AI Quality Monitor for recording and reviewing retrieval quality, citation coverage, answer relevance, copy usefulness, prompt-to-artifact completion, feedback diagnostics, and model-judge readiness
+- Experiment Hub AI evaluation telemetry, deterministic auto-grading API, model-judge/offline evaluation run adapters, and AI Quality Monitor for recording and reviewing retrieval quality, citation coverage, answer relevance, copy usefulness, prompt-to-artifact completion, feedback diagnostics, and judge-readiness lanes
 - Experiment Hub AI feedback API that records approvals, edits, ratings, sends, workflow results, and experiment outcomes, with knowledge feedback already influencing retrieval ranking and compact feedback-learning profiles feeding Ask AI copy-drafting context
 
 Future feature plan:
 1. Expand the delivered managed vector-adapter receipts into provider-specific live vector sync and structured product-artifact retrieval.
 2. Broaden citation-backed context packs from Ask AI turns into every module handoff card that prepares recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
-3. Wire more Ask AI and module UIs into the deterministic AI auto-grader automatically, then add model-judge/offline eval runs that feed the delivered AI Quality Monitor.
+3. Wire more Ask AI and module UIs into deterministic, model-judge, and offline evaluation runs automatically, then add scheduled alert jobs that feed the delivered AI Quality Monitor.
 4. Expand delivered feedback-learning prompt context into model-based reranking and trained optimization.
 5. Keep live sends, publishes, starts/stops, destructive actions, and archive/delete flows out of chat execution.
 

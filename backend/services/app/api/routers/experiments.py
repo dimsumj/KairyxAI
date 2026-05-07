@@ -12,6 +12,8 @@ from app.api.schemas.experiments import (
     AIEvaluationAutoGradeRequest,
     AIEvaluationAutoGradeResponse,
     AIEvaluationExportResponse,
+    AIEvaluationJudgeRunRequest,
+    AIEvaluationJudgeRunResponse,
     AIEvaluationListResponse,
     AIEvaluationRequest,
     AIEvaluationResponse,
@@ -27,7 +29,7 @@ from app.api.schemas.experiments import (
     ExperimentOutcomeIngestRequest,
 )
 from app.application.ai_feedback import AIFeedbackService
-from app.application.ai_evaluations import AIEvaluationService
+from app.application.ai_evaluations import AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE, AIEvaluationService
 from app.application.experiments import ExperimentConfigService
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
 from app.core.deps import get_ai_evaluation_service, get_ai_feedback_service, get_experiment_service
@@ -263,6 +265,33 @@ def grade_ai_evaluation(
         action_type="ai_evaluations_auto_graded",
         resource_type="ai_evaluation_record",
         resource_id=payload["grading_id"],
+        payload=payload,
+    )
+
+
+@router.post("/ai-evaluations/judge-runs", response_model=AIEvaluationJudgeRunResponse, status_code=201)
+def run_ai_evaluation_judge_batch(
+    request: AIEvaluationJudgeRunRequest,
+    http_request: Request,
+    service: AIEvaluationService = Depends(get_ai_evaluation_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.evaluations.write")
+    try:
+        payload = service.run_judge_batch(
+            **{
+                **request.model_dump(exclude={"items"}),
+                "items": [item.model_dump() for item in request.items],
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_evaluations_judge_run_recorded",
+        resource_type=AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE,
+        resource_id=payload["run_id"],
         payload=payload,
     )
 

@@ -808,6 +808,7 @@ assert_ai_quality_monitor_ui() {
       '#ai-quality-summary-cards',
       '#ai-quality-alerts-list',
       '#ai-quality-dimensions-list',
+      '#ai-quality-judge-readiness-list',
       '#ai-quality-records-list',
       '#ai-quality-refresh-btn',
       '#ai-quality-export-btn',
@@ -838,7 +839,8 @@ assert_ai_quality_monitor_ui() {
     await page.waitForFunction(() => {
       const cards = document.getElementById('ai-quality-summary-cards')?.textContent || '';
       const status = document.getElementById('ai-quality-status')?.textContent || '';
-      return cards.includes('Evaluation Records') && status.trim().length > 0;
+      const readiness = document.getElementById('ai-quality-judge-readiness-list')?.textContent || '';
+      return cards.includes('Evaluation Records') && readiness.includes('Model Judge') && status.trim().length > 0;
     }, { timeout: 7000 });
 
     return {

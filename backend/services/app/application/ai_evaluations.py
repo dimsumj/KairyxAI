@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 from app.application.ai_feedback import AIFeedbackService
+from app.application.text_model_runtime import TextModelRuntimeResolver
 
 
 AI_EVALUATION_RESOURCE_TYPE = "ai_evaluation_record"
+AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE = "ai_evaluation_judge_run"
 AI_EVALUATION_EXPORT_FORMAT = "ai_evaluation_record.v1"
 AI_EVALUATION_MONITOR_EXPORT_FORMAT = "ai_quality_monitor.v1"
+AI_EVALUATION_JUDGE_RUN_EXPORT_FORMAT = "ai_evaluation_judge_run.v1"
+MODEL_JUDGE_ADAPTER_NAME = "model_judge_adapter_v1"
+OFFLINE_EVAL_ADAPTER_NAME = "offline_eval_adapter_v1"
 
 ALLOWED_EVALUATION_TYPES = {
     "answer_relevance",
@@ -33,6 +39,7 @@ POSITIVE_OUTCOMES = {"accepted", "completed", "useful"}
 NEGATIVE_OUTCOMES = {"failed", "not_useful", "rejected"}
 MAX_LIST_LIMIT = 500
 MAX_AUTO_GRADE_TEXT_CHARS = 4000
+MAX_JUDGE_RUN_ITEMS = 25
 AUTO_GRADER_NAME = "deterministic_ai_grader_v1"
 AUTO_GRADER_EXPORT_FORMAT = "ai_evaluation_grading.v1"
 MONITOR_STALE_HOURS = 72
@@ -247,6 +254,125 @@ class AIEvaluationService:
             },
         }
 
+    def run_judge_batch(
+        self,
+        *,
+        run_type: str = "model_judge",
+        run_label: str | None = None,
+        model_profile_id: str | None = None,
+        rubric: Dict[str, Any] | None = None,
+        items: list[Dict[str, Any]] | None = None,
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_run_type = _normalize_judge_run_type(run_type)
+        normalized_items = _normalize_judge_items(items or [])
+        normalized_metadata = _normalize_metadata(metadata or {})
+        normalized_rubric = _normalize_judge_rubric(rubric or {})
+        run_id = f"aijudge_{uuid.uuid4().hex[:20]}"
+        run_label_value = _clean_text(run_label, max_length=180) or (
+            "Model judge run" if normalized_run_type == "model_judge" else "Offline evaluation run"
+        )
+        try:
+            selection = TextModelRuntimeResolver(self.repository, circuit_namespace="ai_evaluations").resolve(model_profile_id)
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+        prepared_specs = _prepare_judge_specs(
+            run_type=normalized_run_type,
+            items=normalized_items,
+            rubric=normalized_rubric,
+            selection=selection,
+        )
+        source = "model_judge_provider" if normalized_run_type == "model_judge" else "offline_eval_batch"
+        adapter_name = MODEL_JUDGE_ADAPTER_NAME if normalized_run_type == "model_judge" else OFFLINE_EVAL_ADAPTER_NAME
+        evaluations = []
+        for index, spec in enumerate(prepared_specs):
+            item = normalized_items[index]
+            item_metadata = dict(item.get("metadata") or {})
+            score_origin = str(spec.get("score_origin") or "provided")
+            evaluations.append(
+                self.record_evaluation(
+                    evaluation_type=item["evaluation_type"],
+                    target_type=item["target_type"],
+                    target_id=item.get("target_id"),
+                    outcome=str(spec.get("outcome") or _outcome_for_optional_score(spec.get("score"))),
+                    score=spec.get("score"),
+                    dimensions=dict(spec.get("dimensions") or {}),
+                    citation_ids=_merge_ids(item.get("citation_ids") or [], [citation.get("citation_id") for citation in item.get("citations") or []]),
+                    artifact_ids=_merge_ids(item.get("artifact_ids") or [], [artifact.get("resource_id") for artifact in item.get("artifacts") or []]),
+                    prompt_summary=item.get("prompt_summary") or item.get("prompt"),
+                    response_summary=item.get("response_summary") or item.get("response"),
+                    comments=str(spec.get("comments") or item.get("comments") or ""),
+                    source=source,
+                    metadata={
+                        **normalized_metadata,
+                        **item_metadata,
+                        "judge_run_id": run_id,
+                        "judge_run_type": normalized_run_type,
+                        "offline_eval": normalized_run_type == "offline_eval",
+                        "run_label": run_label_value,
+                        "adapter": adapter_name,
+                        "score_origin": score_origin,
+                        "rubric": _metadata_summary(normalized_rubric),
+                        "model_profile_id": selection.model_profile_id or "",
+                        "model_provider": selection.provider or "",
+                        "model_name": selection.model_name or "",
+                        "model_selection_source": selection.selection_source or "",
+                    },
+                    evaluated_by=_judge_evaluator_name(
+                        adapter_name=adapter_name,
+                        selection=selection,
+                        score_origin=score_origin,
+                    ),
+                )
+            )
+        scores = [float(item["score"]) for item in evaluations if item.get("score") is not None]
+        type_counts: Dict[str, int] = {}
+        for item in evaluations:
+            evaluation_type = str(item.get("evaluation_type") or "unknown")
+            type_counts[evaluation_type] = type_counts.get(evaluation_type, 0) + 1
+        run_payload = {
+            "run_id": run_id,
+            "run_type": normalized_run_type,
+            "run_label": run_label_value,
+            "status": "recorded",
+            "model_selection": {
+                "model_profile_id": selection.model_profile_id,
+                "effective_provider": selection.provider or "deterministic",
+                "effective_model_name": selection.model_name,
+                "model_selection_source": selection.selection_source or "deterministic_fallback",
+                "runtime_available": selection.runtime is not None,
+            },
+            "evaluations": evaluations,
+            "summary": {
+                "evaluation_count": len(evaluations),
+                "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+                "evaluation_type_counts": type_counts,
+            },
+            "export": {
+                "format": AI_EVALUATION_JUDGE_RUN_EXPORT_FORMAT,
+                "resource_id": run_id,
+                "includes": ["evaluations", "summary", "model_selection"],
+            },
+        }
+        self.repository.upsert_resource(
+            AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE,
+            run_id,
+            status="recorded",
+            name=normalized_run_type,
+            payload=run_payload,
+        )
+        self.repository.record_resource_event(
+            AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE,
+            run_id,
+            event_type="ai_evaluation_judge_run_recorded",
+            payload={
+                "run_id": run_id,
+                "run_type": normalized_run_type,
+                "evaluation_count": len(evaluations),
+            },
+        )
+        return run_payload
+
     def list_evaluations(
         self,
         *,
@@ -368,6 +494,222 @@ class AIEvaluationService:
             "updated_by": record.get("updated_by") or payload.get("updated_by") or "system",
             "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",
         }
+
+
+def _normalize_judge_run_type(value: str) -> str:
+    normalized = _normalize_token(value or "model_judge", "run_type", max_length=40)
+    if normalized in {"model", "model_judge", "model_judge_provider"}:
+        return "model_judge"
+    if normalized in {"offline", "offline_batch", "offline_eval", "offline_evaluation"}:
+        return "offline_eval"
+    raise ValueError("run_type must be model_judge or offline_eval.")
+
+
+def _normalize_judge_rubric(value: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("rubric must be an object.")
+    return {
+        key: item
+        for key, item in (
+            (_clean_text(str(key), max_length=80), _normalize_judge_rubric_value(item, depth=0))
+            for key, item in list(value.items())[:40]
+        )
+        if key
+    }
+
+
+def _normalize_judge_rubric_value(value: Any, *, depth: int) -> Any:
+    if depth >= 5:
+        return _clean_text(str(value), max_length=1000)
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, dict):
+        return {
+            key: item
+            for key, item in (
+                (_clean_text(str(key), max_length=80), _normalize_judge_rubric_value(item, depth=depth + 1))
+                for key, item in list(value.items())[:40]
+            )
+            if key
+        }
+    if isinstance(value, list):
+        return [_normalize_judge_rubric_value(item, depth=depth + 1) for item in value[:50]]
+    return _clean_text(str(value), max_length=1000)
+
+
+def _normalize_judge_items(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    if not items:
+        raise ValueError("items must include at least one evaluation item.")
+    if len(items) > MAX_JUDGE_RUN_ITEMS:
+        raise ValueError(f"items can include at most {MAX_JUDGE_RUN_ITEMS} evaluation items.")
+    normalized: list[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("Each judge item must be an object.")
+        evaluation_type = _normalize_evaluation_type(str(item.get("evaluation_type") or ""))
+        target_type = _normalize_token(str(item.get("target_type") or ""), "target_type", max_length=80)
+        prompt = _clean_text(item.get("prompt") or item.get("prompt_summary"), max_length=MAX_AUTO_GRADE_TEXT_CHARS)
+        response = _clean_text(item.get("response") or item.get("response_summary"), max_length=MAX_AUTO_GRADE_TEXT_CHARS)
+        dimensions = _normalize_dimensions(dict(item.get("dimensions") or {}))
+        score = None if item.get("score") is None else _normalize_score_value(item.get("score"), field_name="score")
+        outcome_provided = str(item.get("outcome") or "").strip() != ""
+        normalized.append(
+            {
+                "evaluation_type": evaluation_type,
+                "target_type": target_type,
+                "target_id": _clean_text(item.get("target_id"), max_length=140),
+                "prompt": prompt,
+                "response": response,
+                "prompt_summary": _clean_text(item.get("prompt_summary"), max_length=500),
+                "response_summary": _clean_text(item.get("response_summary"), max_length=500),
+                "citations": _normalize_evidence_items(list(item.get("citations") or [])),
+                "artifacts": _normalize_artifact_items(list(item.get("artifacts") or [])),
+                "citation_ids": _normalize_ids([str(value) for value in list(item.get("citation_ids") or [])]),
+                "artifact_ids": _normalize_ids([str(value) for value in list(item.get("artifact_ids") or [])]),
+                "expected_artifact_type": _clean_text(item.get("expected_artifact_type"), max_length=80),
+                "generated_title": _clean_text(item.get("generated_title"), max_length=240),
+                "generated_body": _clean_text(item.get("generated_body"), max_length=2000),
+                "outcome": _normalize_outcome(str(item.get("outcome") or "neutral")),
+                "outcome_provided": outcome_provided,
+                "score": score,
+                "dimensions": dimensions,
+                "comments": _clean_text(item.get("comments"), max_length=1000),
+                "metadata": _normalize_metadata(dict(item.get("metadata") or {})),
+            }
+        )
+    return normalized
+
+
+def _prepare_judge_specs(
+    *,
+    run_type: str,
+    items: list[Dict[str, Any]],
+    rubric: Dict[str, Any],
+    selection: Any,
+) -> list[Dict[str, Any]]:
+    needs_runtime = run_type == "model_judge" and any(not _has_provided_score(item) for item in items)
+    if needs_runtime and selection.runtime is None:
+        raise ValueError("A configured Ask AI runtime is required for unscored model_judge items. Select a runtime or submit scored offline_eval items.")
+    if run_type == "offline_eval":
+        missing_scores = [item for item in items if not _has_provided_score(item)]
+        if missing_scores:
+            raise ValueError("offline_eval items require score or dimensions.")
+    specs = []
+    for item in items:
+        if _has_provided_score(item):
+            specs.append(_provided_judge_spec(item))
+            continue
+        specs.append(_runtime_judge_spec(selection.runtime, item, rubric))
+    return specs
+
+
+def _has_provided_score(item: Dict[str, Any]) -> bool:
+    return item.get("score") is not None or bool(item.get("dimensions"))
+
+
+def _provided_judge_spec(item: Dict[str, Any]) -> Dict[str, Any]:
+    score = item.get("score")
+    dimensions = dict(item.get("dimensions") or {})
+    if score is not None and not dimensions:
+        dimensions = {str(item.get("evaluation_type") or "score"): score}
+    resolved_score, _ = _resolve_score(score, dimensions, str(item.get("outcome") or "neutral"))
+    return {
+        "score": score,
+        "dimensions": dimensions,
+        "outcome": item.get("outcome") if item.get("outcome_provided") else _outcome_for_optional_score(resolved_score),
+        "comments": item.get("comments") or "Externally judged evaluation score recorded through the AI evaluation adapter.",
+        "score_origin": "provided",
+    }
+
+
+def _runtime_judge_spec(runtime: Any, item: Dict[str, Any], rubric: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = {
+        "task": "Score one growth-marketing AI output. Return JSON only.",
+        "required_json_shape": {
+            "score": "number from 0 to 1",
+            "dimensions": {"dimension_name": "number from 0 to 1"},
+            "outcome": "useful | neutral | not_useful | edited | failed",
+            "comments": "short rationale",
+        },
+        "evaluation_type": item.get("evaluation_type"),
+        "target_type": item.get("target_type"),
+        "rubric": rubric,
+        "prompt": item.get("prompt"),
+        "response": item.get("response"),
+        "citations": item.get("citations"),
+        "artifacts": item.get("artifacts"),
+        "expected_artifact_type": item.get("expected_artifact_type"),
+        "generated_title": item.get("generated_title"),
+        "generated_body": item.get("generated_body"),
+    }
+    try:
+        raw_response = runtime.request_text(prompt)
+        parsed = _parse_json_object(raw_response)
+    except Exception as exc:
+        raise ValueError(f"Model judge runtime failed: {exc}") from exc
+    score = _normalize_score_value(parsed.get("score"), field_name="score")
+    raw_dimensions = parsed.get("dimensions")
+    dimensions = _normalize_dimensions(raw_dimensions if isinstance(raw_dimensions, dict) else {})
+    if not dimensions:
+        dimensions = {str(item.get("evaluation_type") or "score"): score}
+    comments = _clean_text(parsed.get("comments") or parsed.get("rationale"), max_length=1000)
+    return {
+        "score": score,
+        "dimensions": dimensions,
+        "outcome": _normalize_outcome(str(parsed.get("outcome") or _outcome_for_score(score))),
+        "comments": comments or "Model judge evaluation score recorded through the AI evaluation adapter.",
+        "score_origin": "runtime",
+    }
+
+
+def _parse_json_object(value: Any) -> Dict[str, Any]:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("empty model judge response")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("model judge response was not JSON")
+        parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("model judge response must be a JSON object")
+    return parsed
+
+
+def _merge_ids(*groups: list[Any]) -> list[str]:
+    values: list[str] = []
+    for group in groups:
+        values.extend(str(value) for value in group if value)
+    return _normalize_ids(values)
+
+
+def _metadata_summary(value: Dict[str, Any]) -> str:
+    if not value:
+        return ""
+    parts = [f"{key}={value[key]}" for key in sorted(value)[:8]]
+    return _clean_text("; ".join(parts), max_length=250)
+
+
+def _outcome_for_optional_score(score: Any) -> str:
+    if score is None:
+        return "neutral"
+    return _outcome_for_score(float(score))
+
+
+def _judge_evaluator_name(*, adapter_name: str, selection: Any, score_origin: str) -> str:
+    if adapter_name == OFFLINE_EVAL_ADAPTER_NAME:
+        return OFFLINE_EVAL_ADAPTER_NAME
+    provider = _clean_text(getattr(selection, "provider", ""), max_length=40)
+    model_name = _clean_text(getattr(selection, "model_name", ""), max_length=80)
+    suffix = f":{provider}:{model_name}" if provider or model_name else ":external"
+    if score_origin == "provided":
+        suffix = ":external"
+    return f"{MODEL_JUDGE_ADAPTER_NAME}{suffix}"[:120]
 
 
 def _summarize_items(items: list[Dict[str, Any]]) -> Dict[str, Any]:
@@ -527,6 +869,7 @@ def _judge_readiness(items: list[Dict[str, Any]]) -> Dict[str, Any]:
     ]
     deterministic_average = _average_score(deterministic_items)
     model_judge_average = _average_score(model_judge_items)
+    offline_average = _average_score(offline_items)
     drift_alert = None
     if deterministic_average is not None and model_judge_average is not None:
         drift = round(abs(deterministic_average - model_judge_average), 4)
@@ -538,6 +881,7 @@ def _judge_readiness(items: list[Dict[str, Any]]) -> Dict[str, Any]:
         "offline_eval_records": len(offline_items),
         "deterministic_average": deterministic_average,
         "model_judge_average": model_judge_average,
+        "offline_average": offline_average,
         "status": "ready_for_model_judge" if deterministic_items and not model_judge_items else "monitoring",
         "next_steps": _judge_next_steps(deterministic_items, model_judge_items, offline_items),
         "drift_alert": drift_alert,

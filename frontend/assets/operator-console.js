@@ -11278,6 +11278,7 @@ export function initializeOperatorConsole() {
             const aiQualitySummaryCards = document.getElementById('ai-quality-summary-cards');
             const aiQualityAlertsList = document.getElementById('ai-quality-alerts-list');
             const aiQualityDimensionsList = document.getElementById('ai-quality-dimensions-list');
+            const aiQualityJudgeReadinessList = document.getElementById('ai-quality-judge-readiness-list');
             const aiQualityRecordsList = document.getElementById('ai-quality-records-list');
             const aiQualityStatus = document.getElementById('ai-quality-status');
             const aiQualityRefreshBtn = document.getElementById('ai-quality-refresh-btn');
@@ -15624,6 +15625,38 @@ export function initializeOperatorConsole() {
                     ],
                     payload?.dimension_cards || [],
                     'No quality dimensions recorded.',
+                );
+                const judgeReadiness = payload?.judge_readiness || {};
+                const judgeRows = [
+                    {
+                        lane: 'Deterministic Grader',
+                        records: judgeReadiness.deterministic_grader_records || 0,
+                        average: judgeReadiness.deterministic_average,
+                        status: (judgeReadiness.deterministic_grader_records || 0) > 0 ? 'baseline ready' : 'needs baseline',
+                    },
+                    {
+                        lane: 'Model Judge',
+                        records: judgeReadiness.model_judge_records || 0,
+                        average: judgeReadiness.model_judge_average,
+                        status: (judgeReadiness.model_judge_records || 0) > 0 ? 'monitoring' : 'ready to run',
+                    },
+                    {
+                        lane: 'Offline Eval',
+                        records: judgeReadiness.offline_eval_records || 0,
+                        average: judgeReadiness.offline_average,
+                        status: (judgeReadiness.offline_eval_records || 0) > 0 ? 'monitoring' : 'not scheduled',
+                    },
+                ];
+                renderSimpleTable(
+                    aiQualityJudgeReadinessList,
+                    [
+                        { label: 'Lane', render: (item) => escapeHtml(item.lane) },
+                        { label: 'Records', render: (item) => escapeHtml(formatCount(item.records || 0)) },
+                        { label: 'Average', render: (item) => escapeHtml(formatMonitorScore(item.average)) },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatMonitorLabel(item.status))}</span>` },
+                    ],
+                    judgeRows,
+                    'No judge readiness data yet.',
                 );
                 renderSimpleTable(
                     aiQualityRecordsList,

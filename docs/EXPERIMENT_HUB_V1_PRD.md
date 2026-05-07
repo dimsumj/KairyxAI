@@ -10,14 +10,14 @@ Current capabilities to preserve:
 - deterministic assignments, exposure records, outcome ingestion, summaries, SRM/integrity checks, and decision logs
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
-- AI/RAG evaluation records, summaries, and deterministic auto-grading for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
-- AI Quality Monitor diagnostics for evaluation health, quality alerts, dimension cards, feedback-learning context, model-judge readiness, recent records, and export-only monitor artifacts
+- AI/RAG evaluation records, summaries, deterministic auto-grading, and model-judge/offline evaluation run adapters for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
+- AI Quality Monitor diagnostics for evaluation health, quality alerts, dimension cards, feedback-learning context, deterministic/model-judge/offline readiness lanes, recent records, and export-only monitor artifacts
 - AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking and feedback-learning profiles available to Ask AI prompt context
 
 ### Future Growth RAG Plan
 Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
 - store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
-- expand the delivered deterministic evaluation grader into model-judge and offline evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
+- expand the delivered deterministic, model-judge, and offline evaluation runs into scheduled recall probes, drift jobs, and alert routing for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
 - expand delivered feedback records, deterministic retrieval boosts, and feedback-learning profiles into trained optimization and richer prompt/ranking signals
 - cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
 
@@ -39,6 +39,12 @@ Delivered AI Quality Monitor acceptance criteria:
 3. The monitor computes deterministic alerts for low average score, elevated negative evaluation or feedback rates, stale records, failed prompts, low citation coverage/retrieval quality, high hallucination-risk proxy, and model-judge drift when model-judge records exist.
 4. `/api/v1/experiments/ai-quality-monitor/export` returns the complete monitor artifact for `.json` download without adding raw JSON output text fields to the console.
 
+Delivered model-judge/offline evaluation acceptance criteria:
+1. `/api/v1/experiments/ai-evaluations/judge-runs` records tenant/project-scoped `model_judge` and `offline_eval` batches as normal AI evaluation records.
+2. Unscored `model_judge` items use the configured Ask AI runtime and fail before writing records when no runtime is available.
+3. Scored `model_judge` and `offline_eval` batches can ingest external review or benchmark results without requiring raw JSON text fields in the operator console.
+4. Judge-run records tag source, evaluator, run id, model selection, score origin, and offline-eval metadata so the AI Quality Monitor can count model-judge/offline lanes and detect drift.
+
 Delivered feedback-loop acceptance criteria:
 1. Tenant/project-scoped feedback records can be created, listed, summarized, read, and exported.
 2. Feedback captures approvals, edits, ratings, clicks, sends, workflow results, experiment outcomes, citations, artifacts, and outcome metrics.
@@ -54,7 +60,7 @@ Delivered feedback-learning acceptance criteria:
 Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
 2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
-3. Model-judge graders and offline eval runs can complement deterministic scores and the delivered monitor readiness diagnostics without requiring manual operator feedback every time.
+3. Scheduled recall probes and alert jobs can run on deterministic/model-judge/offline results without requiring manual operator feedback every time.
 4. Trained optimization can improve beyond deterministic feedback profiles while remaining module-owned and non-autonomous for live actions.
 5. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
 

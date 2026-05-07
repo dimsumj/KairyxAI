@@ -120,6 +120,37 @@ class AIEvaluationAutoGradeRequest(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AIEvaluationJudgeRunItem(BaseModel):
+    evaluation_type: str
+    target_type: str
+    target_id: str | None = None
+    prompt: str | None = None
+    response: str | None = None
+    prompt_summary: str | None = None
+    response_summary: str | None = None
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    citation_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    expected_artifact_type: str | None = None
+    generated_title: str | None = None
+    generated_body: str | None = None
+    outcome: str | None = None
+    score: float | None = Field(default=None, ge=0, le=1)
+    dimensions: Dict[str, Any] = Field(default_factory=dict)
+    comments: str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AIEvaluationJudgeRunRequest(BaseModel):
+    run_type: str = "model_judge"
+    run_label: str | None = None
+    model_profile_id: str | None = None
+    rubric: Dict[str, Any] = Field(default_factory=dict)
+    items: List[AIEvaluationJudgeRunItem] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class AIEvaluationResponse(BaseModel):
     tenant_id: str | None = None
     project_id: str | None = None
@@ -256,6 +287,22 @@ class AIEvaluationAutoGradeResponse(BaseModel):
     grading_id: str
     target_type: str
     target_id: str = ""
+    evaluations: List[AIEvaluationResponse] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    export: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AIEvaluationJudgeRunResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    run_id: str
+    run_type: str
+    run_label: str = ""
+    status: str = "recorded"
+    model_selection: Dict[str, Any] = Field(default_factory=dict)
     evaluations: List[AIEvaluationResponse] = Field(default_factory=list)
     summary: Dict[str, Any] = Field(default_factory=dict)
     export: Dict[str, Any] = Field(default_factory=dict)

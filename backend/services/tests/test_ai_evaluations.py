@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 
 
@@ -167,6 +170,212 @@ def test_ai_evaluation_auto_grader_records_retrieval_generation_and_artifact_sco
     summary_payload = summary.json()
     assert summary_payload["total_records"] == 5
     assert summary_payload["dimension_averages"]["citation_coverage"] == 1.0
+
+
+def test_ai_evaluation_judge_run_records_external_model_scores_and_updates_monitor(client):
+    run = client.post(
+        "/api/v1/experiments/ai-evaluations/judge-runs",
+        headers={"x-actor-role": "operator"},
+        json={
+            "run_type": "model_judge",
+            "run_label": "Copy judge smoke",
+            "rubric": {"goal": "Judge whether the copy is useful for a winback push."},
+            "items": [
+                {
+                    "evaluation_type": "campaign_copy_usefulness",
+                    "target_type": "push_copy_draft",
+                    "target_id": "draft_judged_push",
+                    "prompt": "Draft a push that calls players back to the game.",
+                    "response": "Title: Your reward is waiting. Body: Come back and keep playing from your saved checkpoint.",
+                    "score": 0.88,
+                    "dimensions": {"campaign_copy_usefulness": 0.88, "action_clarity": 1.0},
+                    "citation_ids": ["C_WINBACK"],
+                    "artifact_ids": ["draft_judged_push"],
+                }
+            ],
+            "metadata": {"sample": "operator_review"},
+        },
+    )
+    assert run.status_code == 201, run.text
+    payload = run.json()
+    assert payload["run_id"].startswith("aijudge_")
+    assert payload["run_type"] == "model_judge"
+    assert payload["summary"]["evaluation_count"] == 1
+    evaluation = payload["evaluations"][0]
+    assert evaluation["source"] == "model_judge_provider"
+    assert evaluation["evaluated_by"] == "model_judge_adapter_v1:external"
+    assert evaluation["metadata"]["judge_run_id"] == payload["run_id"]
+    assert evaluation["metadata"]["score_origin"] == "provided"
+    assert evaluation["metadata"]["offline_eval"] is False
+    assert evaluation["outcome"] == "useful"
+    assert payload["tenant_id"] == "default"
+    assert payload["project_id"] == "default"
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        stored_run = repository.get_resource("ai_evaluation_judge_run", payload["run_id"])
+        assert stored_run is not None
+        assert stored_run["payload"]["run_id"] == payload["run_id"]
+
+    audit = client.get(
+        f"/api/v1/audit/actions?action_type=ai_evaluations_judge_run_recorded&resource_type=ai_evaluation_judge_run&resource_id={payload['run_id']}",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert audit.status_code == 200
+    assert audit.json()["summary"]["returned"] == 1
+
+    monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert monitor.status_code == 200
+    readiness = monitor.json()["judge_readiness"]
+    assert readiness["model_judge_records"] == 1
+    assert readiness["offline_eval_records"] == 0
+
+
+def test_ai_evaluation_judge_run_records_offline_batches_without_runtime(client):
+    run = client.post(
+        "/api/v1/experiments/ai-evaluations/judge-runs",
+        headers={"x-actor-role": "operator"},
+        json={
+            "run_type": "offline_eval",
+            "run_label": "Weekly recall sample",
+            "items": [
+                {
+                    "evaluation_type": "retrieval_quality",
+                    "target_type": "knowledge_retrieval",
+                    "target_id": "kret_offline_sample",
+                    "score": 0.72,
+                    "dimensions": {"retrieval_quality": 0.72, "citation_relevance": 0.8},
+                    "comments": "Offline benchmark sample passed but needs better evidence order.",
+                    "metadata": {"benchmark": "winback_recall"},
+                }
+            ],
+        },
+    )
+    assert run.status_code == 201, run.text
+    payload = run.json()
+    evaluation = payload["evaluations"][0]
+    assert payload["run_type"] == "offline_eval"
+    assert evaluation["source"] == "offline_eval_batch"
+    assert evaluation["evaluated_by"] == "offline_eval_adapter_v1"
+    assert evaluation["metadata"]["offline_eval"] is True
+    assert evaluation["metadata"]["adapter"] == "offline_eval_adapter_v1"
+
+    monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert monitor.status_code == 200
+    readiness = monitor.json()["judge_readiness"]
+    assert readiness["offline_eval_records"] == 1
+    assert readiness["offline_average"] == 0.72
+
+
+def test_ai_evaluation_judge_run_uses_configured_runtime_for_unscored_items(client, monkeypatch):
+    calls = []
+
+    class FakeRuntime:
+        def request_text(self, payload):
+            calls.append(payload)
+            return '{"score": 0.91, "dimensions": {"answer_relevance": 0.91, "citation_coverage": 0.86}, "outcome": "useful", "comments": "Grounded and actionable."}'
+
+    monkeypatch.setattr(
+        "app.application.ai_evaluations.TextModelRuntimeResolver.resolve",
+        lambda self, requested_model_profile_id=None: SimpleNamespace(
+            model_profile_id="profile_judge",
+            provider="gemini",
+            model_name="gemini-flash-latest",
+            selection_source="profile",
+            runtime=FakeRuntime(),
+        ),
+    )
+
+    run = client.post(
+        "/api/v1/experiments/ai-evaluations/judge-runs",
+        headers={"x-actor-role": "operator"},
+        json={
+            "run_type": "model_judge",
+            "model_profile_id": "profile_judge",
+            "rubric": {
+                "criteria": {
+                    "evidence": {"weight": 0.6, "description": "Use cited lifecycle evidence."},
+                    "actionability": {"weight": 0.4},
+                }
+            },
+            "items": [
+                {
+                    "evaluation_type": "answer_relevance",
+                    "target_type": "email_campaign_draft",
+                    "target_id": "email_judge_runtime",
+                    "prompt": "Draft a winback email using the cited playbook.",
+                    "response": "Come back for your saved reward. Evidence: [C1].",
+                    "citations": [{"citation_id": "C1", "snippet": "Winback copy should mention saved rewards."}],
+                }
+            ],
+        },
+    )
+    assert run.status_code == 201, run.text
+    payload = run.json()
+    assert calls and calls[0]["evaluation_type"] == "answer_relevance"
+    assert calls[0]["rubric"]["criteria"]["evidence"]["weight"] == 0.6
+    assert calls[0]["rubric"]["criteria"]["evidence"]["description"] == "Use cited lifecycle evidence."
+    evaluation = payload["evaluations"][0]
+    assert evaluation["score"] == 0.91
+    assert evaluation["metadata"]["score_origin"] == "runtime"
+    assert evaluation["metadata"]["model_profile_id"] == "profile_judge"
+    assert evaluation["evaluated_by"] == "model_judge_adapter_v1:gemini:gemini-flash-latest"
+
+
+def test_ai_evaluation_judge_run_rejects_unscored_items_without_runtime(client):
+    rejected = client.post(
+        "/api/v1/experiments/ai-evaluations/judge-runs",
+        headers={"x-actor-role": "operator"},
+        json={
+            "run_type": "model_judge",
+            "items": [
+                {
+                    "evaluation_type": "answer_relevance",
+                    "target_type": "push_copy_draft",
+                    "target_id": "missing_runtime_judge",
+                    "prompt": "Judge this push copy.",
+                    "response": "Come back now.",
+                }
+            ],
+        },
+    )
+    assert rejected.status_code == 400
+    assert "Ask AI runtime" in rejected.json()["detail"]
+
+    listed = client.get(
+        "/api/v1/experiments/ai-evaluations?target_id=missing_runtime_judge",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+
+
+def test_ai_evaluation_judge_run_rejects_unknown_model_profile_without_writing_records(client):
+    rejected = client.post(
+        "/api/v1/experiments/ai-evaluations/judge-runs",
+        headers={"x-actor-role": "operator"},
+        json={
+            "run_type": "model_judge",
+            "model_profile_id": "missing_profile",
+            "items": [
+                {
+                    "evaluation_type": "answer_relevance",
+                    "target_type": "email_campaign_draft",
+                    "target_id": "missing_profile_judge",
+                    "score": 0.9,
+                    "dimensions": {"answer_relevance": 0.9},
+                }
+            ],
+        },
+    )
+    assert rejected.status_code == 400
+    assert "missing_profile" in rejected.json()["detail"]
+
+    listed = client.get(
+        "/api/v1/experiments/ai-evaluations?target_id=missing_profile_judge",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
 
 
 def test_ai_quality_monitor_returns_alerts_diagnostics_and_export(client):
