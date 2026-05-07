@@ -16,6 +16,8 @@ KNOWLEDGE_CHUNK_RESOURCE_TYPE = "knowledge_chunk"
 KNOWLEDGE_INGESTION_JOB_RESOURCE_TYPE = "knowledge_ingestion_job"
 KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE = "knowledge_retrieval"
 KNOWLEDGE_SOURCE_RESOURCE_TYPE = "knowledge_source"
+KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE = "knowledge_vector_index"
+KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE = "knowledge_vector_record"
 
 MAX_CHUNK_CHARS = 1600
 MAX_DOCUMENT_CHARS = 250_000
@@ -25,6 +27,7 @@ LEXICAL_RETRIEVAL_MODE = "lexical_v1"
 HYBRID_RETRIEVAL_MODE = "hybrid_v1"
 LOCAL_SEMANTIC_VECTOR_MODEL = "local_semantic_hash_v1"
 SEMANTIC_VECTOR_DIMENSIONS = 1024
+DEFAULT_VECTOR_INDEX_ID = "kairyx_knowledge_default"
 HYBRID_MIN_SEMANTIC_SCORE = 0.08
 STOP_WORDS = {
     "a",
@@ -74,8 +77,9 @@ SEMANTIC_SYNONYMS = {
 
 
 class KnowledgeService:
-    def __init__(self, repository):
+    def __init__(self, repository, settings=None):
         self.repository = repository
+        self.vector_backend = _vector_backend_config(settings)
 
     def create_document(
         self,
@@ -228,6 +232,7 @@ class KnowledgeService:
             name=current.get("title") or document_id,
             payload=archived_payload,
         )
+        affected_vector_indexes: set[str] = set()
         for chunk in self.list_chunks(document_id, include_archived=True):
             chunk_payload = {**chunk, "status": "archived", "archived_at": archived_at}
             self.repository.upsert_resource(
@@ -237,6 +242,9 @@ class KnowledgeService:
                 name=document_id,
                 payload=chunk_payload,
             )
+            affected_vector_indexes.update(self._archive_vector_records(str(chunk.get("chunk_id") or ""), archived_at=archived_at))
+        for index_id in sorted(affected_vector_indexes):
+            self._refresh_vector_index_counts(index_id)
         self.repository.record_resource_event(
             KNOWLEDGE_DOCUMENT_RESOURCE_TYPE,
             document_id,
@@ -277,12 +285,15 @@ class KnowledgeService:
         if not query_terms:
             raise ValueError("query must include at least one searchable term.")
         feedback_boosts = self._feedback_boosts()
+        vector_records = self._vector_records_by_chunk_id() if normalized_retrieval_mode == HYBRID_RETRIEVAL_MODE else {}
+        query_vector = _semantic_vector(normalized_query) if normalized_retrieval_mode == HYBRID_RETRIEVAL_MODE else []
         scored = [
             match
             for chunk in self.repository.list_resources(KNOWLEDGE_CHUNK_RESOURCE_TYPE)
             if (match := _score_chunk(
                 self._resource_to_chunk(chunk),
                 query=normalized_query,
+                query_vector=query_vector,
                 query_terms=query_terms,
                 retrieval_mode=normalized_retrieval_mode,
                 tags=normalized_tags,
@@ -290,6 +301,8 @@ class KnowledgeService:
                 document_ids=normalized_document_ids,
                 include_archived=include_archived,
                 feedback_boosts=feedback_boosts,
+                vector_records=vector_records,
+                active_vector_index_id=self.vector_backend["index_id"],
             ))
         ]
         ranked = sorted(
@@ -331,6 +344,7 @@ class KnowledgeService:
                 "document_ids": normalized_document_ids,
                 "include_archived": bool(include_archived),
             },
+            "vector_index": self._retrieval_vector_index_summary(citations),
             "citations": citations,
             "context_pack": context_pack,
             "export": {
@@ -382,6 +396,30 @@ class KnowledgeService:
             },
         }
 
+    def list_vector_indexes(self) -> list[Dict[str, Any]]:
+        indexes = [
+            self._resource_to_vector_index(record)
+            for record in self.repository.list_resources(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE)
+        ]
+        indexes.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+        return indexes
+
+    def export_vector_index(self, index_id: str) -> Dict[str, Any] | None:
+        normalized_index_id = _normalize_vector_index_id(index_id)
+        record = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, normalized_index_id)
+        if record is None:
+            return None
+        records = [
+            _redact_vector_record_for_export(item)
+            for item in self._list_vector_records(normalized_index_id)
+            if item.get("status") != "archived"
+        ]
+        return {
+            "format": "knowledge_vector_index.v1",
+            "index": self._resource_to_vector_index(record),
+            "records": records,
+        }
+
     def _feedback_boosts(self) -> Dict[str, Dict[str, float]]:
         boosts = {"chunks": {}, "documents": {}}
         for record in self.repository.list_resources(AI_FEEDBACK_RESOURCE_TYPE):
@@ -396,6 +434,66 @@ class KnowledgeService:
             elif target_type == "knowledge_document":
                 boosts["documents"][target_id] = _clamp_feedback_boost(boosts["documents"].get(target_id, 0.0) + weight)
         return boosts
+
+    def _active_vector_index_summary(self) -> Dict[str, Any]:
+        record = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, self.vector_backend["index_id"])
+        if record is None:
+            return _vector_index_payload(self.vector_backend, record_count=0, document_count=0)
+        payload = self._resource_to_vector_index(record)
+        return _compact_vector_index_summary(payload)
+
+    def _retrieval_vector_index_summary(self, citations: list[Dict[str, Any]]) -> Dict[str, Any]:
+        index_ids = sorted(
+            {
+                str(dict(citation.get("ranking_signals") or {}).get("vector_index_id") or "").strip()
+                for citation in citations
+                if dict(citation.get("ranking_signals") or {}).get("vector_status") == "ready"
+                and str(dict(citation.get("ranking_signals") or {}).get("vector_index_id") or "").strip()
+            }
+        )
+        if not index_ids:
+            if any(
+                dict(citation.get("ranking_signals") or {}).get("vector_status") == "recomputed_fallback"
+                for citation in citations
+            ):
+                return _recomputed_vector_index_summary()
+            return self._active_vector_index_summary()
+        if len(index_ids) == 1:
+            record = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, index_ids[0])
+            if record is None:
+                return self._active_vector_index_summary()
+            return _compact_vector_index_summary(self._resource_to_vector_index(record))
+        summaries = [
+            self._resource_to_vector_index(record)
+            for index_id in index_ids
+            if (record := self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, index_id)) is not None
+        ]
+        if not summaries:
+            return self._active_vector_index_summary()
+        return {
+            "index_id": "mixed",
+            "embedding_provider": _collapse_summary_field(summaries, "embedding_provider", "mixed"),
+            "embedding_model": _collapse_summary_field(summaries, "embedding_model", "mixed"),
+            "vector_store": _collapse_summary_field(summaries, "vector_store", "mixed"),
+            "vector_namespace": _collapse_summary_field(summaries, "vector_namespace", "mixed"),
+            "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+            "record_count": sum(int(item.get("record_count") or 0) for item in summaries),
+            "document_count": sum(int(item.get("document_count") or 0) for item in summaries),
+            "storage_mode": _collapse_summary_field(summaries, "storage_mode", "mixed"),
+            "status": "active",
+        }
+
+    def _vector_records_by_chunk_id(self) -> Dict[str, list[Dict[str, Any]]]:
+        records_by_chunk_id: Dict[str, list[Dict[str, Any]]] = {}
+        for record in self.repository.list_resources(KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE):
+            payload = self._resource_to_vector_record(record)
+            chunk_id = str(payload.get("chunk_id") or "")
+            if not chunk_id or payload.get("status") == "archived":
+                continue
+            records_by_chunk_id.setdefault(chunk_id, []).append(payload)
+        for records in records_by_chunk_id.values():
+            records.sort(key=lambda item: str(item.get("updated_at") or item.get("materialized_at") or ""), reverse=True)
+        return records_by_chunk_id
 
     def _persist_chunks(
         self,
@@ -412,6 +510,25 @@ class KnowledgeService:
         payloads: list[Dict[str, Any]] = []
         for index, chunk_text in enumerate(chunks, start=1):
             chunk_id = f"{document_id}:chunk_{index:04d}"
+            embedding_text = " ".join(
+                [
+                    title,
+                    source_name,
+                    source_type,
+                    " ".join(tags),
+                    chunk_text,
+                ]
+            )
+            vector_record = self._persist_vector_record(
+                chunk_id=chunk_id,
+                document_id=document_id,
+                title=title,
+                source_id=source_id,
+                source_name=source_name,
+                source_type=source_type,
+                tags=tags,
+                text=embedding_text,
+            )
             payload = {
                 "chunk_id": chunk_id,
                 "document_id": document_id,
@@ -428,17 +545,7 @@ class KnowledgeService:
                 "tags": list(tags),
                 "visibility": visibility,
                 "status": "active",
-                "embedding": _embedding_metadata(
-                    " ".join(
-                        [
-                            title,
-                            source_name,
-                            source_type,
-                            " ".join(tags),
-                            chunk_text,
-                        ]
-                    )
-                ),
+                "embedding": dict(vector_record.get("embedding") or {}),
             }
             record = self.repository.upsert_resource(
                 KNOWLEDGE_CHUNK_RESOURCE_TYPE,
@@ -448,7 +555,133 @@ class KnowledgeService:
                 payload=payload,
             )
             payloads.append(self._resource_to_chunk(record))
+        self._refresh_vector_index_counts()
         return payloads
+
+    def _persist_vector_record(
+        self,
+        *,
+        chunk_id: str,
+        document_id: str,
+        title: str,
+        source_id: str,
+        source_name: str,
+        source_type: str,
+        tags: list[str],
+        text: str,
+    ) -> Dict[str, Any]:
+        vector = _semantic_vector(text)
+        vector_hash = _hash_text(",".join(f"{item:.6f}" for item in vector))[:24]
+        index_id = self.vector_backend["index_id"]
+        record_id = f"{index_id}:{chunk_id}"
+        embedding = _embedding_metadata(self.vector_backend, vector_hash=vector_hash)
+        embedding["vector_record_id"] = record_id
+        payload = {
+            "vector_record_id": record_id,
+            "index_id": index_id,
+            "chunk_id": chunk_id,
+            "document_id": document_id,
+            "source_id": source_id,
+            "source_name": source_name,
+            "source_type": source_type,
+            "source_title": title,
+            "tags": list(tags),
+            "status": "active",
+            "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+            "vector_hash": vector_hash,
+            "vector": vector,
+            "embedding": embedding,
+            "materialized_at": embedding["materialized_at"],
+        }
+        self._ensure_vector_index()
+        record = self.repository.upsert_resource(
+            KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE,
+            record_id,
+            status="active",
+            name=index_id,
+            payload=payload,
+        )
+        return self._resource_to_vector_record(record)
+
+    def _ensure_vector_index(self) -> Dict[str, Any]:
+        current = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, self.vector_backend["index_id"])
+        if current is not None:
+            return self._resource_to_vector_index(current)
+        payload = {
+            **_vector_index_payload(self.vector_backend),
+            "record_count": 0,
+            "document_count": 0,
+        }
+        record = self.repository.upsert_resource(
+            KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE,
+            self.vector_backend["index_id"],
+            status="active",
+            name=self.vector_backend["index_id"],
+            payload=payload,
+        )
+        return self._resource_to_vector_index(record)
+
+    def _refresh_vector_index_counts(self, index_id: str | None = None) -> Dict[str, Any]:
+        index_id = _normalize_vector_index_id(index_id or self.vector_backend["index_id"])
+        records = [record for record in self._list_vector_records(index_id) if record.get("status") != "archived"]
+        document_count = len({str(record.get("document_id") or "") for record in records if record.get("document_id")})
+        current = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, index_id)
+        current_payload = dict(current.get("payload") or {}) if current else {}
+        if records:
+            payload = _vector_index_payload_from_records(
+                index_id,
+                current_payload,
+                records,
+                record_count=len(records),
+                document_count=document_count,
+            )
+        else:
+            fallback = current_payload or _vector_index_payload(self.vector_backend)
+            payload = {
+                **fallback,
+                "index_id": index_id,
+                "status": fallback.get("status") or "active",
+                "format": fallback.get("format") or "knowledge_vector_index.v1",
+                "record_count": 0,
+                "document_count": 0,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        record = self.repository.upsert_resource(
+            KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE,
+            index_id,
+            status="active",
+            name=index_id,
+            payload=payload,
+        )
+        return self._resource_to_vector_index(record)
+
+    def _list_vector_records(self, index_id: str) -> list[Dict[str, Any]]:
+        records = [
+            self._resource_to_vector_record(record)
+            for record in self.repository.list_resources(KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE, name=index_id)
+        ]
+        records.sort(key=lambda record: (str(record.get("document_id") or ""), str(record.get("chunk_id") or "")))
+        return records
+
+    def _archive_vector_records(self, chunk_id: str, *, archived_at: str) -> set[str]:
+        if not chunk_id:
+            return set()
+        affected_indexes: set[str] = set()
+        for current in self.repository.list_resources(KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE):
+            record = self._resource_to_vector_record(current)
+            if record.get("chunk_id") != chunk_id or record.get("status") == "archived":
+                continue
+            index_id = _normalize_vector_index_id(str(record.get("index_id") or self.vector_backend["index_id"]))
+            payload = {**record, "status": "archived", "archived_at": archived_at}
+            self.repository.upsert_resource(
+                KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE,
+                str(record.get("vector_record_id") or current.get("resource_id")),
+                status="archived",
+                name=index_id,
+                payload=payload,
+            )
+            affected_indexes.add(index_id)
+        return affected_indexes
 
     def _record_ingestion_job(
         self,
@@ -528,6 +761,32 @@ class KnowledgeService:
             "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",
         }
 
+    @staticmethod
+    def _resource_to_vector_index(record: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(record.get("payload") or {})
+        return {
+            **payload,
+            "index_id": payload.get("index_id") or record.get("resource_id"),
+            "status": payload.get("status") or record.get("status") or "active",
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+            "project_id": record.get("project_id") or payload.get("project_id"),
+        }
+
+    @staticmethod
+    def _resource_to_vector_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(record.get("payload") or {})
+        return {
+            **payload,
+            "vector_record_id": payload.get("vector_record_id") or record.get("resource_id"),
+            "status": payload.get("status") or record.get("status") or "active",
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+            "project_id": record.get("project_id") or payload.get("project_id"),
+        }
+
 
 def _required_text(value: str, field_name: str, *, max_length: int) -> str:
     normalized = str(value or "").strip()
@@ -598,6 +857,160 @@ def _normalize_id_filters(values: list[str]) -> list[str]:
     return normalized[:50]
 
 
+def _vector_backend_config(settings=None) -> Dict[str, Any]:
+    provider = _normalize_provider_name(getattr(settings, "knowledge_embedding_provider", "local_hash") if settings else "local_hash")
+    model = _clean_text(getattr(settings, "knowledge_embedding_model", LOCAL_SEMANTIC_VECTOR_MODEL) if settings else LOCAL_SEMANTIC_VECTOR_MODEL, max_length=120) or LOCAL_SEMANTIC_VECTOR_MODEL
+    vector_store = _normalize_provider_name(getattr(settings, "knowledge_vector_store", "control_plane") if settings else "control_plane")
+    index_id = _normalize_vector_index_id(getattr(settings, "knowledge_vector_index", DEFAULT_VECTOR_INDEX_ID) if settings else DEFAULT_VECTOR_INDEX_ID)
+    namespace = _normalize_provider_name(getattr(settings, "knowledge_vector_namespace", "default") if settings else "default") or "default"
+    secret_ref = _clean_text(getattr(settings, "knowledge_vector_secret_ref", "") if settings else "", max_length=240)
+    storage_mode = "control_plane_vector_record" if vector_store == "control_plane" else "external_vector_store_shadow_index"
+    return {
+        "embedding_provider": provider,
+        "embedding_model": model,
+        "vector_store": vector_store,
+        "index_id": index_id,
+        "vector_namespace": namespace,
+        "secret_ref_configured": bool(secret_ref),
+        "storage_mode": storage_mode,
+    }
+
+
+def _normalize_provider_name(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(value or "").strip().lower()).strip("_")
+    return normalized[:80]
+
+
+def _normalize_vector_index_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", str(value or "").strip()).strip("_")
+    return normalized[:120] or DEFAULT_VECTOR_INDEX_ID
+
+
+def _vector_index_payload(config: Dict[str, Any], *, record_count: int = 0, document_count: int = 0) -> Dict[str, Any]:
+    return {
+        "index_id": config["index_id"],
+        "status": "active",
+        "format": "knowledge_vector_index.v1",
+        "embedding_provider": config["embedding_provider"],
+        "embedding_model": config["embedding_model"],
+        "vector_store": config["vector_store"],
+        "vector_namespace": config["vector_namespace"],
+        "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+        "distance_metric": "cosine",
+        "record_count": int(record_count or 0),
+        "document_count": int(document_count or 0),
+        "storage_mode": config["storage_mode"],
+        "secret_ref_configured": bool(config.get("secret_ref_configured")),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _vector_index_payload_from_records(
+    index_id: str,
+    current_payload: Dict[str, Any],
+    records: list[Dict[str, Any]],
+    *,
+    record_count: int,
+    document_count: int,
+) -> Dict[str, Any]:
+    return {
+        **current_payload,
+        "index_id": index_id,
+        "status": current_payload.get("status") or "active",
+        "format": current_payload.get("format") or "knowledge_vector_index.v1",
+        "embedding_provider": _collapse_embedding_field(records, "provider", current_payload.get("embedding_provider") or "local_hash"),
+        "embedding_model": _collapse_embedding_field(records, "model", current_payload.get("embedding_model") or LOCAL_SEMANTIC_VECTOR_MODEL),
+        "vector_store": _collapse_embedding_field(records, "vector_store", current_payload.get("vector_store") or "control_plane"),
+        "vector_namespace": _collapse_embedding_field(records, "vector_namespace", current_payload.get("vector_namespace") or "default"),
+        "dimensions": _collapse_embedding_dimensions(records, int(current_payload.get("dimensions") or SEMANTIC_VECTOR_DIMENSIONS)),
+        "distance_metric": current_payload.get("distance_metric") or "cosine",
+        "record_count": int(record_count or 0),
+        "document_count": int(document_count or 0),
+        "storage_mode": _collapse_embedding_field(records, "storage_mode", current_payload.get("storage_mode") or "control_plane_vector_record"),
+        "secret_ref_configured": any(bool(dict(record.get("embedding") or {}).get("secret_ref_configured")) for record in records),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _compact_vector_index_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in payload.items()
+        if key
+        in {
+            "index_id",
+            "embedding_provider",
+            "embedding_model",
+            "vector_store",
+            "vector_namespace",
+            "dimensions",
+            "record_count",
+            "document_count",
+            "storage_mode",
+            "status",
+        }
+    }
+
+
+def _recomputed_vector_index_summary() -> Dict[str, Any]:
+    return {
+        "index_id": "recomputed_fallback",
+        "embedding_provider": "local_hash",
+        "embedding_model": LOCAL_SEMANTIC_VECTOR_MODEL,
+        "vector_store": "none",
+        "vector_namespace": "none",
+        "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+        "record_count": 0,
+        "document_count": 0,
+        "storage_mode": "recomputed_fallback",
+        "status": "fallback",
+    }
+
+
+def _collapse_summary_field(summaries: list[Dict[str, Any]], field_name: str, fallback: str) -> str:
+    values = sorted(
+        {
+            str(summary.get(field_name) or "").strip()
+            for summary in summaries
+            if str(summary.get(field_name) or "").strip()
+        }
+    )
+    if not values:
+        return fallback
+    if len(values) == 1:
+        return values[0]
+    return "mixed"
+
+
+def _collapse_embedding_field(records: list[Dict[str, Any]], field_name: str, fallback: str) -> str:
+    values = sorted(
+        {
+            str(dict(record.get("embedding") or {}).get(field_name) or "").strip()
+            for record in records
+            if str(dict(record.get("embedding") or {}).get(field_name) or "").strip()
+        }
+    )
+    if not values:
+        return fallback
+    if len(values) == 1:
+        return values[0]
+    return "mixed"
+
+
+def _collapse_embedding_dimensions(records: list[Dict[str, Any]], fallback: int) -> int:
+    values: set[int] = set()
+    for record in records:
+        embedding = dict(record.get("embedding") or {})
+        try:
+            values.add(int(embedding.get("dimensions") or record.get("dimensions") or 0))
+        except (TypeError, ValueError):
+            continue
+    values.discard(0)
+    if len(values) == 1:
+        return next(iter(values))
+    return fallback or SEMANTIC_VECTOR_DIMENSIONS
+
+
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -628,23 +1041,70 @@ def _query_terms(value: str) -> list[str]:
     return terms[:32]
 
 
-def _embedding_metadata(value: str) -> Dict[str, Any]:
-    vector = _semantic_vector(value)
-    vector_hash = _hash_text(",".join(f"{item:.6f}" for item in vector))[:20]
+def _embedding_metadata(config: Dict[str, Any], *, vector_hash: str) -> Dict[str, Any]:
+    if config["embedding_provider"] == "local_hash" and config["vector_store"] == "control_plane":
+        vector_ref = f"inline:{config['embedding_model']}:{vector_hash}"
+    else:
+        vector_ref = f"{config['vector_store']}://{config['index_id']}/{vector_hash}"
     return {
         "status": "ready",
-        "model": LOCAL_SEMANTIC_VECTOR_MODEL,
-        "vector_ref": f"inline:{LOCAL_SEMANTIC_VECTOR_MODEL}:{vector_hash}",
+        "provider": config["embedding_provider"],
+        "model": config["embedding_model"],
+        "vector_store": config["vector_store"],
+        "vector_index_id": config["index_id"],
+        "vector_namespace": config["vector_namespace"],
+        "vector_record_id": "",
+        "vector_ref": vector_ref,
         "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+        "storage_mode": config["storage_mode"],
+        "secret_ref_configured": bool(config.get("secret_ref_configured")),
         "materialized_at": datetime.utcnow().isoformat(),
     }
+
+
+def _redact_vector_record_for_export(record: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(record)
+    payload.pop("vector", None)
+    embedding = dict(payload.get("embedding") or {})
+    embedding.pop("secret_ref", None)
+    payload["embedding"] = embedding
+    return payload
 
 
 def _semantic_similarity(query: str, value: str) -> float:
     query_vector = _semantic_vector(query)
     value_vector = _semantic_vector(value)
+    return _semantic_similarity_from_vectors(query_vector, value_vector)
+
+
+def _semantic_similarity_from_vectors(query_vector: list[float], value_vector: list[float]) -> float:
+    if not query_vector or not value_vector or len(query_vector) != len(value_vector):
+        return 0.0
     score = sum(left * right for left, right in zip(query_vector, value_vector))
     return round(max(0.0, min(1.0, score)), 4)
+
+
+def _select_vector_record_for_chunk(
+    chunk: Dict[str, Any],
+    candidates: list[Dict[str, Any]],
+    *,
+    active_index_id: str,
+) -> Dict[str, Any]:
+    active_candidates = [record for record in candidates if record.get("status") != "archived"]
+    if not active_candidates:
+        return {}
+    chunk_embedding = dict(chunk.get("embedding") or {})
+    preferred_index_ids = [
+        str(chunk_embedding.get("vector_index_id") or "").strip(),
+        active_index_id,
+    ]
+    for index_id in preferred_index_ids:
+        if not index_id:
+            continue
+        for record in active_candidates:
+            if str(record.get("index_id") or "") == index_id:
+                return record
+    return active_candidates[0]
 
 
 def _semantic_vector(value: str) -> list[float]:
@@ -719,6 +1179,7 @@ def _score_chunk(
     chunk: Dict[str, Any],
     *,
     query: str,
+    query_vector: list[float],
     query_terms: list[str],
     retrieval_mode: str,
     tags: list[str],
@@ -726,6 +1187,8 @@ def _score_chunk(
     document_ids: list[str],
     include_archived: bool,
     feedback_boosts: Dict[str, Dict[str, float]],
+    vector_records: Dict[str, list[Dict[str, Any]]],
+    active_vector_index_id: str,
 ) -> Dict[str, Any] | None:
     if not include_archived and chunk.get("status") == "archived":
         return None
@@ -764,8 +1227,20 @@ def _score_chunk(
         lexical_score += 5.0
     lexical_score = round(lexical_score / max(float(len(query_terms)), 1.0), 4) if lexical_score > 0 else 0.0
     semantic_score = 0.0
+    vector_record = _select_vector_record_for_chunk(
+        chunk,
+        vector_records.get(str(chunk.get("chunk_id") or ""), []),
+        active_index_id=active_vector_index_id,
+    )
+    vector_embedding = dict(vector_record.get("embedding") or {}) if vector_record else {}
+    vector_status = "not_used"
     if retrieval_mode == HYBRID_RETRIEVAL_MODE:
-        semantic_score = _semantic_similarity(query, f"{metadata_text} {text}")
+        if vector_record and vector_record.get("status") != "archived":
+            semantic_score = _semantic_similarity_from_vectors(query_vector, list(vector_record.get("vector") or []))
+            vector_status = "ready"
+        else:
+            semantic_score = _semantic_similarity(query, f"{metadata_text} {text}")
+            vector_status = "recomputed_fallback"
         if lexical_score <= 0 and semantic_score < HYBRID_MIN_SEMANTIC_SCORE:
             return None
     elif lexical_score <= 0:
@@ -794,7 +1269,13 @@ def _score_chunk(
             "semantic_score": semantic_score,
             "feedback_boost": feedback_boost,
             "rerank_score": score,
-            "vector_model": LOCAL_SEMANTIC_VECTOR_MODEL if retrieval_mode == HYBRID_RETRIEVAL_MODE else None,
+            "vector_status": vector_status,
+            "vector_model": vector_embedding.get("model") or (LOCAL_SEMANTIC_VECTOR_MODEL if retrieval_mode == HYBRID_RETRIEVAL_MODE else None),
+            "embedding_provider": vector_embedding.get("provider") or ("local_hash" if retrieval_mode == HYBRID_RETRIEVAL_MODE else None),
+            "vector_store": vector_embedding.get("vector_store"),
+            "vector_index_id": vector_embedding.get("vector_index_id"),
+            "vector_record_id": vector_embedding.get("vector_record_id"),
+            "storage_mode": vector_embedding.get("storage_mode"),
         },
         "match_terms": match_terms,
         "snippet": _snippet(text, match_terms),

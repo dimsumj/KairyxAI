@@ -14,6 +14,8 @@ from app.api.schemas.knowledge import (
     KnowledgeRetrievalListResponse,
     KnowledgeRetrievalRequest,
     KnowledgeRetrievalResponse,
+    KnowledgeVectorIndexExportResponse,
+    KnowledgeVectorIndexListResponse,
 )
 from app.application.knowledge import KnowledgeService
 from app.core.deps import get_knowledge_service
@@ -172,6 +174,45 @@ def export_knowledge_retrieval(
         action_type="knowledge_retrieval_exported",
         resource_type="knowledge_retrieval",
         resource_id=retrieval_id,
+        payload=payload,
+    )
+
+
+@router.get("/vector-indexes", response_model=KnowledgeVectorIndexListResponse)
+def list_knowledge_vector_indexes(
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    payload = {"items": service.list_vector_indexes()}
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_vector_indexes_read",
+        resource_type="knowledge_vector_index",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/vector-indexes/{index_id}/export", response_model=KnowledgeVectorIndexExportResponse)
+def export_knowledge_vector_index(
+    index_id: str,
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    payload = service.export_vector_index(index_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge vector index '{index_id}' not found.")
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_vector_index_exported",
+        resource_type="knowledge_vector_index",
+        resource_id=index_id,
         payload=payload,
     )
 

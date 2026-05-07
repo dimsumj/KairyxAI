@@ -62,8 +62,9 @@ def get_import_service(
 
 def get_knowledge_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings_dependency),
 ) -> KnowledgeService:
-    return KnowledgeService(repository)
+    return KnowledgeService(repository, settings)
 
 
 def get_prediction_service(

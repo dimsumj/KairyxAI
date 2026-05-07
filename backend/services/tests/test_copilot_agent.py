@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -26,6 +28,26 @@ def client(monkeypatch, tmp_path):
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
+
+
+@contextmanager
+def _client_with_env(monkeypatch, tmp_path, **env):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_BACKEND_MODE", "mock")
+    monkeypatch.setenv("CONTROL_PLANE_DATABASE_URL", f"sqlite:///{tmp_path / 'control_plane.db'}")
+    monkeypatch.setenv("KAIRYX_LOCAL_DB_PATH", str(tmp_path / "local_jobs.db"))
+    monkeypatch.setenv("SCHEDULER_ENABLED", "false")
+    for key, value in env.items():
+        monkeypatch.setenv(key, str(value))
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+    clear_shared_bigquery_service_cache()
+    app = create_app()
+    with TestClient(app) as test_client:
+        yield test_client
+    db_module.get_engine.cache_clear()
+    db_module.get_session_factory.cache_clear()
+    clear_shared_bigquery_service_cache()
 
 
 def _headers(role: str = "admin", *, actor_id: str | None = None, tenant_id: str = "default", project_id: str = "default") -> dict[str, str]:
@@ -683,6 +705,62 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
     assert evidence_artifact["focus"]["retrieval_mode"] == "hybrid_v1"
     assert evidence_artifact["focus"]["citations"][0]["document_title"] == "VIP Winback Playbook"
     assert "Evidence: [C1]" in payload["assistant_message"]
+
+
+def test_copilot_agent_knowledge_grounding_uses_configured_vector_index(monkeypatch, tmp_path):
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="pgvector",
+        KNOWLEDGE_VECTOR_INDEX="agent_playbooks",
+        KNOWLEDGE_VECTOR_NAMESPACE="lifecycle",
+        KNOWLEDGE_VECTOR_SECRET_REF="secret://knowledge/vector",
+    ) as client:
+        headers = _headers("operator", actor_id="agent_configured_grounding")
+        push_provider_connection_id = _create_push_provider_connection(client, headers, name="Configured Grounding Push")
+        document = client.post(
+            "/api/v1/knowledge/documents",
+            headers=headers,
+            json={
+                "title": "Configured Vector Playbook",
+                "source_type": "playbook",
+                "source_name": "Lifecycle Marketing",
+                "tags": ["push", "winback"],
+                "content": (
+                    "Configured vector retrieval should draft winback push copy with saved progress, "
+                    "premium access, and a calm return-to-game reminder."
+                ),
+            },
+        )
+        assert document.status_code == 201, document.text
+        session_id = _create_session(client, headers, title="Configured Vector Grounding")
+
+        response = client.post(
+            f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+            headers=headers,
+            json={
+                "message": "Draft a push title and body for saved progress winback from the configured vector playbook.",
+                "ui_context": {},
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        action = next(item for item in payload["completed_actions"] if item["action_type"] == "send_push_dispatch")
+        evidence_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "knowledge_retrieval")
+        assert action["parameters"]["provider_connection_id"] == push_provider_connection_id
+
+        retrieval = client.get(
+            f"/api/v1/knowledge/retrievals/{evidence_artifact['resource_id']}",
+            headers=headers,
+        )
+        assert retrieval.status_code == 200, retrieval.text
+        retrieval_payload = retrieval.json()
+        assert retrieval_payload["vector_index"]["index_id"] == "agent_playbooks"
+        assert retrieval_payload["vector_index"]["embedding_provider"] == "openai"
+        assert retrieval_payload["citations"][0]["ranking_signals"]["vector_status"] == "ready"
+        assert retrieval_payload["citations"][0]["ranking_signals"]["embedding_provider"] == "openai"
 
 
 def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monkeypatch):

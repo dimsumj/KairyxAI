@@ -148,6 +148,46 @@ class KnowledgeDocumentExportResponse(BaseModel):
     chunks: list[KnowledgeChunkResponse] = Field(default_factory=list)
 
 
+class KnowledgeVectorIndexResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    index_id: str
+    status: str = "active"
+    format: str = "knowledge_vector_index.v1"
+    embedding_provider: str = "local_hash"
+    embedding_model: str = "local_semantic_hash_v1"
+    vector_store: str = "control_plane"
+    vector_namespace: str = "default"
+    dimensions: int = 1024
+    distance_metric: str = "cosine"
+    record_count: int = 0
+    document_count: int = 0
+    storage_mode: str = "control_plane_vector_record"
+    secret_ref_configured: bool = False
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class KnowledgeVectorIndexListResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: list[str] = Field(default_factory=list)
+    items: list[KnowledgeVectorIndexResponse] = Field(default_factory=list)
+
+
+class KnowledgeVectorIndexExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: list[str] = Field(default_factory=list)
+    format: str
+    index: KnowledgeVectorIndexResponse
+    records: list[Dict[str, Any]] = Field(default_factory=list)
+
+
 class KnowledgeRetrievalResponse(BaseModel):
     tenant_id: str | None = None
     project_id: str | None = None
@@ -162,6 +202,7 @@ class KnowledgeRetrievalResponse(BaseModel):
     top_k: int = 5
     result_count: int = 0
     filters: Dict[str, Any] = Field(default_factory=dict)
+    vector_index: Dict[str, Any] = Field(default_factory=dict)
     citations: list[KnowledgeCitationResponse] = Field(default_factory=list)
     context_pack: Dict[str, Any] = Field(default_factory=dict)
     export: Dict[str, Any] = Field(default_factory=dict)

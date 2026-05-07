@@ -9,7 +9,7 @@ Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
 - secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
 - import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
-- no-code knowledge document ingestion and retrieval through `Data Core -> Knowledge` plus `/api/v1/knowledge`, with file-first text/markdown intake, deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, local semantic-vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, and persisted/exportable `knowledge_evidence_pack.v1` retrieval artifacts
+- no-code knowledge document ingestion and retrieval through `Data Core -> Knowledge` plus `/api/v1/knowledge`, with file-first text/markdown intake, deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, config-driven embedding/vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, persisted/exportable `knowledge_evidence_pack.v1` retrieval artifacts, and exportable `knowledge_vector_index.v1` shadow indexes for provider-backed deployments
 - SQL workspace and query-to-cohort behavior as analyst/advanced paths
 - local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
 - backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
@@ -52,9 +52,16 @@ Delivered no-code operator acceptance criteria:
 3. Manual text paste remains available only behind a collapsed `Advanced Text Fallback` panel.
 4. Module-level Ask AI starters can plan sources, summarize guidance with citations, and inspect coverage gaps.
 
+Delivered provider/vector acceptance criteria:
+1. Knowledge chunk ingestion persists vector records keyed by chunk and active vector index.
+2. Hybrid retrieval reads persisted vector records, exposes vector status and provider/store ranking signals, and falls back to deterministic local recompute only when a record is unavailable.
+3. Vector index metadata is listable and exportable as `knowledge_vector_index.v1` without exposing raw vector arrays.
+4. External embedding/vector provider configuration is secret-reference gated for production.
+
 Remaining acceptance criteria:
-1. Broaden local semantic retrieval into provider-grade embedding/vector storage and structured product-artifact retrieval.
-2. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
+1. Add managed vector-service adapters beyond the current control-plane shadow index.
+2. Broaden retrieval into structured product-artifact retrieval.
+3. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
 
 ---
 
@@ -1108,8 +1115,8 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 ### 6.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Provider-Grade Knowledge Retrieval`
-   - Extend first-class knowledge documents and chunks into managed embedding/vector stores
+1. `Managed Vector Adapter Hardening`
+   - Extend the delivered vector-index contract into managed vector-store adapters
    - Preserve provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
 2. `Manifest-Driven Default Path`
    - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic

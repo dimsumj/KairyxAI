@@ -1038,7 +1038,7 @@ class CopilotAgentService:
         self.provider_connections = ProviderConnectionService(repository)
         self.sql_workspace = SqlWorkspaceService(repository, settings, self.bigquery_service)
         self.health_monitor = HealthMonitorService(repository, self.bigquery_service)
-        self.knowledge = KnowledgeService(repository)
+        self.knowledge = KnowledgeService(repository, settings)
         self.ai_feedback = AIFeedbackService(repository)
         self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.workflows = WorkflowService(repository)

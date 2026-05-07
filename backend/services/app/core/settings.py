@@ -83,6 +83,12 @@ class Settings:
     import_stop_poll_interval_seconds: float = 0.1
     prediction_network_timeout_seconds: float = 20.0
     prediction_stop_poll_interval_seconds: float = 0.1
+    knowledge_embedding_provider: str = "local_hash"
+    knowledge_embedding_model: str = "local_semantic_hash_v1"
+    knowledge_vector_store: str = "control_plane"
+    knowledge_vector_index: str = "kairyx_knowledge_default"
+    knowledge_vector_namespace: str = "default"
+    knowledge_vector_secret_ref: str = ""
 
 
 def get_settings() -> Settings:
@@ -189,10 +195,22 @@ def get_settings() -> Settings:
         import_stop_poll_interval_seconds=max(0.05, float(normalize_env_text(os.getenv("IMPORT_STOP_POLL_INTERVAL_SECONDS", "0.1")))),
         prediction_network_timeout_seconds=max(0.5, float(normalize_env_text(os.getenv("PREDICTION_NETWORK_TIMEOUT_SECONDS", "20")))),
         prediction_stop_poll_interval_seconds=max(0.05, float(normalize_env_text(os.getenv("PREDICTION_STOP_POLL_INTERVAL_SECONDS", "0.1")))),
+        knowledge_embedding_provider=normalize_env_text(os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "local_hash")).lower() or "local_hash",
+        knowledge_embedding_model=normalize_env_text(os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "local_semantic_hash_v1")) or "local_semantic_hash_v1",
+        knowledge_vector_store=normalize_env_text(os.getenv("KNOWLEDGE_VECTOR_STORE", "control_plane")).lower() or "control_plane",
+        knowledge_vector_index=normalize_env_text(os.getenv("KNOWLEDGE_VECTOR_INDEX", "kairyx_knowledge_default")) or "kairyx_knowledge_default",
+        knowledge_vector_namespace=normalize_env_text(os.getenv("KNOWLEDGE_VECTOR_NAMESPACE", "default")) or "default",
+        knowledge_vector_secret_ref=normalize_env_text(os.getenv("KNOWLEDGE_VECTOR_SECRET_REF")),
     )
 
 
 def validate_runtime_settings(settings: Settings) -> None:
+    allowed_embedding_providers = {"local_hash", "openai", "gemini", "voyage", "cohere", "bedrock", "custom"}
+    allowed_vector_stores = {"control_plane", "pgvector", "pinecone", "qdrant", "weaviate", "milvus", "opensearch", "bigquery_vector", "custom"}
+    if settings.knowledge_embedding_provider not in allowed_embedding_providers:
+        raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER must be one of: " + ", ".join(sorted(allowed_embedding_providers)))
+    if settings.knowledge_vector_store not in allowed_vector_stores:
+        raise RuntimeError("KNOWLEDGE_VECTOR_STORE must be one of: " + ", ".join(sorted(allowed_vector_stores)))
     if settings.app_env != "prod":
         return
     if settings.control_plane_database_url.startswith("sqlite"):
@@ -213,6 +231,11 @@ def validate_runtime_settings(settings: Settings) -> None:
         raise RuntimeError("APP_ENV=prod requires OIDC issuer, audience, and JWKS settings.")
     if settings.service_role == "operator-api" and settings.scheduler_enabled:
         raise RuntimeError("APP_ENV=prod operator-api must not run the in-process scheduler.")
+    if (
+        settings.knowledge_embedding_provider != "local_hash"
+        or settings.knowledge_vector_store != "control_plane"
+    ) and not settings.knowledge_vector_secret_ref:
+        raise RuntimeError("APP_ENV=prod with external knowledge embedding/vector backends requires KNOWLEDGE_VECTOR_SECRET_REF.")
     if settings.warehouse_backend == "redshift":
         if not settings.aws_region:
             raise RuntimeError("APP_ENV=prod with WAREHOUSE_BACKEND=redshift requires AWS_REGION.")
