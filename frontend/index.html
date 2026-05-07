@@ -756,7 +756,7 @@
             <div class="ai-starter-panel" data-ai-command-center="data-core">
                 <div>
                     <h2>Ask AI For Mapping</h2>
-                    <p class="subtle">Use prompts for mapping fixes, connector setup, and import reprocessing. Manual JSON editors are advanced fallback controls.</p>
+                    <p class="subtle">Use prompts for mapping fixes, connector setup, and import reprocessing. Structured diagnostics are available as exported JSON files.</p>
                 </div>
                 <div class="ai-starter-actions">
                     <button type="button" data-agent-starter-message="Connect a BigQuery data source and open the secure credential dialog.">Connect Data</button>
@@ -823,13 +823,13 @@
                      <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
                  </div>
                 <details id="data-sandbox-advanced-json-panel" class="builder-advanced-panel">
-                    <summary>Advanced JSON Editors</summary>
+                    <summary>Internal Mapping Payloads</summary>
                     <div class="form-group" style="margin-top: 1rem;">
                         <div class="field-label-with-help">
-                            <label for="data-sandbox-mapping-json">Mapping JSON</label>
+                            <label for="data-sandbox-mapping-json">Internal Mapping Payload</label>
                             <span class="inline-help">
-                                <button type="button" class="inline-help-button" aria-label="Show mapping JSON help">?</button>
-                                <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as raw JSON paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
+                                <button type="button" class="inline-help-button" aria-label="Show internal mapping help">?</button>
+                                <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as structured paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
                             </span>
                         </div>
                         <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
@@ -837,10 +837,10 @@
                     <div class="form-group" style="margin-bottom: 0;">
                         <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
                             <div class="field-label-with-help" style="margin-bottom: 0;">
-                                <label for="data-sandbox-sample-json">Sample Raw Event</label>
+                                <label for="data-sandbox-sample-json">Internal Sample Event</label>
                                 <span class="inline-help">
                                     <button type="button" class="inline-help-button" aria-label="Show sample raw event help">?</button>
-                                    <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use the JSON in this editor. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
+                                    <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use this internal sample. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
                                 </span>
                             </div>
                             <select id="data-sandbox-sample-picker" style="max-width: 22rem;">
@@ -1087,8 +1087,8 @@
                     <details class="builder-advanced-panel">
                         <summary>Advanced Manual Members</summary>
                         <div class="form-group" style="margin-top: 1rem;">
-                            <label for="audience-builder-members-input">Members JSON or CSV</label>
-                            <textarea id="audience-builder-members-input" style="min-height: 10rem; font-family: monospace;" placeholder='[{"canonical_user_id":"u_1001","email":"u1001@example.com"}]'></textarea>
+                            <label for="audience-builder-members-input">Member IDs or CSV</label>
+                            <textarea id="audience-builder-members-input" style="min-height: 10rem;" placeholder="player_123&#10;player_456,email@example.com"></textarea>
                         </div>
                     </details>
                 </div>
@@ -1352,7 +1352,7 @@ WHERE predicted_churn_risk = 'high'
                         <details class="builder-advanced-panel">
                             <summary>Advanced Merge Fields</summary>
                             <div class="form-group" style="margin-top: 1rem;">
-                                <label for="email-campaign-merge-fields-input">Merge Fields JSON</label>
+                                <label for="email-campaign-merge-fields-input">Internal Merge Fields</label>
                                 <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
   "first_name": { "source": "field", "value": "first_name" },
   "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
@@ -1489,15 +1489,15 @@ WHERE predicted_churn_risk = 'high'
                     <details class="builder-advanced-panel">
                         <summary>Advanced Push Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
-                            <label for="push-dispatch-data-input">Push Data JSON</label>
+                            <label for="push-dispatch-data-input">Internal Push Data</label>
                             <textarea id="push-dispatch-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
                         </div>
                         <div class="form-group">
-                            <label for="push-dispatch-provider-options-input">Provider Options JSON</label>
+                            <label for="push-dispatch-provider-options-input">Internal Provider Options</label>
                             <textarea id="push-dispatch-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
                         <div class="form-group" id="push-dispatch-wynn-filters-group" style="margin-top: 0.75rem; display: none;">
-                            <label for="push-dispatch-wynn-filters-input">Wynn Filters JSON</label>
+                            <label for="push-dispatch-wynn-filters-input">Internal Wynn Filters</label>
                             <textarea id="push-dispatch-wynn-filters-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
                             <div class="subtle" style="margin-top: 0.35rem;">Uses native Wynn filter keys such as <code>minVIPLevel</code>, <code>platform</code>, <code>daysFromLastLogin</code>, and <code>newUserInstallationDateRange</code>.</div>
                         </div>
@@ -1640,11 +1640,11 @@ WHERE predicted_churn_risk = 'high'
                     <details class="builder-advanced-panel">
                         <summary>Advanced Workflow Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
-                            <label for="workflow-push-data-input">Push Data JSON</label>
+                            <label for="workflow-push-data-input">Internal Push Data</label>
                             <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
                         </div>
                         <div class="form-group">
-                            <label for="workflow-push-provider-options-input">Provider Options JSON</label>
+                            <label for="workflow-push-provider-options-input">Internal Provider Options</label>
                             <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
                     </details>
@@ -1790,7 +1790,7 @@ WHERE predicted_churn_risk = 'high'
                 <div class="ai-starter-actions">
                     <button type="button" data-agent-starter-message="Configure an A/B experiment for the selected cohort with return_rate as the primary metric.">Configure Experiment</button>
                     <button type="button" data-agent-starter-message="Summarize experiment health, guardrails, measurement gaps, and rollout diagnostics.">Summarize Health</button>
-                    <button type="button" data-agent-starter-message="Ingest experiment outcomes for the selected experiment from an outcomes JSON payload.">Ingest Outcomes</button>
+                    <button type="button" data-agent-starter-message="Prepare experiment outcome ingestion for the selected experiment from structured outcome details.">Ingest Outcomes</button>
                 </div>
             </div>
             <div class="grid-2">
@@ -1888,9 +1888,9 @@ WHERE predicted_churn_risk = 'high'
                     <span class="pill">Advanced</span>
                 </div>
                 <details class="builder-advanced-panel">
-                    <summary>Advanced Outcome Payload</summary>
+                    <summary>Internal Outcome Payload</summary>
                     <div class="form-group" style="margin-top: 1rem;">
-                        <label for="experiment-outcomes-json">Outcome Payload</label>
+                        <label for="experiment-outcomes-json">Internal Outcome Payload</label>
                         <textarea id="experiment-outcomes-json" style="min-height: 12rem; font-family: monospace;">{
   "outcomes": []
 }</textarea>
@@ -1936,7 +1936,7 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="copilot-query-window-input" value="7d">
                         </div>
                         <div class="form-group">
-                            <label for="copilot-query-filters-json">Filters JSON</label>
+                            <label for="copilot-query-filters-json">Internal Filters</label>
                             <textarea id="copilot-query-filters-json" style="min-height: 4rem; font-family: monospace;">{}</textarea>
                         </div>
                     </div>
@@ -1972,11 +1972,11 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <div class="grid-2">
                         <div class="form-group">
-                            <label for="copilot-insight-json">Insight JSON</label>
+                            <label for="copilot-insight-json">Internal Insight Context</label>
                             <textarea id="copilot-insight-json" style="min-height: 6rem; font-family: monospace;">{}</textarea>
                         </div>
                         <div class="form-group">
-                            <label for="copilot-metric-context-json">Metric Context JSON</label>
+                            <label for="copilot-metric-context-json">Internal Metric Context</label>
                             <textarea id="copilot-metric-context-json" style="min-height: 6rem; font-family: monospace;">{
   "metric_id": "high_risk_users"
 }</textarea>

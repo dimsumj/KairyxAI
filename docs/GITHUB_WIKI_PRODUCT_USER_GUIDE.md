@@ -7,7 +7,7 @@ This guide explains how to use the current KairyxAI operator console module by m
 
 It is written against the current backend-served React operator shell and covers:
 - every primary module in the sidebar
-- every wired button and text box in the console
+- every wired button and visible operator input in the console
 - representative sample input and output for the main workflows
 - the current minimal UI pattern, where optional explanation is usually moved behind a nearby `?` tooltip and empty states stay intentionally short
 - current placeholder controls that exist in the UI but are not yet wired
@@ -49,10 +49,21 @@ Across the console, the default presentation is now intentionally minimal: the m
 6. Go to `Audience Engine` and create or refresh a cohort.
 7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
 8. Go to `Experiment Hub` and save the linked experiment config.
-9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and prepare workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and prepare live actions as module handoffs without sending, publishing, deleting, or ingesting directly from chat. Open the collapsed advanced manual panels only when you need raw SQL, JSON payloads, member lists, or legacy direct tools.
+9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and prepare workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and prepare live actions as module handoffs without sending, publishing, deleting, or ingesting directly from chat. Structured payloads and diagnostics are reviewed through `Export .json` artifacts instead of raw JSON text fields; open advanced manual panels only for narrow SQL/member-list or legacy direct tools.
 10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
-### 2.3 Deployment Surface Notes
+### 2.3 Fit To The Target Growth-Marketing RAG Architecture
+
+KairyxAI is already moving toward the target AI growth platform shape: `Data Core` handles connector setup, imports, field mapping, data quality, metadata, and governance; `Audience Engine`, `Action Orchestrator`, and `Experiment Hub` turn retrieved context into cohorts, lifecycle drafts, schedules, experiments, and measurement; `Insight Copilot` provides the prompt-first generation layer with setup handoffs, evidence artifacts, and audit history.
+
+Priority completion TODO:
+1. Add a document knowledge pipeline for SOPs, campaign briefs, historical reports, FAQs, and marketing assets, including chunking, source metadata, and permission tags.
+2. Add vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
+3. Add retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
+4. Close the feedback loop from operator approvals, sends, experiment outcomes, and campaign performance back into prompts, retrieval ranking, and playbook suggestions.
+5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
+
+### 2.4 Deployment Surface Notes
 
 - `Local demo mode` keeps mock state in local filesystem cache files by default.
 - `Vercel demo mode` is an isolated demo adapter. It keeps `/` as the gateway page, keeps the main app on `/{organization_id}`, and uses database-backed mock persistence only on that adapter.
@@ -64,7 +75,7 @@ Across the console, the default presentation is now intentionally minimal: the m
   - `mock_state_backend`
   - `mock_state_persistent`
 
-### 2.4 Onboarding And Workspace Overlays
+### 2.5 Onboarding And Workspace Overlays
 
 #### Google login gate
 
@@ -301,11 +312,11 @@ When BigQuery append failures are caused by nested property type drift during ev
 | Import row `Stop` | Row button | Stops a queued or running import. | None | Job moves toward `stopping` then `stopped`. |
 | Import row `Delete` | Row button | Deletes a completed, failed, or stopped import. | None | Import disappears from the list after confirmation, and the backend also removes that import's temporary raw file objects, job-scoped staging rows, and derived sanitized state. |
 | `Import Job` | Select | Choose a non-failed import job for detail views. Failed imports remain visible in the imported-data table, but they are excluded from downstream selectors such as `Import Operations`. | `import_20260322_101500` | Detail actions apply to the selected non-failed import. |
-| `Load Operations` | Button | Loads import operational detail on demand. | None | Operations JSON appears in the detail output. |
-| `Load Quality` | Button | Loads import quality detail on demand. | None | Quality JSON appears in the detail output. |
-| `Load Manifests` | Button | Loads manifest detail for the selected import on demand. | None | Manifest JSON and list appear. |
+| `Load Operations` | Button | Loads import operational detail on demand. | None | The detail panel shows a compact status and enables `Export .json` for the full operations payload. |
+| `Load Quality` | Button | Loads import quality detail on demand. | None | The detail panel shows a compact status and enables `Export .json` for the full quality payload. |
+| `Load Manifests` | Button | Loads manifest detail for the selected import on demand. | None | The manifest list appears and the detail payload can be downloaded with `Export .json`. |
 | `Alias` | Select | Choose a warehouse contract alias. | `standardized` | Contract detail request targets that alias. |
-| `Load Contract` | Button | Loads the selected schema contract on demand. | None | Contract JSON appears in the schema output. |
+| `Load Contract` | Button | Loads the selected schema contract on demand. | None | The schema panel shows a compact status and enables `Export .json` for the full contract. |
 | `List All` | Button | Lists all available schema contracts on demand. | None | Contract list is displayed for all aliases. |
 
 #### Operator flow
@@ -313,7 +324,7 @@ When BigQuery append failures are caused by nested property type drift during ev
 2. Click the disclosure arrow at the start of a row to expand the import summary in place.
 3. Review the inline metrics for current progress, total events, estimated profiles, curated events, duplicates removed, rejected rows, mapping coverage, and canonical coverage.
 4. If the import failed, use the expanded row to see the failure reason and phase before opening the deeper `Import Operations` views.
-5. Use `Load Operations`, `Load Quality`, or `Load Manifests` when you need the full JSON diagnostics after the inline summary.
+5. Use `Load Operations`, `Load Quality`, or `Load Manifests` when you need downloadable diagnostics after the inline summary.
 
 #### Sample import input
 ```json
@@ -503,7 +514,7 @@ Deployment note:
 | `Amplitude` | `Amplitude API Key`, `Amplitude Secret Key` | `api_key=amp_public_123`, `secret_key=amp_secret_456` |
 | `Adjust` | `Adjust API Token`, `Adjust API URL (optional)` | `api_token=adj_token_123`, `api_url=https://dash.adjust.com/control-center/reports-service` |
 | `AppsFlyer` | `AppsFlyer API Token`, `AppsFlyer App ID`, `AppsFlyer Pull API URL (optional)` | `api_token=af_token_123`, `app_id=id123456789`, `pull_api_url=https://hq1.appsflyer.com/api/raw-data/export/app` |
-| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, `How do you want to enter service account credentials?`, and either `Service Account JSON File` or `Service Account JSON`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, `Upload JSON file` |
+| `BigQuery` | Browser form: `Google Cloud Project ID`, `BigQuery Dataset ID`, `BigQuery Location (optional)`, and `Service Account JSON File`; API also supports `service_account_json`, `service_account_info_json`, and the matching `*_ref` fields for server-side integrations | `project_id=my-prod-project`, `dataset_id=growth_inputs`, `location=US`, upload a service account file |
 | `SendGrid` | `SendGrid API Key` | `api_key=SG.xxxxx` |
 | `Braze` | `Braze API Key`, `Braze REST Endpoint` | `api_key=braze_key_123`, `rest_endpoint=https://rest.iad-01.braze.com` |
 
@@ -596,7 +607,7 @@ Teams that keep warehouse credentials in Secret Manager can still use:
 ```
 
 ### 3.4 Mappings
-Use Ask AI or the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize. The prompt-first path can prepare mapping fixes and reprocessing handoffs, but reprocessing itself is finished from the module UI; the manual JSON editors remain collapsed under `Advanced JSON Editors`.
+Use Ask AI or the mapping sandbox when an import is waiting on field mapping or when you want to preview how a raw record will normalize. The prompt-first path can prepare mapping fixes and reprocessing handoffs, but reprocessing itself is finished from the module UI; raw mapping payloads stay internal and are exposed as downloadable JSON artifacts when inspection is needed.
 
 The Mapping Sandbox now keeps the page action-first: persistent helper paragraphs were removed, section-level guidance moved into `?` help beside the headings and labels, and each guided-field or saved-memory card exposes its detail through a per-card `?` tooltip instead of always-visible multi-line helper text.
 
@@ -606,17 +617,15 @@ The Mapping Sandbox now keeps the page action-first: persistent helper paragraph
 | --- | --- | --- | --- | --- |
 | `Connector` | Select | Choose which connector mapping to load or edit. | `Amplitude 1` | The mapping actions target this connector. |
 | `Awaiting Mapping Job` | Select | Choose a paused job that is waiting on mapping. | `import_20260322_101500` | The guided field picker loads raw property paths from that job's import manifests, and `Save and Reprocess Import` targets this job for a background rerun. |
-| `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. Use each field's `?` helper to inspect the suggestion source, sample values, cross-event signal, and correction context. | `event_properties.PID` | The selected path is written into the mapping JSON and becomes the saved mapping value for that field. |
+| `Guided Field Mapping` selectors | Dropdowns | Pick the raw field path for `canonical_user_id`, `event_name`, `event_time`, and optional attribution fields such as `campaign` and `media_source`. Use each field's `?` helper to inspect the suggestion source, sample values, cross-event signal, and correction context. | `event_properties.PID` | The selected path updates the internal mapping and becomes the saved mapping value for that field. |
 | `Saved Mapping Memory` | Read-only cards | Review which raw path currently stays preferred for each canonical field. Use the card-level `?` helper to inspect learned-memory evidence, saved-history context, and alternative paths. | `canonical_user_id -> event_properties.PID` | Operators can see whether a suggestion is backed by learned mapping memory or only by the current raw-sample heuristics. |
-| `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the editor loads the effective job mapping so the guided controls and JSON editor stay in sync. | None | Mapping JSON fills the editor. |
-| `Save Mapping Memory` | Button | Persists the current mapping JSON as the connector's source mapping so future imports from the same connector can reuse it. | None | Mapping memory is updated for future imports without rerunning the paused import. |
-| `Preview Mapping` | Button | Applies the mapping to the sample raw event locally. | None | Preview result JSON is generated. |
+| `Load Mapping` | Button | Loads the current saved field mapping. When a paused import job is selected, the guided controls load the effective job mapping. | None | The guided selectors update from the saved mapping. |
+| `Save Mapping Memory` | Button | Persists the current guided mapping as the connector's source mapping so future imports from the same connector can reuse it. | None | Mapping memory is updated for future imports without rerunning the paused import. |
+| `Preview Mapping` | Button | Applies the mapping to the selected raw sample locally. | None | A compact preview appears with `Export .json` for the full preview payload. |
 | `Coverage` | Button | Calculates mapping coverage against the selected connector. | None | Coverage summary appears. |
 | `Save and Reprocess Import` | Button | Persists the corrected connector mapping, applies the same mapping as a job override for the selected paused import, and resumes that import in the background. | None | Import processing reruns normalization and dedupe for the paused job using the corrected mapping, while the Mapping Sandbox status and the expanded import row keep updating with live progress. |
-| `Advanced JSON Editors` | Disclosure section | Expands the raw mapping and sample-event JSON editors when prompt/guided controls are not enough. | None | Manual JSON editors become visible. |
-| `Mapping JSON` | Text area | Advanced fallback for the canonical mapping definition. | `{"events":[...],"users":[...]}` | Saved and previewed as JSON. |
-| `Sample Raw Event` | Text area | Advanced fallback raw source event used for local preview. When a paused import is selected, the Mapping Sandbox loads true raw sample events returned by the mapping-candidates API, not the import job metadata summary. | `{"user_id":"u_1001","event":"purchase"}` | Preview result shows normalized fields. |
-| `Raw Sample Picker` | Select | Switch between returned raw sample events from the selected paused import. | `Sample 2 · purchase · player-123` | The textarea updates to the selected true raw event, and `Preview Mapping` / `Coverage` run against that sample. |
+| `Mapping sample payload` | Internal artifact | The mapping sandbox keeps raw mapping and sample-event payloads internal. | None | Use `Export .json` from preview or diagnostics when engineering review needs the raw structure. |
+| Mapping samples | Internal artifact | Returned raw samples from paused imports feed the guided preview and coverage checks. | None | `Preview Mapping` / `Coverage` run against the selected internal sample, and raw structure is available through `Export .json` diagnostics. |
 
 #### Operator flow
 1. Open `Data Core -> Mappings`.
@@ -624,9 +633,9 @@ The Mapping Sandbox now keeps the page action-first: persistent helper paragraph
 3. Confirm the connector matches the paused import source.
 4. Review `Saved Mapping Memory` to see whether the connector has a stable learned mapping for each required field.
 5. Use the guided dropdowns to bind `Canonical User ID`, `Event Name`, and `Event Time`. Use each field's `?` helper when you need to inspect suggestion source, sample values, or cross-event presence.
-6. If the suggestion is wrong, change the selector. The JSON editor updates immediately, and the same field-level `?` helper reflects the current correction context.
-7. Use `Raw Sample Picker` to inspect the actual raw events returned from the paused import.
-8. Review or refine the generated `Mapping JSON`.
+6. If the suggestion is wrong, change the selector. The internal mapping updates immediately, and the same field-level `?` helper reflects the current correction context.
+7. Use preview and coverage diagnostics to inspect how actual raw events from the paused import normalize.
+8. Review the generated mapping through selectors and, when needed, download the structured payload with `Export .json`.
 9. Click `Coverage` or `Preview Mapping` if needed.
 10. Click `Save Mapping Memory` if you only want to update the connector default for future imports.
 11. Click `Save and Reprocess Import` to apply the corrected mapping to the paused job and start the rerun in the background.
@@ -695,7 +704,7 @@ Templates let you instantiate a prebuilt scenario into concrete cohort and workf
 | `Name Prefix` | Text box | Optional prefix for generated resource names. | `pilot_` | Cohort and workflow names start with `pilot_`. |
 | `Activate cohort` | Checkbox | Activates the cohort immediately after creation. | Checked | Created cohort becomes active. |
 | `Publish workflow` | Checkbox | Publishes the workflow after it is created. | Checked | Workflow is created and published. |
-| `Instantiate Template` | Button | Creates concrete assets from the selected template. | None | Instantiation output JSON appears. |
+| `Instantiate Template` | Button | Creates concrete assets from the selected template. | None | A compact result appears and `Export .json` downloads the full instantiation payload. |
 
 #### Sample instantiation output
 ```json
@@ -717,7 +726,7 @@ Use Health to inspect system status and manually run one scheduler tick.
 | --- | --- | --- | --- | --- |
 | `Refresh` | Button | Reloads the health payload, module table, alert list, and scheduler list. | None | Health panels refresh. |
 | `Run Scheduler Tick` | Button | Triggers one scheduler tick immediately. | None | Tick output appears and health is reloaded. |
-| Health output panel | JSON output | Read-only. | None | Shows `/api/v1/health`, `/{organization_id}/v1/health`, or tick output depending on the active session context. |
+| Health output panel | Export artifact | Read-only. | None | Shows a compact status and enables `Export .json` for `/api/v1/health`, `/{organization_id}/v1/health`, or tick output depending on the active session context. |
 | Module status table | Read-only table | Read the current module status and metrics. | None | Modules show status and metrics. |
 | Alerts table | Read-only table | Inspect persisted alerts. | None | Alerts list with severity and message. |
 | Scheduler jobs table | Read-only table | Inspect current scheduler configuration and timing. | None | Scheduler jobs show schedule, last run, next run. |
@@ -775,7 +784,7 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | Filter `Field` | Select | Chooses a curated prediction or behavior field such as churn risk, churn state, sessions, revenue, or source name. | `Predicted churn risk` | Operators available for the row adjust to the field type. |
 | Filter `Operator` | Select | Chooses the comparison operator for that field. | `in` | Value input is interpreted using the selected operator. |
 | Filter `Value` | Text box or select | Supplies the comparison value. Enum fields use suggested values; `in` and `between` accept comma-separated input. | `high,medium` | Preview applies the filter row. |
-| `Members JSON or CSV` | Text area | Used only for `Manual list`. Accepts either JSON objects/arrays or simple CSV lines. | `[{"canonical_user_id":"u_1001"}]` | The builder creates a list cohort from the entered members. |
+| `Member IDs or CSV` | Text area | Used only for `Manual list`. Enter one member id per line, or `member_id,email@example.com` rows when email is needed. | `u_1001` | The builder creates a list cohort from the entered members. |
 | `Prompt` | Text area | Tells the inline AI assistant what cohort to draft. | `Find high-risk winback users from Amplitude 1 and Adjust Source, combine them, and exclude churned users.` | The assistant drafts builder state and preview output. |
 | `Draft Builder` | Button | Sends the prompt to the AI assistant and applies the returned builder state without creating cohorts yet. | None | Builder controls populate and preview data appears. |
 | `Create From Prompt` | Button | Drafts builder state through the AI assistant, previews it, then creates draft cohort assets. | None | One or more draft cohorts are created from the prompt. |
@@ -830,11 +839,9 @@ This page currently contains a visible form but the `Save Limits` button is not 
 ```
 
 #### Sample manual list input
-```json
-[
-  { "canonical_user_id": "u_1001", "email": "u1001@example.com" },
-  { "canonical_user_id": "u_1002", "email": "u1002@example.com" }
-]
+```text
+u_1001,u1001@example.com
+u_1002,u1002@example.com
 ```
 
 #### Sample managed warehouse SQL input
@@ -892,7 +899,7 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | `Timeout (seconds)` | Number box | Read-only query timeout. | `30` | Query is cut off after 30 seconds if needed. |
 | `Description` | Text box | Describe why the query exists. | `High-risk audience seed query` | Stored as query description. |
 | `SQL` | Text area | Enter the read-only warehouse query. | See sample below | Used for preview/save/cohort creation. |
-| `Preview` | Button | Runs a preview against the current SQL. | None | Preview JSON appears. |
+| `Preview` | Button | Runs a preview against the current SQL. | None | A compact preview appears and `Export .json` downloads the full preview payload. |
 | `Save Query` | Button | Saves the query and metadata. | None | Query appears in the saved query list. |
 | `Query to Cohort` | Button | Converts the current SQL into a draft warehouse-backed cohort. Use this when the guided builder needs a manual SQL entry point. | None | A new draft cohort is created from the frozen SQL. |
 | Saved query `Preview` | Row button | Loads the saved SQL and previews it. | None | SQL text and preview output refresh. |
@@ -931,12 +938,12 @@ WHERE predicted_churn_risk = 'high'
 | Cohort row `Restore` | Row button | Restores an archived cohort. | None | Cohort returns to a usable lifecycle state. |
 | `Load Members` | Button | Loads cohort member preview rows. | None | Member table appears. |
 | `Load Versions` | Button | Loads cohort version history. | None | Version table appears. |
-| `Load Metrics` | Button | Loads cohort metrics JSON. | None | Metrics JSON appears. |
-| Guided cohort detail cards | Read-only summary | Guided-builder cohorts now show audience basis, source kind, split strategy, selector pills, tags, prediction provenance, and warehouse source summaries before the raw JSON. | None | Operators can understand how the cohort was built without opening raw definition JSON. |
-| `Advanced Definition` | Disclosure | Expands the raw definition, metric summary, and activation-preflight JSON. | None | Full JSON remains available without being the primary detail surface. |
+| `Load Metrics` | Button | Loads cohort metrics. | None | A compact status appears and `Export .json` downloads the full metrics payload. |
+| Guided cohort detail cards | Read-only summary | Guided-builder cohorts show audience basis, source kind, split strategy, selector pills, tags, prediction provenance, and warehouse source summaries before any structured export. | None | Operators can understand how the cohort was built without reading raw definition JSON. |
+| `Advanced Definition` | Disclosure | Shows a compact structured-artifact status for the definition, metric summary, and activation preflight. | None | `Export .json` downloads the full definition payload. |
 | `Base Version` | Number box | Choose the base version for compare or rollback. | `1` | Used in compare and rollback actions. |
 | `Target Version` | Number box | Choose the compare target version. | `2` | Used in version comparison. |
-| `Compare Versions` | Button | Compares the two selected versions. | None | Comparison JSON appears. |
+| `Compare Versions` | Button | Compares the two selected versions. | None | A compact comparison appears and `Export .json` downloads the full comparison payload. |
 | `Rollback to Base` | Button | Rolls the cohort back to the base version. | None | Cohort version reverts to the selected base. |
 
 #### Sample compare output
@@ -987,8 +994,7 @@ Provider behavior:
 | `Template Deeplink Variable` | Text box | Variable name that receives the final deeplink URL in the provider payload. | `deeplink_url` | SendGrid receives it in `dynamic_template_data`; Braze receives it in `trigger_properties`. |
 | `Audience Deeplink Override Field (optional)` | Text box | If present on a row, this field wins over the campaign deeplink template. | `reward_deeplink_url` | Matching rows use the row-level deeplink directly. |
 | `Campaign Deeplink Template (optional)` | Text box | URL template with `{field_name}` placeholders resolved from the audience row and campaign context. | `mygame://reward?user_id={user_id}&reward_id={reward_id}&campaign={campaign_id}` | Rows without an override field receive a rendered deeplink URL. |
-| `Advanced Merge Fields` | Disclosure section | Expands the merge-field JSON editor for provider-template edge cases. | None | Merge-field JSON becomes visible. |
-| `Merge Fields JSON` | Text area | Advanced fallback that maps provider template variables to row fields or literals. | See sample below | SendGrid builds `dynamic_template_data`; Braze builds `trigger_properties`. |
+| Merge fields | Internal artifact | Ask AI and the selected template determine provider merge fields from campaign copy, deeplink variables, and sampled audience columns. | None | SendGrid builds `dynamic_template_data`; Braze builds `trigger_properties` without exposing a raw JSON editor. |
 | `Schedule For (optional)` | Date/time picker | Sets the one-time scheduled send time in the operator's local timezone. | `2026-04-15 11:00` | Campaign status becomes `scheduled`. |
 | `Clear` | Button | Clears the selected campaign and resets the builder to a new draft. | None | The form is ready for a new campaign record. |
 | `Save Draft` | Button | Creates or updates the campaign in `draft` status. | None | Campaign saves without a schedule. |
@@ -1115,10 +1121,7 @@ Use the main composer when KairyxAI should create a Wynn push campaign directly.
 | `Body` | Text area | Required message body. | `A reward is waiting for you.` | The outbound payload includes `body`. |
 | `Deep Link (optional)` | Text box | Optional deep link metadata for the push request. | `app://promotions/vip` | The outbound payload includes `deep_link`. |
 | `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
-| `Advanced Push Payload` | Disclosure section | Expands push `data`, provider options, and Wynn filter JSON editors. | None | The advanced JSON fields become visible. |
-| `Push Data JSON` | Text area | Advanced fallback. Must be valid JSON object text. | `{"reward_id":"vip_pack"}` | The outbound payload includes `data`. |
-| `Provider Options JSON` | Text area | Must be valid JSON object text. | `{"priority":"high"}` | The outbound payload includes `provider_options`. |
-| `Wynn Filters JSON` | Text area | Visible when the selected connection is a Wynn Push Provider. Use native Wynn filter keys. | `{"minVIPLevel":5,"platform":"ios"}` | Wynn applies those filters when it resolves campaign recipients. |
+| Push payload options | Internal artifact | Ask AI and provider setup can prepare data, provider options, and Wynn filters without a raw JSON editor. | `min VIP level 5 on iOS` | Wynn applies the prepared filters when it resolves campaign recipients. |
 | `Send Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode. | None | Immediate sends create a one-time dispatch. Scheduled and repeated sends create and publish workflows. |
 | `Clear` | Button | Clears the composer. | None | The composer resets to a new single send. |
 
@@ -1129,8 +1132,8 @@ Push Composer behavior:
 - Immediate sends use `POST /api/v1/push-dispatches/send-now`.
 - `Schedule once` and `Repeated send` create and publish `provider_campaign` workflows that later appear in `Workflow Studio`.
 - Live Wynn sends require both `Title` and `Body`.
-- `Push Data JSON`, `Provider Options JSON`, and `Wynn Filters JSON` must parse as JSON objects.
-- `Wynn Filters JSON` is stored at `provider_options.filters` and uses native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
+- Provider options and Wynn filters are structured internally and can be prepared by Ask AI from marketer-readable prompts.
+- Wynn filters are stored at `provider_options.filters` and use native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
 - Leaving `Provider Connection` blank keeps the simulator path, but simulator delivery is only valid for explicit user ids and does not broadcast to all players.
 - When the selected Wynn provider connection also includes `Kairyx Callback URL` and `Kairyx Callback Bearer Token`, Kairyx keeps callback correlation server-side and Wynn can forward `opened`, `clicked`, `claimed`, and `returned` callbacks back into the activation service without polluting the visible push `data` payload.
 
@@ -1228,7 +1231,7 @@ Legacy workflow behavior:
 - Leaving `Provider Connection` blank keeps the simulator path for explicit cohort members.
 - Selecting a Push Provider connection switches the workflow to live push delivery and sends explicit cohort member `canonical_user_id` values as provider `player_ids`.
 - Live push workflows require both `Title` and `Body`.
-- `Push Data JSON` and `Provider Options JSON` live under `Advanced Workflow Payload` and must parse as JSON objects before the workflow can be saved.
+- Provider payload options stay structured internally and are normally prepared by Ask AI or provider setup before the workflow is saved.
 - Editing a published or paused workflow creates a new draft version on that same workflow record.
 
 ### 5.3 Workflow Studio
@@ -1247,16 +1250,16 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 | `Next Run` | Table column | Read-only. Uses workflow `runtime_summary.next_run_at` or campaign `schedule_at`. | `2026-03-11 10:15` | Operators can see the next due time. |
 | `Last Results` | Table column | Read-only. Shows compact counts from the latest execution or send. | `ok 42 · fail 3` | The most recent outcome is summarized without opening raw JSON. |
 | `Total Results` | Table column | Read-only. Shows aggregate run or send counts. | `runs 7 · success 255` | Operators can gauge cumulative performance quickly. |
-| `Selected Item` | Detail panel | Shows the current campaign or workflow JSON plus resource-specific actions. | None | Detail JSON and action buttons appear for the selected item. |
+| `Selected Item` | Detail panel | Shows the current campaign or workflow summary plus resource-specific actions. | None | A compact detail status appears and `Export .json` downloads the full record. |
 | `Schedule Email Campaign` | Date/time picker | Visible only when an email campaign is selected. Sets the campaign schedule directly from Workflow Studio. | `2026-04-20 09:30` | The selected email campaign moves to `scheduled`. |
-| Email item `View` | Row or detail button | Loads the selected email campaign into the detail panel. | None | Campaign detail JSON appears. |
+| Email item `View` | Row or detail button | Loads the selected email campaign into the detail panel. | None | Campaign summary appears and `Export .json` downloads the full record. |
 | Email item `Edit` | Row or detail button | Opens the campaign in `Email Campaigns`. | None | The email builder loads the selected campaign. |
 | More actions | Row or detail menu | Keeps secondary actions behind `More` so each row shows only the two primary buttons. | None | `Schedule`, `Send Now`, `Cancel`, `Delete`, `Publish`, `Pause`, `Resume`, `Test Run`, and archive/delete actions appear only when relevant. |
 | Email item `Schedule` | More action | Uses the detail-panel schedule picker to create or update `schedule_at`. | None | The email campaign becomes scheduled. |
 | Email item `Send Now` | More action | Executes the selected draft or scheduled campaign immediately. | None | Campaign runs and records result counts. |
 | Email item `Cancel` | More action | Cancels a scheduled campaign. | None | Campaign status becomes `cancelled`. |
 | Email item `Delete` | More action | Deletes a draft campaign. | None | Draft campaign is removed. |
-| Push item `View` | Row or detail button | Loads the selected workflow into the detail panel. | None | Workflow detail JSON appears. |
+| Push item `View` | Row or detail button | Loads the selected workflow into the detail panel. | None | Workflow summary appears and `Export .json` downloads the full record. |
 | Push item `Edit` | Row or detail button | Opens the workflow in `Push Notifications`. | None | The push builder loads the selected workflow. |
 | Push item `Publish` | More action | Publishes a draft workflow after preflight checks. | None | Workflow status becomes `published`. |
 | Push item `Pause` | More action | Pauses a published workflow. | None | Workflow status becomes `paused`. |
@@ -1280,10 +1283,10 @@ Workflow Studio behavior:
 | `Limit Per Workflow` | Number box | Max items to execute per workflow in a run. | `100` | Scheduler run caps execution per workflow. |
 | `Run Due Workflows` | Button | Runs currently due workflows. | None | Due executions are created and shown. |
 | `Callback Provider` | Select | Choose callback provider parser. | `braze` | Callback ingestion treats payload as Braze callbacks. |
-| `Callback Payload` | Text area | JSON body for callback ingestion. Wynn callbacks may include provider ids instead of delivery ids when they are matching push dispatches or provider-campaign workflows. | See sample below | Callback events are ingested. |
+| Callback payload | Internal artifact | Callback ingestion is primarily handled by provider callbacks or AI-prepared handoffs. Wynn callbacks may include provider ids instead of delivery ids when they match push dispatches or provider-campaign workflows. | None | Callback events are ingested without a visible raw JSON editor. |
 | `Ingest Callback` | Button | Sends callbacks into the activation endpoint. | None | Ingestion status and output update. |
 | `Export Job` | Select | Choose an export job for diagnostics or retry. | `export_20260322_1220` | Diagnostics actions target that export. |
-| `Load Diagnostics` | Button | Loads export diagnostics for the selected export. | None | Diagnostics JSON appears. |
+| `Load Diagnostics` | Button | Loads export diagnostics for the selected export. | None | A compact status appears and `Export .json` downloads the full diagnostics payload. |
 | `Retry Export` | Button | Retries the selected export job. | None | Export retry request is issued. |
 
 #### Sample callback input
@@ -1325,14 +1328,14 @@ Workflow Studio behavior:
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
 | `Selected workflow` badge | Read-only badge | Shows which push workflow the execution and delivery panels are currently inspecting. | `daily_churn_rescue_push` | Operators can confirm the execution scope. |
-| `Executions & Policy Counters` | Detail panel | Read-only list of workflow execution records and policy aggregates for the selected workflow. | None | Execution history and policy JSON update. |
-| `Load Diagnostics` | Button | Loads delivery diagnostics for the selected workflow. | None | Diagnostics JSON appears. |
+| `Executions & Policy Counters` | Detail panel | Read-only list of workflow execution records and policy aggregates for the selected workflow. | None | Execution history updates and policy details can be downloaded with `Export .json`. |
+| `Load Diagnostics` | Button | Loads delivery diagnostics for the selected workflow. | None | A compact status appears and `Export .json` downloads the full diagnostics payload. |
 | `Deliveries` | Detail panel | Read-only list of workflow deliveries for the selected workflow. | None | Delivery rows and diagnostics update. |
 
 Delivery detail behavior:
 - Push workflow deliveries created through a Push Provider keep the selected `provider_connection_id`.
 - The delivery record stores `provider_campaign_id` and `provider_accepted` when the provider accepts the request.
-- Delivery detail JSON also records the normalized `provider_request` and `provider_response` payloads for operator inspection.
+- Delivery detail exports include the normalized `provider_request` and `provider_response` payloads for engineering inspection.
 - In v1, push delivery success means the campaign request was accepted by the configured provider. It does not mean the device-level notification has already been delivered.
 
 #### Sample workflow diagnostics output
@@ -1373,7 +1376,7 @@ Delivery detail behavior:
 | `Stop` | Button | Stops the experiment lifecycle. | None | Experiment moves to stopped state. |
 | `Record Decision` | Button | Records an experiment decision using the current summary. | None | Summary updates with decision result. |
 | `Refresh Summary` | Button | Reloads the summary. | None | Summary output refreshes. |
-| `Load Integrity` | Button | Reloads integrity details only. | None | Integrity JSON refreshes. |
+| `Load Integrity` | Button | Reloads integrity details only. | None | A compact status appears and `Export .json` downloads the full integrity payload. |
 
 #### Sample config output
 ```json
@@ -1395,8 +1398,7 @@ Delivery detail behavior:
 | --- | --- | --- | --- | --- |
 | Exposures table | Read-only table | Inspect exposure assignments. | None | Exposure list shows group and user rows. |
 | Outcomes table | Read-only table | Inspect recorded outcomes. | None | Outcome list shows outcome name and timestamp. |
-| `Advanced Outcome Payload` | Disclosure section | Expands the raw outcome-ingestion payload editor. Ask AI can also ingest outcomes from a prompt with an outcomes JSON payload. | None | The JSON textarea becomes visible. |
-| `Outcome Payload` | Text area | Advanced fallback JSON batch of outcomes to ingest. | See sample below | Outcome ingestion request uses this body. |
+| Outcome payload | Internal artifact | Ask AI or provider callbacks prepare outcome batches for module review. | None | Outcome ingestion uses the prepared structured payload without showing a raw JSON textarea. |
 | `Ingest Outcomes` | Button | Writes outcomes into the experiment. | None | Outcome status confirms ingested count. |
 
 #### Sample outcome ingestion input
@@ -1447,7 +1449,7 @@ The bottom-right `Ask AI` bubble is now the primary operator surface. It stays a
 
 The assistant can:
 - answer grounded product-help questions for the page you are currently viewing
-- give sample SQL, JSON payloads, and example prompts
+- give sample SQL, downloadable structured payloads, and example prompts
 - summarize the current dashboard
 - set up draft cohorts, experiment configs, connectors, and provider connections
 - reuse or start prediction jobs, draft SQL from prediction context, draft guided audience-builder state, and turn the result into a saved query plus draft cohort
@@ -1492,7 +1494,7 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Ask AI` on `Insight Copilot` | Button | Opens the same global assistant from the AI Command Center. | None | You keep the same session and return to the same drawer experience. |
 | AI starter prompt buttons | Button | Send the prewritten prompt to the global assistant from the current module. | `Summarize Health` | The drawer opens and Ask AI starts the requested workflow. |
-| `Advanced Manual Copilot Tools` | Disclosure section | Expand only when you need the direct legacy query, explain, recommend, report, or evidence tools. | None | Manual forms become visible without replacing Ask AI as the primary flow. |
+| `Advanced Manual Copilot Tools` | Disclosure section | Expand only when you need the direct legacy query, explain, recommend, report, or evidence tools. Structured inputs stay hidden and outputs use `Export .json`. | None | Manual forms become visible without replacing Ask AI as the primary flow. |
 
 #### Supported v1 agent tasks
 
@@ -1568,7 +1570,7 @@ saved_query_name: april_high_risk_query
 | --- | --- | --- | --- | --- |
 | `Question` | Text box | Natural-language business question. | `how many high risk users do we have in 7d?` | Copilot runs a query against the evidence layer. |
 | `Time Window` | Text box | Query time window. | `7d` | Request uses a seven-day window. |
-| `Filters JSON` | Text area | Optional filter object. | `{}` | Filters are applied when present. |
+| Filters | Internal artifact | Optional filter objects remain available through Ask AI or API integrations, not a visible JSON editor. | None | Filters are applied when present. |
 | `Run Query` | Button | Sends the query request. | None | Latest response panel updates with query result. |
 
 #### Sample query output
@@ -1612,8 +1614,7 @@ saved_query_name: april_high_risk_query
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Insight JSON` | Text area | Raw insight context for recommendation. | `{}` | Parsed into `insight`. |
-| `Metric Context JSON` | Text area | Metric metadata used for recommendation. | `{"metric_id":"high_risk_users"}` | Parsed into `metric_context`. |
+| Insight context | Internal artifact | Raw insight and metric context stay internal to Ask AI or API integrations. | None | Recommendation requests receive `insight` and `metric_context` without exposing JSON editors. |
 | `Generate Recommendation` | Button | Produces an actionable recommendation. | None | Latest response panel updates. |
 
 #### Sample recommend input
@@ -1848,15 +1849,9 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 1. In `Data Core -> Connectors`, save an `Amplitude` connector.
 2. In `Data Core -> Imports`, choose `Amplitude`, set `Start Date=2026-03-01`, `End Date=2026-03-07`, then click `Import Data`.
 3. Wait for the import to reach a completed or ready state.
-4. In `Audience Engine`, create a SQL cohort:
+4. In `Audience Engine`, create a cohort from Ask AI or the guided builder:
    - `Name`: `churn_rescue_high_risk`
-   - `Type`: `SQL`
-   - `Definition JSON`:
-     ```json
-     {
-       "sql": "SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high'"
-     }
-     ```
+   - Prompt example: `Create a high-risk churn rescue cohort from prediction results and include email fields for activation`
    - Click `Create Cohort`.
 5. In `Action Orchestrator -> Push Notifications`, use the `Push Composer`:
    - `Mode`: `Repeated send`
@@ -1867,7 +1862,7 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
    - `Campaign Name`: `winback_push`
    - `Title`: `Come back`
    - `Body`: `Rewards are waiting for you.`
-   - Optional `Wynn Filters JSON`: `{"minVIPLevel":5}`
+   - Optional Wynn filter prompt: `Limit this to VIP level 5 and above`
    - Click `Create Repeated Workflow`.
    - For an immediate send instead, switch to `Mode = Single send`, choose `Send immediately`, fill the same content, and click `Send Now`.
 6. In `Action Orchestrator -> Workflow Studio`, find the new workflow. Composer-created scheduled and repeated workflows are already published, so use Workflow Studio to inspect, pause, resume, archive, or test-run them.

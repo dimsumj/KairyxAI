@@ -3270,15 +3270,11 @@ export function initializeOperatorConsole() {
             }
 
             function syncBigQueryCredentialMode() {
-                const modeSelect = document.getElementById('bigquery_credentials_entry_mode');
                 const uploadGroup = document.getElementById('bigquery_credentials_upload_group');
-                const pasteGroup = document.getElementById('bigquery_credentials_paste_group');
-                if (!modeSelect || !uploadGroup || !pasteGroup) {
+                if (!uploadGroup) {
                     return;
                 }
-                const selectedMode = String(modeSelect.value || 'upload').toLowerCase();
-                uploadGroup.style.display = selectedMode === 'upload' ? 'block' : 'none';
-                pasteGroup.style.display = selectedMode === 'paste' ? 'block' : 'none';
+                uploadGroup.style.display = 'block';
             }
 
             async function readConnectorFileAsText(file) {
@@ -7270,24 +7266,13 @@ export function initializeOperatorConsole() {
                         <label for="bigquery_location">BigQuery Location (optional)</label>
                         <input type="text" id="bigquery_location" placeholder="US">
                     </div>
-                    <div class="form-group">
-                        <label for="bigquery_credentials_entry_mode">How do you want to enter service account credentials?</label>
-                        <select id="bigquery_credentials_entry_mode">
-                            <option value="upload" selected>Upload JSON file</option>
-                            <option value="paste">Paste JSON text</option>
-                        </select>
-                    </div>
                     <div class="form-group" id="bigquery_credentials_upload_group">
                         <label for="bigquery_service_account_file">Service Account JSON File</label>
                         <input type="file" id="bigquery_service_account_file" accept=".json,application/json">
                     </div>
-                    <div class="form-group" id="bigquery_credentials_paste_group" style="display: none;">
-                        <label for="bigquery_service_account_json">Service Account JSON</label>
-                        <textarea id="bigquery_service_account_json" rows="8" placeholder='{"type":"service_account","client_email":"...","private_key":"..."}'></textarea>
-                    </div>
                     <div class="form-group">
                         <p style="font-size: 0.8rem; color: var(--subtle-text); margin-bottom: 0;">
-                            Credentials entered here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use <code>*_ref</code> values through the API.
+                            Credentials uploaded here are encrypted before they are stored and are never returned to the browser after save. Teams using an external secret manager can still use <code>*_ref</code> values through the API.
                         </p>
                     </div>`,
                 sendgrid: `
@@ -7359,7 +7344,6 @@ export function initializeOperatorConsole() {
                     saveConnectorBtn.style.display = 'inline-block';
                     syncConnectorDisplayName(type);
                     if (type === 'bigquery') {
-                        document.getElementById('bigquery_credentials_entry_mode')?.addEventListener('change', syncBigQueryCredentialMode);
                         syncBigQueryCredentialMode();
                     }
                 } else {
@@ -7391,14 +7375,10 @@ export function initializeOperatorConsole() {
                         pull_api_url: document.getElementById('appsflyer_pull_api_url').value || undefined
                     };
                 } else if (type === 'bigquery') {
-                    const credentialMode = String(document.getElementById('bigquery_credentials_entry_mode')?.value || 'upload').toLowerCase();
                     const selectedFile = document.getElementById('bigquery_service_account_file')?.files?.[0] || null;
-                    const pastedServiceAccountJson = String(document.getElementById('bigquery_service_account_json')?.value || '').trim();
-                    const serviceAccountJson = credentialMode === 'paste'
-                        ? pastedServiceAccountJson
-                        : await readConnectorFileAsText(selectedFile);
+                    const serviceAccountJson = await readConnectorFileAsText(selectedFile);
                     if (!serviceAccountJson) {
-                        alert('BigQuery requires a tenant service account JSON file or pasted JSON text.');
+                        alert('BigQuery requires a tenant service account JSON file.');
                         return;
                     }
                     payload = {
@@ -10256,7 +10236,7 @@ export function initializeOperatorConsole() {
                         : '<div><strong>Cross-event signal:</strong> load raw samples to compare this path across event names.</div>';
                     const correctionText = currentPath && suggestion?.suggested_path && currentPath !== suggestion.suggested_path
                         ? `<div><strong>Correction:</strong> the editor currently overrides the suggested path with ${escapeHtml(currentPath)}. Save to persist that correction in the selected scope.</div>`
-                        : `<div><strong>Correction:</strong> changing this selector updates the JSON editor immediately.</div>`;
+                        : `<div><strong>Correction:</strong> changing this selector updates the internal mapping immediately.</div>`;
                     const fieldHelpContent = `
                         ${suggestionText}
                         ${suggestionSourceText}
@@ -10593,10 +10573,10 @@ export function initializeOperatorConsole() {
                     const sampleRecord = JSON.parse(dataSandboxSampleJson.value || '{}');
                     const mapping = JSON.parse(dataSandboxMappingJson.value || '{}');
                     const preview = previewMappedEvent(connectorName, sampleRecord, mapping);
-                    dataSandboxPreviewResult.textContent = JSON.stringify(preview || {}, null, 2);
+                    renderJsonOutput(dataSandboxPreviewResult, preview || {}, 'No mapping preview available.');
                     setDataSandboxMappingStatus(`Preview generated for ${connectorName}.`);
                 } catch (error) {
-                    dataSandboxPreviewResult.textContent = '';
+                    renderJsonOutput(dataSandboxPreviewResult, null, '');
                     setDataSandboxMappingStatus(error.message || 'Failed to preview field mapping.', true);
                 }
             }
@@ -10942,14 +10922,137 @@ export function initializeOperatorConsole() {
 
             setCopilotAgentComposerReady(false);
 
+            const jsonExportPayloads = new WeakMap();
+
+            function normalizeJsonExportPayload(payload) {
+                if (typeof payload !== 'string') {
+                    return payload;
+                }
+                const trimmed = payload.trim();
+                if (!trimmed) {
+                    return '';
+                }
+                try {
+                    return JSON.parse(trimmed);
+                } catch (error) {
+                    return { value: payload };
+                }
+            }
+
+            function getJsonExportFilename(element) {
+                const base = String(element?.id || 'kairyx-output')
+                    .replace(/-output$/, '')
+                    .replace(/[^a-z0-9_-]+/gi, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .toLowerCase() || 'kairyx-output';
+                const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+                return `${base}-${stamp}.json`;
+            }
+
+            function downloadJsonPayload(payload, filename) {
+                const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            }
+
+            function ensureJsonExportButton(element) {
+                if (!element) return null;
+                const buttonId = element.id ? `${element.id}-export-json-btn` : '';
+                if (buttonId) {
+                    const existing = document.getElementById(buttonId);
+                    if (existing) {
+                        return existing;
+                    }
+                }
+                const actions = document.createElement('div');
+                actions.className = 'json-export-actions';
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'secondary-button json-export-button';
+                button.textContent = 'Export .json';
+                if (buttonId) {
+                    button.id = buttonId;
+                }
+                button.addEventListener('click', () => {
+                    if (!jsonExportPayloads.has(element)) {
+                        return;
+                    }
+                    downloadJsonPayload(jsonExportPayloads.get(element), getJsonExportFilename(element));
+                });
+                actions.appendChild(button);
+                element.insertAdjacentElement('afterend', actions);
+                return button;
+            }
+
             function renderJsonOutput(element, payload, emptyMessage = 'No data available.') {
                 if (!element) return;
                 if (payload === null || payload === undefined || payload === '') {
+                    jsonExportPayloads.delete(element);
                     element.textContent = emptyMessage;
+                    const exportButton = ensureJsonExportButton(element);
+                    if (exportButton) {
+                        exportButton.hidden = true;
+                        exportButton.disabled = true;
+                        if (exportButton.parentElement) {
+                            exportButton.parentElement.hidden = true;
+                        }
+                    }
                     return;
                 }
-                element.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+                const exportPayload = normalizeJsonExportPayload(payload);
+                jsonExportPayloads.set(element, exportPayload);
+                element.classList.add('json-export-summary');
+                element.textContent = 'Structured setup file ready. Export .json to inspect the full payload.';
+                const exportButton = ensureJsonExportButton(element);
+                if (exportButton) {
+                    exportButton.hidden = false;
+                    exportButton.disabled = false;
+                    if (exportButton.parentElement) {
+                        exportButton.parentElement.hidden = false;
+                    }
+                }
             }
+
+            function hideTechnicalJsonInputs() {
+                const jsonInputIds = [
+                    'data-sandbox-mapping-json',
+                    'data-sandbox-sample-json',
+                    'email-campaign-merge-fields-input',
+                    'push-dispatch-data-input',
+                    'push-dispatch-provider-options-input',
+                    'push-dispatch-wynn-filters-input',
+                    'workflow-push-data-input',
+                    'workflow-push-provider-options-input',
+                    'activation-callbacks-json',
+                    'experiment-outcomes-json',
+                    'copilot-query-filters-json',
+                    'copilot-insight-json',
+                    'copilot-metric-context-json',
+                ];
+                const shellsToHide = new Set();
+                jsonInputIds.forEach((id) => {
+                    const input = document.getElementById(id);
+                    if (!input) return;
+                    const details = input.closest('details.builder-advanced-panel');
+                    const shell = details || input.closest('.form-group') || input;
+                    shellsToHide.add(shell);
+                    input.setAttribute('aria-hidden', 'true');
+                    input.setAttribute('tabindex', '-1');
+                    input.dataset.operatorJsonInput = 'hidden';
+                });
+                shellsToHide.forEach((shell) => {
+                    shell.classList.add('hidden');
+                    shell.setAttribute('aria-hidden', 'true');
+                });
+            }
+
+            hideTechnicalJsonInputs();
 
             function parseJsonText(value, fallback = {}) {
                 const raw = String(value || '').trim();
@@ -13640,7 +13743,17 @@ export function initializeOperatorConsole() {
                 setSelectedMultiSelectValues(audienceBuilderJobSelect, request.prediction_job_ids || []);
                 if (audienceBuilderMembersInput) {
                     const members = Array.isArray(request.members) ? request.members : [];
-                    audienceBuilderMembersInput.value = members.length ? JSON.stringify(members, null, 2) : '';
+                    audienceBuilderMembersInput.value = members
+                        .map((member) => {
+                            if (!member || typeof member !== 'object') {
+                                return String(member || '').trim();
+                            }
+                            const canonicalUserId = String(member.canonical_user_id || member.user_id || '').trim();
+                            const email = String(member.email || '').trim();
+                            return email && canonicalUserId ? `${canonicalUserId},${email}` : canonicalUserId || email;
+                        })
+                        .filter(Boolean)
+                        .join('\n');
                 }
                 if (audienceBuilderSavedQuerySelect) {
                     ensureSelectOption(
@@ -13829,7 +13942,7 @@ export function initializeOperatorConsole() {
                     ` : ''}
                     <details class="builder-advanced-panel" style="margin-top: 1rem;">
                         <summary>Advanced Definition</summary>
-                        <pre class="json-output">${escapeHtml(JSON.stringify({ definition: cohort.definition, delta: cohort.delta, activation_preflight: cohort.activation_preflight, metrics_summary: cohort.metrics_summary }, null, 2))}</pre>
+                        <pre id="audience-cohort-definition-output" class="json-output"></pre>
                     </details>
                 `;
             }
@@ -13894,6 +14007,16 @@ export function initializeOperatorConsole() {
                 document.getElementById('audience-base-version-input').value = cohort.version || 1;
                 document.getElementById('audience-target-version-input').value = cohort.version || 1;
                 audienceCohortDetail.innerHTML = renderAudienceCohortDetail(cohort);
+                renderJsonOutput(
+                    document.getElementById('audience-cohort-definition-output'),
+                    {
+                        definition: cohort.definition,
+                        delta: cohort.delta,
+                        activation_preflight: cohort.activation_preflight,
+                        metrics_summary: cohort.metrics_summary,
+                    },
+                    '',
+                );
                 await Promise.all([loadAudienceMetrics(cohortId), loadAudienceMembers(cohortId), loadAudienceVersions(cohortId)]);
             }
 

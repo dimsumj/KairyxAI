@@ -905,6 +905,24 @@
             font-size: 0.82rem;
         }
 
+        .json-output.json-export-summary {
+            min-height: auto;
+            white-space: normal;
+            color: var(--text-secondary);
+            background: rgba(15, 23, 42, 0.45);
+        }
+
+        .json-export-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 0.5rem;
+        }
+
+        .json-export-button {
+            padding: 0.55rem 0.8rem;
+            font-size: 0.82rem;
+        }
+
         .module-section-header {
             display: flex;
             justify-content: space-between;

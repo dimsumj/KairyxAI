@@ -124,18 +124,39 @@ assert_ai_first_operator_ui() {
       await dataSandboxLink.first().click();
       await page.waitForTimeout(300);
     }
-    const mappingAdvancedOpen = await page.locator('#data-sandbox-advanced-json-panel').evaluate((element) => element.open);
-    if (mappingAdvancedOpen) throw new Error('Mapping JSON advanced panel should start collapsed');
+    const visibleJsonInputs = await page.locator([
+      '#data-sandbox-mapping-json',
+      '#data-sandbox-sample-json',
+      '#email-campaign-merge-fields-input',
+      '#push-dispatch-data-input',
+      '#push-dispatch-provider-options-input',
+      '#workflow-push-data-input',
+      '#workflow-push-provider-options-input',
+      '#activation-callbacks-json',
+      '#experiment-outcomes-json',
+      '#copilot-query-filters-json',
+      '#copilot-insight-json',
+      '#copilot-metric-context-json',
+    ].join(',')).evaluateAll((elements) => elements
+      .filter((element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      })
+      .map((element) => element.id));
+    if (visibleJsonInputs.length > 0) {
+      throw new Error('JSON input fields should be hidden from the primary operator UI: ' + visibleJsonInputs.join(', '));
+    }
 
     await page.locator('[data-module=\"action-orchestrator\"]').first().click();
     await page.waitForTimeout(500);
     const pushAdvancedOpen = await page.locator('#push-dispatch-data-input').evaluate((element) => element.closest('details')?.open);
-    if (pushAdvancedOpen) throw new Error('Push data JSON should start inside a collapsed advanced panel');
+    if (pushAdvancedOpen) throw new Error('Push data JSON should not be visible as an expanded editor');
 
     await page.locator('[data-module=\"experiment-hub\"]').first().click();
     await page.waitForTimeout(500);
     const outcomeAdvancedOpen = await page.locator('#experiment-outcomes-json').evaluate((element) => element.closest('details')?.open);
-    if (outcomeAdvancedOpen) throw new Error('Outcome payload should start inside a collapsed advanced panel');
+    if (outcomeAdvancedOpen) throw new Error('Outcome payload JSON should not be visible as an expanded editor');
 
     await page.locator('[data-module=\"insight-copilot\"]').first().click();
     await page.waitForTimeout(500);
@@ -283,20 +304,13 @@ assert_bigquery_connector_ui() {
     await typeSelect.first().selectOption('bigquery');
     await page.waitForTimeout(250);
 
-    const modeSelect = page.locator('#bigquery_credentials_entry_mode');
     const uploadInput = page.locator('#bigquery_service_account_file');
     const pasteTextarea = page.locator('#bigquery_service_account_json');
-    if (await modeSelect.count() === 0 || await uploadInput.count() === 0 || await pasteTextarea.count() === 0) {
-      throw new Error('Missing latest BigQuery connector credential controls');
+    if (await uploadInput.count() === 0) {
+      throw new Error('Missing BigQuery connector credential file upload');
     }
-
-    await modeSelect.first().selectOption('paste');
-    await page.waitForTimeout(150);
-
-    const uploadStyle = await uploadInput.evaluate((element) => window.getComputedStyle(element.closest('.form-group')).display);
-    const pasteStyle = await pasteTextarea.evaluate((element) => window.getComputedStyle(element.closest('.form-group')).display);
-    if (uploadStyle !== 'none' || pasteStyle === 'none') {
-      throw new Error('BigQuery credential mode toggle did not switch to paste mode');
+    if (await pasteTextarea.count() > 0) {
+      throw new Error('BigQuery connector should use file upload or secret refs instead of a JSON paste textarea');
     }
 
     return {
