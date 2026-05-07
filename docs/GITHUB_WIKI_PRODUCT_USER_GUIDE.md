@@ -791,7 +791,7 @@ This page currently contains a visible form but the `Save Limits` button is not 
 | `Logic` | Select | Sets whether selector rows use `AND` or `OR`. | `All filters must match` | Preview filters use the chosen logic. |
 | `Prediction Sources` | Multi-select | Picks one or more prediction sources. The latest completed run per source is used automatically. | `Amplitude 1`, `Adjust Source` | Preview resolves the latest completed run for each selected source. |
 | `Prediction Runs` | Multi-select | Picks exact completed prediction runs when you do not want latest-by-source resolution. | `pred_20260417_1015` | Preview uses only those explicit runs. |
-| `Saved Query` | Select | Used only for `Managed warehouse query`. Loads a saved SQL workspace query into the builder while still freezing the current SQL editor text into the cohort definition at create time. | `High risk users` | Preview and create use the selected query provenance plus the current SQL text. |
+| `Saved Query` | Select | Used only for `Managed warehouse query`. Loads a saved SQL workspace query into the builder while freezing the current SQL artifact into the cohort definition at create time. | `High risk users` | Preview and create use the selected query provenance plus the current SQL artifact. |
 | `BigQuery Connector` | Select | Used only for `BigQuery connector table`. Chooses the tenant BigQuery connector that owns the dataset. | `Warehouse Scores` | Table discovery and preview use that connector. |
 | `Table / View` | Select | Used only for `BigQuery connector table`. Picks the connector-backed table or view to snapshot. | `retention_scores` | Preview and refresh read from that table or view. |
 | `Selected Columns (optional)` | Text box | Comma-separated column allowlist for connector-table snapshots. Leave blank to keep all returned fields. | `player_id,email_address,external_user_id,reward_code` | Preview and stored cohort members include only those columns plus mapped fields. |
@@ -820,8 +820,8 @@ This page currently contains a visible form but the `Save Limits` button is not 
 
 #### Managed warehouse reverse ETL flow
 1. Set `Audience Basis` to `Managed warehouse query`.
-2. Either select a `Saved Query` or type directly into the SQL workspace editor below.
-3. Click `Preview Cohort` to validate the frozen SQL, inspect sampled members, and review discovered field keys.
+2. Select a `Saved Query` or ask AI to draft SQL into the SQL artifact.
+3. Click `Preview Cohort` to validate the frozen SQL artifact, inspect sampled members, and review discovered field keys.
 4. Click `Create Cohort` to store a warehouse-backed cohort. The cohort definition saves both the frozen SQL and optional saved-query provenance so refreshes stay stable even if the saved query is edited later.
 
 #### BigQuery connector reverse ETL flow

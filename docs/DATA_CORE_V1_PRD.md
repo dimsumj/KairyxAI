@@ -3,7 +3,7 @@
 ## 0. Regenerated 2026-05 Baseline And RAG Extension Plan
 
 ### Current Feature Baseline
-Data Core already owns the growth data entry layer for connector setup, import execution, mapping, warehouse query, prediction readiness, and AI runtime profile setup. The primary console direction is guided and prompt-first: selectors, previews, status badges, artifact buttons, and secure credential dialogs stay visible; raw SQL and JSON/code editors remain advanced fallbacks.
+Data Core already owns the growth data entry layer for connector setup, import execution, mapping, warehouse query, prediction readiness, and AI runtime profile setup. The primary console direction is guided and prompt-first: selectors, previews, status badges, artifact buttons, and secure credential dialogs stay visible; raw SQL and JSON/code text editors are replaced by hidden setup state plus `Export .json` artifacts.
 
 Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
@@ -496,10 +496,10 @@ Support one-click rollback to a previous version.
 - Required semantic targets such as `canonical_user_id`, `event_name`, and `event_time` must be selectable from dropdowns instead of requiring JSON-path typing only
 - Optional attribution targets such as `campaign`, `adset`, and `media_source` should use the same guided picker
 - The Mapping Sandbox should surface learned mapping memory from confirmed saves and successful imports so the operator can see when a suggested path has stayed stable across prior corrections and completed runs
-- Manual corrections must be visible before save, including when the current editor selection differs from the suggested path or the remembered source mapping
+- Manual corrections must be visible before save, including when the current guided selection differs from the suggested path or the remembered source mapping
 - Cross-event presence signals from true raw sample events should be shown beside identifier candidates so operators can judge whether a field appears consistently across multiple sampled event names
 - If the operator is editing a paused job, save as `Job Override` by default; if no paused job is selected, save as `Source Mapping`
-- The mapping JSON editor may remain available as an advanced override surface, but it must stay in sync with the guided controls
+- The mapping setup artifact must stay in sync with the guided controls and export as `.json` for inspection instead of exposing a JSON editor
 - The sample-preview area must use true raw sample events returned by the mapping-candidates surface for the selected paused import, not import-job metadata summaries
 
 #### 4.2.7.6 Replay After Mapping Fix

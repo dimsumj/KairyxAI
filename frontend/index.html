@@ -769,7 +769,7 @@
                      <span>Manual Field Mapping</span>
                      <span class="inline-help">
                          <button type="button" class="inline-help-button" aria-label="Show manual field mapping help">?</button>
-                         <span class="inline-help-source" aria-hidden="true">Use manual mapping when a connector payload needs explicit raw-path overrides before normalization. Save Mapping updates future memory, while Save and Reprocess Import reruns the selected paused import with the current editor.</span>
+                         <span class="inline-help-source" aria-hidden="true">Use guided mapping when a connector payload needs explicit raw-path overrides before normalization. Save Mapping updates future memory, while Save and Reprocess Import reruns the selected paused import with the current setup.</span>
                      </span>
                  </h2>
                  <div id="data-sandbox-mapping-status" style="font-size: 0.9rem; min-height: 1.25rem; margin-bottom: 0.75rem;"></div>
@@ -784,7 +784,7 @@
                          <label for="data-sandbox-awaiting-job">Awaiting Mapping Job</label>
                          <span class="inline-help">
                              <button type="button" class="inline-help-button" aria-label="Show awaiting mapping job help">?</button>
-                             <span class="inline-help-source" aria-hidden="true">Choose a paused <code>Awaiting Mapping</code> import when you want the current mapping editor to reprocess that same job. Leave this empty when you only want to update future mapping memory.</span>
+                             <span class="inline-help-source" aria-hidden="true">Choose a paused <code>Awaiting Mapping</code> import when you want the current mapping setup to reprocess that same job. Leave this empty when you only want to update future mapping memory.</span>
                          </span>
                      </div>
                      <select id="data-sandbox-awaiting-job">
@@ -823,21 +823,22 @@
                      <div id="data-sandbox-memory-grid" class="mapping-memory-grid"></div>
                  </div>
                 <details id="data-sandbox-advanced-json-panel" class="builder-advanced-panel">
-                    <summary>Internal Mapping Payloads</summary>
+                    <summary>Mapping Setup Files</summary>
                     <div class="form-group" style="margin-top: 1rem;">
                         <div class="field-label-with-help">
-                            <label for="data-sandbox-mapping-json">Internal Mapping Payload</label>
+                            <label for="data-sandbox-mapping-json-artifact">Mapping Payload</label>
                             <span class="inline-help">
                                 <button type="button" class="inline-help-button" aria-label="Show internal mapping help">?</button>
                                 <span class="inline-help-source" aria-hidden="true">Save canonical field overrides as structured paths. Example fields include <code>canonical_user_id</code>, <code>event_name</code>, <code>event_time</code>, and <code>source_event_id</code>.</span>
                             </span>
                         </div>
-                        <textarea id="data-sandbox-mapping-json" style="min-height: 12rem; font-family: monospace;">{}</textarea>
+                        <input type="hidden" id="data-sandbox-mapping-json" value="{}">
+                        <pre id="data-sandbox-mapping-json-artifact" class="json-output"></pre>
                     </div>
                     <div class="form-group" style="margin-bottom: 0;">
                         <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap;">
                             <div class="field-label-with-help" style="margin-bottom: 0;">
-                                <label for="data-sandbox-sample-json">Internal Sample Event</label>
+                                <label for="data-sandbox-sample-json-artifact">Sample Event</label>
                                 <span class="inline-help">
                                     <button type="button" class="inline-help-button" aria-label="Show sample raw event help">?</button>
                                     <span class="inline-help-source" aria-hidden="true">Preview Mapping and Coverage use this internal sample. When a paused import is selected, the sample picker loads real raw events from that import so you can validate mappings against live source payloads.</span>
@@ -847,7 +848,8 @@
                                 <option value="">No raw samples loaded</option>
                             </select>
                         </div>
-                        <textarea id="data-sandbox-sample-json" style="min-height: 10rem; font-family: monospace;"></textarea>
+                        <input type="hidden" id="data-sandbox-sample-json" value="">
+                        <pre id="data-sandbox-sample-json-artifact" class="json-output"></pre>
                     </div>
                 </details>
                  <div style="display: grid; grid-template-columns: 1fr; gap: 1rem; margin-top: 1rem;">
@@ -1022,7 +1024,7 @@
                     </div>
                     <div class="form-group">
                         <label>Source Notes</label>
-                        <div class="subtle">Use the current SQL workspace text, or pick a saved query to load and freeze into the cohort definition.</div>
+                        <div class="subtle">Use the current SQL artifact, or pick a saved query to load and freeze into the cohort definition.</div>
                     </div>
                 </div>
 
@@ -1160,11 +1162,9 @@
                         <input type="text" id="sql-saved-query-description" placeholder="Why this query is useful">
                     </div>
                     <div class="form-group">
-                        <label for="sql-workspace-textarea">SQL</label>
-                        <textarea id="sql-workspace-textarea" style="min-height: 12rem; font-family: monospace;">SELECT user_id AS canonical_user_id, email
-FROM prediction_results
-WHERE predicted_churn_risk = 'high'
-  AND COALESCE(churn_state, 'active') != 'churned'</textarea>
+                        <label for="sql-workspace-artifact">SQL Artifact</label>
+                        <input type="hidden" id="sql-workspace-textarea" value="SELECT user_id AS canonical_user_id, email FROM prediction_results WHERE predicted_churn_risk = 'high' AND COALESCE(churn_state, 'active') != 'churned'">
+                        <pre id="sql-workspace-artifact" class="json-output"></pre>
                     </div>
                     <div class="inline-actions">
                         <button id="sql-preview-btn" type="button">Preview</button>
@@ -1352,11 +1352,9 @@ WHERE predicted_churn_risk = 'high'
                         <details class="builder-advanced-panel">
                             <summary>Advanced Merge Fields</summary>
                             <div class="form-group" style="margin-top: 1rem;">
-                                <label for="email-campaign-merge-fields-input">Internal Merge Fields</label>
-                                <textarea id="email-campaign-merge-fields-input" style="min-height: 10rem; font-family: monospace;">{
-  "first_name": { "source": "field", "value": "first_name" },
-  "reward_name": { "source": "literal", "value": "Welcome Back Pack" }
-}</textarea>
+                                <label for="email-campaign-merge-fields-artifact">Merge Fields Setup</label>
+                                <input type="hidden" id="email-campaign-merge-fields-input" value='{"first_name":{"source":"field","value":"first_name"},"reward_name":{"source":"literal","value":"Welcome Back Pack"}}'>
+                                <pre id="email-campaign-merge-fields-artifact" class="json-output"></pre>
                             </div>
                         </details>
                         <div class="grid-2">
@@ -1489,17 +1487,19 @@ WHERE predicted_churn_risk = 'high'
                     <details class="builder-advanced-panel">
                         <summary>Advanced Push Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
-                            <label for="push-dispatch-data-input">Internal Push Data</label>
-                            <textarea id="push-dispatch-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                            <label for="push-dispatch-data-artifact">Push Data Setup</label>
+                            <input type="hidden" id="push-dispatch-data-input" value="{}">
+                            <pre id="push-dispatch-data-artifact" class="json-output"></pre>
                         </div>
                         <div class="form-group">
-                            <label for="push-dispatch-provider-options-input">Internal Provider Options</label>
-                            <textarea id="push-dispatch-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                            <label for="push-dispatch-provider-options-artifact">Provider Options Setup</label>
+                            <input type="hidden" id="push-dispatch-provider-options-input" value="{}">
+                            <pre id="push-dispatch-provider-options-artifact" class="json-output"></pre>
                         </div>
                         <div class="form-group" id="push-dispatch-wynn-filters-group" style="margin-top: 0.75rem; display: none;">
-                            <label for="push-dispatch-wynn-filters-input">Internal Wynn Filters</label>
-                            <textarea id="push-dispatch-wynn-filters-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
-                            <div class="subtle" style="margin-top: 0.35rem;">Uses native Wynn filter keys such as <code>minVIPLevel</code>, <code>platform</code>, <code>daysFromLastLogin</code>, and <code>newUserInstallationDateRange</code>.</div>
+                            <label for="push-dispatch-wynn-filters-artifact">Wynn Filters Setup</label>
+                            <input type="hidden" id="push-dispatch-wynn-filters-input" value="{}">
+                            <pre id="push-dispatch-wynn-filters-artifact" class="json-output"></pre>
                         </div>
                     </details>
                     <div class="inline-actions">
@@ -1640,12 +1640,14 @@ WHERE predicted_churn_risk = 'high'
                     <details class="builder-advanced-panel">
                         <summary>Advanced Workflow Payload</summary>
                         <div class="form-group" style="margin-top: 0.75rem;">
-                            <label for="workflow-push-data-input">Internal Push Data</label>
-                            <textarea id="workflow-push-data-input" style="min-height: 8rem; font-family: monospace;">{}</textarea>
+                            <label for="workflow-push-data-artifact">Push Data Setup</label>
+                            <input type="hidden" id="workflow-push-data-input" value="{}">
+                            <pre id="workflow-push-data-artifact" class="json-output"></pre>
                         </div>
                         <div class="form-group">
-                            <label for="workflow-push-provider-options-input">Internal Provider Options</label>
-                            <textarea id="workflow-push-provider-options-input" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                            <label for="workflow-push-provider-options-artifact">Provider Options Setup</label>
+                            <input type="hidden" id="workflow-push-provider-options-input" value="{}">
+                            <pre id="workflow-push-provider-options-artifact" class="json-output"></pre>
                         </div>
                     </details>
                 </div>
@@ -1732,10 +1734,9 @@ WHERE predicted_churn_risk = 'high'
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="activation-callbacks-json">Callback Payload</label>
-                        <textarea id="activation-callbacks-json" style="min-height: 10rem; font-family: monospace;">{
-  "callbacks": []
-}</textarea>
+                        <label for="activation-callbacks-artifact">Callback Payload Setup</label>
+                        <input type="hidden" id="activation-callbacks-json" value='{"callbacks":[]}'>
+                        <pre id="activation-callbacks-artifact" class="json-output"></pre>
                     </div>
                     <div class="inline-actions">
                         <button id="activation-ingest-btn">Ingest Callback</button>
@@ -1888,12 +1889,11 @@ WHERE predicted_churn_risk = 'high'
                     <span class="pill">Advanced</span>
                 </div>
                 <details class="builder-advanced-panel">
-                    <summary>Internal Outcome Payload</summary>
+                    <summary>Outcome Setup File</summary>
                     <div class="form-group" style="margin-top: 1rem;">
-                        <label for="experiment-outcomes-json">Internal Outcome Payload</label>
-                        <textarea id="experiment-outcomes-json" style="min-height: 12rem; font-family: monospace;">{
-  "outcomes": []
-}</textarea>
+                        <label for="experiment-outcomes-artifact">Outcome Payload Setup</label>
+                        <input type="hidden" id="experiment-outcomes-json" value='{"outcomes":[]}'>
+                        <pre id="experiment-outcomes-artifact" class="json-output"></pre>
                     </div>
                 </details>
                 <div class="inline-actions">
@@ -1936,8 +1936,9 @@ WHERE predicted_churn_risk = 'high'
                             <input type="text" id="copilot-query-window-input" value="7d">
                         </div>
                         <div class="form-group">
-                            <label for="copilot-query-filters-json">Internal Filters</label>
-                            <textarea id="copilot-query-filters-json" style="min-height: 4rem; font-family: monospace;">{}</textarea>
+                            <label for="copilot-query-filters-artifact">Filter Setup</label>
+                            <input type="hidden" id="copilot-query-filters-json" value="{}">
+                            <pre id="copilot-query-filters-artifact" class="json-output"></pre>
                         </div>
                     </div>
                     <button id="copilot-query-btn">Run Query</button>
@@ -1972,14 +1973,14 @@ WHERE predicted_churn_risk = 'high'
                     </div>
                     <div class="grid-2">
                         <div class="form-group">
-                            <label for="copilot-insight-json">Internal Insight Context</label>
-                            <textarea id="copilot-insight-json" style="min-height: 6rem; font-family: monospace;">{}</textarea>
+                            <label for="copilot-insight-artifact">Insight Context Setup</label>
+                            <input type="hidden" id="copilot-insight-json" value="{}">
+                            <pre id="copilot-insight-artifact" class="json-output"></pre>
                         </div>
                         <div class="form-group">
-                            <label for="copilot-metric-context-json">Internal Metric Context</label>
-                            <textarea id="copilot-metric-context-json" style="min-height: 6rem; font-family: monospace;">{
-  "metric_id": "high_risk_users"
-}</textarea>
+                            <label for="copilot-metric-context-artifact">Metric Context Setup</label>
+                            <input type="hidden" id="copilot-metric-context-json" value='{"metric_id":"high_risk_users"}'>
+                            <pre id="copilot-metric-context-artifact" class="json-output"></pre>
                         </div>
                     </div>
                     <button id="copilot-recommend-btn">Generate Recommendation</button>

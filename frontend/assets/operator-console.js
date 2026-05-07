@@ -9862,7 +9862,7 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 if (selectedJob) {
-                    dataSandboxActionHint.textContent = `Save Mapping Memory updates future imports for ${connectorName}. Save and Reprocess Import applies the current editor to ${selectedJob.name}, reruns normalization and dedupe, and keeps the successful mapping as future memory.`;
+                    dataSandboxActionHint.textContent = `Save Mapping Memory updates future imports for ${connectorName}. Save and Reprocess Import applies the current setup to ${selectedJob.name}, reruns normalization and dedupe, and keeps the successful mapping as future memory.`;
                     return;
                 }
                 dataSandboxActionHint.textContent = `Save Mapping updates connector memory for future ${connectorName} imports. Reprocessing is only available after you select a paused Awaiting Mapping import for the same connector.`;
@@ -9871,6 +9871,7 @@ export function initializeOperatorConsole() {
             function setDataSandboxMappingJsonValue(mapping = {}) {
                 if (!dataSandboxMappingJson) return;
                 dataSandboxMappingJson.value = JSON.stringify(mapping || {}, null, 2);
+                syncNoCodeSetupArtifacts(['data-sandbox-mapping-json']);
             }
 
             function getDataSandboxCurrentMapping(options = {}) {
@@ -9940,6 +9941,7 @@ export function initializeOperatorConsole() {
                     dataSandboxSampleJson.value = nextValue;
                     dataSandboxSampleJson.dataset.autoValue = nextValue;
                     dataSandboxSampleJson.dataset.sampleSource = source;
+                    syncNoCodeSetupArtifacts(['data-sandbox-sample-json']);
                 }
             }
 
@@ -9972,6 +9974,7 @@ export function initializeOperatorConsole() {
                         dataSandboxSampleJson.value = '';
                         dataSandboxSampleJson.dataset.autoValue = '';
                         dataSandboxSampleJson.dataset.sampleSource = '';
+                        syncNoCodeSetupArtifacts(['data-sandbox-sample-json']);
                     }
                 }
                 renderDataSandboxSampleMeta();
@@ -10091,10 +10094,10 @@ export function initializeOperatorConsole() {
                     if (memoryItem.topPath && suggestion?.suggested_path === memoryItem.topPath) {
                         badges.push('<span class="mapping-memory-badge is-good">Matches current suggestion</span>');
                     } else if (memoryItem.topPath && currentPath && currentPath !== memoryItem.topPath) {
-                        badges.push('<span class="mapping-memory-badge is-warn">Current editor selection differs</span>');
+                        badges.push('<span class="mapping-memory-badge is-warn">Current selection differs</span>');
                     }
                     if (suggestion?.suggested_path && currentPath && currentPath !== suggestion.suggested_path) {
-                        badges.push('<span class="mapping-memory-badge is-warn">Manual correction in editor</span>');
+                        badges.push('<span class="mapping-memory-badge is-warn">Manual correction in setup</span>');
                     }
                     const topPathMarkup = memoryItem.topPath
                         ? `<div class="mapping-memory-path"><strong>Preferred path:</strong> ${escapeHtml(memoryItem.topPath)}</div>`
@@ -10109,7 +10112,7 @@ export function initializeOperatorConsole() {
                             ? `<div><strong>Cross-event stability:</strong> present across ${(Number(memoryItem.profile.event_type_coverage || 0) * 100).toFixed(0)}% of sampled event-name groups.</div>`
                             : ''}
                         <div><strong>Correction rule:</strong> ${selectedJob
-                            ? 'Use Save Mapping Memory if future imports should inherit the correction without touching the paused job. Use Save and Reprocess Import when the current paused import should rerun with this editor.'
+                            ? 'Use Save Mapping Memory if future imports should inherit the correction without touching the paused job. Use Save and Reprocess Import when the current paused import should rerun with this setup.'
                             : 'Save the mapping after you correct a field to persist that choice into future source-memory history.'}</div>
                         ${memoryItem.alternatives.length
                             ? `<div><strong>Other saved paths:</strong> ${escapeHtml(memoryItem.alternatives.map(([path, count]) => `${path} (${count})`).join(', '))}</div>`
@@ -10147,7 +10150,7 @@ export function initializeOperatorConsole() {
                         parts.push(`ID signal ${userValue}.`);
                     }
                     if (source === 'manual' && currentValue && currentValue !== autoValue) {
-                        parts.push('The textarea has manual edits and no longer matches the loaded sample.');
+                        parts.push('The sample setup differs from the loaded raw event.');
                     } else {
                         parts.push('Preview and Coverage use this true raw sample payload.');
                     }
@@ -10155,8 +10158,8 @@ export function initializeOperatorConsole() {
                     return;
                 }
                 dataSandboxSampleMeta.textContent = currentValue
-                    ? 'Using manual sample JSON. Preview and Coverage use the text currently in the editor.'
-                    : 'Load a paused import job to pull true raw sample events into the editor.';
+                    ? 'Using the current sample setup file for Preview and Coverage.'
+                    : 'Load a paused import job to pull true raw sample events into the setup file.';
             }
 
             function renderDataSandboxGuidedMapping() {
@@ -10173,7 +10176,7 @@ export function initializeOperatorConsole() {
                 );
                 if (dataSandboxGuidedHint) {
                     if (selectedJob) {
-                        dataSandboxGuidedHint.textContent = 'The editor reflects the paused import’s effective mapping. Save Mapping Memory updates future imports only; Save and Reprocess Import applies this editor to the paused import and resumes processing.';
+                        dataSandboxGuidedHint.textContent = 'The setup reflects the paused import’s effective mapping. Save Mapping Memory updates future imports only; Save and Reprocess Import applies this setup to the paused import and resumes processing.';
                     } else if (connectorName) {
                         dataSandboxGuidedHint.textContent = `Selections here save a ${scope.scopeLabel}. Confirmed saves and successful imports become the memory reused on future loads.`;
                     } else {
@@ -10235,7 +10238,7 @@ export function initializeOperatorConsole() {
                         ? `<div><strong>Cross-event signal:</strong> present in ${presenceStats.presentCount}/${presenceStats.totalSamples} sampled events across ${presenceStats.eventNameCount} event name${presenceStats.eventNameCount === 1 ? '' : 's'}.</div>`
                         : '<div><strong>Cross-event signal:</strong> load raw samples to compare this path across event names.</div>';
                     const correctionText = currentPath && suggestion?.suggested_path && currentPath !== suggestion.suggested_path
-                        ? `<div><strong>Correction:</strong> the editor currently overrides the suggested path with ${escapeHtml(currentPath)}. Save to persist that correction in the selected scope.</div>`
+                        ? `<div><strong>Correction:</strong> the setup currently overrides the suggested path with ${escapeHtml(currentPath)}. Save to persist that correction in the selected scope.</div>`
                         : `<div><strong>Correction:</strong> changing this selector updates the internal mapping immediately.</div>`;
                     const fieldHelpContent = `
                         ${suggestionText}
@@ -10676,11 +10679,13 @@ export function initializeOperatorConsole() {
                 const currentValue = (dataSandboxSampleJson.value || '').trim();
                 const autoValue = dataSandboxSampleJson.dataset.autoValue || '';
                 dataSandboxSampleJson.dataset.sampleSource = currentValue && currentValue !== autoValue ? 'manual' : 'candidate';
+                syncNoCodeSetupArtifacts(['data-sandbox-sample-json']);
                 renderDataSandboxSampleMeta();
             });
             dataSandboxMappingJson.addEventListener('input', () => {
                 try {
                     getDataSandboxCurrentMapping();
+                    syncNoCodeSetupArtifacts(['data-sandbox-mapping-json']);
                     renderDataSandboxGuidedMapping();
                     renderDataSandboxMemory();
                 } catch (error) {
@@ -10994,6 +10999,7 @@ export function initializeOperatorConsole() {
                 if (!element) return;
                 if (payload === null || payload === undefined || payload === '') {
                     jsonExportPayloads.delete(element);
+                    element.classList.add('json-export-summary');
                     element.textContent = emptyMessage;
                     const exportButton = ensureJsonExportButton(element);
                     if (exportButton) {
@@ -11019,10 +11025,61 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            const noCodeSetupArtifacts = [
+                { inputId: 'data-sandbox-mapping-json', outputId: 'data-sandbox-mapping-json-artifact', emptyMessage: 'No mapping setup file loaded.' },
+                { inputId: 'data-sandbox-sample-json', outputId: 'data-sandbox-sample-json-artifact', emptyMessage: 'No sample event loaded.' },
+                { inputId: 'sql-workspace-textarea', outputId: 'sql-workspace-artifact', kind: 'sql', emptyMessage: 'No SQL artifact loaded.' },
+                { inputId: 'email-campaign-merge-fields-input', outputId: 'email-campaign-merge-fields-artifact', emptyMessage: 'No merge fields setup loaded.' },
+                { inputId: 'push-dispatch-data-input', outputId: 'push-dispatch-data-artifact', emptyMessage: 'No push data setup loaded.' },
+                { inputId: 'push-dispatch-provider-options-input', outputId: 'push-dispatch-provider-options-artifact', emptyMessage: 'No provider options setup loaded.' },
+                { inputId: 'push-dispatch-wynn-filters-input', outputId: 'push-dispatch-wynn-filters-artifact', emptyMessage: 'No Wynn filters setup loaded.' },
+                { inputId: 'workflow-push-data-input', outputId: 'workflow-push-data-artifact', emptyMessage: 'No workflow push data setup loaded.' },
+                { inputId: 'workflow-push-provider-options-input', outputId: 'workflow-push-provider-options-artifact', emptyMessage: 'No workflow provider options setup loaded.' },
+                { inputId: 'activation-callbacks-json', outputId: 'activation-callbacks-artifact', emptyMessage: 'No callback payload setup loaded.' },
+                { inputId: 'experiment-outcomes-json', outputId: 'experiment-outcomes-artifact', emptyMessage: 'No outcome payload setup loaded.' },
+                { inputId: 'copilot-query-filters-json', outputId: 'copilot-query-filters-artifact', emptyMessage: 'No filter setup loaded.' },
+                { inputId: 'copilot-insight-json', outputId: 'copilot-insight-artifact', emptyMessage: 'No insight context loaded.' },
+                { inputId: 'copilot-metric-context-json', outputId: 'copilot-metric-context-artifact', emptyMessage: 'No metric context loaded.' },
+            ];
+
+            function buildNoCodeSetupArtifactPayload(input, definition = {}) {
+                const raw = String(input?.value || '').trim();
+                if (!raw) {
+                    return null;
+                }
+                if (definition.kind === 'sql') {
+                    return {
+                        format: 'sql_workspace_artifact.v1',
+                        sql: raw,
+                    };
+                }
+                return normalizeJsonExportPayload(raw);
+            }
+
+            function syncNoCodeSetupArtifacts(inputIds = null) {
+                const filterIds = Array.isArray(inputIds) && inputIds.length ? new Set(inputIds) : null;
+                noCodeSetupArtifacts.forEach((definition) => {
+                    if (filterIds && !filterIds.has(definition.inputId)) {
+                        return;
+                    }
+                    const input = document.getElementById(definition.inputId);
+                    const output = document.getElementById(definition.outputId);
+                    if (!input || !output) {
+                        return;
+                    }
+                    renderJsonOutput(
+                        output,
+                        buildNoCodeSetupArtifactPayload(input, definition),
+                        definition.emptyMessage || 'No setup file loaded.',
+                    );
+                });
+            }
+
             function hideTechnicalJsonInputs() {
                 const jsonInputIds = [
                     'data-sandbox-mapping-json',
                     'data-sandbox-sample-json',
+                    'sql-workspace-textarea',
                     'email-campaign-merge-fields-input',
                     'push-dispatch-data-input',
                     'push-dispatch-provider-options-input',
@@ -11039,6 +11096,10 @@ export function initializeOperatorConsole() {
                 jsonInputIds.forEach((id) => {
                     const input = document.getElementById(id);
                     if (!input) return;
+                    if (String(input.getAttribute('type') || '').toLowerCase() === 'hidden') {
+                        input.dataset.operatorJsonInput = 'state';
+                        return;
+                    }
                     const details = input.closest('details.builder-advanced-panel');
                     const shell = details || input.closest('.form-group') || input;
                     shellsToHide.add(shell);
@@ -11053,6 +11114,7 @@ export function initializeOperatorConsole() {
             }
 
             hideTechnicalJsonInputs();
+            syncNoCodeSetupArtifacts();
 
             function parseJsonText(value, fallback = {}) {
                 const raw = String(value || '').trim();
@@ -11305,6 +11367,11 @@ export function initializeOperatorConsole() {
                 if (pushDispatchWynnFiltersInput) {
                     pushDispatchWynnFiltersInput.value = '{}';
                 }
+                syncNoCodeSetupArtifacts([
+                    'push-dispatch-data-input',
+                    'push-dispatch-provider-options-input',
+                    'push-dispatch-wynn-filters-input',
+                ]);
                 renderJsonOutput(pushDispatchOutput, null, 'No push composer action submitted yet.');
                 setInlineStatus(pushDispatchStatus, 'Ready to send or schedule a push.');
                 syncPushDispatchComposerFields();
@@ -11382,6 +11449,10 @@ export function initializeOperatorConsole() {
                 if (workflowPushProviderOptionsInput) {
                     workflowPushProviderOptionsInput.value = '{}';
                 }
+                syncNoCodeSetupArtifacts([
+                    'workflow-push-data-input',
+                    'workflow-push-provider-options-input',
+                ]);
                 document.getElementById('workflow-requires-confirmation-checkbox').checked = false;
                 syncWorkflowChannelFields();
                 syncWorkflowBuilderState(null);
@@ -11546,6 +11617,11 @@ export function initializeOperatorConsole() {
                 if (pushDispatchWynnFiltersInput) {
                     pushDispatchWynnFiltersInput.value = JSON.stringify((channelConfig.provider_options || {}).filters || {}, null, 2);
                 }
+                syncNoCodeSetupArtifacts([
+                    'push-dispatch-data-input',
+                    'push-dispatch-provider-options-input',
+                    'push-dispatch-wynn-filters-input',
+                ]);
                 syncPushDispatchComposerFields();
                 renderJsonOutput(pushDispatchOutput, workflow, 'No push workflow selected.');
                 setInlineStatus(pushDispatchStatus, `${workflow.name || workflow.workflow_id} loaded into Push Composer.`);
@@ -11607,6 +11683,10 @@ export function initializeOperatorConsole() {
                 if (workflowPushProviderOptionsInput) {
                     workflowPushProviderOptionsInput.value = JSON.stringify(channelConfig.provider_options || {}, null, 2);
                 }
+                syncNoCodeSetupArtifacts([
+                    'workflow-push-data-input',
+                    'workflow-push-provider-options-input',
+                ]);
                 document.getElementById('workflow-requires-confirmation-checkbox').checked = Boolean(workflow.definition?.requires_confirmation);
                 syncWorkflowChannelFields();
                 syncWorkflowBuilderState(workflow);
@@ -12662,6 +12742,7 @@ export function initializeOperatorConsole() {
                 emailCampaignDeeplinkOverrideFieldInput.value = campaign.deeplink_override_field || '';
                 emailCampaignDeeplinkTemplateInput.value = campaign.deeplink_template || '';
                 emailCampaignMergeFieldsInput.value = JSON.stringify(campaign.merge_fields || {}, null, 2);
+                syncNoCodeSetupArtifacts(['email-campaign-merge-fields-input']);
                 emailCampaignScheduleAtInput.value = fromIsoToLocalDateTimeInput(campaign.schedule_at);
                 ensureSelectOption(emailCampaignProviderSelect, campaign.provider_connection_id, campaign.provider_connection_id);
                 emailCampaignProviderSelect.value = campaign.provider_connection_id || '';
@@ -12728,6 +12809,7 @@ export function initializeOperatorConsole() {
                 emailCampaignDeeplinkOverrideFieldInput.value = '';
                 emailCampaignDeeplinkTemplateInput.value = '';
                 emailCampaignMergeFieldsInput.value = getDefaultEmailCampaignMergeFieldsText();
+                syncNoCodeSetupArtifacts(['email-campaign-merge-fields-input']);
                 emailCampaignScheduleAtInput.value = '';
                 renderJsonOutput(emailCampaignDetailOutput, null, '');
                 setInlineStatus(emailCampaignStatus, 'Creating a new draft.');
@@ -13307,10 +13389,10 @@ export function initializeOperatorConsole() {
                                     <span class="pill">saved query</span>
                                 </div>
                                 <div class="subtle">${escapeHtml(savedQuery.query_id || '-')}</div>
-                                <div class="subtle">${escapeHtml(savedQuery.description || 'The current SQL editor value will be frozen into the cohort definition.')}</div>
+                                <div class="subtle">${escapeHtml(savedQuery.description || 'The current SQL artifact will be frozen into the cohort definition.')}</div>
                             </div>
                         `
-                        : '<div class="list-empty">Using the current SQL workspace text.</div>';
+                        : '<div class="list-empty">Using the current SQL artifact.</div>';
                     return;
                 }
                 if (basis === 'connector_bigquery_table') {
@@ -13804,6 +13886,7 @@ export function initializeOperatorConsole() {
                 }
                 document.getElementById('sql-workspace-textarea').value = String(request.sql || builderState.sql || '').trim()
                     || document.getElementById('sql-workspace-textarea').value;
+                syncNoCodeSetupArtifacts(['sql-workspace-textarea']);
                 audienceBuilderConditions = Array.isArray(request.conditions)
                     ? request.conditions.map((condition) => ({
                         id: `builder_condition_${Math.random().toString(16).slice(2, 8)}`,
@@ -14048,6 +14131,7 @@ export function initializeOperatorConsole() {
                         if (!query) return;
                         if (button.dataset.sqlAction === 'preview') {
                             document.getElementById('sql-workspace-textarea').value = query.sql || '';
+                            syncNoCodeSetupArtifacts(['sql-workspace-textarea']);
                             await previewSqlWorkspace();
                             return;
                         }
@@ -15613,6 +15697,11 @@ export function initializeOperatorConsole() {
                         if (pushDispatchProviderOptionsInput) {
                             pushDispatchProviderOptionsInput.value = JSON.stringify(parameters.provider_options || {}, null, 2);
                         }
+                        syncNoCodeSetupArtifacts([
+                            'push-dispatch-data-input',
+                            'push-dispatch-provider-options-input',
+                            'push-dispatch-wynn-filters-input',
+                        ]);
                         if (parameters.schedule_at) {
                             if (pushDispatchModeSelect) {
                                 pushDispatchModeSelect.value = 'single';
@@ -15700,6 +15789,7 @@ export function initializeOperatorConsole() {
                         const outcomesInput = document.getElementById('experiment-outcomes-json');
                         if (outcomesInput && Array.isArray(parameters.outcomes)) {
                             outcomesInput.value = JSON.stringify({ outcomes: parameters.outcomes }, null, 2);
+                            syncNoCodeSetupArtifacts(['experiment-outcomes-json']);
                         }
                         setInlineStatus(experimentIngestStatus, artifact.status_detail || 'Prepared experiment handoff loaded for review.');
                         return;
@@ -16294,6 +16384,7 @@ export function initializeOperatorConsole() {
                 resetAudienceBuilderPreview('Preview cleared.');
             });
             document.getElementById('sql-workspace-textarea')?.addEventListener('input', () => {
+                syncNoCodeSetupArtifacts(['sql-workspace-textarea']);
                 if (getAudienceBuilderBasis() === 'managed_warehouse_sql') {
                     resetAudienceBuilderPreview('Preview cleared.');
                 }
@@ -16304,6 +16395,7 @@ export function initializeOperatorConsole() {
                     document.getElementById('sql-workspace-textarea').value = selectedQuery.sql || '';
                     document.getElementById('sql-saved-query-name').value = selectedQuery.name || '';
                     document.getElementById('sql-saved-query-description').value = selectedQuery.description || '';
+                    syncNoCodeSetupArtifacts(['sql-workspace-textarea']);
                 }
                 renderAudienceBuilderSourceSummary();
                 resetAudienceBuilderPreview('Preview cleared.');

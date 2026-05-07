@@ -127,9 +127,11 @@ assert_ai_first_operator_ui() {
     const visibleJsonInputs = await page.locator([
       '#data-sandbox-mapping-json',
       '#data-sandbox-sample-json',
+      '#sql-workspace-textarea',
       '#email-campaign-merge-fields-input',
       '#push-dispatch-data-input',
       '#push-dispatch-provider-options-input',
+      '#push-dispatch-wynn-filters-input',
       '#workflow-push-data-input',
       '#workflow-push-provider-options-input',
       '#activation-callbacks-json',
@@ -146,6 +148,39 @@ assert_ai_first_operator_ui() {
       .map((element) => element.id));
     if (visibleJsonInputs.length > 0) {
       throw new Error('JSON input fields should be hidden from the primary operator UI: ' + visibleJsonInputs.join(', '));
+    }
+    const nonStateTechnicalInputs = await page.locator([
+      '#data-sandbox-mapping-json',
+      '#data-sandbox-sample-json',
+      '#sql-workspace-textarea',
+      '#email-campaign-merge-fields-input',
+      '#push-dispatch-data-input',
+      '#push-dispatch-provider-options-input',
+      '#push-dispatch-wynn-filters-input',
+      '#workflow-push-data-input',
+      '#workflow-push-provider-options-input',
+      '#activation-callbacks-json',
+      '#experiment-outcomes-json',
+      '#copilot-query-filters-json',
+      '#copilot-insight-json',
+      '#copilot-metric-context-json',
+    ].join(',')).evaluateAll((elements) => elements
+      .filter((element) => element.tagName.toLowerCase() === 'textarea' || String(element.getAttribute('type') || '').toLowerCase() !== 'hidden')
+      .map((element) => element.id));
+    if (nonStateTechnicalInputs.length > 0) {
+      throw new Error('Technical JSON/code setup fields must be hidden state inputs with export artifacts: ' + nonStateTechnicalInputs.join(', '));
+    }
+
+    const requiredArtifactButtons = [
+      '#data-sandbox-mapping-json-artifact-export-json-btn',
+      '#sql-workspace-artifact-export-json-btn',
+      '#push-dispatch-data-artifact-export-json-btn',
+      '#experiment-outcomes-artifact-export-json-btn',
+    ];
+    for (const selector of requiredArtifactButtons) {
+      if (await page.locator(selector).count() === 0) {
+        throw new Error('Missing setup artifact export button: ' + selector);
+      }
     }
 
     await page.locator('[data-module=\"action-orchestrator\"]').first().click();
