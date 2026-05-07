@@ -28,7 +28,7 @@ Upgrade growth operations into an AI-native growth marketing RAG platform where 
 KairyxAI is now specified as a prompt-first growth marketing operating system, not a code-first analytics console. `Ask AI` is the primary entry point for Data Core setup, audience drafting, campaign/workflow preparation, experiment planning, diagnostics, and growth insight synthesis. Manual controls remain available only where they support review, compact selection, advanced debugging, export, or secure credential entry.
 
 ### Current Shipped Baseline To Preserve
-- `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles
+- `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles; knowledge documents and cited retrieval evidence packs
 - `Audience Engine`: guided cohort builder; SQL/rule/list cohort support behind marketer-first flows; prediction-backed audience creation; cohort versions, members, refresh, metrics, and AI-drafted builder-state artifacts
 - `Action Orchestrator`: provider connections for SendGrid, Braze, webhook, simulator, and push provider paths; email campaign drafts; push notification drafts; Workflow Studio; scheduled/sent/archived workflow management; JSON artifacts exported through buttons instead of primary text fields
 - `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, and decision logging with Ask AI handoffs for setup and diagnostics
@@ -38,7 +38,7 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 ### Priority Roadmap
 1. `PRD Regeneration Baseline`: keep all current features and planned gaps aligned across the master PRD and module PRDs before additional implementation.
 2. `Knowledge Ingestion`: add first-class growth knowledge resources for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
-3. `Retrieval And Citations`: add Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, top-K retrieval, optional rerank metadata, and citation-backed context packs.
+3. `Retrieval And Citations`: expand the delivered knowledge retrieval evidence-pack API into Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, semantic/vector retrieval, optional rerank metadata, and citation-backed context packs.
 4. `Evaluation And Monitoring`: measure retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
 5. `Feedback Loop`: feed approvals, edits, sends, workflow results, experiment outcomes, and operator feedback back into playbooks, retrieval ranking, and future recommendation prompts.
 6. `No-Code Console Hardening`: continue removing raw JSON/code text fields from primary operator surfaces, replacing them with guided controls, artifact cards, and `Export .json` buttons for inspectable setup payloads.

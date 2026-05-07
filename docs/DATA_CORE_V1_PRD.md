@@ -9,7 +9,7 @@ Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
 - secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
 - import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
-- API-first knowledge document ingestion through `/api/v1/knowledge`, with deterministic chunks, provenance, tags, content hashes, archive lifecycle, and exportable `knowledge_document.v1` artifacts
+- API-first knowledge document ingestion and retrieval through `/api/v1/knowledge`, with deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, exportable `knowledge_document.v1` artifacts, and persisted `knowledge_evidence_pack.v1` retrieval artifacts
 - SQL workspace and query-to-cohort behavior as analyst/advanced paths
 - local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
 - backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
@@ -30,9 +30,16 @@ Delivered first-slice acceptance criteria:
 4. No raw JSON/code input field is required for normal knowledge ingestion.
 5. Future embedding/vector metadata can attach to chunks without changing the document ownership boundary.
 
+Delivered second-slice acceptance criteria:
+1. API clients can run tenant/project-scoped retrieval over active knowledge chunks.
+2. Retrieval responses rank relevant chunks, return stable citation ids, and persist an auditable retrieval record.
+3. Evidence packs are exportable as `.json` artifacts without exposing raw JSON editors in the operator path.
+4. Archived chunks are excluded from retrieval unless explicitly requested.
+
 Remaining acceptance criteria:
 1. Add a no-code operator UI and Ask AI intake flow for knowledge documents.
-2. Add vector/embedding materialization and retrieval over the stored chunks.
+2. Add semantic embedding materialization, vector retrieval, and reranking over the stored chunks.
+3. Wire cited knowledge context into Ask AI answers, copy drafting, diagnostics, and setup handoff cards.
 
 ---
 

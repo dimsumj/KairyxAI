@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from collections import Counter
 from datetime import datetime
 from typing import Any, Dict
 
@@ -10,10 +11,43 @@ from typing import Any, Dict
 KNOWLEDGE_DOCUMENT_RESOURCE_TYPE = "knowledge_document"
 KNOWLEDGE_CHUNK_RESOURCE_TYPE = "knowledge_chunk"
 KNOWLEDGE_INGESTION_JOB_RESOURCE_TYPE = "knowledge_ingestion_job"
+KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE = "knowledge_retrieval"
 KNOWLEDGE_SOURCE_RESOURCE_TYPE = "knowledge_source"
 
 MAX_CHUNK_CHARS = 1600
 MAX_DOCUMENT_CHARS = 250_000
+MAX_RETRIEVAL_QUERY_CHARS = 500
+MAX_RETRIEVAL_RESULTS = 20
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "of",
+    "on",
+    "or",
+    "our",
+    "shall",
+    "should",
+    "the",
+    "this",
+    "to",
+    "we",
+    "with",
+    "you",
+}
 
 
 class KnowledgeService:
@@ -199,6 +233,126 @@ class KnowledgeService:
             "chunks": chunks,
         }
 
+    def retrieve(
+        self,
+        *,
+        query: str,
+        top_k: int = 5,
+        tags: list[str] | None = None,
+        source_types: list[str] | None = None,
+        document_ids: list[str] | None = None,
+        include_archived: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_query = _required_text(query, "query", max_length=MAX_RETRIEVAL_QUERY_CHARS)
+        normalized_top_k = max(1, min(int(top_k or 5), MAX_RETRIEVAL_RESULTS))
+        normalized_tags = _normalize_tags(tags or [])
+        normalized_source_types = [_normalize_source_type(item) for item in source_types or []]
+        normalized_document_ids = _normalize_id_filters(document_ids or [])
+        query_terms = _query_terms(normalized_query)
+        if not query_terms:
+            raise ValueError("query must include at least one searchable term.")
+        scored = [
+            match
+            for chunk in self.repository.list_resources(KNOWLEDGE_CHUNK_RESOURCE_TYPE)
+            if (match := _score_chunk(
+                self._resource_to_chunk(chunk),
+                query=normalized_query,
+                query_terms=query_terms,
+                tags=normalized_tags,
+                source_types=normalized_source_types,
+                document_ids=normalized_document_ids,
+                include_archived=include_archived,
+            ))
+        ]
+        ranked = sorted(
+            scored,
+            key=lambda item: (
+                -float(item["score"]),
+                str(item["document_title"]).lower(),
+                int(item["ordinal"]),
+            ),
+        )[:normalized_top_k]
+        retrieval_id = f"kret_{uuid.uuid4().hex[:20]}"
+        citations = [
+            {
+                **item,
+                "rank": index,
+                "citation_id": f"C{index}",
+                "citation": f"[C{index}] {item['document_title']} chunk {item['ordinal']}",
+            }
+            for index, item in enumerate(ranked, start=1)
+        ]
+        context_pack = _build_context_pack(
+            retrieval_id=retrieval_id,
+            query=normalized_query,
+            normalized_query=" ".join(query_terms),
+            citations=citations,
+        )
+        payload = {
+            "retrieval_id": retrieval_id,
+            "query": normalized_query,
+            "normalized_query": " ".join(query_terms),
+            "retrieval_mode": "lexical_v1",
+            "status": "completed",
+            "top_k": normalized_top_k,
+            "result_count": len(citations),
+            "filters": {
+                "tags": normalized_tags,
+                "source_types": normalized_source_types,
+                "document_ids": normalized_document_ids,
+                "include_archived": bool(include_archived),
+            },
+            "citations": citations,
+            "context_pack": context_pack,
+            "export": {
+                "format": "knowledge_evidence_pack.v1",
+                "resource_id": retrieval_id,
+                "includes": ["query", "filters", "citations", "context_pack"],
+            },
+        }
+        record = self.repository.upsert_resource(
+            KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE,
+            retrieval_id,
+            status="completed",
+            name=normalized_query[:120],
+            payload=payload,
+        )
+        self.repository.record_resource_event(
+            KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE,
+            retrieval_id,
+            event_type="knowledge_retrieval_completed",
+            payload={
+                "retrieval_id": retrieval_id,
+                "result_count": len(citations),
+                "retrieval_mode": "lexical_v1",
+            },
+        )
+        return self._resource_to_retrieval(record)
+
+    def list_retrievals(self) -> list[Dict[str, Any]]:
+        return [self._resource_to_retrieval(record) for record in self.repository.list_resources(KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE)]
+
+    def get_retrieval(self, retrieval_id: str) -> Dict[str, Any] | None:
+        record = self.repository.get_resource(KNOWLEDGE_RETRIEVAL_RESOURCE_TYPE, retrieval_id)
+        return self._resource_to_retrieval(record) if record is not None else None
+
+    def export_retrieval(self, retrieval_id: str) -> Dict[str, Any] | None:
+        retrieval = self.get_retrieval(retrieval_id)
+        if retrieval is None:
+            return None
+        return {
+            "format": "knowledge_evidence_pack.v1",
+            "retrieval": {
+                key: value
+                for key, value in retrieval.items()
+                if key
+                not in {
+                    "audit_id",
+                    "masked_fields",
+                }
+            },
+        }
+
     def _persist_chunks(
         self,
         *,
@@ -308,6 +462,22 @@ class KnowledgeService:
             "project_id": record.get("project_id") or payload.get("project_id"),
         }
 
+    @staticmethod
+    def _resource_to_retrieval(record: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(record.get("payload") or {})
+        return {
+            **payload,
+            "retrieval_id": payload.get("retrieval_id") or record.get("resource_id"),
+            "status": payload.get("status") or record.get("status") or "completed",
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+            "project_id": record.get("project_id") or payload.get("project_id"),
+            "created_by": record.get("created_by") or payload.get("created_by") or "system",
+            "updated_by": record.get("updated_by") or payload.get("updated_by") or "system",
+            "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",
+        }
+
 
 def _required_text(value: str, field_name: str, *, max_length: int) -> str:
     normalized = str(value or "").strip()
@@ -358,6 +528,18 @@ def _normalize_tags(tags: list[str]) -> list[str]:
     return normalized[:20]
 
 
+def _normalize_id_filters(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = _clean_text(value, max_length=100)
+        if not cleaned or cleaned in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(cleaned)
+    return normalized[:50]
+
+
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -371,6 +553,131 @@ def _preview(value: str, *, max_length: int = 260) -> str:
 
 def _estimate_tokens(value: str) -> int:
     return max(1, len(value) // 4)
+
+
+def _query_terms(value: str) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in re.findall(r"[a-zA-Z0-9_]+", value.lower()):
+        if len(term) <= 1 or term in STOP_WORDS or term in seen:
+            continue
+        terms.append(term)
+        seen.add(term)
+    return terms[:32]
+
+
+def _score_chunk(
+    chunk: Dict[str, Any],
+    *,
+    query: str,
+    query_terms: list[str],
+    tags: list[str],
+    source_types: list[str],
+    document_ids: list[str],
+    include_archived: bool,
+) -> Dict[str, Any] | None:
+    if not include_archived and chunk.get("status") == "archived":
+        return None
+    if document_ids and str(chunk.get("document_id") or "") not in set(document_ids):
+        return None
+    if source_types and str(chunk.get("source_type") or "") not in set(source_types):
+        return None
+    chunk_tags = {str(tag).lower() for tag in chunk.get("tags") or []}
+    if tags and not set(tags).issubset(chunk_tags):
+        return None
+    text = str(chunk.get("text") or "")
+    if not text:
+        return None
+    text_tokens = Counter(re.findall(r"[a-zA-Z0-9_]+", text.lower()))
+    metadata_text = " ".join(
+        [
+            str(chunk.get("source_title") or ""),
+            str(chunk.get("source_name") or ""),
+            str(chunk.get("source_type") or ""),
+            " ".join(chunk.get("tags") or []),
+        ]
+    ).lower()
+    match_terms: list[str] = []
+    score = 0.0
+    for term in query_terms:
+        frequency = text_tokens.get(term, 0)
+        metadata_hit = term in metadata_text
+        if frequency or metadata_hit:
+            match_terms.append(term)
+            score += min(float(frequency), 5.0)
+            if metadata_hit:
+                score += 0.75
+    normalized_query = re.sub(r"\s+", " ", query.lower()).strip()
+    normalized_text = re.sub(r"\s+", " ", text.lower()).strip()
+    if normalized_query and normalized_query in normalized_text:
+        score += 5.0
+    if score <= 0:
+        return None
+    score = round(score / max(float(len(query_terms)), 1.0), 4)
+    return {
+        "chunk_id": chunk.get("chunk_id"),
+        "document_id": chunk.get("document_id"),
+        "document_title": chunk.get("source_title") or chunk.get("document_id") or "",
+        "source_id": chunk.get("source_id"),
+        "source_name": chunk.get("source_name") or "",
+        "source_type": chunk.get("source_type") or "markdown",
+        "ordinal": int(chunk.get("ordinal") or 0),
+        "score": score,
+        "match_terms": match_terms,
+        "snippet": _snippet(text, match_terms),
+        "text": text,
+        "summary": chunk.get("summary") or _preview(text, max_length=180),
+        "tags": list(chunk.get("tags") or []),
+    }
+
+
+def _snippet(text: str, match_terms: list[str], *, max_length: int = 420) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_length:
+        return compact
+    lowered = compact.lower()
+    first_index = min(
+        [lowered.find(term) for term in match_terms if lowered.find(term) >= 0],
+        default=0,
+    )
+    start = max(0, first_index - 80)
+    end = min(len(compact), start + max_length)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(compact) else ""
+    return f"{prefix}{compact[start:end].strip()}{suffix}"
+
+
+def _build_context_pack(
+    *,
+    retrieval_id: str,
+    query: str,
+    normalized_query: str,
+    citations: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "format": "knowledge_context_pack.v1",
+        "retrieval_id": retrieval_id,
+        "query": query,
+        "normalized_query": normalized_query,
+        "retrieval_mode": "lexical_v1",
+        "citation_count": len(citations),
+        "sections": [
+            {
+                "citation_id": citation["citation_id"],
+                "citation": citation["citation"],
+                "heading": citation["document_title"],
+                "source": {
+                    "document_id": citation["document_id"],
+                    "chunk_id": citation["chunk_id"],
+                    "source_name": citation["source_name"],
+                    "source_type": citation["source_type"],
+                    "ordinal": citation["ordinal"],
+                },
+                "text": citation["text"],
+            }
+            for citation in citations
+        ],
+    }
 
 
 def _chunk_text(content: str) -> list[str]:

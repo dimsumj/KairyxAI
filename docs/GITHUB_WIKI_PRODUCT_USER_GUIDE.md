@@ -57,8 +57,8 @@ Across the console, the default presentation is now intentionally minimal: the m
 KairyxAI is already moving toward the target AI growth platform shape: `Data Core` handles connector setup, imports, field mapping, data quality, metadata, and governance; `Audience Engine`, `Action Orchestrator`, and `Experiment Hub` turn retrieved context into cohorts, lifecycle drafts, schedules, experiments, and measurement; `Insight Copilot` provides the prompt-first generation layer with setup handoffs, evidence artifacts, and audit history.
 
 Priority completion TODO:
-1. Extend the new knowledge document API into the operator UI so SOPs, campaign briefs, historical reports, FAQs, and marketing assets can be added without raw JSON fields.
-2. Add vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
+1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
+2. Add semantic/vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
 3. Add retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
 4. Close the feedback loop from operator approvals, sends, experiment outcomes, and campaign performance back into prompts, retrieval ranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
@@ -535,6 +535,10 @@ Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/know
 | `GET /api/v1/knowledge/documents/{document_id}/chunks` | List chunks for retrieval/debug review. | Chunks include ordinal, text, summary, content hash, token estimate, tags, visibility, and pending embedding metadata. |
 | `GET /api/v1/knowledge/documents/{document_id}/export` | Export the full setup artifact. | Returns `knowledge_document.v1` with the document and chunks for `.json` download. |
 | `POST /api/v1/knowledge/documents/{document_id}/archive` | Archive the document and its chunks. | Archived knowledge is hidden from the active list and remains auditable/exportable. |
+| `POST /api/v1/knowledge/retrievals` | Run a tenant/project-scoped retrieval over knowledge chunks. | Returns ranked citations, snippets, full cited text, a context pack, and an export descriptor. |
+| `GET /api/v1/knowledge/retrievals` | List recent retrieval evidence packs. | Retrieval records are scoped like documents and preserve query, filters, citations, and context-pack metadata. |
+| `GET /api/v1/knowledge/retrievals/{retrieval_id}` | Read one retrieval evidence pack. | Use this to reopen cited context for Ask AI, diagnostics, or review. |
+| `GET /api/v1/knowledge/retrievals/{retrieval_id}/export` | Export the evidence pack. | Returns `knowledge_evidence_pack.v1` for `.json` download instead of exposing a raw JSON text area. |
 
 Supported `source_type` values are `markdown`, `text`, `campaign_brief`, `sop`, `report`, `faq`, and `playbook`. Supported `visibility` values are `workspace`, `project`, and `private`. Normal users should not paste secret material into knowledge documents; credentials still belong in secure connector/provider/model-profile setup.
 

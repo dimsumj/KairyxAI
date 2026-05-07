@@ -128,3 +128,94 @@ def test_knowledge_documents_are_project_scoped(client):
         headers={"x-actor-role": "analyst", "x-project-id": "project-b"},
     )
     assert other_project.status_code == 404
+
+
+def test_knowledge_retrieval_returns_citations_and_exportable_evidence_pack(client):
+    first = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json=_knowledge_payload(),
+    )
+    assert first.status_code == 201
+    second = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json={
+            "title": "VIP Loyalty Notes",
+            "content": "VIP concierge email copy should focus on status benefits, account manager access, and premium event windows.",
+            "source_type": "campaign_brief",
+            "tags": ["vip", "email"],
+        },
+    )
+    assert second.status_code == 201
+
+    retrieval = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={"query": "weekend evening push reminder saved game", "top_k": 3, "tags": ["push"]},
+    )
+    assert retrieval.status_code == 201
+    payload = retrieval.json()
+    assert payload["retrieval_id"].startswith("kret_")
+    assert payload["retrieval_mode"] == "lexical_v1"
+    assert payload["result_count"] >= 1
+    assert payload["export"]["format"] == "knowledge_evidence_pack.v1"
+    assert payload["context_pack"]["format"] == "knowledge_context_pack.v1"
+    assert payload["context_pack"]["citation_count"] == payload["result_count"]
+    assert payload["citations"][0]["citation_id"] == "C1"
+    assert payload["citations"][0]["citation"].startswith("[C1] Q2 Winback Playbook chunk")
+    assert payload["citations"][0]["document_title"] == "Q2 Winback Playbook"
+    assert "weekend" in payload["citations"][0]["match_terms"]
+    assert "weekend evening reminders" in payload["citations"][0]["snippet"]
+
+    retrieval_id = payload["retrieval_id"]
+    listed = client.get("/api/v1/knowledge/retrievals", headers={"x-actor-role": "analyst"})
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["retrieval_id"] == retrieval_id
+
+    exported = client.get(f"/api/v1/knowledge/retrievals/{retrieval_id}/export", headers={"x-actor-role": "analyst"})
+    assert exported.status_code == 200
+    export_payload = exported.json()
+    assert export_payload["format"] == "knowledge_evidence_pack.v1"
+    assert export_payload["retrieval"]["retrieval_id"] == retrieval_id
+    assert export_payload["retrieval"]["citations"][0]["chunk_id"] == payload["citations"][0]["chunk_id"]
+
+
+def test_knowledge_retrieval_is_project_scoped_and_excludes_archived_by_default(client):
+    created = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator", "x-project-id": "project-a"},
+        json=_knowledge_payload(),
+    )
+    assert created.status_code == 201
+    document_id = created.json()["document_id"]
+
+    other_project = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst", "x-project-id": "project-b"},
+        json={"query": "weekend evening push"},
+    )
+    assert other_project.status_code == 201
+    assert other_project.json()["result_count"] == 0
+
+    archived = client.post(
+        f"/api/v1/knowledge/documents/{document_id}/archive",
+        headers={"x-actor-role": "operator", "x-project-id": "project-a"},
+    )
+    assert archived.status_code == 200
+
+    active_only = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst", "x-project-id": "project-a"},
+        json={"query": "weekend evening push"},
+    )
+    assert active_only.status_code == 201
+    assert active_only.json()["result_count"] == 0
+
+    with_archived = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst", "x-project-id": "project-a"},
+        json={"query": "weekend evening push", "include_archived": True},
+    )
+    assert with_archived.status_code == 201
+    assert with_archived.json()["result_count"] > 0

@@ -10,6 +10,10 @@ from app.api.schemas.knowledge import (
     KnowledgeDocumentExportResponse,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    KnowledgeRetrievalExportResponse,
+    KnowledgeRetrievalListResponse,
+    KnowledgeRetrievalRequest,
+    KnowledgeRetrievalResponse,
 )
 from app.application.knowledge import KnowledgeService
 from app.core.deps import get_knowledge_service
@@ -33,6 +37,7 @@ def _with_audit(
         "response_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
         "item_count": len(payload.get("items") or []) if isinstance(payload, dict) else None,
         "chunk_count": len(payload.get("chunks") or []) if isinstance(payload, dict) else None,
+        "citation_count": len(payload.get("citations") or []) if isinstance(payload, dict) else None,
         "format": payload.get("format") if isinstance(payload, dict) else None,
     }
     audit_id = record_audit(
@@ -77,6 +82,95 @@ def list_knowledge_documents(
         action_type="knowledge_documents_read",
         resource_type="knowledge_document",
         resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/retrievals", response_model=KnowledgeRetrievalListResponse)
+def list_knowledge_retrievals(
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    payload = {"items": service.list_retrievals()}
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_retrievals_read",
+        resource_type="knowledge_retrieval",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.post("/retrievals", response_model=KnowledgeRetrievalResponse, status_code=status.HTTP_201_CREATED)
+def create_knowledge_retrieval(
+    request: KnowledgeRetrievalRequest,
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    try:
+        payload = service.retrieve(
+            query=request.query,
+            top_k=request.top_k,
+            tags=request.tags,
+            source_types=request.source_types,
+            document_ids=request.document_ids,
+            include_archived=request.include_archived,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_retrieval_completed",
+        resource_type="knowledge_retrieval",
+        resource_id=payload["retrieval_id"],
+        payload=payload,
+    )
+
+
+@router.get("/retrievals/{retrieval_id}", response_model=KnowledgeRetrievalResponse)
+def get_knowledge_retrieval(
+    retrieval_id: str,
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    payload = service.get_retrieval(retrieval_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge retrieval '{retrieval_id}' not found.")
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_retrieval_read",
+        resource_type="knowledge_retrieval",
+        resource_id=retrieval_id,
+        payload=payload,
+    )
+
+
+@router.get("/retrievals/{retrieval_id}/export", response_model=KnowledgeRetrievalExportResponse)
+def export_knowledge_retrieval(
+    retrieval_id: str,
+    http_request: Request,
+    service: KnowledgeService = Depends(get_knowledge_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "knowledge.read")
+    payload = service.export_retrieval(retrieval_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge retrieval '{retrieval_id}' not found.")
+    return _with_audit(
+        service,
+        context,
+        action_type="knowledge_retrieval_exported",
+        resource_type="knowledge_retrieval",
+        resource_id=retrieval_id,
         payload=payload,
     )
 

@@ -18,6 +18,15 @@ class KnowledgeDocumentCreateRequest(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class KnowledgeRetrievalRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=20)
+    tags: list[str] = Field(default_factory=list)
+    source_types: list[str] = Field(default_factory=list)
+    document_ids: list[str] = Field(default_factory=list)
+    include_archived: bool = False
+
+
 class KnowledgeIngestionJobResponse(BaseModel):
     tenant_id: str | None = None
     project_id: str | None = None
@@ -55,6 +64,25 @@ class KnowledgeChunkResponse(BaseModel):
     archived_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class KnowledgeCitationResponse(BaseModel):
+    citation_id: str
+    citation: str
+    rank: int
+    score: float
+    chunk_id: str
+    document_id: str
+    document_title: str = ""
+    source_id: str
+    source_name: str = ""
+    source_type: str = "markdown"
+    ordinal: int
+    match_terms: list[str] = Field(default_factory=list)
+    snippet: str = ""
+    text: str = ""
+    summary: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 class KnowledgeDocumentResponse(BaseModel):
@@ -115,3 +143,45 @@ class KnowledgeDocumentExportResponse(BaseModel):
     format: str
     document: KnowledgeDocumentResponse
     chunks: list[KnowledgeChunkResponse] = Field(default_factory=list)
+
+
+class KnowledgeRetrievalResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: list[str] = Field(default_factory=list)
+    retrieval_id: str
+    query: str
+    normalized_query: str = ""
+    retrieval_mode: str = "lexical_v1"
+    status: str = "completed"
+    top_k: int = 5
+    result_count: int = 0
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    citations: list[KnowledgeCitationResponse] = Field(default_factory=list)
+    context_pack: Dict[str, Any] = Field(default_factory=dict)
+    export: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+
+
+class KnowledgeRetrievalListResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: list[str] = Field(default_factory=list)
+    items: list[KnowledgeRetrievalResponse] = Field(default_factory=list)
+
+
+class KnowledgeRetrievalExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: list[str] = Field(default_factory=list)
+    format: str
+    retrieval: KnowledgeRetrievalResponse
