@@ -21,6 +21,7 @@ class KnowledgeDocumentCreateRequest(BaseModel):
 class KnowledgeRetrievalRequest(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     top_k: int = Field(default=5, ge=1, le=20)
+    retrieval_mode: str = "lexical_v1"
     tags: list[str] = Field(default_factory=list)
     source_types: list[str] = Field(default_factory=list)
     document_ids: list[str] = Field(default_factory=list)

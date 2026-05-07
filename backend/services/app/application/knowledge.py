@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import uuid
 from collections import Counter
@@ -20,6 +21,11 @@ MAX_CHUNK_CHARS = 1600
 MAX_DOCUMENT_CHARS = 250_000
 MAX_RETRIEVAL_QUERY_CHARS = 500
 MAX_RETRIEVAL_RESULTS = 20
+LEXICAL_RETRIEVAL_MODE = "lexical_v1"
+HYBRID_RETRIEVAL_MODE = "hybrid_v1"
+LOCAL_SEMANTIC_VECTOR_MODEL = "local_semantic_hash_v1"
+SEMANTIC_VECTOR_DIMENSIONS = 1024
+HYBRID_MIN_SEMANTIC_SCORE = 0.08
 STOP_WORDS = {
     "a",
     "an",
@@ -49,6 +55,21 @@ STOP_WORDS = {
     "we",
     "with",
     "you",
+}
+SEMANTIC_EQUIVALENCE_GROUPS = (
+    ("reactivation", "reactivate", "reactivating", "winback", "lapsed", "return", "returning", "reengage", "reengagement"),
+    ("bonus", "reward", "offer", "incentive", "credit", "perk", "benefit"),
+    ("progression", "progress", "checkpoint", "saved", "resume", "state"),
+    ("push", "notification", "message", "reminder", "alert"),
+    ("email", "mail", "newsletter", "message"),
+    ("vip", "premium", "status", "loyalty"),
+    ("campaign", "journey", "workflow", "send", "schedule"),
+    ("experiment", "test", "holdout", "variant", "ab"),
+)
+SEMANTIC_SYNONYMS = {
+    term: tuple(alias for alias in group if alias != term)
+    for group in SEMANTIC_EQUIVALENCE_GROUPS
+    for term in group
 }
 
 
@@ -240,6 +261,7 @@ class KnowledgeService:
         *,
         query: str,
         top_k: int = 5,
+        retrieval_mode: str = LEXICAL_RETRIEVAL_MODE,
         tags: list[str] | None = None,
         source_types: list[str] | None = None,
         document_ids: list[str] | None = None,
@@ -247,6 +269,7 @@ class KnowledgeService:
     ) -> Dict[str, Any]:
         normalized_query = _required_text(query, "query", max_length=MAX_RETRIEVAL_QUERY_CHARS)
         normalized_top_k = max(1, min(int(top_k or 5), MAX_RETRIEVAL_RESULTS))
+        normalized_retrieval_mode = _normalize_retrieval_mode(retrieval_mode)
         normalized_tags = _normalize_tags(tags or [])
         normalized_source_types = [_normalize_source_type(item) for item in source_types or []]
         normalized_document_ids = _normalize_id_filters(document_ids or [])
@@ -261,6 +284,7 @@ class KnowledgeService:
                 self._resource_to_chunk(chunk),
                 query=normalized_query,
                 query_terms=query_terms,
+                retrieval_mode=normalized_retrieval_mode,
                 tags=normalized_tags,
                 source_types=normalized_source_types,
                 document_ids=normalized_document_ids,
@@ -290,13 +314,14 @@ class KnowledgeService:
             retrieval_id=retrieval_id,
             query=normalized_query,
             normalized_query=" ".join(query_terms),
+            retrieval_mode=normalized_retrieval_mode,
             citations=citations,
         )
         payload = {
             "retrieval_id": retrieval_id,
             "query": normalized_query,
             "normalized_query": " ".join(query_terms),
-            "retrieval_mode": "lexical_v1",
+            "retrieval_mode": normalized_retrieval_mode,
             "status": "completed",
             "top_k": normalized_top_k,
             "result_count": len(citations),
@@ -328,7 +353,7 @@ class KnowledgeService:
             payload={
                 "retrieval_id": retrieval_id,
                 "result_count": len(citations),
-                "retrieval_mode": "lexical_v1",
+                "retrieval_mode": normalized_retrieval_mode,
             },
         )
         return self._resource_to_retrieval(record)
@@ -403,11 +428,17 @@ class KnowledgeService:
                 "tags": list(tags),
                 "visibility": visibility,
                 "status": "active",
-                "embedding": {
-                    "status": "pending",
-                    "model": None,
-                    "vector_ref": None,
-                },
+                "embedding": _embedding_metadata(
+                    " ".join(
+                        [
+                            title,
+                            source_name,
+                            source_type,
+                            " ".join(tags),
+                            chunk_text,
+                        ]
+                    )
+                ),
             }
             record = self.repository.upsert_resource(
                 KNOWLEDGE_CHUNK_RESOURCE_TYPE,
@@ -535,6 +566,14 @@ def _normalize_visibility(value: str) -> str:
     return normalized
 
 
+def _normalize_retrieval_mode(value: str) -> str:
+    normalized = str(value or LEXICAL_RETRIEVAL_MODE).strip().lower().replace("-", "_")
+    allowed = {LEXICAL_RETRIEVAL_MODE, HYBRID_RETRIEVAL_MODE}
+    if normalized not in allowed:
+        raise ValueError(f"retrieval_mode must be one of: {', '.join(sorted(allowed))}.")
+    return normalized
+
+
 def _normalize_tags(tags: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -589,11 +628,99 @@ def _query_terms(value: str) -> list[str]:
     return terms[:32]
 
 
+def _embedding_metadata(value: str) -> Dict[str, Any]:
+    vector = _semantic_vector(value)
+    vector_hash = _hash_text(",".join(f"{item:.6f}" for item in vector))[:20]
+    return {
+        "status": "ready",
+        "model": LOCAL_SEMANTIC_VECTOR_MODEL,
+        "vector_ref": f"inline:{LOCAL_SEMANTIC_VECTOR_MODEL}:{vector_hash}",
+        "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
+        "materialized_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _semantic_similarity(query: str, value: str) -> float:
+    query_vector = _semantic_vector(query)
+    value_vector = _semantic_vector(value)
+    score = sum(left * right for left, right in zip(query_vector, value_vector))
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def _semantic_vector(value: str) -> list[float]:
+    vector = [0.0] * SEMANTIC_VECTOR_DIMENSIONS
+    for feature in _semantic_features(value):
+        digest = hashlib.sha256(f"semantic:{feature}".encode("utf-8")).hexdigest()
+        index = int(digest[:8], 16) % SEMANTIC_VECTOR_DIMENSIONS
+        vector[index] += 1.0
+    norm = math.sqrt(sum(item * item for item in vector))
+    if norm <= 0:
+        return vector
+    return [round(item / norm, 6) for item in vector]
+
+
+def _semantic_features(value: str) -> list[str]:
+    features: list[str] = []
+    seen: set[str] = set()
+    for raw_term in re.findall(r"[a-zA-Z0-9_]+", str(value or "").lower()):
+        if len(raw_term) <= 1 or raw_term in STOP_WORDS:
+            continue
+        for term in _expanded_semantic_terms(raw_term):
+            if term in STOP_WORDS or term in seen:
+                continue
+            features.append(f"term:{term}")
+            seen.add(term)
+        for ngram in _character_ngrams(raw_term):
+            feature = f"char:{ngram}"
+            if feature in seen:
+                continue
+            features.append(feature)
+            seen.add(feature)
+    return features[:600]
+
+
+def _expanded_semantic_terms(term: str) -> list[str]:
+    normalized = _semantic_stem(term)
+    terms = [term, normalized]
+    terms.extend(SEMANTIC_SYNONYMS.get(term, ()))
+    terms.extend(SEMANTIC_SYNONYMS.get(normalized, ()))
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for item in terms:
+        cleaned = _semantic_stem(item)
+        if len(cleaned) <= 1 or cleaned in seen:
+            continue
+        expanded.append(cleaned)
+        seen.add(cleaned)
+    return expanded
+
+
+def _semantic_stem(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "", str(value or "").lower())
+    if len(normalized) > 6 and normalized.endswith("ing"):
+        return normalized[:-3]
+    if len(normalized) > 6 and normalized.endswith("ion"):
+        return normalized[:-3]
+    if len(normalized) > 5 and normalized.endswith("ed"):
+        return normalized[:-2]
+    if len(normalized) > 4 and normalized.endswith("s"):
+        return normalized[:-1]
+    return normalized
+
+
+def _character_ngrams(value: str) -> list[str]:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "", value.lower())
+    if len(normalized) < 4:
+        return []
+    return [normalized[index : index + 4] for index in range(0, min(len(normalized) - 3, 12))]
+
+
 def _score_chunk(
     chunk: Dict[str, Any],
     *,
     query: str,
     query_terms: list[str],
+    retrieval_mode: str,
     tags: list[str],
     source_types: list[str],
     document_ids: list[str],
@@ -635,14 +762,22 @@ def _score_chunk(
     normalized_text = re.sub(r"\s+", " ", text.lower()).strip()
     if normalized_query and normalized_query in normalized_text:
         lexical_score += 5.0
-    if lexical_score <= 0:
+    lexical_score = round(lexical_score / max(float(len(query_terms)), 1.0), 4) if lexical_score > 0 else 0.0
+    semantic_score = 0.0
+    if retrieval_mode == HYBRID_RETRIEVAL_MODE:
+        semantic_score = _semantic_similarity(query, f"{metadata_text} {text}")
+        if lexical_score <= 0 and semantic_score < HYBRID_MIN_SEMANTIC_SCORE:
+            return None
+    elif lexical_score <= 0:
         return None
-    lexical_score = round(lexical_score / max(float(len(query_terms)), 1.0), 4)
     feedback_boost = _clamp_feedback_boost(
         float(feedback_boosts.get("chunks", {}).get(str(chunk.get("chunk_id") or ""), 0.0))
         + float(feedback_boosts.get("documents", {}).get(str(chunk.get("document_id") or ""), 0.0))
     )
-    score = round(max(0.0, lexical_score + feedback_boost), 4)
+    if retrieval_mode == HYBRID_RETRIEVAL_MODE:
+        score = round(max(0.0, (lexical_score * 0.65) + (semantic_score * 4.0) + feedback_boost), 4)
+    else:
+        score = round(max(0.0, lexical_score + feedback_boost), 4)
     return {
         "chunk_id": chunk.get("chunk_id"),
         "document_id": chunk.get("document_id"),
@@ -654,8 +789,12 @@ def _score_chunk(
         "score": score,
         "feedback_boost": feedback_boost,
         "ranking_signals": {
+            "retrieval_mode": retrieval_mode,
             "lexical_score": lexical_score,
+            "semantic_score": semantic_score,
             "feedback_boost": feedback_boost,
+            "rerank_score": score,
+            "vector_model": LOCAL_SEMANTIC_VECTOR_MODEL if retrieval_mode == HYBRID_RETRIEVAL_MODE else None,
         },
         "match_terms": match_terms,
         "snippet": _snippet(text, match_terms),
@@ -686,6 +825,7 @@ def _build_context_pack(
     retrieval_id: str,
     query: str,
     normalized_query: str,
+    retrieval_mode: str,
     citations: list[Dict[str, Any]],
 ) -> Dict[str, Any]:
     return {
@@ -693,7 +833,7 @@ def _build_context_pack(
         "retrieval_id": retrieval_id,
         "query": query,
         "normalized_query": normalized_query,
-        "retrieval_mode": "lexical_v1",
+        "retrieval_mode": retrieval_mode,
         "citation_count": len(citations),
         "sections": [
             {

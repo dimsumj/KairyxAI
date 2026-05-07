@@ -116,6 +116,7 @@ def create_knowledge_retrieval(
         payload = service.retrieve(
             query=request.query,
             top_k=request.top_k,
+            retrieval_mode=request.retrieval_mode,
             tags=request.tags,
             source_types=request.source_types,
             document_ids=request.document_ids,

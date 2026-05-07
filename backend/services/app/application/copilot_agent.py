@@ -2455,6 +2455,7 @@ class CopilotAgentService:
             retrieval = self.knowledge.retrieve(
                 query=build_knowledge_query(message, plan),
                 top_k=3,
+                retrieval_mode="hybrid_v1",
             )
         except Exception:
             return {}
@@ -2712,6 +2713,7 @@ class CopilotAgentService:
             prepared["copy_draft"]["citations"] = list(knowledge_context.get("citations") or [])
             prepared["knowledge_context"] = {
                 "retrieval_id": str(knowledge_context.get("retrieval_id") or ""),
+                "retrieval_mode": str(knowledge_context.get("retrieval_mode") or "hybrid_v1"),
                 "citation_count": int(knowledge_context.get("citation_count") or len(knowledge_context.get("citations") or [])),
             }
         prepared["needs_operator_copy_approval"] = True
@@ -4462,6 +4464,7 @@ def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:
         "context_pack": {
             "format": "knowledge_context_pack.v1",
             "retrieval_id": retrieval_id,
+            "retrieval_mode": str(value.get("retrieval_mode") or "lexical_v1"),
             "citation_count": len(citations),
             "sections": sections,
         },
@@ -4576,6 +4579,7 @@ def artifact_for_knowledge_retrieval(retrieval: Dict[str, Any]) -> Dict[str, Any
         "api_path": f"/api/v1/knowledge/retrievals/{quote(retrieval_id)}" if retrieval_id else "",
         "focus": {
             "retrieval_id": retrieval_id,
+            "retrieval_mode": str(context.get("retrieval_mode") or ""),
             "citation_count": citation_count,
             "citations": list(context.get("citations") or []),
             "context_pack": context.get("context_pack") or {},

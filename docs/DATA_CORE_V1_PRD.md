@@ -9,7 +9,7 @@ Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
 - secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
 - import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
-- API-first knowledge document ingestion and retrieval through `/api/v1/knowledge`, with deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, and persisted `knowledge_evidence_pack.v1` retrieval artifacts
+- API-first knowledge document ingestion and retrieval through `/api/v1/knowledge`, with deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, local semantic-vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, and persisted `knowledge_evidence_pack.v1` retrieval artifacts
 - SQL workspace and query-to-cohort behavior as analyst/advanced paths
 - local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
 - backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
@@ -36,14 +36,20 @@ Delivered second-slice acceptance criteria:
 3. Evidence packs are exportable as `.json` artifacts without exposing raw JSON editors in the operator path.
 4. Archived chunks are excluded from retrieval unless explicitly requested.
 
+Delivered semantic-retrieval acceptance criteria:
+1. Knowledge chunks materialize deterministic local semantic-vector metadata at ingestion time.
+2. Retrieval supports compatibility `lexical_v1` and hybrid `hybrid_v1` modes.
+3. `hybrid_v1` combines lexical score, local semantic similarity, bounded feedback boosts, and final rerank score in auditable ranking signals.
+4. Ask AI uses `hybrid_v1` evidence packs for relevant setup, diagnostics, audience, workflow, experiment, and copy-drafting prompts.
+
 Delivered feedback-loop acceptance criteria:
 1. Retrieval ranking applies bounded positive or negative feedback scores from Experiment Hub AI feedback records.
 2. Feedback boosts are exposed as ranking signals on cited chunks so operators can audit why a source moved up.
 
 Remaining acceptance criteria:
 1. Add a no-code operator UI and Ask AI intake flow for knowledge documents.
-2. Add semantic embedding materialization, vector retrieval, and reranking over the stored chunks.
-3. Broaden the delivered Ask AI lexical citations into richer module-specific handoff cards and structured product-artifact retrieval.
+2. Broaden local semantic retrieval into provider-grade embedding/vector storage and structured product-artifact retrieval.
+3. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
 
 ---
 

@@ -664,7 +664,9 @@ def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client
     assert action["parameters"]["copy_draft"]["channel"] == "push"
     assert action["parameters"]["copy_draft"]["citations"][0]["citation_id"] == "C1"
     assert action["parameters"]["knowledge_context"]["retrieval_id"] == evidence_artifact["resource_id"]
+    assert action["parameters"]["knowledge_context"]["retrieval_mode"] == "hybrid_v1"
     assert evidence_artifact["focus"]["citation_count"] >= 1
+    assert evidence_artifact["focus"]["retrieval_mode"] == "hybrid_v1"
     assert evidence_artifact["focus"]["citations"][0]["document_title"] == "VIP Winback Playbook"
     assert "Evidence: [C1]" in payload["assistant_message"]
 

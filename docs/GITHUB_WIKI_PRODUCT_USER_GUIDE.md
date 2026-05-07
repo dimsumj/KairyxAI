@@ -58,7 +58,7 @@ KairyxAI is already moving toward the target AI growth platform shape: `Data Cor
 
 Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
-2. Expand the delivered Ask AI lexical evidence attachments into semantic/vector retrieval and reranking over knowledge documents plus structured artifacts.
+2. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
 3. Expand the new AI evaluation API into automated retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
 4. Expand the new AI feedback API and retrieval-ranking boosts into automatic prompt context, semantic reranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
@@ -525,17 +525,17 @@ For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connecto
 
 #### Knowledge Documents API
 
-Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. Knowledge document management is still API-first and designed for a future no-code intake UI, while Ask AI already consumes retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts.
+Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. Knowledge document management is still API-first and designed for a future no-code intake UI, while Ask AI already consumes `hybrid_v1` retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts.
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `POST /api/v1/knowledge/documents` | Create a tenant/project-scoped knowledge document from text or markdown content. | Saves document metadata, provenance, normalized tags, content hash, an ingestion job, and deterministic chunks. |
 | `GET /api/v1/knowledge/documents` | List active knowledge documents. | Add `include_archived=true` to include archived records. |
 | `GET /api/v1/knowledge/documents/{document_id}` | Read one document summary. | Add `include_chunks=true` when a client needs chunks with the document response. |
-| `GET /api/v1/knowledge/documents/{document_id}/chunks` | List chunks for retrieval/debug review. | Chunks include ordinal, text, summary, content hash, token estimate, tags, visibility, and pending embedding metadata. |
+| `GET /api/v1/knowledge/documents/{document_id}/chunks` | List chunks for retrieval/debug review. | Chunks include ordinal, text, summary, content hash, token estimate, tags, visibility, and ready local semantic-vector metadata. |
 | `GET /api/v1/knowledge/documents/{document_id}/export` | Export the full setup artifact. | Returns `knowledge_document.v1` with the document and chunks for `.json` download. |
 | `POST /api/v1/knowledge/documents/{document_id}/archive` | Archive the document and its chunks. | Archived knowledge is hidden from the active list and remains auditable/exportable. |
-| `POST /api/v1/knowledge/retrievals` | Run a tenant/project-scoped retrieval over knowledge chunks. | Returns ranked citations, snippets, full cited text, feedback boost/ranking signals, a context pack, and an export descriptor. |
+| `POST /api/v1/knowledge/retrievals` | Run a tenant/project-scoped retrieval over knowledge chunks. | Supports `retrieval_mode` values `lexical_v1` and `hybrid_v1`; returns ranked citations, snippets, full cited text, semantic/rerank signals, feedback boost/ranking signals, a context pack, and an export descriptor. |
 | `GET /api/v1/knowledge/retrievals` | List recent retrieval evidence packs. | Retrieval records are scoped like documents and preserve query, filters, citations, and context-pack metadata. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}` | Read one retrieval evidence pack. | Use this to reopen cited context for Ask AI, diagnostics, or review. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}/export` | Export the evidence pack. | Returns `knowledge_evidence_pack.v1` for `.json` download instead of exposing a raw JSON text area. |

@@ -73,7 +73,9 @@ def test_knowledge_document_ingestion_chunks_archive_and_export(client):
     chunk_items = chunks.json()["items"]
     assert len(chunk_items) == document["chunk_count"]
     assert chunk_items[0]["ordinal"] == 1
-    assert chunk_items[0]["embedding"]["status"] == "pending"
+    assert chunk_items[0]["embedding"]["status"] == "ready"
+    assert chunk_items[0]["embedding"]["model"] == "local_semantic_hash_v1"
+    assert chunk_items[0]["embedding"]["dimensions"] == 1024
     assert "Winback campaign brief" in chunk_items[0]["text"]
 
     exported = client.get(f"/api/v1/knowledge/documents/{document_id}/export", headers={"x-actor-role": "operator"})
@@ -179,6 +181,86 @@ def test_knowledge_retrieval_returns_citations_and_exportable_evidence_pack(clie
     assert export_payload["format"] == "knowledge_evidence_pack.v1"
     assert export_payload["retrieval"]["retrieval_id"] == retrieval_id
     assert export_payload["retrieval"]["citations"][0]["chunk_id"] == payload["citations"][0]["chunk_id"]
+
+
+def test_knowledge_hybrid_retrieval_uses_semantic_vectors_and_reranking(client):
+    first = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json={
+            "title": "Lapsed Player Winback Playbook",
+            "content": (
+                "Lapsed players respond when the campaign names their saved checkpoint, "
+                "shows the returning reward, and reminds them that progress is waiting."
+            ),
+            "source_type": "playbook",
+            "tags": ["push", "winback"],
+        },
+    )
+    assert first.status_code == 201
+    chunks = client.get(
+        f"/api/v1/knowledge/documents/{first.json()['document_id']}/chunks",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert chunks.status_code == 200
+    embedding = chunks.json()["items"][0]["embedding"]
+    assert embedding["status"] == "ready"
+    assert embedding["model"] == "local_semantic_hash_v1"
+    assert embedding["vector_ref"].startswith("inline:local_semantic_hash_v1:")
+
+    second = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json={
+            "title": "Subscription Billing FAQ",
+            "content": "Invoice receipts, refund timing, tax handling, and payment retry notes for account support.",
+            "source_type": "faq",
+            "tags": ["billing"],
+        },
+    )
+    assert second.status_code == 201
+
+    lexical = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={"query": "reactivation bonus progression", "top_k": 3, "retrieval_mode": "lexical_v1"},
+    )
+    assert lexical.status_code == 201
+    assert lexical.json()["retrieval_mode"] == "lexical_v1"
+    assert lexical.json()["result_count"] == 0
+
+    hybrid = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={"query": "reactivation bonus progression", "top_k": 3, "retrieval_mode": "hybrid_v1"},
+    )
+    assert hybrid.status_code == 201
+    payload = hybrid.json()
+    assert payload["retrieval_mode"] == "hybrid_v1"
+    assert payload["context_pack"]["retrieval_mode"] == "hybrid_v1"
+    assert payload["result_count"] == 1
+    citation = payload["citations"][0]
+    assert citation["document_title"] == "Lapsed Player Winback Playbook"
+    assert citation["ranking_signals"]["semantic_score"] > 0
+    assert citation["ranking_signals"]["rerank_score"] == citation["score"]
+    assert citation["ranking_signals"]["vector_model"] == "local_semantic_hash_v1"
+
+
+def test_knowledge_retrieval_rejects_unknown_retrieval_mode(client):
+    created = client.post(
+        "/api/v1/knowledge/documents",
+        headers={"x-actor-role": "operator"},
+        json=_knowledge_payload(),
+    )
+    assert created.status_code == 201
+
+    retrieval = client.post(
+        "/api/v1/knowledge/retrievals",
+        headers={"x-actor-role": "analyst"},
+        json={"query": "weekend evening push", "retrieval_mode": "unsupported"},
+    )
+    assert retrieval.status_code == 400
+    assert "retrieval_mode" in retrieval.json()["detail"]
 
 
 def test_knowledge_retrieval_is_project_scoped_and_excludes_archived_by_default(client):

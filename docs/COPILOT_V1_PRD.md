@@ -6,7 +6,7 @@
 KairyxAI is moving from a manual configuration console toward an AI-native growth marketing workspace. The operator workflow still has too many manual steps between "understand the current state" and "prepare the next controlled action":
 - Operators need to move across Data Core, Audience Engine, Experiment Hub, workflow health, and Copilot reporting to build a single tenant-level picture
 - Low-risk setup work such as connector configuration, cohort draft creation, and experiment draft creation still requires form-by-form navigation
-- Growth knowledge such as campaign briefs, SOPs, historical analyses, and playbooks is now retrievable as lexical cited evidence for recommendations and campaign drafting, with semantic/vector ranking still planned
+- Growth knowledge such as campaign briefs, SOPs, historical analyses, and playbooks is now retrievable as cited `hybrid_v1` evidence for recommendations and campaign drafting, with provider-grade vector stores and structured artifact retrieval still planned
 
 ### 1.2 Goal (v1)
 Upgrade `Insight Copilot` into a constrained prompt-first growth agent that can:
@@ -39,12 +39,12 @@ Current features to preserve:
 - backend-managed model profiles for Gemini, OpenAI-compatible local runtimes, OpenAI, and Anthropic
 - draft email and push copy generation so operators can approve, edit, and schedule in Action Orchestrator
 - artifact cards, module handoffs, and `.json` export buttons instead of raw JSON/code output text fields in the primary UI
-- Data Core retrieval evidence-pack API wired into Ask AI for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
+- Data Core retrieval evidence-pack API wired into Ask AI with `hybrid_v1` semantic/reranked citations for relevant strategy, setup, diagnostics, audience, workflow, experiment, and copywriting turns
 - Experiment Hub AI evaluation telemetry API for recording retrieval quality, citation coverage, answer relevance, copy usefulness, and prompt-to-artifact completion
 - Experiment Hub AI feedback API that records approvals, edits, ratings, sends, workflow results, and experiment outcomes, with knowledge feedback already influencing retrieval ranking
 
 Future feature plan:
-1. Expand retrieval from lexical knowledge chunks into semantic/vector retrieval over knowledge documents and structured product artifacts.
+1. Expand local semantic retrieval from knowledge chunks into provider-grade embedding/vector retrieval over knowledge documents and structured product artifacts.
 2. Broaden citation-backed context packs from Ask AI turns into every module handoff card that prepares recommendations, generated email/push copy, cohort ideas, workflow setup, experiment plans, and diagnostics.
 3. Wire Ask AI and module UIs into the AI evaluation telemetry API automatically.
 4. Wire Ask AI and module UIs into the AI feedback API automatically, then use feedback summaries in prompt context and model-based reranking.
