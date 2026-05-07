@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.ai_evaluations import AIEvaluationService, MAX_LIST_LIMIT
 from app.core import db as db_module
 from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
@@ -376,6 +377,359 @@ def test_ai_evaluation_judge_run_rejects_unknown_model_profile_without_writing_r
     )
     assert listed.status_code == 200
     assert listed.json()["items"] == []
+
+
+def test_ai_quality_scheduler_tick_records_alert_check_and_monitor_latest_check(client):
+    low_grade = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "operator"},
+        json={
+            "target_type": "push_copy_draft",
+            "target_id": "scheduled_alert_low_quality",
+            "prompt": "Draft a cited winback push.",
+            "response": "Generic message without evidence.",
+            "citations": [],
+            "artifacts": [],
+            "expected_artifact_type": "workflow",
+            "generated_title": "Hi",
+            "generated_body": "Come back.",
+        },
+    )
+    assert low_grade.status_code == 201, low_grade.text
+
+    scheduler = client.get("/api/v1/health/scheduler", headers={"x-actor-role": "analyst"})
+    assert scheduler.status_code == 200
+    assert any(item["job_id"] == "ai_quality_monitor" for item in scheduler.json()["items"])
+
+    tick = client.post(
+        "/api/v1/health/scheduler/tick",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2099-03-10T10:00:00"},
+    )
+    assert tick.status_code == 200, tick.text
+    ai_quality_job = next(item for item in tick.json()["items"] if item["job_id"] == "ai_quality_monitor")
+    assert ai_quality_job["status"] in {"warning", "critical"}
+    assert ai_quality_job["result_summary"]["alert_count"] >= 1
+    check_id = ai_quality_job["result_summary"]["check_id"]
+    assert check_id.startswith("aiqcheck_")
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        stored_check = repository.get_resource("ai_quality_alert_check", check_id)
+        assert stored_check is not None
+        assert stored_check["payload"]["format"] == "ai_quality_alert_check.v1"
+        assert stored_check["payload"]["alert_count"] >= 1
+        assert stored_check["payload"]["evaluated_at"] == "2099-03-10T10:00:00"
+        assert stored_check["payload"]["monitor"]["generated_at"] == "2099-03-10T10:00:00"
+        assert stored_check["payload"]["monitor"]["format"] == "ai_quality_monitor.v1"
+        open_alerts = [
+            item
+            for item in repository.list_resources("ai_quality_alert")
+            if item["payload"]["status"] == "open"
+        ]
+        assert any(item["payload"]["code"] == "low_average_score" for item in open_alerts)
+
+    monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert monitor.status_code == 200
+    latest = monitor.json()["latest_alert_check"]
+    assert latest["check_id"] == check_id
+    assert latest["alert_count"] >= 1
+    assert latest["export"]["format"] == "ai_quality_alert_check.v1"
+    exported = client.get(
+        f"/api/v1/experiments/ai-quality-alert-checks/{check_id}/export",
+        headers={"x-actor-role": "analyst"},
+    )
+    assert exported.status_code == 200
+    assert exported.json()["format"] == "ai_quality_alert_check.v1"
+    assert exported.json()["check"]["check_id"] == check_id
+
+    same_day_tick = client.post(
+        "/api/v1/health/scheduler/tick",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2099-03-10T12:00:00"},
+    )
+    assert same_day_tick.status_code == 200
+    same_day_job = next(item for item in same_day_tick.json()["items"] if item["job_id"] == "ai_quality_monitor")
+    assert same_day_job["status"] == "skipped"
+    assert same_day_job["reason"] == "not_due"
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        assert len(repository.list_resources("ai_quality_alert_check")) == 1
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        for item in low_grade.json()["evaluations"]:
+            assert repository.delete_resource("ai_evaluation_record", item["evaluation_id"]) is True
+        session.commit()
+
+    second_tick = client.post(
+        "/api/v1/health/scheduler/tick",
+        headers={"x-actor-role": "operator"},
+        json={"reference_time": "2099-03-11T10:00:00"},
+    )
+    assert second_tick.status_code == 200
+    second_job = next(item for item in second_tick.json()["items"] if item["job_id"] == "ai_quality_monitor")
+    assert second_job["status"] == "critical"
+    second_check_id = second_job["result_summary"]["check_id"]
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        stored_second_check = repository.get_resource("ai_quality_alert_check", second_check_id)
+        assert stored_second_check is not None
+        assert stored_second_check["payload"]["evaluated_at"] == "2099-03-11T10:00:00"
+        assert stored_second_check["payload"]["monitor"]["generated_at"] == "2099-03-11T10:00:00"
+        resolved_low_average = repository.get_resource("ai_quality_alert", "ai_quality:low_average_score")
+        assert resolved_low_average is not None
+        assert resolved_low_average["payload"]["status"] == "resolved"
+        resolved_low_average_payload = dict(resolved_low_average["payload"])
+        no_records_alert = repository.get_resource("ai_quality_alert", "ai_quality:no_evaluation_records")
+        assert no_records_alert is not None
+        no_records_payload = dict(no_records_alert["payload"])
+        assert repository.get_resource("ai_quality_alert", "ai_quality:high_negative_feedback") is None
+        session.commit()
+
+    late_grade = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "operator"},
+        json={
+            "target_type": "push_copy_draft",
+            "target_id": "late_negative_feedback_target",
+            "prompt": "Draft a cited winback push.",
+            "response": "Return for a timed reward. Source: segment A churn model.",
+            "citations": [{"id": "src_segment_a"}],
+            "artifacts": [{"id": "artifact_push_draft"}],
+            "expected_artifact_type": "workflow",
+            "generated_title": "Reward waiting",
+            "generated_body": "Come back today for a limited reward based on your recent play history.",
+        },
+    )
+    assert late_grade.status_code == 201, late_grade.text
+    late_feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_edit",
+            "target_type": "push_copy_draft",
+            "target_id": "late_negative_feedback_target",
+            "comments": "The offer still needed stronger personalization.",
+        },
+    )
+    assert late_feedback.status_code == 201, late_feedback.text
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        for item in late_grade.json()["evaluations"]:
+            record = repository.get_resource("ai_evaluation_record", item["evaluation_id"])
+            assert record is not None
+            payload = {**record["payload"], "recorded_at": "2099-03-10T18:00:00"}
+            repository.upsert_resource("ai_evaluation_record", item["evaluation_id"], status="recorded", name=record["name"], payload=payload)
+        feedback_id = late_feedback.json()["feedback_id"]
+        feedback_record = repository.get_resource("ai_feedback_record", feedback_id)
+        assert feedback_record is not None
+        feedback_payload = {**feedback_record["payload"], "recorded_at": "2099-03-10T18:00:00"}
+        repository.upsert_resource("ai_feedback_record", feedback_id, status="recorded", name=feedback_record["name"], payload=feedback_payload)
+        repository.upsert_resource(
+            "ai_evaluation_record",
+            "aieval_historical_backfill",
+            status="recorded",
+            name="answer_relevance",
+            payload={
+                "evaluation_id": "aieval_historical_backfill",
+                "evaluation_type": "answer_relevance",
+                "target_type": "push_copy_draft",
+                "target_id": "historical_backfill",
+                "outcome": "accepted",
+                "score": 0.95,
+                "score_source": "manual",
+                "dimensions": {
+                    "answer_relevance": 0.95,
+                    "campaign_copy_usefulness": 0.95,
+                    "citation_coverage": 0.95,
+                    "prompt_to_artifact_completion": 0.95,
+                    "retrieval_quality": 0.95,
+                },
+                "citation_ids": ["historical_source"],
+                "artifact_ids": ["historical_artifact"],
+                "prompt_summary": "Historical check record.",
+                "response_summary": "Historical response.",
+                "comments": "",
+                "source": "fixture",
+                "metadata": {},
+                "evaluated_by": "fixture",
+                "status": "recorded",
+                "recorded_at": "2099-03-08T10:00:00",
+                "export": {"format": "ai_evaluation_record.v1", "resource_id": "aieval_historical_backfill"},
+            },
+        )
+        repository.upsert_resource(
+            "ai_feedback_record",
+            "aifb_historical_monitor",
+            status="recorded",
+            name="operator_approval",
+            payload={
+                "feedback_id": "aifb_historical_monitor",
+                "feedback_type": "operator_approval",
+                "target_type": "push_copy_draft",
+                "target_id": "historical_backfill",
+                "sentiment": "positive",
+                "weight": 1.0,
+                "rating": None,
+                "citation_ids": [],
+                "artifact_ids": [],
+                "related_evaluation_id": "aieval_historical_backfill",
+                "change_summary": "",
+                "outcome_metrics": {},
+                "comments": "Historical monitor feedback.",
+                "source": "fixture",
+                "metadata": {},
+                "recorded_by": "fixture",
+                "status": "recorded",
+                "recorded_at": "2099-03-08T12:00:00",
+                "export": {"format": "ai_feedback_record.v1", "resource_id": "aifb_historical_monitor"},
+            },
+        )
+        for index in range(MAX_LIST_LIMIT + 5):
+            evaluation_id = f"aieval_future_noise_{index}"
+            repository.upsert_resource(
+                "ai_evaluation_record",
+                evaluation_id,
+                status="recorded",
+                name="answer_relevance",
+                payload={
+                    "evaluation_id": evaluation_id,
+                    "evaluation_type": "answer_relevance",
+                    "target_type": "push_copy_draft",
+                    "target_id": f"future_noise_{index}",
+                    "outcome": "accepted",
+                    "score": 0.99,
+                    "score_source": "manual",
+                    "dimensions": {"answer_relevance": 0.99},
+                    "citation_ids": [],
+                    "artifact_ids": [],
+                    "prompt_summary": "Future noise.",
+                    "response_summary": "Future response.",
+                    "comments": "",
+                    "source": "fixture",
+                    "metadata": {},
+                    "evaluated_by": "fixture",
+                    "status": "recorded",
+                    "recorded_at": "2099-03-10T19:00:00",
+                    "export": {"format": "ai_evaluation_record.v1", "resource_id": evaluation_id},
+                },
+            )
+            old_evaluation_noise_id = f"aieval_old_monitor_noise_{index}"
+            repository.upsert_resource(
+                "ai_evaluation_record",
+                old_evaluation_noise_id,
+                status="recorded",
+                name="answer_relevance",
+                payload={
+                    "evaluation_id": old_evaluation_noise_id,
+                    "evaluation_type": "answer_relevance",
+                    "target_type": "push_copy_draft",
+                    "target_id": f"old_monitor_noise_{index}",
+                    "outcome": "accepted",
+                    "score": 0.99,
+                    "score_source": "manual",
+                    "dimensions": {
+                        "answer_relevance": 0.99,
+                        "campaign_copy_usefulness": 0.99,
+                        "citation_coverage": 0.99,
+                        "prompt_to_artifact_completion": 0.99,
+                        "retrieval_quality": 0.99,
+                    },
+                    "citation_ids": [],
+                    "artifact_ids": [],
+                    "prompt_summary": "Older monitor noise.",
+                    "response_summary": "Older response.",
+                    "comments": "",
+                    "source": "fixture",
+                    "metadata": {},
+                    "evaluated_by": "fixture",
+                    "status": "recorded",
+                    "recorded_at": "2099-03-07T10:00:00",
+                    "export": {"format": "ai_evaluation_record.v1", "resource_id": old_evaluation_noise_id},
+                },
+            )
+            feedback_noise_id = f"aifb_non_monitor_noise_{index}"
+            repository.upsert_resource(
+                "ai_feedback_record",
+                feedback_noise_id,
+                status="recorded",
+                name="operator_edit",
+                payload={
+                    "feedback_id": feedback_noise_id,
+                    "feedback_type": "operator_edit",
+                    "target_type": "support_ticket",
+                    "target_id": f"non_monitor_noise_{index}",
+                    "sentiment": "negative",
+                    "weight": -1.0,
+                    "rating": None,
+                    "citation_ids": [],
+                    "artifact_ids": [],
+                    "related_evaluation_id": "",
+                    "change_summary": "",
+                    "outcome_metrics": {},
+                    "comments": "Non-monitor feedback noise.",
+                    "source": "fixture",
+                    "metadata": {},
+                    "recorded_by": "fixture",
+                    "status": "recorded",
+                    "recorded_at": "2099-03-08T13:00:00",
+                    "export": {"format": "ai_feedback_record.v1", "resource_id": feedback_noise_id},
+                },
+            )
+            monitor_feedback_noise_id = f"aifb_old_monitor_noise_{index}"
+            repository.upsert_resource(
+                "ai_feedback_record",
+                monitor_feedback_noise_id,
+                status="recorded",
+                name="operator_approval",
+                payload={
+                    "feedback_id": monitor_feedback_noise_id,
+                    "feedback_type": "operator_approval",
+                    "target_type": "push_copy_draft",
+                    "target_id": f"old_monitor_noise_{index}",
+                    "sentiment": "positive",
+                    "weight": 1.0,
+                    "rating": None,
+                    "citation_ids": [],
+                    "artifact_ids": [],
+                    "related_evaluation_id": "",
+                    "change_summary": "",
+                    "outcome_metrics": {},
+                    "comments": "Older monitor feedback noise.",
+                    "source": "fixture",
+                    "metadata": {},
+                    "recorded_by": "fixture",
+                    "status": "recorded",
+                    "recorded_at": "2099-03-07T12:00:00",
+                    "export": {"format": "ai_feedback_record.v1", "resource_id": monitor_feedback_noise_id},
+                },
+            )
+        session.commit()
+
+    with db_module.get_session_factory()() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        backfill = AIEvaluationService(repository).run_alert_check(reference_time="2099-03-09T10:00:00")
+        assert backfill["check_id"] != second_check_id
+        assert not any(alert["code"] == "high_negative_feedback" for alert in backfill["alerts"])
+        assert backfill["summary"]["total_records"] == MAX_LIST_LIMIT
+        assert backfill["monitor"]["recent_records"][0]["evaluation_id"] == "aieval_historical_backfill"
+        assert backfill["monitor"]["feedback_summary"]["total_records"] == MAX_LIST_LIMIT
+        assert backfill["monitor"]["feedback_summary"]["positive_rate"] == 1.0
+        assert any(
+            item["target_id"] == "historical_backfill"
+            for item in backfill["monitor"]["feedback_learning"]["top_positive_targets"]
+        )
+        assert repository.get_resource("ai_quality_alert", "ai_quality:low_average_score")["payload"] == resolved_low_average_payload
+        assert repository.get_resource("ai_quality_alert", "ai_quality:no_evaluation_records")["payload"] == no_records_payload
+        assert repository.get_resource("ai_quality_alert", "ai_quality:high_negative_feedback") is None
+        session.commit()
+
+    latest_after_backfill = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert latest_after_backfill.status_code == 200
+    assert latest_after_backfill.json()["latest_alert_check"]["check_id"] == second_check_id
 
 
 def test_ai_quality_monitor_returns_alerts_diagnostics_and_export(client):

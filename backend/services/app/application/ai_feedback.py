@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 
@@ -111,6 +111,7 @@ class AIFeedbackService:
         feedback_type: str | None = None,
         target_type: str | None = None,
         target_id: str | None = None,
+        recorded_before: datetime | None = None,
         limit: int = 100,
     ) -> list[Dict[str, Any]]:
         normalized_type = _normalize_optional_feedback_type(feedback_type)
@@ -120,6 +121,8 @@ class AIFeedbackService:
         items = []
         for record in self.repository.list_resources(AI_FEEDBACK_RESOURCE_TYPE):
             item = self._resource_to_feedback(record)
+            if not _recorded_at_on_or_before(item, recorded_before):
+                continue
             if normalized_type and item.get("feedback_type") != normalized_type:
                 continue
             if normalized_target_type and item.get("target_type") != normalized_target_type:
@@ -127,9 +130,7 @@ class AIFeedbackService:
             if normalized_target_id and item.get("target_id") != normalized_target_id:
                 continue
             items.append(item)
-            if len(items) >= normalized_limit:
-                break
-        return items
+        return sorted(items, key=_recorded_at_sort_key, reverse=True)[:normalized_limit]
 
     def get_feedback(self, feedback_id: str) -> Dict[str, Any] | None:
         record = self.repository.get_resource(AI_FEEDBACK_RESOURCE_TYPE, feedback_id)
@@ -148,8 +149,8 @@ class AIFeedbackService:
             },
         }
 
-    def summarize(self, *, target_type: str | None = None) -> Dict[str, Any]:
-        items = self.list_feedback(target_type=target_type, limit=MAX_LIST_LIMIT)
+    def summarize(self, *, target_type: str | None = None, recorded_before: datetime | None = None) -> Dict[str, Any]:
+        items = self.list_feedback(target_type=target_type, recorded_before=recorded_before, limit=MAX_LIST_LIMIT)
         sentiment_counts: Dict[str, int] = {}
         type_counts: Dict[str, int] = {}
         target_counts: Dict[str, int] = {}
@@ -182,10 +183,10 @@ class AIFeedbackService:
             "latest_recorded_at": max((str(item.get("recorded_at") or "") for item in items), default=""),
         }
 
-    def learning_profile(self, *, target_type: str | None = None, limit: int = MAX_LIST_LIMIT) -> Dict[str, Any]:
+    def learning_profile(self, *, target_type: str | None = None, limit: int = MAX_LIST_LIMIT, recorded_before: datetime | None = None) -> Dict[str, Any]:
         normalized_target_type = _normalize_optional_token(target_type, max_length=80)
-        items = self.list_feedback(target_type=normalized_target_type or None, limit=limit)
-        summary = _redact_learning_summary(self.summarize(target_type=normalized_target_type or None))
+        items = self.list_feedback(target_type=normalized_target_type or None, recorded_before=recorded_before, limit=limit)
+        summary = _redact_learning_summary(self.summarize(target_type=normalized_target_type or None, recorded_before=recorded_before))
         target_rows: Dict[str, Dict[str, Any]] = {}
         for item in items:
             raw_target_type = str(item.get("target_type") or "unknown")
@@ -276,6 +277,33 @@ def _normalize_optional_feedback_type(value: str | None) -> str:
     if value is None or str(value).strip() == "":
         return ""
     return _normalize_feedback_type(value)
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _recorded_at_on_or_before(item: Dict[str, Any], reference_time: datetime | None) -> bool:
+    if reference_time is None:
+        return True
+    recorded_at = _parse_optional_datetime(item.get("recorded_at"))
+    return recorded_at is None or recorded_at <= reference_time
+
+
+def _recorded_at_sort_key(item: Dict[str, Any]) -> tuple[datetime, str]:
+    return (
+        _parse_optional_datetime(item.get("recorded_at")) or datetime.min,
+        str(item.get("feedback_id") or item.get("resource_id") or ""),
+    )
 
 
 def _resolve_sentiment(sentiment: str | None, feedback_type: str, rating: float | None) -> str:

@@ -812,6 +812,7 @@ assert_ai_quality_monitor_ui() {
       '#ai-quality-records-list',
       '#ai-quality-refresh-btn',
       '#ai-quality-export-btn',
+      '#ai-quality-export-latest-check-btn',
     ];
     for (const selector of requiredSelectors) {
       if (await page.locator(selector).count() === 0) {
@@ -840,7 +841,7 @@ assert_ai_quality_monitor_ui() {
       const cards = document.getElementById('ai-quality-summary-cards')?.textContent || '';
       const status = document.getElementById('ai-quality-status')?.textContent || '';
       const readiness = document.getElementById('ai-quality-judge-readiness-list')?.textContent || '';
-      return cards.includes('Evaluation Records') && readiness.includes('Model Judge') && status.trim().length > 0;
+      return cards.includes('Evaluation Records') && cards.includes('Scheduled Check') && readiness.includes('Model Judge') && status.trim().length > 0;
     }, { timeout: 7000 });
 
     return {

@@ -11283,6 +11283,7 @@ export function initializeOperatorConsole() {
             const aiQualityStatus = document.getElementById('ai-quality-status');
             const aiQualityRefreshBtn = document.getElementById('ai-quality-refresh-btn');
             const aiQualityExportBtn = document.getElementById('ai-quality-export-btn');
+            const aiQualityExportLatestCheckBtn = document.getElementById('ai-quality-export-latest-check-btn');
             const copilotResponseOutput = document.getElementById('copilot-response-output');
             const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
             const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
@@ -15590,6 +15591,7 @@ export function initializeOperatorConsole() {
                 const summary = payload?.summary || {};
                 const feedbackSummary = payload?.feedback_summary || {};
                 const dimensionAverages = summary.dimension_averages || {};
+                const latestAlertCheck = payload?.latest_alert_check || {};
                 const cards = [
                     { label: 'Monitor Status', value: formatMonitorLabel(payload?.status || 'unknown') },
                     { label: 'Evaluation Records', value: formatCount(summary.total_records || 0) },
@@ -15597,6 +15599,7 @@ export function initializeOperatorConsole() {
                     { label: 'Citation Coverage', value: formatMonitorPercent(dimensionAverages.citation_coverage) },
                     { label: 'Retrieval Quality', value: formatMonitorPercent(dimensionAverages.retrieval_quality) },
                     { label: 'Negative Feedback', value: formatMonitorPercent(feedbackSummary.negative_rate || 0) },
+                    { label: 'Scheduled Check', value: latestAlertCheck.check_id ? formatMonitorLabel(latestAlertCheck.status) : 'Not run' },
                 ];
                 if (aiQualitySummaryCards) {
                     aiQualitySummaryCards.innerHTML = cards.map((item) => `
@@ -15605,6 +15608,10 @@ export function initializeOperatorConsole() {
                             <div class="value">${escapeHtml(item.value)}</div>
                         </div>
                     `).join('');
+                }
+                if (aiQualityExportLatestCheckBtn) {
+                    aiQualityExportLatestCheckBtn.disabled = !latestAlertCheck.check_id;
+                    aiQualityExportLatestCheckBtn.dataset.checkId = latestAlertCheck.check_id || '';
                 }
                 renderSimpleTable(
                     aiQualityAlertsList,
@@ -15719,6 +15726,21 @@ export function initializeOperatorConsole() {
                     setInlineStatus(aiQualityStatus, 'Evaluation record exported.');
                 } catch (error) {
                     setInlineStatus(aiQualityStatus, error.message || 'Failed to export evaluation record.', true);
+                }
+            }
+
+            async function exportLatestAiQualityAlertCheck() {
+                const checkId = String(aiQualityExportLatestCheckBtn?.dataset.checkId || '').trim();
+                if (!checkId) {
+                    setInlineStatus(aiQualityStatus, 'No scheduled AI quality check is available yet.', true);
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/experiments/ai-quality-alert-checks/${encodeURIComponent(checkId)}/export`);
+                    downloadJsonPayload(payload, `ai-quality-alert-check-${checkId}.json`);
+                    setInlineStatus(aiQualityStatus, 'AI quality check exported.');
+                } catch (error) {
+                    setInlineStatus(aiQualityStatus, error.message || 'Failed to export AI quality check.', true);
                 }
             }
 
@@ -17270,6 +17292,7 @@ export function initializeOperatorConsole() {
             document.getElementById('experiment-ingest-outcomes-btn').addEventListener('click', ingestExperimentOutcomes);
             aiQualityRefreshBtn?.addEventListener('click', loadAiQualityMonitor);
             aiQualityExportBtn?.addEventListener('click', exportAiQualityMonitor);
+            aiQualityExportLatestCheckBtn?.addEventListener('click', exportLatestAiQualityAlertCheck);
             aiQualityRecordsList?.addEventListener('click', async (event) => {
                 const button = event.target instanceof Element ? event.target.closest('[data-ai-quality-export-evaluation]') : null;
                 if (!button) {

@@ -18,6 +18,7 @@ from app.api.schemas.experiments import (
     AIEvaluationRequest,
     AIEvaluationResponse,
     AIEvaluationSummaryResponse,
+    AIQualityAlertCheckExportResponse,
     AIQualityMonitorExportResponse,
     AIQualityMonitorResponse,
     ExperimentConfigRequest,
@@ -348,6 +349,27 @@ def export_ai_quality_monitor(
         action_type="ai_quality_monitor_exported",
         resource_type="ai_evaluation_record",
         resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/ai-quality-alert-checks/{check_id}/export", response_model=AIQualityAlertCheckExportResponse)
+def export_ai_quality_alert_check(
+    check_id: str,
+    http_request: Request,
+    service: AIEvaluationService = Depends(get_ai_evaluation_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.evaluations.read")
+    payload = service.export_alert_check(check_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"AI quality alert check '{check_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_quality_alert_check_exported",
+        resource_type="ai_quality_alert_check",
+        resource_id=check_id,
         payload=payload,
     )
 

@@ -6,15 +6,18 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from app.application.ai_feedback import AIFeedbackService
+from app.application.ai_feedback import AI_FEEDBACK_RESOURCE_TYPE, AIFeedbackService
 from app.application.text_model_runtime import TextModelRuntimeResolver
 
 
 AI_EVALUATION_RESOURCE_TYPE = "ai_evaluation_record"
 AI_EVALUATION_JUDGE_RUN_RESOURCE_TYPE = "ai_evaluation_judge_run"
+AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE = "ai_quality_alert_check"
+AI_QUALITY_ALERT_RESOURCE_TYPE = "ai_quality_alert"
 AI_EVALUATION_EXPORT_FORMAT = "ai_evaluation_record.v1"
 AI_EVALUATION_MONITOR_EXPORT_FORMAT = "ai_quality_monitor.v1"
 AI_EVALUATION_JUDGE_RUN_EXPORT_FORMAT = "ai_evaluation_judge_run.v1"
+AI_QUALITY_ALERT_CHECK_EXPORT_FORMAT = "ai_quality_alert_check.v1"
 MODEL_JUDGE_ADAPTER_NAME = "model_judge_adapter_v1"
 OFFLINE_EVAL_ADAPTER_NAME = "offline_eval_adapter_v1"
 
@@ -379,6 +382,7 @@ class AIEvaluationService:
         evaluation_type: str | None = None,
         target_type: str | None = None,
         target_id: str | None = None,
+        recorded_before: datetime | None = None,
         limit: int = 100,
     ) -> list[Dict[str, Any]]:
         normalized_type = _normalize_optional_evaluation_type(evaluation_type)
@@ -388,6 +392,8 @@ class AIEvaluationService:
         items = []
         for record in self.repository.list_resources(AI_EVALUATION_RESOURCE_TYPE):
             item = self._resource_to_evaluation(record)
+            if not _recorded_at_on_or_before(item, recorded_before):
+                continue
             if normalized_type and item.get("evaluation_type") != normalized_type:
                 continue
             if normalized_target_type and item.get("target_type") != normalized_target_type:
@@ -395,9 +401,7 @@ class AIEvaluationService:
             if normalized_target_id and item.get("target_id") != normalized_target_id:
                 continue
             items.append(item)
-            if len(items) >= normalized_limit:
-                break
-        return items
+        return sorted(items, key=_recorded_at_sort_key, reverse=True)[:normalized_limit]
 
     def get_evaluation(self, evaluation_id: str) -> Dict[str, Any] | None:
         record = self.repository.get_resource(AI_EVALUATION_RESOURCE_TYPE, evaluation_id)
@@ -420,21 +424,16 @@ class AIEvaluationService:
         items = self.list_evaluations(evaluation_type=evaluation_type, target_type=target_type, limit=MAX_LIST_LIMIT)
         return _summarize_items(items)
 
-    def monitor(self) -> Dict[str, Any]:
-        all_items = self.list_evaluations(limit=MAX_LIST_LIMIT)
-        scoped_items = [
-            item
-            for item in all_items
-            if str(item.get("target_type") or "") in MONITOR_TARGET_TYPES
-        ]
-        items = scoped_items
+    def monitor(self, *, reference_time: str | None = None) -> Dict[str, Any]:
+        generated_at = _parse_reference_time(reference_time)
+        items, ignored_non_monitor_records = self._monitor_evaluation_items(generated_at)
         summary = _summarize_items(items)
         feedback = AIFeedbackService(self.repository)
-        feedback_items = _monitor_feedback_items(feedback)
+        feedback_items = _monitor_feedback_items(feedback, reference_time=generated_at)
         feedback_summary = _summarize_feedback_items(feedback_items)
-        feedback_learning = _monitor_feedback_learning(feedback, feedback_items)
+        feedback_learning = _monitor_feedback_learning(feedback, feedback_items, reference_time=generated_at)
         dimension_cards = _dimension_cards(summary.get("dimension_averages") or {})
-        alerts = _monitor_alerts(summary, feedback_summary, dimension_cards)
+        alerts = _monitor_alerts(summary, feedback_summary, dimension_cards, reference_time=generated_at)
         judge_readiness = _judge_readiness(items)
         if judge_readiness.get("drift_alert"):
             alerts.append(judge_readiness["drift_alert"])
@@ -446,11 +445,11 @@ class AIEvaluationService:
         return {
             "format": AI_EVALUATION_MONITOR_EXPORT_FORMAT,
             "status": status,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": generated_at.isoformat(),
             "scope": {
                 "target_types": sorted(MONITOR_TARGET_TYPES),
                 "record_count": len(items),
-                "ignored_non_monitor_records": max(0, len(all_items) - len(scoped_items)),
+                "ignored_non_monitor_records": ignored_non_monitor_records,
             },
             "summary": summary,
             "feedback_summary": feedback_summary,
@@ -460,13 +459,71 @@ class AIEvaluationService:
             "dimension_cards": dimension_cards,
             "coverage_gaps": _coverage_gaps(summary),
             "judge_readiness": judge_readiness,
+            "latest_alert_check": self._latest_alert_check(),
             "recent_records": recent_records,
             "export": {
                 "format": AI_EVALUATION_MONITOR_EXPORT_FORMAT,
                 "resource_id": "ai_quality_monitor",
-                "includes": ["summary", "feedback_summary", "alerts", "dimension_cards", "judge_readiness", "recent_records"],
+                "includes": ["summary", "feedback_summary", "alerts", "dimension_cards", "judge_readiness", "latest_alert_check", "recent_records"],
             },
         }
+
+    def run_alert_check(self, *, reference_time: str | None = None) -> Dict[str, Any]:
+        evaluated_at = _parse_reference_time(reference_time).isoformat()
+        monitor = self.monitor(reference_time=evaluated_at)
+        check_id = f"aiqcheck_{uuid.uuid4().hex[:20]}"
+        alerts = [_compact_alert_check_alert(item) for item in list(monitor.get("alerts") or [])]
+        warning_count = sum(1 for item in alerts if item.get("severity") == "warning")
+        critical_count = sum(1 for item in alerts if item.get("severity") == "critical")
+        payload = {
+            "format": AI_QUALITY_ALERT_CHECK_EXPORT_FORMAT,
+            "check_id": check_id,
+            "status": str(monitor.get("status") or "unknown"),
+            "evaluated_at": evaluated_at,
+            "alert_count": len(alerts),
+            "warning_count": warning_count,
+            "critical_count": critical_count,
+            "coverage_gap_count": len(list(monitor.get("coverage_gaps") or [])),
+            "summary": {
+                "total_records": dict(monitor.get("summary") or {}).get("total_records", 0),
+                "average_score": dict(monitor.get("summary") or {}).get("average_score"),
+                "negative_rate": dict(monitor.get("summary") or {}).get("negative_rate", 0.0),
+                "latest_recorded_at": dict(monitor.get("summary") or {}).get("latest_recorded_at", ""),
+                "model_judge_records": dict(monitor.get("judge_readiness") or {}).get("model_judge_records", 0),
+                "offline_eval_records": dict(monitor.get("judge_readiness") or {}).get("offline_eval_records", 0),
+            },
+            "alerts": alerts,
+            "monitor": {
+                key: value
+                for key, value in monitor.items()
+                if key not in {"latest_alert_check", "audit_id", "masked_fields"}
+            },
+            "export": {
+                "format": AI_QUALITY_ALERT_CHECK_EXPORT_FORMAT,
+                "resource_id": check_id,
+                "includes": ["summary", "alerts", "coverage_gap_count", "monitor"],
+            },
+        }
+        self.repository.upsert_resource(
+            AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE,
+            check_id,
+            status=str(payload["status"]),
+            name=str(payload["status"]),
+            payload=payload,
+        )
+        self.repository.record_resource_event(
+            AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE,
+            check_id,
+            event_type="ai_quality_alert_check_recorded",
+            payload={
+                "check_id": check_id,
+                "status": payload["status"],
+                "alert_count": payload["alert_count"],
+                "evaluated_at": evaluated_at,
+            },
+        )
+        self._persist_alert_check_alerts(alerts=alerts, evaluated_at=evaluated_at, check_id=check_id)
+        return payload
 
     def export_monitor(self) -> Dict[str, Any]:
         monitor = self.monitor()
@@ -475,6 +532,23 @@ class AIEvaluationService:
             "monitor": {
                 key: value
                 for key, value in monitor.items()
+                if key not in {"audit_id", "masked_fields"}
+            },
+        }
+
+    def export_alert_check(self, check_id: str) -> Dict[str, Any] | None:
+        normalized_id = _clean_text(check_id, max_length=140)
+        if not normalized_id:
+            return None
+        record = self.repository.get_resource(AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE, normalized_id)
+        if record is None:
+            return None
+        payload = dict(record.get("payload") or {})
+        return {
+            "format": AI_QUALITY_ALERT_CHECK_EXPORT_FORMAT,
+            "check": {
+                key: value
+                for key, value in payload.items()
                 if key not in {"audit_id", "masked_fields"}
             },
         }
@@ -494,6 +568,120 @@ class AIEvaluationService:
             "updated_by": record.get("updated_by") or payload.get("updated_by") or "system",
             "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",
         }
+
+    def _monitor_evaluation_items(self, reference_time: datetime) -> tuple[list[Dict[str, Any]], int]:
+        scoped_items: list[Dict[str, Any]] = []
+        ignored_non_monitor_records = 0
+        for record in self.repository.list_resources(AI_EVALUATION_RESOURCE_TYPE):
+            item = self._resource_to_evaluation(record)
+            if not _recorded_at_on_or_before(item, reference_time):
+                continue
+            if str(item.get("target_type") or "") not in MONITOR_TARGET_TYPES:
+                ignored_non_monitor_records += 1
+                continue
+            scoped_items.append(item)
+        return sorted(scoped_items, key=_recorded_at_sort_key, reverse=True)[:MAX_LIST_LIMIT], ignored_non_monitor_records
+
+    def _latest_alert_check(self) -> Dict[str, Any]:
+        records = self.repository.list_resources(AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE)
+        if not records:
+            return {}
+        latest_record = sorted(records, key=_alert_check_sort_key, reverse=True)[0]
+        payload = dict(latest_record.get("payload") or {})
+        return {
+            "format": str(payload.get("format") or AI_QUALITY_ALERT_CHECK_EXPORT_FORMAT),
+            "check_id": str(payload.get("check_id") or latest_record.get("resource_id") or ""),
+            "status": str(payload.get("status") or latest_record.get("status") or "unknown"),
+            "evaluated_at": str(payload.get("evaluated_at") or ""),
+            "alert_count": int(payload.get("alert_count") or 0),
+            "warning_count": int(payload.get("warning_count") or 0),
+            "critical_count": int(payload.get("critical_count") or 0),
+            "coverage_gap_count": int(payload.get("coverage_gap_count") or 0),
+            "export": dict(payload.get("export") or {}),
+        }
+
+    def _persist_alert_check_alerts(self, *, alerts: list[Dict[str, Any]], evaluated_at: str, check_id: str) -> None:
+        evaluated_time = _parse_optional_datetime(evaluated_at) or datetime.min
+        if self._has_newer_alert_check(evaluated_time):
+            return
+        active_alerts = {
+            _ai_quality_alert_id(str(item.get("code") or "")): dict(item)
+            for item in alerts
+            if str(item.get("code") or "").strip()
+        }
+        existing_alerts = {
+            str(record.get("resource_id") or ""): record
+            for record in self.repository.list_resources(AI_QUALITY_ALERT_RESOURCE_TYPE)
+        }
+        for alert_id, alert in active_alerts.items():
+            if self._has_newer_alert_check(evaluated_time):
+                return
+            existing_payload = dict((existing_alerts.get(alert_id) or {}).get("payload") or {})
+            existing_time = _alert_state_time(existing_payload)
+            if existing_time is not None and existing_time > evaluated_time:
+                continue
+            first_seen_at = str(existing_payload.get("first_seen_at") or evaluated_at)
+            previous_status = str(existing_payload.get("status") or "")
+            payload = {
+                **alert,
+                "alert_id": alert_id,
+                "module": "experiment_hub",
+                "status": "open",
+                "first_seen_at": first_seen_at,
+                "last_seen_at": evaluated_at,
+                "resolved_at": None,
+                "last_check_id": check_id,
+            }
+            self.repository.upsert_resource(
+                AI_QUALITY_ALERT_RESOURCE_TYPE,
+                alert_id,
+                status="open",
+                name=alert.get("code"),
+                payload=payload,
+            )
+            event_type = "alert_opened" if previous_status != "open" else "alert_updated"
+            self.repository.record_resource_event(AI_QUALITY_ALERT_RESOURCE_TYPE, alert_id, event_type=event_type, payload=payload)
+        for alert_id, record in existing_alerts.items():
+            if self._has_newer_alert_check(evaluated_time):
+                return
+            if alert_id in active_alerts:
+                continue
+            existing_payload = dict(record.get("payload") or {})
+            existing_time = _alert_state_time(existing_payload)
+            if existing_time is not None and existing_time > evaluated_time:
+                continue
+            if str(existing_payload.get("status") or "") == "resolved":
+                continue
+            payload = {
+                **existing_payload,
+                "status": "resolved",
+                "last_seen_at": evaluated_at,
+                "resolved_at": evaluated_at,
+                "resolved_check_id": check_id,
+            }
+            self.repository.upsert_resource(
+                AI_QUALITY_ALERT_RESOURCE_TYPE,
+                alert_id,
+                status="resolved",
+                name=existing_payload.get("code"),
+                payload=payload,
+            )
+            self.repository.record_resource_event(AI_QUALITY_ALERT_RESOURCE_TYPE, alert_id, event_type="alert_resolved", payload=payload)
+
+    def _latest_alert_check_time(self) -> datetime | None:
+        values = [
+            parsed
+            for parsed in (
+                _parse_optional_datetime(dict(record.get("payload") or {}).get("evaluated_at"))
+                for record in self.repository.list_resources(AI_QUALITY_ALERT_CHECK_RESOURCE_TYPE)
+            )
+            if parsed is not None
+        ]
+        return max(values) if values else None
+
+    def _has_newer_alert_check(self, evaluated_time: datetime) -> bool:
+        latest_check_time = self._latest_alert_check_time()
+        return latest_check_time is not None and latest_check_time > evaluated_time
 
 
 def _normalize_judge_run_type(value: str) -> str:
@@ -681,6 +869,41 @@ def _parse_json_object(value: Any) -> Dict[str, Any]:
     return parsed
 
 
+def _compact_alert_check_alert(item: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "severity": str(item.get("severity") or ""),
+        "code": str(item.get("code") or ""),
+        "title": _clean_text(item.get("title"), max_length=160),
+        "detail": _clean_text(item.get("detail"), max_length=500),
+    }
+
+
+def _ai_quality_alert_id(code: str) -> str:
+    normalized = _normalize_token(code or "unknown", "alert_code", max_length=120)
+    return f"ai_quality:{normalized}"
+
+
+def _alert_check_sort_key(record: Dict[str, Any]) -> tuple[datetime, str]:
+    payload = dict(record.get("payload") or {})
+    return (
+        _parse_optional_datetime(payload.get("evaluated_at")) or datetime.min,
+        str(payload.get("check_id") or record.get("resource_id") or ""),
+    )
+
+
+def _alert_state_time(payload: Dict[str, Any]) -> datetime | None:
+    values = [
+        parsed
+        for parsed in (
+            _parse_optional_datetime(payload.get("resolved_at")),
+            _parse_optional_datetime(payload.get("last_seen_at")),
+            _parse_optional_datetime(payload.get("first_seen_at")),
+        )
+        if parsed is not None
+    ]
+    return max(values) if values else None
+
+
 def _merge_ids(*groups: list[Any]) -> list[str]:
     values: list[str] = []
     for group in groups:
@@ -781,6 +1004,8 @@ def _monitor_alerts(
     summary: Dict[str, Any],
     feedback_summary: Dict[str, Any],
     dimension_cards: list[Dict[str, Any]],
+    *,
+    reference_time: datetime | None = None,
 ) -> list[Dict[str, Any]]:
     alerts: list[Dict[str, Any]] = []
     total = int(summary.get("total_records") or 0)
@@ -810,7 +1035,7 @@ def _monitor_alerts(
         alerts.append(_monitor_alert("critical", "high_negative_feedback", "Operator feedback is strongly negative", f"Negative feedback rate is {feedback_negative_rate:.0%}."))
     elif feedback_negative_rate > MONITOR_NEGATIVE_WARNING:
         alerts.append(_monitor_alert("warning", "high_negative_feedback", "Operator feedback needs review", f"Negative feedback rate is {feedback_negative_rate:.0%}."))
-    stale_hours = _hours_since(summary.get("latest_recorded_at"))
+    stale_hours = _hours_since(summary.get("latest_recorded_at"), reference_time=reference_time)
     if stale_hours is not None and stale_hours > MONITOR_STALE_HOURS:
         alerts.append(_monitor_alert("warning", "stale_evaluations", "AI quality checks are stale", f"Latest record is {int(stale_hours)} hours old."))
     failed_count = int(dict(summary.get("outcome_counts") or {}).get("failed") or 0)
@@ -918,12 +1143,16 @@ def _compact_monitor_record(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _monitor_feedback_items(feedback: AIFeedbackService) -> list[Dict[str, Any]]:
-    return [
-        item
-        for item in feedback.list_feedback(limit=MAX_LIST_LIMIT)
-        if str(item.get("target_type") or "") in MONITOR_TARGET_TYPES
-    ]
+def _monitor_feedback_items(feedback: AIFeedbackService, *, reference_time: datetime) -> list[Dict[str, Any]]:
+    items: list[Dict[str, Any]] = []
+    for record in feedback.repository.list_resources(AI_FEEDBACK_RESOURCE_TYPE):
+        item = feedback._resource_to_feedback(record)
+        if not _recorded_at_on_or_before(item, reference_time):
+            continue
+        if str(item.get("target_type") or "") not in MONITOR_TARGET_TYPES:
+            continue
+        items.append(item)
+    return sorted(items, key=_recorded_at_sort_key, reverse=True)[:MAX_LIST_LIMIT]
 
 
 def _summarize_feedback_items(items: list[Dict[str, Any]]) -> Dict[str, Any]:
@@ -960,15 +1189,15 @@ def _summarize_feedback_items(items: list[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _monitor_feedback_learning(feedback: AIFeedbackService, items: list[Dict[str, Any]]) -> Dict[str, Any]:
+def _monitor_feedback_learning(feedback: AIFeedbackService, items: list[Dict[str, Any]], *, reference_time: datetime) -> Dict[str, Any]:
     if not items:
-        return _compact_feedback_learning(feedback.learning_profile(target_type="push_copy_draft", limit=1))
+        return _compact_feedback_learning(feedback.learning_profile(target_type="push_copy_draft", limit=1, recorded_before=reference_time))
     target_type_counts: Dict[str, int] = {}
     for item in items:
         target_type = str(item.get("target_type") or "")
         target_type_counts[target_type] = target_type_counts.get(target_type, 0) + 1
     primary_target_type = sorted(target_type_counts.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
-    return _compact_feedback_learning(feedback.learning_profile(target_type=primary_target_type, limit=50))
+    return _compact_feedback_learning(feedback.learning_profile(target_type=primary_target_type, limit=50, recorded_before=reference_time))
 
 
 def _compact_feedback_learning(profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -988,7 +1217,20 @@ def _average_score(items: list[Dict[str, Any]]) -> float | None:
     return round(sum(scores) / len(scores), 4) if scores else None
 
 
-def _hours_since(value: Any) -> float | None:
+def _parse_reference_time(value: str | None) -> datetime:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return datetime.utcnow()
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.utcnow()
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
     normalized = str(value or "").strip()
     if not normalized:
         return None
@@ -998,7 +1240,32 @@ def _hours_since(value: Any) -> float | None:
         return None
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return (datetime.utcnow() - parsed).total_seconds() / 3600.0
+    return parsed
+
+
+def _recorded_at_on_or_before(item: Dict[str, Any], reference_time: datetime | None) -> bool:
+    if reference_time is None:
+        return True
+    recorded_at = _parse_optional_datetime(item.get("recorded_at"))
+    return recorded_at is None or recorded_at <= reference_time
+
+
+def _recorded_at_sort_key(item: Dict[str, Any]) -> tuple[datetime, str]:
+    return (
+        _parse_optional_datetime(item.get("recorded_at")) or datetime.min,
+        str(item.get("evaluation_id") or item.get("feedback_id") or item.get("resource_id") or ""),
+    )
+
+
+def _hours_since(value: Any, *, reference_time: datetime | None = None) -> float | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    parsed = _parse_optional_datetime(normalized)
+    if parsed is None:
+        return None
+    resolved_time = reference_time or datetime.utcnow()
+    return (resolved_time - parsed).total_seconds() / 3600.0
 
 
 def _normalize_evaluation_type(value: str) -> str:

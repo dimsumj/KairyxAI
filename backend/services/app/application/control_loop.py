@@ -7,6 +7,7 @@ from bigquery_service import BigQueryService, get_shared_bigquery_service
 
 from app.application.copilot import CopilotService
 from app.application.email_campaigns import EmailCampaignService
+from app.application.ai_evaluations import AIEvaluationService
 from app.application.experiments import ExperimentConfigService
 from app.application.health_monitor import HealthMonitorService
 from app.application.predictions import PredictionService
@@ -25,6 +26,7 @@ class ControlLoopService:
         self.copilot = CopilotService(repository, settings, self.bigquery_service)
         self.predictions = PredictionService(repository, settings, self.bigquery_service)
         self.experiments = ExperimentConfigService(repository)
+        self.ai_evaluations = AIEvaluationService(repository)
 
     def _commit_session(self) -> None:
         session = getattr(self.repository, "session", None)
@@ -50,6 +52,12 @@ class ControlLoopService:
                 "name": "Due Email Campaign Runner",
                 "job_type": "email_campaign_run_due",
                 "schedule": {"type": "interval", "seconds": self.settings.scheduler_interval_seconds},
+            },
+            {
+                "job_id": "ai_quality_monitor",
+                "name": "AI Quality Monitor",
+                "job_type": "ai_quality_monitor",
+                "schedule": {"type": "daily", "hour": self.settings.scheduler_daily_report_hour, "minute": 15},
             },
             {
                 "job_id": "daily_churn_rescue_optimizer",
@@ -116,6 +124,7 @@ class ControlLoopService:
             self._run_health_refresh(resolved_time),
             self._run_due_workflow_job(resolved_time),
             self._run_due_email_campaign_job(resolved_time),
+            self._run_ai_quality_monitor_job(resolved_time),
             self._run_churn_optimizer_job(resolved_time),
             self._run_report_job("daily_copilot_report", resolved_time),
             self._run_report_job("weekly_closed_loop_report", resolved_time),
@@ -188,6 +197,24 @@ class ControlLoopService:
                 "model_status": model_payload.get("status"),
                 "optimizer_runs": len(optimizer_runs),
                 "optimized_experiments": [item.get("experiment_id") for item in optimizer_runs],
+            },
+        )
+
+    def _run_ai_quality_monitor_job(self, resolved_time: datetime) -> Dict[str, Any]:
+        job = self._get_job_payload("ai_quality_monitor")
+        if not self._schedule_due(job, resolved_time):
+            return self._skip_job(job, resolved_time, "not_due")
+        check = self.ai_evaluations.run_alert_check(reference_time=resolved_time.isoformat())
+        return self._mark_job_run(
+            "ai_quality_monitor",
+            resolved_time,
+            status=str(check.get("status") or "completed"),
+            result_summary={
+                "check_id": check.get("check_id"),
+                "alert_count": check.get("alert_count"),
+                "warning_count": check.get("warning_count"),
+                "critical_count": check.get("critical_count"),
+                "coverage_gap_count": check.get("coverage_gap_count"),
             },
         )
 

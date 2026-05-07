@@ -254,6 +254,7 @@ class AIQualityMonitorResponse(BaseModel):
     dimension_cards: List[AIQualityDimensionCard] = Field(default_factory=list)
     coverage_gaps: List[str] = Field(default_factory=list)
     judge_readiness: Dict[str, Any] = Field(default_factory=dict)
+    latest_alert_check: Dict[str, Any] = Field(default_factory=dict)
     recent_records: List[AIQualityMonitorRecord] = Field(default_factory=list)
     export: Dict[str, Any] = Field(default_factory=dict)
 
@@ -266,6 +267,16 @@ class AIQualityMonitorExportResponse(BaseModel):
     masked_fields: List[str] = Field(default_factory=list)
     format: str = "ai_quality_monitor.v1"
     monitor: AIQualityMonitorResponse | Dict[str, Any]
+
+
+class AIQualityAlertCheckExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    format: str = "ai_quality_alert_check.v1"
+    check: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AIEvaluationExportResponse(BaseModel):
