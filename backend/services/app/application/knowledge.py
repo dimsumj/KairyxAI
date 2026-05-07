@@ -9,6 +9,10 @@ from datetime import datetime
 from typing import Any, Dict
 
 from app.application.ai_feedback import AI_FEEDBACK_RESOURCE_TYPE
+from app.application.knowledge_vector_backends import (
+    archived_adapter_receipt,
+    build_knowledge_vector_backend,
+)
 
 
 KNOWLEDGE_DOCUMENT_RESOURCE_TYPE = "knowledge_document"
@@ -80,6 +84,7 @@ class KnowledgeService:
     def __init__(self, repository, settings=None):
         self.repository = repository
         self.vector_backend = _vector_backend_config(settings)
+        self.vector_adapter = build_knowledge_vector_backend(self.vector_backend)
 
     def create_document(
         self,
@@ -574,7 +579,7 @@ class KnowledgeService:
         vector_hash = _hash_text(",".join(f"{item:.6f}" for item in vector))[:24]
         index_id = self.vector_backend["index_id"]
         record_id = f"{index_id}:{chunk_id}"
-        embedding = _embedding_metadata(self.vector_backend, vector_hash=vector_hash)
+        embedding = _embedding_metadata(self.vector_backend, vector_hash=vector_hash, adapter=self.vector_adapter)
         embedding["vector_record_id"] = record_id
         payload = {
             "vector_record_id": record_id,
@@ -591,6 +596,7 @@ class KnowledgeService:
             "vector_hash": vector_hash,
             "vector": vector,
             "embedding": embedding,
+            "adapter": dict(embedding.get("adapter") or {}),
             "materialized_at": embedding["materialized_at"],
         }
         self._ensure_vector_index()
@@ -623,7 +629,8 @@ class KnowledgeService:
 
     def _refresh_vector_index_counts(self, index_id: str | None = None) -> Dict[str, Any]:
         index_id = _normalize_vector_index_id(index_id or self.vector_backend["index_id"])
-        records = [record for record in self._list_vector_records(index_id) if record.get("status") != "archived"]
+        all_records = self._list_vector_records(index_id)
+        records = [record for record in all_records if record.get("status") != "archived"]
         document_count = len({str(record.get("document_id") or "") for record in records if record.get("document_id")})
         current = self.repository.get_resource(KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE, index_id)
         current_payload = dict(current.get("payload") or {}) if current else {}
@@ -644,6 +651,7 @@ class KnowledgeService:
                 "format": fallback.get("format") or "knowledge_vector_index.v1",
                 "record_count": 0,
                 "document_count": 0,
+                "last_adapter_operation": _latest_adapter_operation(all_records),
                 "updated_at": datetime.utcnow().isoformat(),
             }
         record = self.repository.upsert_resource(
@@ -672,7 +680,12 @@ class KnowledgeService:
             if record.get("chunk_id") != chunk_id or record.get("status") == "archived":
                 continue
             index_id = _normalize_vector_index_id(str(record.get("index_id") or self.vector_backend["index_id"]))
-            payload = {**record, "status": "archived", "archived_at": archived_at}
+            embedding = {
+                **dict(record.get("embedding") or {}),
+                "status": "archived",
+                "adapter": archived_adapter_receipt(dict(record.get("embedding") or {}), archived_at=archived_at),
+            }
+            payload = {**record, "status": "archived", "archived_at": archived_at, "embedding": embedding, "adapter": embedding["adapter"]}
             self.repository.upsert_resource(
                 KNOWLEDGE_VECTOR_RECORD_RESOURCE_TYPE,
                 str(record.get("vector_record_id") or current.get("resource_id")),
@@ -764,6 +777,7 @@ class KnowledgeService:
     @staticmethod
     def _resource_to_vector_index(record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        payload = _with_inferred_index_adapter(payload)
         return {
             **payload,
             "index_id": payload.get("index_id") or record.get("resource_id"),
@@ -777,6 +791,7 @@ class KnowledgeService:
     @staticmethod
     def _resource_to_vector_record(record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        payload = _with_inferred_record_adapter(payload)
         return {
             **payload,
             "vector_record_id": payload.get("vector_record_id") or record.get("resource_id"),
@@ -845,6 +860,60 @@ def _normalize_tags(tags: list[str]) -> list[str]:
     return normalized[:20]
 
 
+def _with_inferred_index_adapter(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if payload.get("adapter_kind") and payload.get("sync_status") and payload.get("readiness_status"):
+        return payload
+    config = _adapter_config_from_payload(payload)
+    adapter = build_knowledge_vector_backend(config).index_payload_patch()
+    return {
+        **payload,
+        "adapter_kind": payload.get("adapter_kind") or adapter.get("adapter_kind"),
+        "sync_status": payload.get("sync_status") or adapter.get("sync_status"),
+        "readiness_status": payload.get("readiness_status") or adapter.get("readiness_status"),
+        "capabilities": list(payload.get("capabilities") or adapter.get("capabilities") or []),
+        "warnings": list(payload.get("warnings") or adapter.get("warnings") or []),
+        "last_adapter_operation": dict(payload.get("last_adapter_operation") or {}),
+    }
+
+
+def _with_inferred_record_adapter(payload: Dict[str, Any]) -> Dict[str, Any]:
+    embedding = dict(payload.get("embedding") or {})
+    if embedding.get("adapter"):
+        return payload
+    config = _adapter_config_from_payload({**payload, **embedding})
+    adapter = build_knowledge_vector_backend(config).index_payload_patch()
+    inferred_receipt = {
+        "adapter_kind": adapter.get("adapter_kind"),
+        "operation": "legacy_record",
+        "sync_status": adapter.get("sync_status"),
+        "readiness_status": adapter.get("readiness_status"),
+        "vector_store": config["vector_store"],
+        "index_id": config["index_id"],
+        "vector_namespace": config["vector_namespace"],
+        "external_vector_ref": embedding.get("vector_ref") or "",
+        "secret_ref_configured": bool(config.get("secret_ref_configured")),
+        "capabilities": list(adapter.get("capabilities") or []),
+        "warnings": list(adapter.get("warnings") or []),
+        "receipt_id": "",
+        "recorded_at": str(payload.get("materialized_at") or ""),
+    }
+    embedding["adapter"] = inferred_receipt
+    return {**payload, "embedding": embedding, "adapter": dict(payload.get("adapter") or inferred_receipt)}
+
+
+def _adapter_config_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    vector_store = _normalize_provider_name(payload.get("vector_store") or "control_plane")
+    return {
+        "embedding_provider": _normalize_provider_name(payload.get("embedding_provider") or payload.get("provider") or "local_hash"),
+        "embedding_model": _clean_text(payload.get("embedding_model") or payload.get("model") or LOCAL_SEMANTIC_VECTOR_MODEL, max_length=120) or LOCAL_SEMANTIC_VECTOR_MODEL,
+        "vector_store": vector_store,
+        "index_id": _normalize_vector_index_id(payload.get("index_id") or payload.get("vector_index_id") or DEFAULT_VECTOR_INDEX_ID),
+        "vector_namespace": _normalize_provider_name(payload.get("vector_namespace") or "default") or "default",
+        "secret_ref_configured": bool(payload.get("secret_ref_configured")),
+        "storage_mode": payload.get("storage_mode") or ("control_plane_vector_record" if vector_store == "control_plane" else "external_vector_store_shadow_index"),
+    }
+
+
 def _normalize_id_filters(values: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -887,6 +956,7 @@ def _normalize_vector_index_id(value: str) -> str:
 
 
 def _vector_index_payload(config: Dict[str, Any], *, record_count: int = 0, document_count: int = 0) -> Dict[str, Any]:
+    adapter = build_knowledge_vector_backend(config)
     return {
         "index_id": config["index_id"],
         "status": "active",
@@ -901,6 +971,7 @@ def _vector_index_payload(config: Dict[str, Any], *, record_count: int = 0, docu
         "document_count": int(document_count or 0),
         "storage_mode": config["storage_mode"],
         "secret_ref_configured": bool(config.get("secret_ref_configured")),
+        **adapter.index_payload_patch(),
         "updated_at": datetime.utcnow().isoformat(),
     }
 
@@ -913,6 +984,22 @@ def _vector_index_payload_from_records(
     record_count: int,
     document_count: int,
 ) -> Dict[str, Any]:
+    adapter_capabilities = sorted(
+        {
+            str(capability)
+            for record in records
+            for capability in list(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get("capabilities") or [])
+            if str(capability).strip()
+        }
+    )
+    adapter_warnings = sorted(
+        {
+            str(warning)
+            for record in records
+            for warning in list(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get("warnings") or [])
+            if str(warning).strip()
+        }
+    )
     return {
         **current_payload,
         "index_id": index_id,
@@ -928,6 +1015,12 @@ def _vector_index_payload_from_records(
         "document_count": int(document_count or 0),
         "storage_mode": _collapse_embedding_field(records, "storage_mode", current_payload.get("storage_mode") or "control_plane_vector_record"),
         "secret_ref_configured": any(bool(dict(record.get("embedding") or {}).get("secret_ref_configured")) for record in records),
+        "adapter_kind": _collapse_adapter_field(records, "adapter_kind", current_payload.get("adapter_kind") or "control_plane"),
+        "sync_status": _collapse_adapter_field(records, "sync_status", current_payload.get("sync_status") or "control_plane_synced"),
+        "readiness_status": _collapse_adapter_readiness(records, current_payload.get("readiness_status") or "ready"),
+        "capabilities": adapter_capabilities or list(current_payload.get("capabilities") or []),
+        "warnings": adapter_warnings,
+        "last_adapter_operation": _latest_adapter_operation(records),
         "updated_at": datetime.utcnow().isoformat(),
     }
 
@@ -948,6 +1041,9 @@ def _compact_vector_index_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
             "document_count",
             "storage_mode",
             "status",
+            "adapter_kind",
+            "sync_status",
+            "readiness_status",
         }
     }
 
@@ -964,6 +1060,9 @@ def _recomputed_vector_index_summary() -> Dict[str, Any]:
         "document_count": 0,
         "storage_mode": "recomputed_fallback",
         "status": "fallback",
+        "adapter_kind": "local_recompute",
+        "sync_status": "recomputed_fallback",
+        "readiness_status": "fallback",
     }
 
 
@@ -1011,6 +1110,46 @@ def _collapse_embedding_dimensions(records: list[Dict[str, Any]], fallback: int)
     return fallback or SEMANTIC_VECTOR_DIMENSIONS
 
 
+def _collapse_adapter_field(records: list[Dict[str, Any]], field_name: str, fallback: str) -> str:
+    values = sorted(
+        {
+            str(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get(field_name) or "").strip()
+            for record in records
+            if str(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get(field_name) or "").strip()
+        }
+    )
+    if not values:
+        return fallback
+    if len(values) == 1:
+        return values[0]
+    return "mixed"
+
+
+def _collapse_adapter_readiness(records: list[Dict[str, Any]], fallback: str) -> str:
+    values = {
+        str(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get("readiness_status") or "").strip()
+        for record in records
+        if str(dict(dict(record.get("embedding") or {}).get("adapter") or {}).get("readiness_status") or "").strip()
+    }
+    if "needs_secret_ref" in values:
+        return "needs_secret_ref"
+    if len(values) == 1 and next(iter(values)) in {"ready", "ready_for_live_sync"}:
+        return next(iter(values))
+    if len(values) > 1:
+        return "mixed"
+    return next(iter(values), fallback)
+
+
+def _latest_adapter_operation(records: list[Dict[str, Any]]) -> Dict[str, Any]:
+    operations = [
+        dict(dict(record.get("embedding") or {}).get("adapter") or {})
+        for record in records
+        if dict(dict(record.get("embedding") or {}).get("adapter") or {})
+    ]
+    operations.sort(key=lambda item: str(item.get("recorded_at") or ""), reverse=True)
+    return operations[0] if operations else {}
+
+
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -1041,13 +1180,13 @@ def _query_terms(value: str) -> list[str]:
     return terms[:32]
 
 
-def _embedding_metadata(config: Dict[str, Any], *, vector_hash: str) -> Dict[str, Any]:
-    if config["embedding_provider"] == "local_hash" and config["vector_store"] == "control_plane":
-        vector_ref = f"inline:{config['embedding_model']}:{vector_hash}"
-    else:
-        vector_ref = f"{config['vector_store']}://{config['index_id']}/{vector_hash}"
+def _embedding_metadata(config: Dict[str, Any], *, vector_hash: str, adapter=None) -> Dict[str, Any]:
+    vector_adapter = adapter or build_knowledge_vector_backend(config)
+    adapter_receipt = vector_adapter.materialization_receipt(vector_hash=vector_hash)
+    vector_ref = vector_adapter.vector_ref(vector_hash=vector_hash)
+    readiness_status = str(adapter_receipt.get("readiness_status") or "")
     return {
-        "status": "ready",
+        "status": "ready" if readiness_status in {"ready", "ready_for_live_sync"} else "needs_secret_ref",
         "provider": config["embedding_provider"],
         "model": config["embedding_model"],
         "vector_store": config["vector_store"],
@@ -1058,6 +1197,7 @@ def _embedding_metadata(config: Dict[str, Any], *, vector_hash: str) -> Dict[str
         "dimensions": SEMANTIC_VECTOR_DIMENSIONS,
         "storage_mode": config["storage_mode"],
         "secret_ref_configured": bool(config.get("secret_ref_configured")),
+        "adapter": adapter_receipt,
         "materialized_at": datetime.utcnow().isoformat(),
     }
 
@@ -1233,6 +1373,7 @@ def _score_chunk(
         active_index_id=active_vector_index_id,
     )
     vector_embedding = dict(vector_record.get("embedding") or {}) if vector_record else {}
+    vector_adapter = dict(vector_embedding.get("adapter") or {})
     vector_status = "not_used"
     if retrieval_mode == HYBRID_RETRIEVAL_MODE:
         if vector_record and vector_record.get("status") != "archived":
@@ -1276,6 +1417,9 @@ def _score_chunk(
             "vector_index_id": vector_embedding.get("vector_index_id"),
             "vector_record_id": vector_embedding.get("vector_record_id"),
             "storage_mode": vector_embedding.get("storage_mode"),
+            "vector_adapter_kind": vector_adapter.get("adapter_kind"),
+            "vector_sync_status": vector_adapter.get("sync_status"),
+            "vector_readiness_status": vector_adapter.get("readiness_status"),
         },
         "match_terms": match_terms,
         "snippet": _snippet(text, match_terms),

@@ -2460,6 +2460,7 @@ export function initializeOperatorConsole() {
                 }
                 if (pageId === 'knowledge-library') {
                     loadKnowledgeLibrary();
+                    loadKnowledgeVectorIndexes();
                 }
                 if (pageId === 'data-sandbox') {
                     loadDataSandboxMappingControls();
@@ -3160,6 +3161,9 @@ export function initializeOperatorConsole() {
             const knowledgeRetrievalExportBtn = document.getElementById('knowledge-retrieval-export-btn');
             const knowledgeRetrievalStatus = document.getElementById('knowledge-retrieval-status');
             const knowledgeRetrievalResults = document.getElementById('knowledge-retrieval-results');
+            const knowledgeVectorRefreshBtn = document.getElementById('knowledge-vector-refresh-btn');
+            const knowledgeVectorStatus = document.getElementById('knowledge-vector-status');
+            const knowledgeVectorList = document.getElementById('knowledge-vector-list');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -6863,6 +6867,7 @@ export function initializeOperatorConsole() {
                     setInlineStatus(knowledgeDocumentStatus, `Added ${documentPayload.title}.`);
                     resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
                     await loadKnowledgeLibrary();
+                    await loadKnowledgeVectorIndexes();
                     return documentPayload;
                 } catch (error) {
                     setInlineStatus(knowledgeDocumentStatus, error.message || 'Failed to add source.', true);
@@ -6936,6 +6941,79 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function renderKnowledgeVectorIndexes(items = []) {
+                if (!knowledgeVectorList) {
+                    return;
+                }
+                const indexes = Array.isArray(items) ? items : [];
+                if (!indexes.length) {
+                    knowledgeVectorList.innerHTML = '<div class="list-empty">No vector indexes yet.</div>';
+                    return;
+                }
+                knowledgeVectorList.innerHTML = `
+                    <div class="knowledge-document-grid">
+                        ${indexes.map((item) => {
+                            const status = String(item.readiness_status || item.status || 'unknown');
+                            const syncStatus = String(item.sync_status || 'unknown');
+                            const warnings = (item.warnings || []).slice(0, 2).map((warning) => `<span class="pill">${escapeHtml(warning)}</span>`).join('');
+                            return `
+                                <article class="knowledge-document-card">
+                                    <div>
+                                        <div class="table-badge-row">
+                                            <span class="pill">${escapeHtml(formatMonitorLabel(status))}</span>
+                                            <span class="pill">${escapeHtml(formatMonitorLabel(syncStatus))}</span>
+                                        </div>
+                                        <h3>${escapeHtml(item.index_id || 'Vector Index')}</h3>
+                                        <p class="subtle">${escapeHtml(item.embedding_provider || 'provider')} / ${escapeHtml(item.embedding_model || 'model')}</p>
+                                    </div>
+                                    <div class="knowledge-card-meta">
+                                        <span>${escapeHtml(item.vector_store || 'store')}</span>
+                                        <span>${escapeHtml(item.vector_namespace || 'default')}</span>
+                                        <span>${Number(item.record_count || 0).toLocaleString()} records</span>
+                                        <span>${Number(item.document_count || 0).toLocaleString()} docs</span>
+                                    </div>
+                                    <div class="table-badge-row">
+                                        <span class="pill">${escapeHtml(item.adapter_kind || 'control_plane')}</span>
+                                        <span class="pill">${item.secret_ref_configured ? 'Secret ref' : 'No secret ref'}</span>
+                                        ${warnings}
+                                    </div>
+                                    <div class="inline-actions">
+                                        <button type="button" data-knowledge-vector-action="export" data-index-id="${escapeHtml(item.index_id || '')}">Export .json</button>
+                                    </div>
+                                </article>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            async function loadKnowledgeVectorIndexes() {
+                if (!knowledgeVectorList) {
+                    return [];
+                }
+                setInlineStatus(knowledgeVectorStatus, 'Loading vector store...');
+                try {
+                    const payload = await apiRequest('/knowledge/vector-indexes');
+                    const items = Array.isArray(payload?.items) ? payload.items : [];
+                    renderKnowledgeVectorIndexes(items);
+                    setInlineStatus(knowledgeVectorStatus, `${items.length} vector index${items.length === 1 ? '' : 'es'}.`);
+                    return items;
+                } catch (error) {
+                    renderKnowledgeVectorIndexes([]);
+                    setInlineStatus(knowledgeVectorStatus, error.message || 'Failed to load vector store.', true);
+                    return [];
+                }
+            }
+
+            async function exportKnowledgeVectorIndex(indexId) {
+                const normalizedId = String(indexId || '').trim();
+                if (!normalizedId) {
+                    return;
+                }
+                const payload = await apiRequest(`/knowledge/vector-indexes/${encodeURIComponent(normalizedId)}/export`);
+                downloadJsonPayload(payload, `knowledge-vector-index-${normalizedId}.json`);
+            }
+
             async function exportKnowledgeDocument(documentId) {
                 const normalizedId = String(documentId || '').trim();
                 if (!normalizedId) {
@@ -6958,6 +7036,7 @@ export function initializeOperatorConsole() {
                     await apiRequest(`/knowledge/documents/${encodeURIComponent(normalizedId)}/archive`, { method: 'POST' });
                     resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
                     await loadKnowledgeLibrary();
+                    await loadKnowledgeVectorIndexes();
                 } catch (error) {
                     setInlineStatus(knowledgeDocumentListStatus, error.message || 'Failed to archive source.', true);
                 }
@@ -16929,6 +17008,7 @@ export function initializeOperatorConsole() {
             knowledgeDocumentSaveBtn?.addEventListener('click', saveKnowledgeDocument);
             knowledgeDocumentResetBtn?.addEventListener('click', resetKnowledgeIntakeForm);
             knowledgeDocumentRefreshBtn?.addEventListener('click', loadKnowledgeLibrary);
+            knowledgeVectorRefreshBtn?.addEventListener('click', loadKnowledgeVectorIndexes);
             knowledgeRetrievalRunBtn?.addEventListener('click', runKnowledgeRetrieval);
             knowledgeRetrievalExportBtn?.addEventListener('click', exportLatestKnowledgeRetrieval);
             knowledgeRetrievalQueryInput?.addEventListener('input', () => {
@@ -16959,6 +17039,22 @@ export function initializeOperatorConsole() {
                 }
                 if (action === 'archive') {
                     await archiveKnowledgeDocument(documentId);
+                }
+            });
+            knowledgeVectorList?.addEventListener('click', async (event) => {
+                const button = event.target instanceof Element ? event.target.closest('[data-knowledge-vector-action]') : null;
+                if (!button) {
+                    return;
+                }
+                const indexId = button.getAttribute('data-index-id') || '';
+                const action = button.getAttribute('data-knowledge-vector-action') || '';
+                if (action === 'export') {
+                    try {
+                        await exportKnowledgeVectorIndex(indexId);
+                        setInlineStatus(knowledgeVectorStatus, 'Vector index exported.');
+                    } catch (error) {
+                        setInlineStatus(knowledgeVectorStatus, error.message || 'Failed to export vector index.', true);
+                    }
                 }
             });
             providerConnectionSaveBtn.addEventListener('click', async () => {

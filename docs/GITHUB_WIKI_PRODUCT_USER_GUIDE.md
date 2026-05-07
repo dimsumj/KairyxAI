@@ -58,7 +58,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 KairyxAI is already moving toward the target AI growth platform shape: `Data Core` handles connector setup, imports, field mapping, data quality, metadata, and governance; `Audience Engine`, `Action Orchestrator`, and `Experiment Hub` turn retrieved context into cohorts, lifecycle drafts, schedules, experiments, and measurement; `Insight Copilot` provides the prompt-first generation layer with setup handoffs, evidence artifacts, and audit history.
 
 Priority completion TODO:
-1. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
+1. Expand delivered managed vector-adapter receipts into provider-specific live vector sync plus structured artifact retrieval.
 2. Expand the delivered AI Quality Monitor and deterministic auto-grader into live model-judge evaluation, offline eval runs, recall probes, and automated alert jobs.
 3. Expand delivered feedback-learning profiles into trained optimization, richer semantic reranking, and structured playbook suggestions.
 4. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
@@ -525,7 +525,7 @@ For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connecto
 
 #### Knowledge Documents API
 
-Data Core now owns the RAG knowledge-ingestion slice through `Data Core -> Knowledge` and `/api/v1/knowledge`. Operators can upload text or markdown playbooks, campaign briefs, SOPs, reports, and FAQs from the console, run cited evidence checks, and export full setup artifacts with `Export .json` buttons instead of reading raw JSON/code fields. Ask AI consumes `hybrid_v1` retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts. Backend deployments can configure embedding/vector metadata with `KNOWLEDGE_EMBEDDING_PROVIDER`, `KNOWLEDGE_EMBEDDING_MODEL`, `KNOWLEDGE_VECTOR_STORE`, `KNOWLEDGE_VECTOR_INDEX`, `KNOWLEDGE_VECTOR_NAMESPACE`, and `KNOWLEDGE_VECTOR_SECRET_REF`; production external providers/stores require the secret reference and exports expose only redacted vector-index records.
+Data Core now owns the RAG knowledge-ingestion slice through `Data Core -> Knowledge` and `/api/v1/knowledge`. Operators can upload text or markdown playbooks, campaign briefs, SOPs, reports, and FAQs from the console, run cited evidence checks, review vector-store readiness, and export full setup artifacts with `Export .json` buttons instead of reading raw JSON/code fields. Ask AI consumes `hybrid_v1` retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts. Backend deployments can configure embedding/vector metadata with `KNOWLEDGE_EMBEDDING_PROVIDER`, `KNOWLEDGE_EMBEDDING_MODEL`, `KNOWLEDGE_VECTOR_STORE`, `KNOWLEDGE_VECTOR_INDEX`, `KNOWLEDGE_VECTOR_NAMESPACE`, and `KNOWLEDGE_VECTOR_SECRET_REF`; production external providers/stores require the secret reference and exports expose only redacted vector-index records. Managed stores such as pgvector, Pinecone, Qdrant, Weaviate, Milvus, OpenSearch, BigQuery Vector, and custom gateways produce adapter receipts, sync/readiness status, and export-only shadow-index metadata.
 
 | Console control | Type | How to use it | Expected result |
 | --- | --- | --- | --- |
@@ -535,6 +535,8 @@ Data Core now owns the RAG knowledge-ingestion slice through `Data Core -> Knowl
 | `Advanced Text Fallback` | Collapsed fallback | Paste plain text only when no source file is available. | The fallback remains out of the primary UI and is stored as normal knowledge content. |
 | `Check Evidence` | Button | Enter a marketer-readable question and run a retrieval preview. | The page shows cited snippets and scores without exposing a JSON output field. |
 | `Export .json` | Button | Export a knowledge document or evidence pack when an operator needs the full setup file. | A `knowledge_document.v1` or `knowledge_evidence_pack.v1` file downloads locally. |
+| `Vector Store` | Read-only status cards | Review active index, adapter kind, sync/readiness state, record counts, and secret-ref status. | Operators can inspect provider readiness without editing JSON or credentials in the page. |
+| Vector row `Export .json` | Button | Export the redacted vector-index setup artifact. | A `knowledge_vector_index.v1` file downloads locally and omits raw vectors and secret material. |
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
@@ -548,8 +550,8 @@ Data Core now owns the RAG knowledge-ingestion slice through `Data Core -> Knowl
 | `GET /api/v1/knowledge/retrievals` | List recent retrieval evidence packs. | Retrieval records are scoped like documents and preserve query, filters, citations, and context-pack metadata. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}` | Read one retrieval evidence pack. | Use this to reopen cited context for Ask AI, diagnostics, or review. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}/export` | Export the evidence pack. | Returns `knowledge_evidence_pack.v1` for `.json` download instead of exposing a raw JSON text area. |
-| `GET /api/v1/knowledge/vector-indexes` | List active vector indexes. | Shows embedding provider/model, vector store, namespace, dimensions, storage mode, and record/document counts. |
-| `GET /api/v1/knowledge/vector-indexes/{index_id}/export` | Export vector-index metadata. | Returns `knowledge_vector_index.v1`; records include hashes and embedding metadata but omit raw vectors and secret material. |
+| `GET /api/v1/knowledge/vector-indexes` | List active vector indexes. | Shows embedding provider/model, vector store, namespace, dimensions, storage mode, adapter kind, sync/readiness status, and record/document counts. |
+| `GET /api/v1/knowledge/vector-indexes/{index_id}/export` | Export vector-index metadata. | Returns `knowledge_vector_index.v1`; records include hashes, adapter receipts, and embedding metadata but omit raw vectors and secret material. |
 
 Supported `source_type` values are `markdown`, `text`, `campaign_brief`, `sop`, `report`, `faq`, and `playbook`. Supported `visibility` values are `workspace`, `project`, and `private`. Normal users should not paste secret material into knowledge documents; credentials still belong in secure connector/provider/model-profile setup.
 

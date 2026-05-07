@@ -54,12 +54,13 @@ Delivered no-code operator acceptance criteria:
 
 Delivered provider/vector acceptance criteria:
 1. Knowledge chunk ingestion persists vector records keyed by chunk and active vector index.
-2. Hybrid retrieval reads persisted vector records, exposes vector status and provider/store ranking signals, and falls back to deterministic local recompute only when a record is unavailable.
+2. Hybrid retrieval reads persisted vector records, exposes vector status, provider/store ranking signals, adapter kind, sync status, and readiness status, and falls back to deterministic local recompute only when a record is unavailable.
 3. Vector index metadata is listable and exportable as `knowledge_vector_index.v1` without exposing raw vector arrays.
 4. External embedding/vector provider configuration is secret-reference gated for production.
+5. Managed vector stores produce adapter receipts for upsert/archive readiness while preserving the shadow-index export contract.
 
 Remaining acceptance criteria:
-1. Add managed vector-service adapters beyond the current control-plane shadow index.
+1. Add provider-specific live vector sync implementations beyond the current managed shadow-adapter receipts.
 2. Broaden retrieval into structured product-artifact retrieval.
 3. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
 
@@ -1116,8 +1117,8 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 
 #### P0 Finish-Up
 1. `Managed Vector Adapter Hardening`
-   - Extend the delivered vector-index contract into managed vector-store adapters
-   - Preserve provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
+   - Delivered managed vector-adapter receipts behind the vector-index contract
+   - Next, add provider-specific live vector sync while preserving provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
 2. `Manifest-Driven Default Path`
    - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic
    - Reduce the degree to which application-layer job orchestration dominates the main path

@@ -103,6 +103,8 @@ def test_knowledge_document_ingestion_chunks_archive_and_export(client):
     assert chunk_items[0]["embedding"]["vector_index_id"] == "kairyx_knowledge_default"
     assert chunk_items[0]["embedding"]["vector_record_id"].endswith(chunk_items[0]["chunk_id"])
     assert chunk_items[0]["embedding"]["dimensions"] == 1024
+    assert chunk_items[0]["embedding"]["adapter"]["adapter_kind"] == "control_plane"
+    assert chunk_items[0]["embedding"]["adapter"]["sync_status"] == "control_plane_synced"
     assert "Winback campaign brief" in chunk_items[0]["text"]
 
     indexes = client.get("/api/v1/knowledge/vector-indexes", headers={"x-actor-role": "analyst"})
@@ -111,6 +113,8 @@ def test_knowledge_document_ingestion_chunks_archive_and_export(client):
     assert index["index_id"] == "kairyx_knowledge_default"
     assert index["embedding_provider"] == "local_hash"
     assert index["vector_store"] == "control_plane"
+    assert index["adapter_kind"] == "control_plane"
+    assert index["readiness_status"] == "ready"
     assert index["record_count"] == document["chunk_count"]
 
     exported = client.get(f"/api/v1/knowledge/documents/{document_id}/export", headers={"x-actor-role": "operator"})
@@ -351,8 +355,13 @@ def test_knowledge_provider_vector_config_materializes_exportable_shadow_index(m
         assert embedding["vector_store"] == "pgvector"
         assert embedding["vector_index_id"] == "growth_playbooks"
         assert embedding["vector_namespace"] == "lifecycle"
+        assert embedding["status"] == "ready"
         assert embedding["secret_ref_configured"] is True
         assert embedding["vector_ref"].startswith("pgvector://growth_playbooks/")
+        assert embedding["adapter"]["adapter_kind"] == "pgvector_adapter"
+        assert embedding["adapter"]["sync_status"] == "external_shadow_prepared"
+        assert embedding["adapter"]["readiness_status"] == "ready_for_live_sync"
+        assert embedding["adapter"]["external_vector_ref"].startswith("pgvector://growth_playbooks/lifecycle/")
 
         retrieval = client.post(
             "/api/v1/knowledge/retrievals",
@@ -369,15 +378,85 @@ def test_knowledge_provider_vector_config_materializes_exportable_shadow_index(m
         assert signals["embedding_provider"] == "openai"
         assert signals["vector_store"] == "pgvector"
         assert signals["vector_index_id"] == "growth_playbooks"
+        assert signals["vector_adapter_kind"] == "pgvector_adapter"
+        assert signals["vector_sync_status"] == "external_shadow_prepared"
+        assert signals["vector_readiness_status"] == "ready_for_live_sync"
 
         exported = client.get("/api/v1/knowledge/vector-indexes/growth_playbooks/export", headers={"x-actor-role": "analyst"})
         assert exported.status_code == 200
         export_payload = exported.json()
         assert export_payload["format"] == "knowledge_vector_index.v1"
         assert export_payload["index"]["secret_ref_configured"] is True
+        assert export_payload["index"]["adapter_kind"] == "pgvector_adapter"
+        assert export_payload["index"]["sync_status"] == "external_shadow_prepared"
+        assert export_payload["index"]["readiness_status"] == "ready_for_live_sync"
         assert export_payload["records"][0]["vector_hash"]
+        assert export_payload["records"][0]["embedding"]["status"] == "ready"
+        assert export_payload["records"][0]["adapter"]["adapter_kind"] == "pgvector_adapter"
         assert "vector" not in export_payload["records"][0]
         assert "secret_ref" not in export_payload["records"][0]["embedding"]
+
+
+def test_knowledge_control_plane_store_remains_local_with_provider_embedding(monkeypatch, tmp_path):
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="control_plane",
+        KNOWLEDGE_VECTOR_INDEX="control_plane_openai",
+    ) as client:
+        created = client.post(
+            "/api/v1/knowledge/documents",
+            headers={"x-actor-role": "operator"},
+            json={
+                "title": "Control Plane Provider Embedding",
+                "content": "Control-plane storage can still label provider embeddings without requiring a vector-store secret ref.",
+                "source_type": "playbook",
+                "tags": ["push"],
+            },
+        )
+        assert created.status_code == 201
+        embedding = created.json()["chunks"][0]["embedding"]
+        assert embedding["provider"] == "openai"
+        assert embedding["vector_store"] == "control_plane"
+        assert embedding["vector_ref"].startswith("inline:text-embedding-3-small:")
+        assert embedding["adapter"]["adapter_kind"] == "control_plane"
+        assert embedding["adapter"]["sync_status"] == "control_plane_synced"
+        assert embedding["adapter"]["readiness_status"] == "ready"
+
+
+def test_knowledge_legacy_external_vector_index_infers_adapter_status(client):
+    from app.application.knowledge import KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE
+
+    with session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.upsert_resource(
+            KNOWLEDGE_VECTOR_INDEX_RESOURCE_TYPE,
+            "legacy_pgvector",
+            status="active",
+            name="legacy_pgvector",
+            payload={
+                "index_id": "legacy_pgvector",
+                "format": "knowledge_vector_index.v1",
+                "embedding_provider": "openai",
+                "embedding_model": "text-embedding-3-small",
+                "vector_store": "pgvector",
+                "vector_namespace": "lifecycle",
+                "dimensions": 1024,
+                "record_count": 0,
+                "document_count": 0,
+                "storage_mode": "external_vector_store_shadow_index",
+                "secret_ref_configured": True,
+            },
+        )
+
+    indexes = client.get("/api/v1/knowledge/vector-indexes", headers={"x-actor-role": "analyst"})
+    assert indexes.status_code == 200
+    index = next(item for item in indexes.json()["items"] if item["index_id"] == "legacy_pgvector")
+    assert index["adapter_kind"] == "pgvector_adapter"
+    assert index["sync_status"] == "external_shadow_prepared"
+    assert index["readiness_status"] == "ready_for_live_sync"
 
 
 def test_knowledge_archive_updates_original_vector_index_after_runtime_index_change(monkeypatch, tmp_path):
@@ -419,6 +498,38 @@ def test_knowledge_archive_updates_original_vector_index_after_runtime_index_cha
         assert payload["index"]["record_count"] == 0
         assert payload["index"]["document_count"] == 0
         assert payload["records"] == []
+
+
+def test_knowledge_archive_surfaces_external_adapter_receipt(monkeypatch, tmp_path):
+    with _client_with_env(
+        monkeypatch,
+        tmp_path,
+        KNOWLEDGE_EMBEDDING_PROVIDER="openai",
+        KNOWLEDGE_EMBEDDING_MODEL="text-embedding-3-small",
+        KNOWLEDGE_VECTOR_STORE="pgvector",
+        KNOWLEDGE_VECTOR_INDEX="archive_playbooks",
+        KNOWLEDGE_VECTOR_SECRET_REF="secret://knowledge/vector",
+    ) as client:
+        created = client.post(
+            "/api/v1/knowledge/documents",
+            headers={"x-actor-role": "operator"},
+            json={
+                "title": "Archive Adapter Playbook",
+                "content": "Archive receipts should remain visible after the last vector record is archived.",
+                "source_type": "playbook",
+            },
+        )
+        assert created.status_code == 201
+        document_id = created.json()["document_id"]
+
+        archived = client.post(f"/api/v1/knowledge/documents/{document_id}/archive", headers={"x-actor-role": "operator"})
+        assert archived.status_code == 200
+        exported = client.get("/api/v1/knowledge/vector-indexes/archive_playbooks/export", headers={"x-actor-role": "analyst"})
+        assert exported.status_code == 200
+        index = exported.json()["index"]
+        assert index["record_count"] == 0
+        assert index["last_adapter_operation"]["operation"] == "archive"
+        assert index["last_adapter_operation"]["sync_status"] == "external_shadow_archive_prepared"
 
 
 def test_knowledge_vector_index_reports_mixed_provider_when_config_reuses_index(monkeypatch, tmp_path):

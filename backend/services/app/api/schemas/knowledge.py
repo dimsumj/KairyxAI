@@ -164,6 +164,12 @@ class KnowledgeVectorIndexResponse(BaseModel):
     document_count: int = 0
     storage_mode: str = "control_plane_vector_record"
     secret_ref_configured: bool = False
+    adapter_kind: str = "control_plane"
+    sync_status: str = "control_plane_synced"
+    readiness_status: str = "ready"
+    capabilities: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    last_adapter_operation: Dict[str, Any] = Field(default_factory=dict)
     created_at: str | None = None
     updated_at: str | None = None
 

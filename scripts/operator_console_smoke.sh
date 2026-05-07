@@ -233,6 +233,9 @@ assert_knowledge_library_ui() {
       '#knowledge-retrieval-run-btn',
       '#knowledge-retrieval-export-btn',
       '#knowledge-document-list',
+      '#knowledge-vector-section',
+      '#knowledge-vector-refresh-btn',
+      '#knowledge-vector-list',
     ];
     for (const selector of requiredSelectors) {
       if (await page.locator(selector).count() === 0) {
@@ -298,6 +301,12 @@ assert_knowledge_library_ui() {
     if (!sourceCardState.found || !sourceCardState.hasExport || !sourceCardState.hasArchive) {
       throw new Error('Added knowledge source did not render export/archive actions');
     }
+
+    await page.locator('#knowledge-vector-refresh-btn').click();
+    await page.waitForFunction(() => {
+      const vectorText = document.getElementById('knowledge-vector-list')?.textContent || '';
+      return vectorText.includes('kairyx_knowledge_default') && vectorText.includes('Export .json');
+    }, { timeout: 7000 });
 
     await page.locator('#knowledge-retrieval-query-input').fill('What should VIP winback push copy avoid?');
     await page.locator('#knowledge-retrieval-top-k-select').selectOption('3');
