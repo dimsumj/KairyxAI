@@ -1133,12 +1133,12 @@ State rules:
 
 Use this page for two push paths:
 
-- `Push Composer` for immediate sends, one-time scheduled sends, and repeated Wynn provider campaigns
-- `Legacy Advanced Workflow Builder` for the older cohort-based workflow path with experiment and policy controls
+- `Push Composer` for immediate sends, one-time scheduled sends, repeated Wynn provider campaigns, and cohort-backed push workflows
+- `Legacy Advanced Workflow Builder` for the older direct workflow editor when you still need the deeper experiment/policy form
 
 #### 5.2.1 Push Composer
 
-Use the main composer when KairyxAI should create a Wynn push campaign directly. This is the default operator path for single sends, future one-time sends, repeated daily sends, explicit multi-user sends, all-player sends, and Wynn-native audience filters.
+Use the main composer when KairyxAI should create a push dispatch or push workflow directly. This is the default operator path for single sends, future one-time sends, repeated daily sends, explicit multi-user sends, cohort-backed sends, all-player sends, and Wynn-native audience filters.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
@@ -1146,28 +1146,34 @@ Use the main composer when KairyxAI should create a Wynn push campaign directly.
 | `Mode` | Select | Choose `Single send` or `Repeated send`. | `Single send` | The composer changes between immediate/one-time flow and daily repeated flow. |
 | `Provider Connection` | Select | Leave blank to keep simulator delivery for explicit ids, or choose a Push Provider connection for live Wynn delivery. | `Push Provider Production` | Execution uses the selected connection. |
 | `Single Send Timing` | Select | Visible when `Mode` is `Single send`. Choose `Send immediately` or `Schedule once`. | `Schedule once` | The composer either sends now or creates a one-time scheduled workflow. |
+| `Audience` | Select | Choose whether the push targets a `User ID list`, a `Cohort`, or `All players`. | `Cohort` | The composer reveals only the matching audience input. |
 | `Schedule Once For` | Date/time picker | Visible when `Single Send Timing` is `Schedule once`. | `2026-04-16 11:30` | Kairyx creates and publishes a one-time scheduled workflow. |
 | `Daily Hour` / `Daily Minute` | Number boxes | Visible when `Mode` is `Repeated send`. | `10` / `15` | Kairyx creates and publishes a daily workflow scheduled for 10:15. |
-| `User IDs (optional)` | Text area | Enter comma-separated Wynn `canonical_user_id` / `playerId` values, or leave blank to target all players. | `player_123, player_456` | Kairyx sends only those ids when filled, or broadcasts to all Wynn players when blank. |
+| `User IDs` | Text area | Visible when `Audience` is `User ID list`. Enter comma-separated Wynn `canonical_user_id` / `playerId` values. | `player_123, player_456` | Kairyx sends only to those ids. |
+| `Cohort` | Select | Visible when `Audience` is `Cohort`. Choose an active Audience Engine cohort. | `High Risk Winback (active)` | Kairyx uses the cohort membership for the workflow-backed send. |
 | `Campaign Name (optional)` | Text box | Optional downstream campaign label. If blank, Kairyx defaults it from the name field. | `vip_reactivation_push` | The outbound payload includes `campaign_name`. |
 | `Title` | Text box | Recommended for all sends and required for live Wynn delivery. | `We miss you` | The outbound payload includes `title`. |
 | `Body` | Text area | Required message body. | `A reward is waiting for you.` | The outbound payload includes `body`. |
 | `Deep Link (optional)` | Text box | Optional deep link metadata for the push request. | `app://promotions/vip` | The outbound payload includes `deep_link`. |
 | `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
+| `Advanced Delivery Controls` | Disclosure | Optional workflow guardrails such as global limit, channel limit, cooldown hours, quiet hours, daily budget limit, and blacklist ids. | `Global Daily Limit = 5`, `Quiet Hours = 22 -> 7` | When a value is filled, Kairyx stores it on the workflow. When a field is left blank, that guardrail is disabled. |
 | Push payload options | Internal artifact | Ask AI and provider setup can prepare data, provider options, and Wynn filters without a raw JSON editor. | `min VIP level 5 on iOS` | Wynn applies the prepared filters when it resolves campaign recipients. |
-| `Send Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode. | None | Immediate sends create a one-time dispatch. Scheduled and repeated sends create and publish workflows. |
+| `Send Now` / `Run Cohort Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode and audience. | None | Immediate direct sends create a one-time dispatch. Immediate cohort sends create a draft workflow and execute it immediately. Scheduled and repeated sends create and publish workflows. |
 | `Clear` | Button | Clears the composer. | None | The composer resets to a new single send. |
 
 Push Composer behavior:
-- Leaving `User IDs` blank means `all players`, but that broadcast path requires a live Wynn Push Provider connection.
-- Entering one or more `User IDs` means Kairyx sends one Wynn campaign targeting exactly those ids.
+- `Audience = User ID list` requires one or more explicit ids. Leaving that box blank no longer implies broadcast.
+- `Audience = Cohort` uses an active Audience Engine cohort. `Send immediately` creates a draft push workflow and runs it right away; `Schedule once` and `Repeated send` create published workflows.
+- `Audience = All players` means broadcast, and that path requires a live Wynn Push Provider connection.
 - Ask AI can draft the push `Title` and `Body`, parse relative schedule requests such as `in half an hour`, and preload the composer for approval without sending from chat.
 - Immediate sends use `POST /api/v1/push-dispatches/send-now`.
-- `Schedule once` and `Repeated send` create and publish `provider_campaign` workflows that later appear in `Workflow Studio`.
+- Immediate cohort sends use a draft workflow plus `test-run` so they are auditable in `Workflow Studio`.
+- `Schedule once` and `Repeated send` create and publish workflows that later appear in `Workflow Studio`.
 - Live Wynn sends require both `Title` and `Body`.
+- Advanced delivery controls are optional. Leaving a limit or quiet-hours field blank means no cap or quiet-hours block is applied for that workflow.
 - Provider options and Wynn filters are structured internally and can be prepared by Ask AI from marketer-readable prompts.
 - Wynn filters are stored at `provider_options.filters` and use native Wynn keys such as `minVIPLevel`, `maxVIPLevel`, `vipLevels`, `platform`, `daysFromLastLogin`, `daysFromLastPayment`, `daysFromFirstSeen`, `newUserInstallationDate`, and `newUserInstallationDateRange`.
-- Leaving `Provider Connection` blank keeps the simulator path, but simulator delivery is only valid for explicit user ids and does not broadcast to all players.
+- Leaving `Provider Connection` blank keeps the simulator path for explicit ids or cohort-backed simulator workflows, but simulator delivery does not broadcast to all players.
 - When the selected Wynn provider connection also includes `Kairyx Callback URL` and `Kairyx Callback Bearer Token`, Kairyx keeps callback correlation server-side and Wynn can forward `opened`, `clicked`, `claimed`, and `returned` callbacks back into the activation service without polluting the visible push `data` payload.
 
 #### Sample immediate push request
@@ -1258,7 +1264,7 @@ Kairyx applies those callbacks in three places:
 
 #### 5.2.2 Legacy Advanced Workflow Builder
 
-Use the collapsed legacy builder only when the push should stay cohort-driven, reusable, and experiment/policy controlled. This older path still supports cadence, blacklist, quiet hours, cooldown, and budget controls, and editing it still creates a draft version on the same workflow record.
+Use the collapsed legacy builder only when the push needs the older direct workflow editor surface. The main Push Composer now also supports cohort audiences plus optional advanced delivery controls, so the legacy form is mainly for teams that still want the original experiment-linked workflow fields and edit flow.
 
 Legacy workflow behavior:
 - Leaving `Provider Connection` blank keeps the simulator path for explicit cohort members.
@@ -1924,15 +1930,18 @@ Create a high-risk churn cohort, bind it to a workflow, measure it with an exper
 5. In `Action Orchestrator -> Push Notifications`, use the `Push Composer`:
    - `Mode`: `Repeated send`
    - `Provider Connection`: choose your Wynn Push Provider
+   - `Audience`: choose `All players`, `Cohort`, or `User ID list`
    - `Daily Hour`: `10`
    - `Daily Minute`: `15`
-   - `User IDs`: leave blank to target all players, or enter comma-separated ids for a smaller audience
+   - If `Audience = All players`, keep the audience inputs empty and use the live provider connection
+   - If `Audience = Cohort`, choose the active winback cohort you created in `Audience Engine`
+   - If `Audience = User ID list`, enter comma-separated ids for a smaller audience
    - `Campaign Name`: `winback_push`
    - `Title`: `Come back`
    - `Body`: `Rewards are waiting for you.`
    - Optional Wynn filter prompt: `Limit this to VIP level 5 and above`
    - Click `Create Repeated Workflow`.
-   - For an immediate send instead, switch to `Mode = Single send`, choose `Send immediately`, fill the same content, and click `Send Now`.
+   - For an immediate send instead, switch to `Mode = Single send`, choose `Send immediately`, fill the same content, and click `Send Now` for direct user-list or all-player sends, or `Run Cohort Now` for a cohort-backed immediate workflow run.
 6. In `Action Orchestrator -> Workflow Studio`, find the new workflow. Composer-created scheduled and repeated workflows are already published, so use Workflow Studio to inspect, pause, resume, archive, or test-run them.
 7. In `Experiment Hub`, load `churn_rescue_v1`, review the summary, and click `Start` if the experiment is still inactive.
 8. After executions and outcomes accumulate, click `Record Decision`.

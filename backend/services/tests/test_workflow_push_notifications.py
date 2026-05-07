@@ -243,6 +243,45 @@ def test_legacy_push_workflow_without_provider_connection_uses_simulator(client:
     assert delivery["provider_request"]["body"] == "Fallback simulator copy"
 
 
+def test_cohort_push_workflow_publish_and_run_allow_blank_policy_limits(client: TestClient):
+    cohort_id = _create_active_cohort(client, name="unlimited_push_cohort")
+    response = client.post(
+        "/api/v1/workflows",
+        headers=_headers(),
+        json={
+            "name": "unlimited_push_flow",
+            "cohort_id": cohort_id,
+            "trigger": {"type": "daily_schedule", "hour": 23, "minute": 0},
+            "action": {"channel": "push_notification", "content": "After-hours simulator copy"},
+            "channel_config": {"channel": "push_notification", "content": "After-hours simulator copy"},
+            "policy": {
+                "global_daily_limit": None,
+                "channel_daily_limit": None,
+                "cooldown_hours": None,
+                "quiet_hours": None,
+                "blacklist_ids": [],
+            },
+            "budget_policy": {"daily_budget_limit": None, "daily_delivery_limit": None},
+        },
+    )
+    assert response.status_code == 201, response.text
+    workflow_id = response.json()["workflow_id"]
+
+    publish = client.post(f"/api/v1/workflows/{workflow_id}/publish", headers=_headers())
+    assert publish.status_code == 200, publish.text
+
+    run = client.post(
+        "/api/v1/orchestrator/run-due",
+        headers=_headers(),
+        json={"reference_time": "2026-04-17T23:15:00+00:00", "limit_per_workflow": 10},
+    )
+    assert run.status_code == 200, run.text
+    items = run.json()["items"]
+    assert len(items) == 1
+    assert items[0]["workflow_id"] == workflow_id
+    assert items[0]["success"] == 1
+
+
 def test_push_workflow_delivery_records_wynn_campaign_metadata(client: TestClient, monkeypatch):
     captured_requests: list[dict] = []
 

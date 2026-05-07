@@ -11186,7 +11186,12 @@ export function initializeOperatorConsole() {
             const pushDispatchStatus = document.getElementById('push-dispatch-status');
             const pushDispatchOutput = document.getElementById('push-dispatch-output');
             const pushDispatchNameInput = document.getElementById('push-dispatch-name-input');
+            const pushDispatchAudienceTypeSelect = document.getElementById('push-dispatch-audience-type-select');
+            const pushDispatchUserIdGroup = document.getElementById('push-dispatch-user-id-group');
             const pushDispatchUserIdInput = document.getElementById('push-dispatch-user-id-input');
+            const pushDispatchCohortGroup = document.getElementById('push-dispatch-cohort-group');
+            const pushDispatchCohortSelect = document.getElementById('push-dispatch-cohort-select');
+            const pushDispatchAllPlayersNote = document.getElementById('push-dispatch-all-players-note');
             const pushDispatchModeSelect = document.getElementById('push-dispatch-mode-select');
             const pushDispatchSingleTimingGroup = document.getElementById('push-dispatch-single-timing-group');
             const pushDispatchSingleTimingSelect = document.getElementById('push-dispatch-single-timing-select');
@@ -11201,6 +11206,13 @@ export function initializeOperatorConsole() {
             const pushDispatchBodyInput = document.getElementById('push-dispatch-body-input');
             const pushDispatchDeepLinkInput = document.getElementById('push-dispatch-deep-link-input');
             const pushDispatchDeepLinkTokenInput = document.getElementById('push-dispatch-deep-link-token-input');
+            const pushDispatchGlobalLimitInput = document.getElementById('push-dispatch-global-limit-input');
+            const pushDispatchChannelLimitInput = document.getElementById('push-dispatch-channel-limit-input');
+            const pushDispatchCooldownHoursInput = document.getElementById('push-dispatch-cooldown-hours-input');
+            const pushDispatchQuietStartInput = document.getElementById('push-dispatch-quiet-start-input');
+            const pushDispatchQuietEndInput = document.getElementById('push-dispatch-quiet-end-input');
+            const pushDispatchBudgetLimitInput = document.getElementById('push-dispatch-budget-limit-input');
+            const pushDispatchBlacklistInput = document.getElementById('push-dispatch-blacklist-input');
             const pushDispatchDataInput = document.getElementById('push-dispatch-data-input');
             const pushDispatchProviderOptionsInput = document.getElementById('push-dispatch-provider-options-input');
             const pushDispatchWynnFiltersGroup = document.getElementById('push-dispatch-wynn-filters-group');
@@ -11642,8 +11654,10 @@ export function initializeOperatorConsole() {
                 return sourceLabel ? `${baseLabel} (${statusLabel}) · ${sourceLabel}` : `${baseLabel} (${statusLabel})`;
             }
 
-            function populateWorkflowCohortSelect(cohorts = []) {
-                const select = document.getElementById('workflow-cohort-select');
+            function populateCohortSelectOptions(select, cohorts = []) {
+                if (!select) {
+                    return;
+                }
                 const previousValue = select.value;
                 select.innerHTML = '<option value="">Select cohort</option>';
                 cohorts.forEach((cohort) => {
@@ -11655,6 +11669,11 @@ export function initializeOperatorConsole() {
                 if (cohorts.some((item) => item.cohort_id === previousValue)) {
                     select.value = previousValue;
                 }
+            }
+
+            function populateWorkflowCohortSelect(cohorts = []) {
+                populateCohortSelectOptions(document.getElementById('workflow-cohort-select'), cohorts);
+                populateCohortSelectOptions(pushDispatchCohortSelect, cohorts);
             }
 
             function populatePushProviderSelect(selectElement, { preferredValue } = {}) {
@@ -11698,6 +11717,10 @@ export function initializeOperatorConsole() {
                 return String(pushDispatchSingleTimingSelect?.value || 'immediate').trim().toLowerCase() || 'immediate';
             }
 
+            function getPushComposerAudienceType() {
+                return String(pushDispatchAudienceTypeSelect?.value || 'user_ids').trim().toLowerCase() || 'user_ids';
+            }
+
             function getSelectedPushDispatchProvider() {
                 const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
                 return providerConnectionId ? findProviderConnection(providerConnectionId) : null;
@@ -11708,31 +11731,135 @@ export function initializeOperatorConsole() {
                 return String(provider?.provider || '').trim().toLowerCase() === 'wynn_push_notifier';
             }
 
-            function syncPushDispatchAudienceFieldState() {
-                if (!pushDispatchUserIdInput) {
-                    return;
+            function getPushComposerAudienceSelection() {
+                const audienceType = getPushComposerAudienceType();
+                const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
+                const cohortId = String(pushDispatchCohortSelect?.value || '').trim();
+                const cohort = cohortId ? findCohort(cohortId) : null;
+                if (audienceType === 'cohort') {
+                    return {
+                        audienceType,
+                        audienceMode: 'cohort',
+                        cohortId,
+                        cohort,
+                        userIds: [],
+                        label: cohort?.name || cohortId || 'selected cohort',
+                    };
                 }
-                pushDispatchUserIdInput.required = false;
-                pushDispatchUserIdInput.removeAttribute('required');
-                pushDispatchUserIdInput.setCustomValidity('');
+                if (audienceType === 'all_players') {
+                    return {
+                        audienceType,
+                        audienceMode: 'provider_campaign',
+                        cohortId: null,
+                        cohort: null,
+                        userIds: [],
+                        label: 'all players',
+                    };
+                }
+                return {
+                    audienceType: 'user_ids',
+                    audienceMode: 'provider_campaign',
+                    cohortId: null,
+                    cohort: null,
+                    userIds,
+                    label: `${userIds.length || 0} user${userIds.length === 1 ? '' : 's'}`,
+                };
             }
 
-            function validatePushComposerAudience({ userIds, providerConnectionId }) {
+            function syncPushDispatchAudienceFieldState() {
+                const audienceType = getPushComposerAudienceType();
+                if (pushDispatchUserIdGroup) {
+                    pushDispatchUserIdGroup.style.display = audienceType === 'user_ids' ? 'block' : 'none';
+                }
+                if (pushDispatchCohortGroup) {
+                    pushDispatchCohortGroup.style.display = audienceType === 'cohort' ? 'block' : 'none';
+                }
+                if (pushDispatchAllPlayersNote) {
+                    pushDispatchAllPlayersNote.style.display = audienceType === 'all_players' ? 'block' : 'none';
+                }
+                if (pushDispatchUserIdInput) {
+                    pushDispatchUserIdInput.required = false;
+                    pushDispatchUserIdInput.removeAttribute('required');
+                    pushDispatchUserIdInput.setCustomValidity('');
+                }
+                if (pushDispatchCohortSelect) {
+                    pushDispatchCohortSelect.required = false;
+                    pushDispatchCohortSelect.removeAttribute('required');
+                    pushDispatchCohortSelect.setCustomValidity('');
+                }
+            }
+
+            function validatePushComposerAudience({ audienceType, cohortId, cohort, userIds, providerConnectionId }) {
                 syncPushDispatchAudienceFieldState();
+                if (audienceType === 'cohort') {
+                    if (!cohortId) {
+                        throw new Error('Select an active cohort before sending or scheduling a push.');
+                    }
+                    if (String(cohort?.status || '').trim().toLowerCase() !== 'active') {
+                        throw new Error('Activate the selected cohort before sending or scheduling a push.');
+                    }
+                    return;
+                }
+                if (audienceType === 'all_players') {
+                    if (String(providerConnectionId || '').trim()) {
+                        return;
+                    }
+                    throw new Error('All-player push sends require a live Wynn PushNotifier provider connection.');
+                }
                 if (Array.isArray(userIds) && userIds.length > 0) {
                     return;
                 }
-                if (String(providerConnectionId || '').trim()) {
-                    return;
+                throw new Error('Enter one or more User IDs, or switch the audience to Cohort or All players.');
+            }
+
+            function parseOptionalWholeNumberInput(input, label, { min = 0, max = null } = {}) {
+                const raw = String(input?.value || '').trim();
+                if (!raw) {
+                    return null;
                 }
-                throw new Error(
-                    'Leave User IDs blank only when sending through a live Wynn PushNotifier provider connection. Select a provider connection to target all players, or enter one or more User IDs for simulator sends.',
-                );
+                const value = Number(raw);
+                if (!Number.isInteger(value)) {
+                    throw new Error(`${label} must be a whole number.`);
+                }
+                if (value < min) {
+                    throw new Error(`${label} must be at least ${min}.`);
+                }
+                if (max !== null && value > max) {
+                    throw new Error(`${label} must be at most ${max}.`);
+                }
+                return value;
+            }
+
+            function buildPushComposerPolicyPayload() {
+                const globalDailyLimit = parseOptionalWholeNumberInput(pushDispatchGlobalLimitInput, 'Global daily limit');
+                const channelDailyLimit = parseOptionalWholeNumberInput(pushDispatchChannelLimitInput, 'Channel daily limit');
+                const cooldownHours = parseOptionalWholeNumberInput(pushDispatchCooldownHoursInput, 'Cooldown hours');
+                const quietStart = parseOptionalWholeNumberInput(pushDispatchQuietStartInput, 'Quiet hours start', { min: 0, max: 23 });
+                const quietEnd = parseOptionalWholeNumberInput(pushDispatchQuietEndInput, 'Quiet hours end', { min: 0, max: 23 });
+                if ((quietStart === null) !== (quietEnd === null)) {
+                    throw new Error('Set both quiet-hours values or leave both blank.');
+                }
+                return {
+                    global_daily_limit: globalDailyLimit,
+                    channel_daily_limit: channelDailyLimit,
+                    cooldown_hours: cooldownHours,
+                    blacklist_ids: splitCsv(pushDispatchBlacklistInput?.value || ''),
+                    quiet_hours: quietStart === null ? null : { start: quietStart, end: quietEnd },
+                };
+            }
+
+            function buildPushComposerBudgetPolicyPayload() {
+                const dailyBudgetLimit = parseOptionalWholeNumberInput(pushDispatchBudgetLimitInput, 'Daily budget limit');
+                return {
+                    daily_budget_limit: dailyBudgetLimit,
+                    daily_delivery_limit: dailyBudgetLimit,
+                };
             }
 
             function syncPushDispatchComposerFields() {
                 const mode = getPushComposerMode();
                 const singleTiming = getPushComposerSingleTiming();
+                const audienceType = getPushComposerAudienceType();
                 syncPushDispatchAudienceFieldState();
                 if (pushDispatchSingleTimingGroup) {
                     pushDispatchSingleTimingGroup.style.display = mode === 'single' ? 'block' : 'none';
@@ -11751,6 +11878,8 @@ export function initializeOperatorConsole() {
                         pushDispatchSendNowBtn.textContent = 'Create Repeated Workflow';
                     } else if (singleTiming === 'schedule_once') {
                         pushDispatchSendNowBtn.textContent = 'Schedule Once';
+                    } else if (audienceType === 'cohort') {
+                        pushDispatchSendNowBtn.textContent = 'Run Cohort Now';
                     } else {
                         pushDispatchSendNowBtn.textContent = 'Send Now';
                     }
@@ -11781,8 +11910,14 @@ export function initializeOperatorConsole() {
                 if (pushDispatchSingleTimingSelect) {
                     pushDispatchSingleTimingSelect.value = 'immediate';
                 }
+                if (pushDispatchAudienceTypeSelect) {
+                    pushDispatchAudienceTypeSelect.value = 'user_ids';
+                }
                 if (pushDispatchUserIdInput) {
                     pushDispatchUserIdInput.value = '';
+                }
+                if (pushDispatchCohortSelect) {
+                    pushDispatchCohortSelect.value = '';
                 }
                 if (pushDispatchScheduleOnceInput) {
                     pushDispatchScheduleOnceInput.value = '';
@@ -11808,6 +11943,27 @@ export function initializeOperatorConsole() {
                 }
                 if (pushDispatchDeepLinkTokenInput) {
                     pushDispatchDeepLinkTokenInput.value = '';
+                }
+                if (pushDispatchGlobalLimitInput) {
+                    pushDispatchGlobalLimitInput.value = '';
+                }
+                if (pushDispatchChannelLimitInput) {
+                    pushDispatchChannelLimitInput.value = '';
+                }
+                if (pushDispatchCooldownHoursInput) {
+                    pushDispatchCooldownHoursInput.value = '';
+                }
+                if (pushDispatchQuietStartInput) {
+                    pushDispatchQuietStartInput.value = '';
+                }
+                if (pushDispatchQuietEndInput) {
+                    pushDispatchQuietEndInput.value = '';
+                }
+                if (pushDispatchBudgetLimitInput) {
+                    pushDispatchBudgetLimitInput.value = '';
+                }
+                if (pushDispatchBlacklistInput) {
+                    pushDispatchBlacklistInput.value = '';
                 }
                 if (pushDispatchDataInput) {
                     pushDispatchDataInput.value = '{}';
@@ -11910,22 +12066,73 @@ export function initializeOperatorConsole() {
                 setInlineStatus(workflowCreateStatus, 'Creating a new push workflow.');
             }
 
-            function buildPushDispatchPayload() {
+            function buildPushComposerChannelConfig(name, providerConnectionId) {
                 const body = String(pushDispatchBodyInput?.value || '').trim();
                 if (!body) {
                     throw new Error('Body is required.');
                 }
-                const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
+                return {
+                    channel: 'push_notification',
+                    campaign_name: String(pushDispatchCampaignNameInput?.value || '').trim() || name,
+                    title: String(pushDispatchTitleInput?.value || '').trim(),
+                    body,
+                    content: body,
+                    deep_link: String(pushDispatchDeepLinkInput?.value || '').trim(),
+                    deep_link_token: String(pushDispatchDeepLinkTokenInput?.value || '').trim(),
+                    data: parseJsonText(pushDispatchDataInput?.value, {}),
+                    provider_connection_id: providerConnectionId,
+                    provider_options: buildPushComposerProviderOptions(),
+                };
+            }
+
+            function buildPushComposerTrigger({ manualTest = false } = {}) {
+                const mode = getPushComposerMode();
+                if (manualTest) {
+                    return { type: 'manual_test', hour: 0, minute: 0 };
+                }
+                if (mode === 'repeated') {
+                    return {
+                        type: 'daily_schedule',
+                        hour: Number(pushDispatchRepeatHourInput?.value || 0),
+                        minute: Number(pushDispatchRepeatMinuteInput?.value || 0),
+                    };
+                }
+                const scheduledAt = toIsoFromLocalDateTimeInput(pushDispatchScheduleOnceInput?.value || '');
+                if (!scheduledAt) {
+                    throw new Error('Choose a schedule time before creating a one-time push workflow.');
+                }
+                return {
+                    type: 'one_time_schedule',
+                    scheduled_at: scheduledAt,
+                };
+            }
+
+            function setOptionalInputValue(input, value) {
+                if (!input) {
+                    return;
+                }
+                input.value = value === null || value === undefined || value === '' ? '' : String(value);
+            }
+
+            function buildPushDispatchPayload() {
+                const audience = getPushComposerAudienceSelection();
+                const body = String(pushDispatchBodyInput?.value || '').trim();
+                if (!body) {
+                    throw new Error('Body is required.');
+                }
                 const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
-                validatePushComposerAudience({ userIds, providerConnectionId });
+                validatePushComposerAudience({ ...audience, providerConnectionId });
+                if (audience.audienceType === 'cohort') {
+                    throw new Error('Immediate cohort sends run through workflow execution, not direct dispatch.');
+                }
                 const payload = {
                     body,
-                    user_ids: userIds,
+                    user_ids: audience.userIds,
                     data: parseJsonText(pushDispatchDataInput?.value, {}),
                     provider_options: buildPushComposerProviderOptions(),
                 };
-                if (userIds.length === 1) {
-                    payload.user_id = userIds[0];
+                if (audience.userIds.length === 1) {
+                    payload.user_id = audience.userIds[0];
                 }
                 const name = String(pushDispatchNameInput?.value || '').trim();
                 const campaignName = String(pushDispatchCampaignNameInput?.value || '').trim();
@@ -11953,58 +12160,22 @@ export function initializeOperatorConsole() {
                 return payload;
             }
 
-            function buildPushComposerWorkflowPayload() {
-                const mode = getPushComposerMode();
+            function buildPushComposerWorkflowPayload({ manualTest = false } = {}) {
                 const name = String(pushDispatchNameInput?.value || '').trim() || `push_campaign_${Date.now()}`;
-                const body = String(pushDispatchBodyInput?.value || '').trim();
-                if (!body) {
-                    throw new Error('Body is required.');
-                }
-                const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
+                const audience = getPushComposerAudienceSelection();
                 const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim() || null;
-                validatePushComposerAudience({ userIds, providerConnectionId });
-                const channelConfig = {
-                    channel: 'push_notification',
-                    campaign_name: String(pushDispatchCampaignNameInput?.value || '').trim() || name,
-                    title: String(pushDispatchTitleInput?.value || '').trim(),
-                    body,
-                    content: body,
-                    deep_link: String(pushDispatchDeepLinkInput?.value || '').trim(),
-                    deep_link_token: String(pushDispatchDeepLinkTokenInput?.value || '').trim(),
-                    data: parseJsonText(pushDispatchDataInput?.value, {}),
-                    provider_connection_id: providerConnectionId,
-                    provider_options: buildPushComposerProviderOptions(),
-                };
-                const trigger = mode === 'repeated'
-                    ? {
-                        type: 'daily_schedule',
-                        hour: Number(pushDispatchRepeatHourInput?.value || 0),
-                        minute: Number(pushDispatchRepeatMinuteInput?.value || 0),
-                    }
-                    : {
-                        type: 'one_time_schedule',
-                        scheduled_at: toIsoFromLocalDateTimeInput(pushDispatchScheduleOnceInput?.value || ''),
-                    };
+                validatePushComposerAudience({ ...audience, providerConnectionId });
+                const channelConfig = buildPushComposerChannelConfig(name, providerConnectionId);
                 return {
                     name,
-                    audience_mode: 'provider_campaign',
-                    user_ids: userIds,
-                    trigger,
+                    audience_mode: audience.audienceMode,
+                    cohort_id: audience.cohortId,
+                    user_ids: audience.userIds,
+                    trigger: buildPushComposerTrigger({ manualTest }),
                     action: channelConfig,
                     channel_config: channelConfig,
-                    policy: {
-                        global_daily_limit: 5,
-                        channel_daily_limit: 5,
-                        cooldown_hours: 0,
-                        blacklist_ids: [],
-                        quiet_hours: {
-                            start: 22,
-                            end: 7,
-                        },
-                    },
-                    budget_policy: {
-                        daily_budget_limit: 25,
-                    },
+                    policy: buildPushComposerPolicyPayload(),
+                    budget_policy: buildPushComposerBudgetPolicyPayload(),
                     requires_confirmation: false,
                 };
             }
@@ -12024,11 +12195,21 @@ export function initializeOperatorConsole() {
                 if (pushDispatchProviderConnectionSelect) {
                     pushDispatchProviderConnectionSelect.value = channelConfig.provider_connection_id || '';
                 }
+                const triggerType = String(trigger.type || '').trim().toLowerCase();
                 if (pushDispatchModeSelect) {
-                    pushDispatchModeSelect.value = String(trigger.type || '').trim().toLowerCase() === 'one_time_schedule' ? 'single' : 'repeated';
+                    pushDispatchModeSelect.value = triggerType === 'daily_schedule' ? 'repeated' : 'single';
                 }
                 if (pushDispatchSingleTimingSelect) {
-                    pushDispatchSingleTimingSelect.value = String(trigger.type || '').trim().toLowerCase() === 'one_time_schedule' ? 'schedule_once' : 'immediate';
+                    pushDispatchSingleTimingSelect.value = triggerType === 'one_time_schedule' ? 'schedule_once' : 'immediate';
+                }
+                if (pushDispatchAudienceTypeSelect) {
+                    if (String(definition.audience_mode || workflow.audience_mode || '').trim().toLowerCase() === 'cohort' || definition.cohort_id) {
+                        pushDispatchAudienceTypeSelect.value = 'cohort';
+                    } else if (Array.isArray(definition.user_ids) && definition.user_ids.length > 0) {
+                        pushDispatchAudienceTypeSelect.value = 'user_ids';
+                    } else {
+                        pushDispatchAudienceTypeSelect.value = 'all_players';
+                    }
                 }
                 if (pushDispatchScheduleOnceInput) {
                     pushDispatchScheduleOnceInput.value = fromIsoToLocalDateTimeInput(trigger.scheduled_at || '');
@@ -12041,6 +12222,9 @@ export function initializeOperatorConsole() {
                 }
                 if (pushDispatchUserIdInput) {
                     pushDispatchUserIdInput.value = Array.isArray(definition.user_ids) ? definition.user_ids.join(', ') : '';
+                }
+                if (pushDispatchCohortSelect) {
+                    pushDispatchCohortSelect.value = definition.cohort_id || '';
                 }
                 if (pushDispatchCampaignNameInput) {
                     pushDispatchCampaignNameInput.value = channelConfig.campaign_name || '';
@@ -12056,6 +12240,18 @@ export function initializeOperatorConsole() {
                 }
                 if (pushDispatchDeepLinkTokenInput) {
                     pushDispatchDeepLinkTokenInput.value = channelConfig.deep_link_token || '';
+                }
+                setOptionalInputValue(pushDispatchGlobalLimitInput, workflow.policy?.global_daily_limit);
+                setOptionalInputValue(pushDispatchChannelLimitInput, workflow.policy?.channel_daily_limit);
+                setOptionalInputValue(pushDispatchCooldownHoursInput, workflow.policy?.cooldown_hours);
+                setOptionalInputValue(pushDispatchQuietStartInput, workflow.policy?.quiet_hours?.start);
+                setOptionalInputValue(pushDispatchQuietEndInput, workflow.policy?.quiet_hours?.end);
+                setOptionalInputValue(
+                    pushDispatchBudgetLimitInput,
+                    workflow.budget_policy?.daily_budget_limit ?? workflow.budget_policy?.daily_delivery_limit,
+                );
+                if (pushDispatchBlacklistInput) {
+                    pushDispatchBlacklistInput.value = Array.isArray(workflow.policy?.blacklist_ids) ? workflow.policy.blacklist_ids.join(', ') : '';
                 }
                 if (pushDispatchDataInput) {
                     pushDispatchDataInput.value = JSON.stringify(channelConfig.data || {}, null, 2);
@@ -15009,7 +15205,14 @@ export function initializeOperatorConsole() {
                 if (resourceType === 'workflow') {
                     if (action === 'edit') {
                         const workflow = findWorkflow(resourceId) || await apiRequest(`/workflows/${encodeURIComponent(resourceId)}`);
-                        if (String(workflow.audience_mode || workflow.definition?.audience_mode || '').trim().toLowerCase() === 'provider_campaign') {
+                        const workflowAudienceMode = String(workflow.audience_mode || workflow.definition?.audience_mode || '').trim().toLowerCase();
+                        const workflowChannel = String(
+                            workflow.channel_config?.channel
+                            || workflow.definition?.channel_config?.channel
+                            || workflow.definition?.action?.channel
+                            || ''
+                        ).trim().toLowerCase();
+                        if (workflowChannel === 'push_notification' || workflowAudienceMode === 'provider_campaign') {
                             loadWorkflowIntoPushComposer(workflow);
                         } else {
                             loadWorkflowIntoBuilder(workflow);
@@ -15175,9 +15378,13 @@ export function initializeOperatorConsole() {
 
             async function sendPushDispatchNow() {
                 try {
+                    const audience = getPushComposerAudienceSelection();
                     const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim();
-                    const userIds = splitCsv(pushDispatchUserIdInput?.value || '');
-                    const audienceLabel = userIds.length > 0 ? `${userIds.length} user${userIds.length === 1 ? '' : 's'}` : 'all players';
+                    validatePushComposerAudience({ ...audience, providerConnectionId });
+                    if (audience.audienceType === 'cohort') {
+                        throw new Error('Use Run Cohort Now to execute cohort-backed immediate sends.');
+                    }
+                    const audienceLabel = audience.label || 'selected audience';
                     setInlineStatus(
                         pushDispatchStatus,
                         providerConnectionId ? `Sending push to ${audienceLabel}...` : `Running simulator push for ${audienceLabel}...`,
@@ -15209,18 +15416,57 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            async function runPushComposerWorkflowNow() {
+                const audience = getPushComposerAudienceSelection();
+                const providerConnectionId = String(pushDispatchProviderConnectionSelect?.value || '').trim() || null;
+                validatePushComposerAudience({ ...audience, providerConnectionId });
+                const cohortLimit = Math.max(1000, Number(audience.cohort?.member_count || 0));
+                setInlineStatus(pushDispatchStatus, `Running immediate push workflow for ${audience.label}...`);
+                const createdWorkflow = await apiRequest('/workflows', {
+                    method: 'POST',
+                    body: buildPushComposerWorkflowPayload({ manualTest: true }),
+                });
+                const runResult = await apiRequest(`/workflows/${encodeURIComponent(createdWorkflow.workflow_id)}/test-run`, {
+                    method: 'POST',
+                    body: {
+                        limit: cohortLimit,
+                        confirm: true,
+                        sandbox: false,
+                        reference_time: getCurrentWorkflowReferenceTime(),
+                    },
+                });
+                renderJsonOutput(
+                    pushDispatchOutput,
+                    { workflow: createdWorkflow, execution: runResult },
+                    'No push workflow response.',
+                );
+                setInlineStatus(
+                    pushDispatchStatus,
+                    `Draft workflow ${createdWorkflow.name || createdWorkflow.workflow_id} ran immediately for ${audience.label}.`,
+                    Number(runResult.failures || 0) > 0,
+                );
+                await loadActionOrchestrator();
+                await loadWorkflowStudioSelection('workflow', createdWorkflow.workflow_id);
+            }
+
             async function submitPushComposer() {
                 const mode = getPushComposerMode();
                 const singleTiming = getPushComposerSingleTiming();
+                const audience = getPushComposerAudienceSelection();
                 if (mode === 'single' && singleTiming === 'immediate') {
+                    if (audience.audienceType === 'cohort') {
+                        await runPushComposerWorkflowNow();
+                        return;
+                    }
                     await sendPushDispatchNow();
                     return;
                 }
                 try {
                     const isRepeated = mode === 'repeated';
+                    const actionLabel = isRepeated ? 'Creating repeated push workflow...' : 'Creating one-time scheduled push workflow...';
                     setInlineStatus(
                         pushDispatchStatus,
-                        isRepeated ? 'Creating repeated push workflow...' : 'Creating one-time scheduled push workflow...',
+                        actionLabel,
                     );
                     const createdWorkflow = await apiRequest('/workflows', {
                         method: 'POST',
@@ -16319,8 +16565,20 @@ export function initializeOperatorConsole() {
                         const userIds = Array.isArray(parameters.user_ids) && parameters.user_ids.length
                             ? parameters.user_ids
                             : (parameters.user_id ? [parameters.user_id] : []);
+                        if (pushDispatchAudienceTypeSelect) {
+                            if (parameters.cohort_id) {
+                                pushDispatchAudienceTypeSelect.value = 'cohort';
+                            } else if (userIds.length > 0) {
+                                pushDispatchAudienceTypeSelect.value = 'user_ids';
+                            } else {
+                                pushDispatchAudienceTypeSelect.value = 'all_players';
+                            }
+                        }
                         if (pushDispatchUserIdInput) {
                             pushDispatchUserIdInput.value = userIds.join(', ');
+                        }
+                        if (pushDispatchCohortSelect) {
+                            pushDispatchCohortSelect.value = parameters.cohort_id || '';
                         }
                         if (pushDispatchTitleInput) {
                             pushDispatchTitleInput.value = parameters.title || '';
@@ -17281,6 +17539,7 @@ export function initializeOperatorConsole() {
             pushDispatchClearBtn?.addEventListener('click', () => {
                 resetPushDispatchForm();
             });
+            pushDispatchAudienceTypeSelect?.addEventListener('change', syncPushDispatchComposerFields);
             pushDispatchModeSelect?.addEventListener('change', syncPushDispatchComposerFields);
             pushDispatchSingleTimingSelect?.addEventListener('change', syncPushDispatchComposerFields);
             pushDispatchProviderConnectionSelect?.addEventListener('change', syncPushDispatchComposerFields);

@@ -1541,10 +1541,10 @@
                         <span>Push Notifications</span>
                         <span class="inline-help">
                             <button type="button" class="inline-help-button" aria-label="Show push workflow help">?</button>
-                            <span class="inline-help-source" aria-hidden="true">Use the unified Push Composer for immediate sends, one-time scheduled sends, or repeated Wynn provider campaigns. Leave User IDs blank to target all players through Wynn PushNotifier, or enter comma-separated user ids to target explicit players.</span>
+                            <span class="inline-help-source" aria-hidden="true">Use the unified Push Composer for immediate sends, one-time scheduled sends, or repeated push workflows. Pick an audience type first, then target a cohort, a comma-separated user-id list, or all players through Wynn PushNotifier.</span>
                         </span>
                     </h2>
-                    <span id="workflow-builder-selected-label" class="pill">No legacy workflow selected</span>
+                    <span id="workflow-builder-selected-label" class="pill">No push workflow selected</span>
                 </div>
                 <div class="card split-card" style="margin-bottom: 1rem;">
                     <div class="module-section-header">
@@ -1552,7 +1552,7 @@
                             <span>Push Composer</span>
                             <span class="inline-help">
                                 <button type="button" class="inline-help-button" aria-label="Show push composer help">?</button>
-                                <span class="inline-help-source" aria-hidden="true">Choose Single send or Repeated send. Single send can go out immediately or be scheduled once for a future time. Enter comma-separated user ids to target specific players, or leave the field blank to target all players through Wynn PushNotifier.</span>
+                                <span class="inline-help-source" aria-hidden="true">Choose Single send or Repeated send. Single send can go out immediately or be scheduled once for a future time. Then choose whether the audience is a cohort, a user-id list, or all players through Wynn PushNotifier.</span>
                             </span>
                         </h3>
                         <span class="pill">Immediate / Scheduled / Repeated</span>
@@ -1576,12 +1576,20 @@
                             </select>
                         </div>
                     </div>
-                    <div class="grid-2">
+                    <div class="grid-3">
                         <div class="form-group" id="push-dispatch-single-timing-group">
                             <label for="push-dispatch-single-timing-select">Single Send Timing</label>
                             <select id="push-dispatch-single-timing-select">
                                 <option value="immediate" selected>Send immediately</option>
                                 <option value="schedule_once">Schedule once</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-audience-type-select">Audience</label>
+                            <select id="push-dispatch-audience-type-select">
+                                <option value="user_ids" selected>User ID list</option>
+                                <option value="cohort">Cohort</option>
+                                <option value="all_players">All players</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1603,11 +1611,55 @@
                             <input type="number" id="push-dispatch-repeat-minute-input" min="0" max="59" value="0">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="push-dispatch-user-id-input">User IDs (optional)</label>
+                    <div class="form-group" id="push-dispatch-user-id-group">
+                        <label for="push-dispatch-user-id-input">User IDs</label>
                         <textarea id="push-dispatch-user-id-input" style="min-height: 7rem;" placeholder="player_123, player_456"></textarea>
-                        <div class="subtle" style="margin-top: 0.35rem;">Leave blank to target all players. Enter comma-separated ids to target specific players.</div>
+                        <div class="subtle" style="margin-top: 0.35rem;">Enter comma-separated ids to target specific players.</div>
                     </div>
+                    <div class="form-group" id="push-dispatch-cohort-group" style="display: none;">
+                        <label for="push-dispatch-cohort-select">Cohort</label>
+                        <select id="push-dispatch-cohort-select">
+                            <option value="">Select cohort</option>
+                        </select>
+                        <div class="subtle" style="margin-top: 0.35rem;">Use an active cohort from Audience Engine for scheduled, repeated, or immediate workflow-backed sends.</div>
+                    </div>
+                    <div id="push-dispatch-all-players-note" class="subtle" style="display: none; margin-bottom: 0.75rem;">All-player delivery requires a live Wynn PushNotifier provider connection.</div>
+                    <details class="builder-advanced-panel">
+                        <summary>Advanced Delivery Controls</summary>
+                        <div class="subtle" style="margin-top: 0.75rem;">Leave these blank to disable the limit or quiet-hours rule.</div>
+                        <div class="grid-3" style="margin-top: 0.75rem;">
+                            <div class="form-group">
+                                <label for="push-dispatch-global-limit-input">Global Daily Limit</label>
+                                <input type="number" id="push-dispatch-global-limit-input" min="0" placeholder="No limit">
+                            </div>
+                            <div class="form-group">
+                                <label for="push-dispatch-channel-limit-input">Channel Daily Limit</label>
+                                <input type="number" id="push-dispatch-channel-limit-input" min="0" placeholder="No limit">
+                            </div>
+                            <div class="form-group">
+                                <label for="push-dispatch-cooldown-hours-input">Cooldown Hours</label>
+                                <input type="number" id="push-dispatch-cooldown-hours-input" min="0" placeholder="No cooldown">
+                            </div>
+                        </div>
+                        <div class="grid-3">
+                            <div class="form-group">
+                                <label for="push-dispatch-quiet-start-input">Quiet Hours Start</label>
+                                <input type="number" id="push-dispatch-quiet-start-input" min="0" max="23" placeholder="Disabled">
+                            </div>
+                            <div class="form-group">
+                                <label for="push-dispatch-quiet-end-input">Quiet Hours End</label>
+                                <input type="number" id="push-dispatch-quiet-end-input" min="0" max="23" placeholder="Disabled">
+                            </div>
+                            <div class="form-group">
+                                <label for="push-dispatch-budget-limit-input">Daily Budget Limit</label>
+                                <input type="number" id="push-dispatch-budget-limit-input" min="0" placeholder="No budget cap">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="push-dispatch-blacklist-input">Blacklist User IDs (optional)</label>
+                            <input type="text" id="push-dispatch-blacklist-input" placeholder="player_123, player_456">
+                        </div>
+                    </details>
                     <div class="grid-2">
                         <div class="form-group">
                             <label for="push-dispatch-title-input">Title</label>

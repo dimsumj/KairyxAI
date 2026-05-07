@@ -889,6 +889,22 @@ class WorkflowService:
         payload.setdefault("quiet_hours", {"start": 22, "end": 7})
         return payload
 
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_budget_delivery_limit(self, budget_policy: Dict[str, Any]) -> int | None:
+        return self._optional_int(
+            (budget_policy or {}).get("daily_delivery_limit")
+            if (budget_policy or {}).get("daily_delivery_limit") not in (None, "")
+            else (budget_policy or {}).get("daily_budget_limit")
+        )
+
     def _normalize_channel_config(self, channel_config: Dict[str, Any], *, workflow_name: str = "") -> Dict[str, Any]:
         payload = dict(channel_config or {})
         channel = str(payload.get("channel") or "push_notification").strip().lower() or "push_notification"
@@ -1140,9 +1156,10 @@ class WorkflowService:
                 reasons.append("threshold_operator_invalid")
         if trigger_type == "one_time_schedule" and not str(trigger.get("scheduled_at") or "").strip():
             reasons.append("scheduled_at_missing")
-        if audience_mode != "provider_campaign" and not workflow.get("experiment_id") and not definition.get("experiment_id"):
+        requires_experiment = audience_mode != "provider_campaign" and str(channel_config.get("channel") or "").strip().lower() != "push_notification"
+        if requires_experiment and not workflow.get("experiment_id") and not definition.get("experiment_id"):
             reasons.append("experiment_missing")
-        elif audience_mode != "provider_campaign":
+        elif requires_experiment:
             experiment_id = str(workflow.get("experiment_id") or definition.get("experiment_id") or "")
             experiment = self.repository.get_resource("experiment", experiment_id)
             if experiment is None:
@@ -1156,7 +1173,8 @@ class WorkflowService:
                 reasons.append("provider_connection_required_for_broadcast")
         policy = workflow.get("policy") or definition.get("policy") or {}
         for field in ("global_daily_limit", "channel_daily_limit", "cooldown_hours"):
-            if int(policy.get(field) or 0) < 0:
+            resolved_value = self._optional_int(policy.get(field))
+            if resolved_value is not None and resolved_value < 0:
                 reasons.append(f"invalid_{field}")
         if steps:
             has_action_step = any(str(step.get("type") or "") == "action" for step in steps)
@@ -1780,12 +1798,14 @@ class WorkflowService:
             return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
 
         if trigger_type == "daily_schedule":
-            quiet = policy.get("quiet_hours") or {}
-            start_hour = int(quiet.get("start", 22))
-            end_hour = int(quiet.get("end", 7))
-            current_hour = reference_time.hour
-            if current_hour >= start_hour or current_hour < end_hour:
-                return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
+            quiet = policy.get("quiet_hours")
+            if isinstance(quiet, dict):
+                start_hour = self._optional_int(quiet.get("start"))
+                end_hour = self._optional_int(quiet.get("end"))
+                if start_hour is not None and end_hour is not None:
+                    current_hour = reference_time.hour
+                    if current_hour >= start_hour or current_hour < end_hour:
+                        return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
 
         if self._idempotency_exists(key):
             return {"allowed": False, "reason": "duplicate_suppressed", "idempotency_key": key}
@@ -1804,15 +1824,18 @@ class WorkflowService:
                 if parsed is not None and (last_delivery_at is None or parsed > last_delivery_at):
                     last_delivery_at = parsed
 
-        if global_deliveries >= int(policy.get("global_daily_limit") or 0):
+        global_daily_limit = self._optional_int(policy.get("global_daily_limit"))
+        if global_daily_limit is not None and global_daily_limit > 0 and global_deliveries >= global_daily_limit:
             return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
-        if channel_deliveries >= int(policy.get("channel_daily_limit") or 0):
+        channel_daily_limit = self._optional_int(policy.get("channel_daily_limit"))
+        if channel_daily_limit is not None and channel_daily_limit > 0 and channel_deliveries >= channel_daily_limit:
             return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
-        if last_delivery_at is not None and last_delivery_at >= reference_time - timedelta(hours=int(policy.get("cooldown_hours") or 0)):
+        cooldown_hours = self._optional_int(policy.get("cooldown_hours"))
+        if cooldown_hours is not None and cooldown_hours > 0 and last_delivery_at is not None and last_delivery_at >= reference_time - timedelta(hours=cooldown_hours):
             return {"allowed": False, "reason": "policy_blocked", "idempotency_key": key}
 
-        max_deliveries = int(budget_policy.get("daily_delivery_limit") or 0)
-        if max_deliveries > 0:
+        max_deliveries = self._resolve_budget_delivery_limit(budget_policy)
+        if max_deliveries is not None and max_deliveries > 0:
             budget_state = self._get_budget_state(workflow_id, action_date)
             if int(budget_state.get("consumed") or 0) >= max_deliveries:
                 return {"allowed": False, "reason": "budget_exhausted", "idempotency_key": key}
@@ -2003,7 +2026,7 @@ class WorkflowService:
                             workflow["workflow_id"],
                             action_date,
                             blocked=True,
-                            max_deliveries=int(budget_policy.get("daily_delivery_limit") or 0) or None,
+                            max_deliveries=self._resolve_budget_delivery_limit(budget_policy),
                         )
                 summary["results"].append(execution_payload)
                 continue
@@ -2135,7 +2158,7 @@ class WorkflowService:
                     workflow["workflow_id"],
                     action_date,
                     consumed=True,
-                    max_deliveries=int(budget_policy.get("daily_delivery_limit") or 0) or None,
+                    max_deliveries=self._resolve_budget_delivery_limit(budget_policy),
                 )
                 self._record_idempotency(
                     policy_result["idempotency_key"],
