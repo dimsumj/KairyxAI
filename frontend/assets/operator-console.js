@@ -270,6 +270,7 @@ export function initializeOperatorConsole() {
                     items: [
                         { id: 'experiment-hub-control', label: 'Experiment Control', pageId: 'experiment-hub', targetId: 'experiment-control-section' },
                         { id: 'experiment-hub-summary', label: 'Summary', pageId: 'experiment-hub', targetId: 'experiment-summary-section' },
+                        { id: 'experiment-hub-ai-quality', label: 'AI Quality', pageId: 'experiment-hub', targetId: 'experiment-ai-quality-section' },
                         { id: 'experiment-hub-results', label: 'Exposures & Outcomes', pageId: 'experiment-hub', targetId: 'experiment-results-section' },
                         { id: 'experiment-hub-ingestion', label: 'Outcome Ingestion', pageId: 'experiment-hub', targetId: 'experiment-ingest-section' },
                     ],
@@ -11195,6 +11196,13 @@ export function initializeOperatorConsole() {
             const experimentExposuresList = document.getElementById('experiment-exposures-list');
             const experimentOutcomesList = document.getElementById('experiment-outcomes-list');
             const experimentIngestStatus = document.getElementById('experiment-ingest-status');
+            const aiQualitySummaryCards = document.getElementById('ai-quality-summary-cards');
+            const aiQualityAlertsList = document.getElementById('ai-quality-alerts-list');
+            const aiQualityDimensionsList = document.getElementById('ai-quality-dimensions-list');
+            const aiQualityRecordsList = document.getElementById('ai-quality-records-list');
+            const aiQualityStatus = document.getElementById('ai-quality-status');
+            const aiQualityRefreshBtn = document.getElementById('ai-quality-refresh-btn');
+            const aiQualityExportBtn = document.getElementById('ai-quality-export-btn');
             const copilotResponseOutput = document.getElementById('copilot-response-output');
             const copilotQueryLogOutput = document.getElementById('copilot-query-log-output');
             const copilotAnomaliesList = document.getElementById('copilot-anomalies-list');
@@ -11474,6 +11482,22 @@ export function initializeOperatorConsole() {
                 if (!value) return '-';
                 const parsed = parseIsoDate(value);
                 return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString();
+            }
+
+            function formatMonitorScore(value) {
+                if (value === null || value === undefined || value === '') return '-';
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed.toFixed(2) : '-';
+            }
+
+            function formatMonitorPercent(value) {
+                if (value === null || value === undefined || value === '') return '-';
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : '-';
+            }
+
+            function formatMonitorLabel(value) {
+                return String(value || '-').replace(/_/g, ' ');
             }
 
             function renderMetricList(container, payload = {}, emptyMessage = 'No metrics available.') {
@@ -15482,8 +15506,115 @@ export function initializeOperatorConsole() {
                 }
             }
 
+            function renderAiQualityMonitor(payload = null) {
+                const summary = payload?.summary || {};
+                const feedbackSummary = payload?.feedback_summary || {};
+                const dimensionAverages = summary.dimension_averages || {};
+                const cards = [
+                    { label: 'Monitor Status', value: formatMonitorLabel(payload?.status || 'unknown') },
+                    { label: 'Evaluation Records', value: formatCount(summary.total_records || 0) },
+                    { label: 'Average Score', value: formatMonitorScore(summary.average_score) },
+                    { label: 'Citation Coverage', value: formatMonitorPercent(dimensionAverages.citation_coverage) },
+                    { label: 'Retrieval Quality', value: formatMonitorPercent(dimensionAverages.retrieval_quality) },
+                    { label: 'Negative Feedback', value: formatMonitorPercent(feedbackSummary.negative_rate || 0) },
+                ];
+                if (aiQualitySummaryCards) {
+                    aiQualitySummaryCards.innerHTML = cards.map((item) => `
+                        <div class="stat-card">
+                            <div class="label">${escapeHtml(item.label)}</div>
+                            <div class="value">${escapeHtml(item.value)}</div>
+                        </div>
+                    `).join('');
+                }
+                renderSimpleTable(
+                    aiQualityAlertsList,
+                    [
+                        { label: 'Severity', render: (item) => `<span class="pill">${escapeHtml(formatMonitorLabel(item.severity))}</span>` },
+                        { label: 'Issue', render: (item) => escapeHtml(item.title || item.code || '-') },
+                        { label: 'Detail', render: (item) => escapeHtml(item.detail || '-') },
+                    ],
+                    payload?.alerts || [],
+                    'No AI quality alerts.',
+                );
+                renderSimpleTable(
+                    aiQualityDimensionsList,
+                    [
+                        { label: 'Dimension', render: (item) => escapeHtml(item.label || formatMonitorLabel(item.dimension)) },
+                        { label: 'Average', render: (item) => escapeHtml(formatMonitorScore(item.average)) },
+                        { label: 'Status', render: (item) => `<span class="pill">${escapeHtml(formatMonitorLabel(item.status))}</span>` },
+                    ],
+                    payload?.dimension_cards || [],
+                    'No quality dimensions recorded.',
+                );
+                renderSimpleTable(
+                    aiQualityRecordsList,
+                    [
+                        { label: 'Type', render: (item) => escapeHtml(formatMonitorLabel(item.evaluation_type)) },
+                        { label: 'Target', render: (item) => escapeHtml(item.target_id || item.target_type || '-') },
+                        { label: 'Score', render: (item) => escapeHtml(formatMonitorScore(item.score)) },
+                        { label: 'Outcome', render: (item) => `<span class="pill">${escapeHtml(formatMonitorLabel(item.outcome))}</span>` },
+                        { label: 'Recorded', render: (item) => escapeHtml(formatDateTime(item.recorded_at)) },
+                        {
+                            label: 'Artifact',
+                            render: (item) => `<button type="button" data-ai-quality-export-evaluation="${escapeHtml(item.evaluation_id || '')}">Export .json</button>`,
+                        },
+                    ],
+                    payload?.recent_records || [],
+                    'No AI quality records yet.',
+                );
+                setInlineStatus(
+                    aiQualityStatus,
+                    payload ? `${formatMonitorLabel(payload.status)} - ${formatCount(payload.alert_count || 0)} alert${Number(payload.alert_count || 0) === 1 ? '' : 's'}.` : 'No monitor loaded.',
+                    payload?.status === 'critical',
+                );
+            }
+
+            async function loadAiQualityMonitor() {
+                try {
+                    setInlineStatus(aiQualityStatus, 'Loading AI quality monitor...');
+                    const payload = await apiRequest('/experiments/ai-quality-monitor');
+                    renderAiQualityMonitor(payload);
+                } catch (error) {
+                    if (isWorkspaceContextError(error)) {
+                        renderAiQualityMonitor(null);
+                        setInlineStatus(aiQualityStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
+                        return;
+                    }
+                    renderAiQualityMonitor(null);
+                    setInlineStatus(aiQualityStatus, error.message || 'Failed to load AI quality monitor.', true);
+                }
+            }
+
+            async function exportAiQualityMonitor() {
+                try {
+                    const payload = await apiRequest('/experiments/ai-quality-monitor/export');
+                    downloadJsonPayload(payload, 'ai-quality-monitor.json');
+                    setInlineStatus(aiQualityStatus, 'AI quality monitor exported.');
+                } catch (error) {
+                    setInlineStatus(aiQualityStatus, error.message || 'Failed to export AI quality monitor.', true);
+                }
+            }
+
+            async function exportAiQualityEvaluation(evaluationId) {
+                const resolvedId = String(evaluationId || '').trim();
+                if (!resolvedId) {
+                    setInlineStatus(aiQualityStatus, 'Evaluation record is missing.', true);
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/experiments/ai-evaluations/${encodeURIComponent(resolvedId)}/export`);
+                    downloadJsonPayload(payload, `ai-evaluation-${resolvedId}.json`);
+                    setInlineStatus(aiQualityStatus, 'Evaluation record exported.');
+                } catch (error) {
+                    setInlineStatus(aiQualityStatus, error.message || 'Failed to export evaluation record.', true);
+                }
+            }
+
             async function loadExperimentHub() {
-                await loadExperimentWorkspace();
+                await Promise.all([
+                    loadExperimentWorkspace(),
+                    loadAiQualityMonitor(),
+                ]);
             }
 
             function getCopilotAgentUiContext() {
@@ -17008,6 +17139,15 @@ export function initializeOperatorConsole() {
             });
             document.getElementById('experiment-decision-btn').addEventListener('click', decideExperiment);
             document.getElementById('experiment-ingest-outcomes-btn').addEventListener('click', ingestExperimentOutcomes);
+            aiQualityRefreshBtn?.addEventListener('click', loadAiQualityMonitor);
+            aiQualityExportBtn?.addEventListener('click', exportAiQualityMonitor);
+            aiQualityRecordsList?.addEventListener('click', async (event) => {
+                const button = event.target instanceof Element ? event.target.closest('[data-ai-quality-export-evaluation]') : null;
+                if (!button) {
+                    return;
+                }
+                await exportAiQualityEvaluation(button.getAttribute('data-ai-quality-export-evaluation') || '');
+            });
             document.getElementById('copilot-query-btn').addEventListener('click', async () => {
                 await runCopilotRequest('/copilot/query', {
                     question: document.getElementById('copilot-question-input').value,

@@ -11,6 +11,7 @@ Current capabilities to preserve:
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
 - AI/RAG evaluation records, summaries, and deterministic auto-grading for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
+- AI Quality Monitor diagnostics for evaluation health, quality alerts, dimension cards, feedback-learning context, model-judge readiness, recent records, and export-only monitor artifacts
 - AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking and feedback-learning profiles available to Ask AI prompt context
 
 ### Future Growth RAG Plan
@@ -32,6 +33,12 @@ Delivered deterministic auto-grader acceptance criteria:
 3. Auto-grader dimensions include citation relevance, citation coverage, citation support, hallucination-risk proxy, artifact completion, and copy shape/action clarity.
 4. The grading response exposes a `.json` export descriptor instead of requiring a raw JSON output text area.
 
+Delivered AI Quality Monitor acceptance criteria:
+1. Experiment Hub exposes an operator-visible AI Quality Monitor with summary cards, alert rows, dimension status, recent evaluation records, and per-record `Export .json` actions.
+2. `/api/v1/experiments/ai-quality-monitor` returns a tenant/project-scoped `ai_quality_monitor.v1` snapshot for growth-marketing target types.
+3. The monitor computes deterministic alerts for low average score, elevated negative evaluation or feedback rates, stale records, failed prompts, low citation coverage/retrieval quality, high hallucination-risk proxy, and model-judge drift when model-judge records exist.
+4. `/api/v1/experiments/ai-quality-monitor/export` returns the complete monitor artifact for `.json` download without adding raw JSON output text fields to the console.
+
 Delivered feedback-loop acceptance criteria:
 1. Tenant/project-scoped feedback records can be created, listed, summarized, read, and exported.
 2. Feedback captures approvals, edits, ratings, clicks, sends, workflow results, experiment outcomes, citations, artifacts, and outcome metrics.
@@ -47,7 +54,7 @@ Delivered feedback-learning acceptance criteria:
 Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
 2. Ask AI can explain recommendations with citations to experiment evidence and integrity warnings.
-3. Model-judge graders, offline eval runs, and monitoring jobs can complement deterministic scores without requiring manual operator feedback every time.
+3. Model-judge graders and offline eval runs can complement deterministic scores and the delivered monitor readiness diagnostics without requiring manual operator feedback every time.
 4. Trained optimization can improve beyond deterministic feedback profiles while remaining module-owned and non-autonomous for live actions.
 5. Experiment-controlled rollout suggestions remain module-owned and do not auto-execute from chat.
 

@@ -178,6 +178,65 @@ class AIEvaluationSummaryResponse(BaseModel):
     latest_recorded_at: str = ""
 
 
+class AIQualityMonitorAlert(BaseModel):
+    severity: str
+    code: str
+    title: str
+    detail: str = ""
+
+
+class AIQualityDimensionCard(BaseModel):
+    dimension: str
+    label: str
+    average: float | None = None
+    status: str = "missing"
+
+
+class AIQualityMonitorRecord(BaseModel):
+    evaluation_id: str
+    evaluation_type: str
+    target_type: str
+    target_id: str = ""
+    outcome: str = "neutral"
+    score: float | None = None
+    source: str = ""
+    evaluated_by: str = ""
+    recorded_at: str = ""
+    export: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AIQualityMonitorResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    format: str = "ai_quality_monitor.v1"
+    status: str = "healthy"
+    generated_at: str = ""
+    scope: Dict[str, Any] = Field(default_factory=dict)
+    summary: AIEvaluationSummaryResponse | Dict[str, Any] = Field(default_factory=dict)
+    feedback_summary: Dict[str, Any] = Field(default_factory=dict)
+    feedback_learning: Dict[str, Any] = Field(default_factory=dict)
+    alerts: List[AIQualityMonitorAlert] = Field(default_factory=list)
+    alert_count: int = 0
+    dimension_cards: List[AIQualityDimensionCard] = Field(default_factory=list)
+    coverage_gaps: List[str] = Field(default_factory=list)
+    judge_readiness: Dict[str, Any] = Field(default_factory=dict)
+    recent_records: List[AIQualityMonitorRecord] = Field(default_factory=list)
+    export: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AIQualityMonitorExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    format: str = "ai_quality_monitor.v1"
+    monitor: AIQualityMonitorResponse | Dict[str, Any]
+
+
 class AIEvaluationExportResponse(BaseModel):
     tenant_id: str | None = None
     project_id: str | None = None

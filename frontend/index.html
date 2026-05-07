@@ -1994,6 +1994,42 @@
                     <pre id="experiment-integrity-output" class="json-output"></pre>
                 </div>
             </div>
+            <div id="experiment-ai-quality-section" class="card split-card">
+                <div class="module-section-header">
+                    <div>
+                        <h2>AI Quality Monitor</h2>
+                        <span class="subtle">Evaluation health for evidence, generated copy, and prompt-to-artifact handoffs.</span>
+                    </div>
+                    <div class="inline-actions">
+                        <button id="ai-quality-refresh-btn">Refresh Monitor</button>
+                        <button id="ai-quality-export-btn">Export .json</button>
+                    </div>
+                </div>
+                <div id="ai-quality-summary-cards" class="stats-grid"></div>
+                <div class="grid-2">
+                    <div>
+                        <div class="module-section-header">
+                            <h3>Alerts</h3>
+                            <span id="ai-quality-status" class="subtle"></span>
+                        </div>
+                        <div id="ai-quality-alerts-list"></div>
+                    </div>
+                    <div>
+                        <div class="module-section-header">
+                            <h3>Dimensions</h3>
+                            <span class="pill">Deterministic</span>
+                        </div>
+                        <div id="ai-quality-dimensions-list"></div>
+                    </div>
+                </div>
+                <div>
+                    <div class="module-section-header">
+                        <h3>Recent Records</h3>
+                        <span class="pill">Export only</span>
+                    </div>
+                    <div id="ai-quality-records-list"></div>
+                </div>
+            </div>
             <div class="grid-2">
                 <div class="card split-card">
                     <div class="module-section-header">

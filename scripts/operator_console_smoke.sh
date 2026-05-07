@@ -786,6 +786,60 @@ exercise_copilot_agent() {
   }"
 }
 
+assert_ai_quality_monitor_ui() {
+  log_step "Checking AI Quality Monitor UI"
+  run_pw run-code "async (page) => {
+    const experimentLink = page.locator('[data-module=\"experiment-hub\"]');
+    if (await experimentLink.count() === 0) throw new Error('Missing Experiment Hub module link');
+    await experimentLink.first().click();
+    await page.waitForTimeout(700);
+
+    const requiredSelectors = [
+      '#experiment-ai-quality-section',
+      '#ai-quality-summary-cards',
+      '#ai-quality-alerts-list',
+      '#ai-quality-dimensions-list',
+      '#ai-quality-records-list',
+      '#ai-quality-refresh-btn',
+      '#ai-quality-export-btn',
+    ];
+    for (const selector of requiredSelectors) {
+      if (await page.locator(selector).count() === 0) {
+        throw new Error('Missing AI Quality Monitor control: ' + selector);
+      }
+    }
+
+    const navLink = page.locator('[data-item=\"experiment-hub-ai-quality\"]');
+    if (await navLink.count() === 0) {
+      throw new Error('Missing Experiment Hub AI Quality navigation item');
+    }
+
+    const visibleJsonEditors = await page.locator('#experiment-ai-quality-section textarea, #experiment-ai-quality-section .json-output').evaluateAll((elements) => elements
+      .filter((element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      })
+      .map((element) => element.id || element.className));
+    if (visibleJsonEditors.length > 0) {
+      throw new Error('AI Quality Monitor should not expose JSON/text editors: ' + visibleJsonEditors.join(', '));
+    }
+
+    await page.locator('#ai-quality-refresh-btn').click();
+    await page.waitForFunction(() => {
+      const cards = document.getElementById('ai-quality-summary-cards')?.textContent || '';
+      const status = document.getElementById('ai-quality-status')?.textContent || '';
+      return cards.includes('Evaluation Records') && status.trim().length > 0;
+    }, { timeout: 7000 });
+
+    return {
+      navVisible: await navLink.count(),
+      exportButton: await page.locator('#ai-quality-export-btn').textContent(),
+      status: await page.locator('#ai-quality-status').textContent(),
+    };
+  }"
+}
+
 cleanup() {
   "$PWCLI" --session "$SESSION" close >>"$LOG_FILE" 2>/dev/null || true
 }
@@ -805,6 +859,7 @@ assert_audience_builder_ui
 assert_module "action-orchestrator" "#workflow-delivery-diagnostics-output"
 assert_email_campaign_ui
 assert_module "experiment-hub" "#experiment-integrity-output"
+assert_ai_quality_monitor_ui
 assert_module "insight-copilot" "#copilot-manual-tools-panel"
 exercise_copilot_agent
 log_step "Operator console smoke completed."

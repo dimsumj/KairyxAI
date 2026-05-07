@@ -59,7 +59,7 @@ KairyxAI is already moving toward the target AI growth platform shape: `Data Cor
 
 Priority completion TODO:
 1. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
-2. Expand the delivered deterministic AI auto-grader into model-judge evaluation, offline eval runs, recall probes, and monitoring alerts.
+2. Expand the delivered AI Quality Monitor and deterministic auto-grader into live model-judge evaluation, offline eval runs, recall probes, and automated alert jobs.
 3. Expand delivered feedback-learning profiles into trained optimization, richer semantic reranking, and structured playbook suggestions.
 4. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
@@ -1473,12 +1473,16 @@ Delivery detail behavior:
 
 Experiment Hub owns AI quality telemetry for retrieval, citations, generated copy, and prompt-to-artifact completion. The current surface is API-first so Ask AI, module UIs, and QA jobs can record whether evidence and drafts were useful without exposing raw JSON editors. A deterministic auto-grader can also score prompt/response/citation/artifact bundles without waiting for manual operator feedback.
 
+The operator console also includes `Experiment Hub -> AI Quality Monitor`, which summarizes evaluation records, feedback diagnostics, dimension health, alerts, model-judge readiness, and recent records. Use `Export .json` from the monitor or a recent record when you need the full setup artifact; the monitor does not expose a raw JSON text area.
+
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `POST /api/v1/experiments/ai-evaluations` | Record one AI/RAG quality event. | Supported evaluation types are `retrieval_quality`, `citation_coverage`, `answer_relevance`, `campaign_copy_usefulness`, and `prompt_to_artifact_completion`. |
 | `POST /api/v1/experiments/ai-evaluations/grade` | Auto-grade one prompt/response/citation/artifact bundle. | Records deterministic evaluation events for retrieval quality, citation coverage, answer relevance, prompt-to-artifact completion, and campaign-copy usefulness when generated copy is present. |
 | `GET /api/v1/experiments/ai-evaluations` | List recorded evaluation events. | Optional filters include evaluation type, target type, target id, and limit. |
 | `GET /api/v1/experiments/ai-evaluations/summary` | Summarize AI/RAG quality. | Returns total records, score average, positive/negative/edited rates, outcome counts, target counts, and dimension averages. |
+| `GET /api/v1/experiments/ai-quality-monitor` | Read the AI Quality Monitor snapshot. | Returns `ai_quality_monitor.v1` health, alerts, dimensions, feedback diagnostics, model-judge readiness, coverage gaps, and recent records. |
+| `GET /api/v1/experiments/ai-quality-monitor/export` | Export the AI Quality Monitor artifact. | Downloads the complete monitor payload as `.json` instead of rendering raw JSON in the page. |
 | `GET /api/v1/experiments/ai-evaluations/{evaluation_id}` | Read one evaluation record. | Records include normalized outcome, score, citations, artifacts, summaries, comments, and metadata. |
 | `GET /api/v1/experiments/ai-evaluations/{evaluation_id}/export` | Export the evaluation artifact. | Returns `ai_evaluation_record.v1` for `.json` download instead of a raw JSON text area. |
 

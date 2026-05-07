@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
+
+from app.application.ai_feedback import AIFeedbackService
 
 
 AI_EVALUATION_RESOURCE_TYPE = "ai_evaluation_record"
 AI_EVALUATION_EXPORT_FORMAT = "ai_evaluation_record.v1"
+AI_EVALUATION_MONITOR_EXPORT_FORMAT = "ai_quality_monitor.v1"
 
 ALLOWED_EVALUATION_TYPES = {
     "answer_relevance",
@@ -32,6 +35,27 @@ MAX_LIST_LIMIT = 500
 MAX_AUTO_GRADE_TEXT_CHARS = 4000
 AUTO_GRADER_NAME = "deterministic_ai_grader_v1"
 AUTO_GRADER_EXPORT_FORMAT = "ai_evaluation_grading.v1"
+MONITOR_STALE_HOURS = 72
+MONITOR_SCORE_WARNING = 0.7
+MONITOR_SCORE_CRITICAL = 0.5
+MONITOR_NEGATIVE_WARNING = 0.15
+MONITOR_NEGATIVE_CRITICAL = 0.3
+MONITOR_EXPECTED_DIMENSIONS = {
+    "answer_relevance",
+    "campaign_copy_usefulness",
+    "citation_coverage",
+    "prompt_to_artifact_completion",
+    "retrieval_quality",
+}
+MONITOR_TARGET_TYPES = {
+    "email_campaign",
+    "email_campaign_draft",
+    "knowledge_retrieval",
+    "push_copy_draft",
+    "push_dispatch",
+    "workflow",
+    "workflow_draft",
+}
 STOP_WORDS = {
     "a",
     "an",
@@ -268,35 +292,65 @@ class AIEvaluationService:
 
     def summarize(self, *, evaluation_type: str | None = None, target_type: str | None = None) -> Dict[str, Any]:
         items = self.list_evaluations(evaluation_type=evaluation_type, target_type=target_type, limit=MAX_LIST_LIMIT)
-        scores = [float(item["score"]) for item in items if item.get("score") is not None]
-        outcome_counts: Dict[str, int] = {}
-        type_counts: Dict[str, int] = {}
-        target_type_counts: Dict[str, int] = {}
-        dimension_values: Dict[str, list[float]] = {}
-        for item in items:
-            outcome_counts[str(item.get("outcome") or "neutral")] = outcome_counts.get(str(item.get("outcome") or "neutral"), 0) + 1
-            type_counts[str(item.get("evaluation_type") or "unknown")] = type_counts.get(str(item.get("evaluation_type") or "unknown"), 0) + 1
-            target_type_counts[str(item.get("target_type") or "unknown")] = target_type_counts.get(str(item.get("target_type") or "unknown"), 0) + 1
-            for key, value in dict(item.get("dimensions") or {}).items():
-                dimension_values.setdefault(key, []).append(float(value))
-        total = len(items)
-        positive_count = sum(outcome_counts.get(key, 0) for key in POSITIVE_OUTCOMES)
-        negative_count = sum(outcome_counts.get(key, 0) for key in NEGATIVE_OUTCOMES)
+        return _summarize_items(items)
+
+    def monitor(self) -> Dict[str, Any]:
+        all_items = self.list_evaluations(limit=MAX_LIST_LIMIT)
+        scoped_items = [
+            item
+            for item in all_items
+            if str(item.get("target_type") or "") in MONITOR_TARGET_TYPES
+        ]
+        items = scoped_items
+        summary = _summarize_items(items)
+        feedback = AIFeedbackService(self.repository)
+        feedback_items = _monitor_feedback_items(feedback)
+        feedback_summary = _summarize_feedback_items(feedback_items)
+        feedback_learning = _monitor_feedback_learning(feedback, feedback_items)
+        dimension_cards = _dimension_cards(summary.get("dimension_averages") or {})
+        alerts = _monitor_alerts(summary, feedback_summary, dimension_cards)
+        judge_readiness = _judge_readiness(items)
+        if judge_readiness.get("drift_alert"):
+            alerts.append(judge_readiness["drift_alert"])
+        status = _monitor_status(alerts)
+        recent_records = [
+            _compact_monitor_record(item)
+            for item in items[:10]
+        ]
         return {
-            "total_records": total,
-            "average_score": round(sum(scores) / len(scores), 4) if scores else None,
-            "positive_rate": round(positive_count / total, 4) if total else 0.0,
-            "negative_rate": round(negative_count / total, 4) if total else 0.0,
-            "edited_rate": round(outcome_counts.get("edited", 0) / total, 4) if total else 0.0,
-            "outcome_counts": outcome_counts,
-            "evaluation_type_counts": type_counts,
-            "target_type_counts": target_type_counts,
-            "dimension_averages": {
-                key: round(sum(values) / len(values), 4)
-                for key, values in sorted(dimension_values.items())
-                if values
+            "format": AI_EVALUATION_MONITOR_EXPORT_FORMAT,
+            "status": status,
+            "generated_at": datetime.utcnow().isoformat(),
+            "scope": {
+                "target_types": sorted(MONITOR_TARGET_TYPES),
+                "record_count": len(items),
+                "ignored_non_monitor_records": max(0, len(all_items) - len(scoped_items)),
             },
-            "latest_recorded_at": max((str(item.get("recorded_at") or "") for item in items), default=""),
+            "summary": summary,
+            "feedback_summary": feedback_summary,
+            "feedback_learning": _compact_feedback_learning(feedback_learning),
+            "alerts": alerts,
+            "alert_count": len([item for item in alerts if item.get("severity") in {"warning", "critical"}]),
+            "dimension_cards": dimension_cards,
+            "coverage_gaps": _coverage_gaps(summary),
+            "judge_readiness": judge_readiness,
+            "recent_records": recent_records,
+            "export": {
+                "format": AI_EVALUATION_MONITOR_EXPORT_FORMAT,
+                "resource_id": "ai_quality_monitor",
+                "includes": ["summary", "feedback_summary", "alerts", "dimension_cards", "judge_readiness", "recent_records"],
+            },
+        }
+
+    def export_monitor(self) -> Dict[str, Any]:
+        monitor = self.monitor()
+        return {
+            "format": AI_EVALUATION_MONITOR_EXPORT_FORMAT,
+            "monitor": {
+                key: value
+                for key, value in monitor.items()
+                if key not in {"audit_id", "masked_fields"}
+            },
         }
 
     @staticmethod
@@ -314,6 +368,293 @@ class AIEvaluationService:
             "updated_by": record.get("updated_by") or payload.get("updated_by") or "system",
             "correlation_id": record.get("correlation_id") or payload.get("correlation_id") or "",
         }
+
+
+def _summarize_items(items: list[Dict[str, Any]]) -> Dict[str, Any]:
+    scores = [float(item["score"]) for item in items if item.get("score") is not None]
+    outcome_counts: Dict[str, int] = {}
+    type_counts: Dict[str, int] = {}
+    target_type_counts: Dict[str, int] = {}
+    dimension_values: Dict[str, list[float]] = {}
+    for item in items:
+        outcome_counts[str(item.get("outcome") or "neutral")] = outcome_counts.get(str(item.get("outcome") or "neutral"), 0) + 1
+        type_counts[str(item.get("evaluation_type") or "unknown")] = type_counts.get(str(item.get("evaluation_type") or "unknown"), 0) + 1
+        target_type_counts[str(item.get("target_type") or "unknown")] = target_type_counts.get(str(item.get("target_type") or "unknown"), 0) + 1
+        for key, value in dict(item.get("dimensions") or {}).items():
+            dimension_values.setdefault(key, []).append(float(value))
+    total = len(items)
+    positive_count = sum(outcome_counts.get(key, 0) for key in POSITIVE_OUTCOMES)
+    negative_count = sum(outcome_counts.get(key, 0) for key in NEGATIVE_OUTCOMES)
+    return {
+        "total_records": total,
+        "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+        "positive_rate": round(positive_count / total, 4) if total else 0.0,
+        "negative_rate": round(negative_count / total, 4) if total else 0.0,
+        "edited_rate": round(outcome_counts.get("edited", 0) / total, 4) if total else 0.0,
+        "outcome_counts": outcome_counts,
+        "evaluation_type_counts": type_counts,
+        "target_type_counts": target_type_counts,
+        "dimension_averages": {
+            key: round(sum(values) / len(values), 4)
+            for key, values in sorted(dimension_values.items())
+            if values
+        },
+        "latest_recorded_at": max((str(item.get("recorded_at") or "") for item in items), default=""),
+    }
+
+
+def _dimension_cards(dimension_averages: Dict[str, float]) -> list[Dict[str, Any]]:
+    cards = []
+    for key in sorted(MONITOR_EXPECTED_DIMENSIONS.union(set(dimension_averages))):
+        value = dimension_averages.get(key)
+        status = _dimension_status(key, value)
+        cards.append(
+            {
+                "dimension": key,
+                "average": value,
+                "status": status,
+                "label": key.replace("_", " ").title(),
+            }
+        )
+    return cards
+
+
+def _dimension_status(dimension: str, value: float | None) -> str:
+    if value is None:
+        return "missing"
+    if dimension == "hallucination_risk":
+        if value > 0.5:
+            return "critical"
+        if value > 0.3:
+            return "warning"
+        return "healthy"
+    if value < MONITOR_SCORE_CRITICAL:
+        return "critical"
+    if value < MONITOR_SCORE_WARNING:
+        return "warning"
+    return "healthy"
+
+
+def _monitor_alerts(
+    summary: Dict[str, Any],
+    feedback_summary: Dict[str, Any],
+    dimension_cards: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    alerts: list[Dict[str, Any]] = []
+    total = int(summary.get("total_records") or 0)
+    average_score = summary.get("average_score")
+    if total == 0:
+        alerts.append(
+            _monitor_alert(
+                "critical",
+                "no_evaluation_records",
+                "No AI quality records",
+                "Run Ask AI or deterministic grading to create a baseline before judging growth recommendations.",
+            )
+        )
+        return alerts
+    if isinstance(average_score, (int, float)):
+        if float(average_score) < MONITOR_SCORE_CRITICAL:
+            alerts.append(_monitor_alert("critical", "low_average_score", "Average AI quality is critical", f"Average score is {float(average_score):.2f}."))
+        elif float(average_score) < MONITOR_SCORE_WARNING:
+            alerts.append(_monitor_alert("warning", "low_average_score", "Average AI quality needs review", f"Average score is {float(average_score):.2f}."))
+    negative_rate = float(summary.get("negative_rate") or 0.0)
+    if negative_rate > MONITOR_NEGATIVE_CRITICAL:
+        alerts.append(_monitor_alert("critical", "high_negative_rate", "Negative evaluation rate is high", f"Negative rate is {negative_rate:.0%}."))
+    elif negative_rate > MONITOR_NEGATIVE_WARNING:
+        alerts.append(_monitor_alert("warning", "high_negative_rate", "Negative evaluation rate is elevated", f"Negative rate is {negative_rate:.0%}."))
+    feedback_negative_rate = float(feedback_summary.get("negative_rate") or 0.0)
+    if feedback_negative_rate > MONITOR_NEGATIVE_CRITICAL:
+        alerts.append(_monitor_alert("critical", "high_negative_feedback", "Operator feedback is strongly negative", f"Negative feedback rate is {feedback_negative_rate:.0%}."))
+    elif feedback_negative_rate > MONITOR_NEGATIVE_WARNING:
+        alerts.append(_monitor_alert("warning", "high_negative_feedback", "Operator feedback needs review", f"Negative feedback rate is {feedback_negative_rate:.0%}."))
+    stale_hours = _hours_since(summary.get("latest_recorded_at"))
+    if stale_hours is not None and stale_hours > MONITOR_STALE_HOURS:
+        alerts.append(_monitor_alert("warning", "stale_evaluations", "AI quality checks are stale", f"Latest record is {int(stale_hours)} hours old."))
+    failed_count = int(dict(summary.get("outcome_counts") or {}).get("failed") or 0)
+    if failed_count:
+        alerts.append(_monitor_alert("warning", "unsupported_or_failed_prompts", "Some prompts failed quality checks", f"{failed_count} failed evaluation record(s) need review."))
+    for card in dimension_cards:
+        if card.get("status") == "critical":
+            alerts.append(_monitor_alert("critical", f"critical_{card['dimension']}", f"{card['label']} is critical", "Open recent records and improve the prompt, evidence, or artifact handoff."))
+        elif card.get("status") == "warning":
+            alerts.append(_monitor_alert("warning", f"low_{card['dimension']}", f"{card['label']} is below target", "Review recent records and improve the prompt, evidence, or artifact handoff."))
+    return alerts
+
+
+def _monitor_alert(severity: str, code: str, title: str, detail: str) -> Dict[str, str]:
+    return {
+        "severity": severity,
+        "code": code,
+        "title": title,
+        "detail": detail,
+    }
+
+
+def _monitor_status(alerts: list[Dict[str, Any]]) -> str:
+    severities = {str(item.get("severity") or "") for item in alerts}
+    if "critical" in severities:
+        return "critical"
+    if "warning" in severities:
+        return "warning"
+    return "healthy"
+
+
+def _coverage_gaps(summary: Dict[str, Any]) -> list[str]:
+    type_counts = dict(summary.get("evaluation_type_counts") or {})
+    return [
+        evaluation_type
+        for evaluation_type in sorted(ALLOWED_EVALUATION_TYPES)
+        if int(type_counts.get(evaluation_type) or 0) == 0
+    ]
+
+
+def _judge_readiness(items: list[Dict[str, Any]]) -> Dict[str, Any]:
+    deterministic_items = [
+        item
+        for item in items
+        if str(item.get("evaluated_by") or "") == AUTO_GRADER_NAME or str(item.get("source") or "") == "auto_grader"
+    ]
+    model_judge_items = [
+        item
+        for item in items
+        if "model_judge" in f"{item.get('evaluated_by') or ''} {item.get('source') or ''}".lower()
+    ]
+    offline_items = [
+        item
+        for item in items
+        if "offline" in str(item.get("source") or "").lower() or bool(dict(item.get("metadata") or {}).get("offline_eval"))
+    ]
+    deterministic_average = _average_score(deterministic_items)
+    model_judge_average = _average_score(model_judge_items)
+    drift_alert = None
+    if deterministic_average is not None and model_judge_average is not None:
+        drift = round(abs(deterministic_average - model_judge_average), 4)
+        if drift >= 0.2:
+            drift_alert = _monitor_alert("warning", "model_judge_drift", "Model judge drift is elevated", f"Deterministic and model-judge averages differ by {drift:.2f}.")
+    return {
+        "deterministic_grader_records": len(deterministic_items),
+        "model_judge_records": len(model_judge_items),
+        "offline_eval_records": len(offline_items),
+        "deterministic_average": deterministic_average,
+        "model_judge_average": model_judge_average,
+        "status": "ready_for_model_judge" if deterministic_items and not model_judge_items else "monitoring",
+        "next_steps": _judge_next_steps(deterministic_items, model_judge_items, offline_items),
+        "drift_alert": drift_alert,
+    }
+
+
+def _judge_next_steps(
+    deterministic_items: list[Dict[str, Any]],
+    model_judge_items: list[Dict[str, Any]],
+    offline_items: list[Dict[str, Any]],
+) -> list[str]:
+    steps = []
+    if not deterministic_items:
+        steps.append("Run deterministic grading from Ask AI or module handoff artifacts.")
+    if not model_judge_items:
+        steps.append("Add a model-judge provider run for sampled AI outputs.")
+    if not offline_items:
+        steps.append("Schedule offline eval batches for recall and drift checks.")
+    return steps
+
+
+def _compact_monitor_record(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "evaluation_id": str(item.get("evaluation_id") or ""),
+        "evaluation_type": str(item.get("evaluation_type") or ""),
+        "target_type": str(item.get("target_type") or ""),
+        "target_id": str(item.get("target_id") or ""),
+        "outcome": str(item.get("outcome") or "neutral"),
+        "score": item.get("score"),
+        "source": str(item.get("source") or ""),
+        "evaluated_by": str(item.get("evaluated_by") or ""),
+        "recorded_at": str(item.get("recorded_at") or ""),
+        "export": dict(item.get("export") or {}),
+    }
+
+
+def _monitor_feedback_items(feedback: AIFeedbackService) -> list[Dict[str, Any]]:
+    return [
+        item
+        for item in feedback.list_feedback(limit=MAX_LIST_LIMIT)
+        if str(item.get("target_type") or "") in MONITOR_TARGET_TYPES
+    ]
+
+
+def _summarize_feedback_items(items: list[Dict[str, Any]]) -> Dict[str, Any]:
+    sentiment_counts: Dict[str, int] = {}
+    type_counts: Dict[str, int] = {}
+    target_counts: Dict[str, int] = {}
+    target_weights: Dict[str, float] = {}
+    metric_values: Dict[str, list[float]] = {}
+    for item in items:
+        sentiment = str(item.get("sentiment") or "neutral")
+        feedback_type = str(item.get("feedback_type") or "unknown")
+        target_key = f"{item.get('target_type') or 'unknown'}:{item.get('target_id') or ''}"
+        sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+        type_counts[feedback_type] = type_counts.get(feedback_type, 0) + 1
+        target_counts[target_key] = target_counts.get(target_key, 0) + 1
+        target_weights[target_key] = round(target_weights.get(target_key, 0.0) + float(item.get("weight") or 0.0), 4)
+        for key, value in dict(item.get("outcome_metrics") or {}).items():
+            metric_values.setdefault(key, []).append(float(value))
+    total = len(items)
+    return {
+        "total_records": total,
+        "positive_rate": round(sentiment_counts.get("positive", 0) / total, 4) if total else 0.0,
+        "negative_rate": round(sentiment_counts.get("negative", 0) / total, 4) if total else 0.0,
+        "sentiment_counts": sentiment_counts,
+        "feedback_type_counts": type_counts,
+        "target_counts": target_counts,
+        "target_weight_scores": dict(sorted(target_weights.items())),
+        "metric_averages": {
+            key: round(sum(values) / len(values), 4)
+            for key, values in sorted(metric_values.items())
+            if values
+        },
+        "latest_recorded_at": max((str(item.get("recorded_at") or "") for item in items), default=""),
+    }
+
+
+def _monitor_feedback_learning(feedback: AIFeedbackService, items: list[Dict[str, Any]]) -> Dict[str, Any]:
+    if not items:
+        return _compact_feedback_learning(feedback.learning_profile(target_type="push_copy_draft", limit=1))
+    target_type_counts: Dict[str, int] = {}
+    for item in items:
+        target_type = str(item.get("target_type") or "")
+        target_type_counts[target_type] = target_type_counts.get(target_type, 0) + 1
+    primary_target_type = sorted(target_type_counts.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+    return _compact_feedback_learning(feedback.learning_profile(target_type=primary_target_type, limit=50))
+
+
+def _compact_feedback_learning(profile: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "profile_id": str(profile.get("profile_id") or ""),
+        "target_type": str(profile.get("target_type") or ""),
+        "summary": dict(profile.get("summary") or {}),
+        "top_positive_targets": list(profile.get("top_positive_targets") or [])[:5],
+        "top_negative_targets": list(profile.get("top_negative_targets") or [])[:5],
+        "recommendations": list(profile.get("recommendations") or [])[:6],
+        "export": dict(profile.get("export") or {}),
+    }
+
+
+def _average_score(items: list[Dict[str, Any]]) -> float | None:
+    scores = [float(item["score"]) for item in items if item.get("score") is not None]
+    return round(sum(scores) / len(scores), 4) if scores else None
+
+
+def _hours_since(value: Any) -> float | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return (datetime.utcnow() - parsed).total_seconds() / 3600.0
 
 
 def _normalize_evaluation_type(value: str) -> str:

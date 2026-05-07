@@ -16,6 +16,8 @@ from app.api.schemas.experiments import (
     AIEvaluationRequest,
     AIEvaluationResponse,
     AIEvaluationSummaryResponse,
+    AIQualityMonitorExportResponse,
+    AIQualityMonitorResponse,
     ExperimentConfigRequest,
     ExperimentDecisionRequest,
     ExperimentDecisionResponse,
@@ -279,6 +281,42 @@ def summarize_ai_evaluations(
         service.repository,
         context,
         action_type="ai_evaluations_summarized",
+        resource_type="ai_evaluation_record",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/ai-quality-monitor", response_model=AIQualityMonitorResponse)
+def get_ai_quality_monitor(
+    http_request: Request,
+    service: AIEvaluationService = Depends(get_ai_evaluation_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.evaluations.read")
+    payload = service.monitor()
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_quality_monitor_read",
+        resource_type="ai_evaluation_record",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/ai-quality-monitor/export", response_model=AIQualityMonitorExportResponse)
+def export_ai_quality_monitor(
+    http_request: Request,
+    service: AIEvaluationService = Depends(get_ai_evaluation_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.evaluations.read")
+    payload = service.export_monitor()
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_quality_monitor_exported",
         resource_type="ai_evaluation_record",
         resource_id=None,
         payload=payload,

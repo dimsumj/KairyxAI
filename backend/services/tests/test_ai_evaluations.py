@@ -169,6 +169,154 @@ def test_ai_evaluation_auto_grader_records_retrieval_generation_and_artifact_sco
     assert summary_payload["dimension_averages"]["citation_coverage"] == 1.0
 
 
+def test_ai_quality_monitor_returns_alerts_diagnostics_and_export(client):
+    low_grade = client.post(
+        "/api/v1/experiments/ai-evaluations/grade",
+        headers={"x-actor-role": "operator"},
+        json={
+            "target_type": "push_copy_draft",
+            "target_id": "draft_low_quality",
+            "prompt": "Draft a winback push with evidence.",
+            "response": "Generic message without evidence.",
+            "citations": [],
+            "artifacts": [],
+            "expected_artifact_type": "workflow",
+            "generated_title": "Hi",
+            "generated_body": "Come back.",
+        },
+    )
+    assert low_grade.status_code == 201, low_grade.text
+    feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_edit",
+            "target_type": "push_copy_draft",
+            "target_id": "draft_low_quality",
+            "comments": "Needed evidence and a clearer offer.",
+        },
+    )
+    assert feedback.status_code == 201, feedback.text
+
+    monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert monitor.status_code == 200, monitor.text
+    payload = monitor.json()
+    assert payload["format"] == "ai_quality_monitor.v1"
+    assert payload["status"] in {"warning", "critical"}
+    assert payload["summary"]["total_records"] >= 4
+    assert payload["feedback_summary"]["negative_rate"] == 1.0
+    assert payload["feedback_learning"]["recommendations"]
+    assert payload["dimension_cards"]
+    assert payload["recent_records"][0]["evaluation_id"].startswith("aieval_")
+    assert any(alert["code"] in {"high_negative_feedback", "low_average_score"} for alert in payload["alerts"])
+    assert payload["export"]["format"] == "ai_quality_monitor.v1"
+
+    exported = client.get("/api/v1/experiments/ai-quality-monitor/export", headers={"x-actor-role": "analyst"})
+    assert exported.status_code == 200, exported.text
+    export_payload = exported.json()
+    assert export_payload["format"] == "ai_quality_monitor.v1"
+    assert export_payload["monitor"]["recent_records"]
+
+
+def test_ai_quality_monitor_is_project_scoped(client):
+    created = client.post(
+        "/api/v1/experiments/ai-evaluations",
+        headers={"x-actor-role": "operator", "x-project-id": "project-a"},
+        json={
+            **_evaluation_payload(),
+            "target_type": "knowledge_retrieval",
+            "target_id": "kret_project_a",
+        },
+    )
+    assert created.status_code == 201
+
+    same_project = client.get(
+        "/api/v1/experiments/ai-quality-monitor",
+        headers={"x-actor-role": "analyst", "x-project-id": "project-a"},
+    )
+    assert same_project.status_code == 200
+    assert same_project.json()["summary"]["total_records"] == 1
+
+    other_project = client.get(
+        "/api/v1/experiments/ai-quality-monitor",
+        headers={"x-actor-role": "analyst", "x-project-id": "project-b"},
+    )
+    assert other_project.status_code == 200
+    assert other_project.json()["summary"]["total_records"] == 0
+    assert any(alert["code"] == "no_evaluation_records" for alert in other_project.json()["alerts"])
+
+
+def test_ai_quality_monitor_ignores_unrelated_targets_and_detects_source_model_judge(client):
+    unrelated = client.post(
+        "/api/v1/experiments/ai-evaluations",
+        headers={"x-actor-role": "operator"},
+        json={
+            **_evaluation_payload(),
+            "target_type": "support_chat_summary",
+            "target_id": "unrelated_eval",
+            "score": 1.0,
+            "dimensions": {"answer_relevance": 1.0, "citation_coverage": 1.0, "retrieval_quality": 1.0},
+        },
+    )
+    assert unrelated.status_code == 201
+    unrelated_feedback = client.post(
+        "/api/v1/experiments/ai-feedback",
+        headers={"x-actor-role": "operator"},
+        json={
+            "feedback_type": "operator_edit",
+            "target_type": "support_chat_summary",
+            "target_id": "unrelated_feedback",
+            "comments": "This unrelated edit must not affect growth quality.",
+        },
+    )
+    assert unrelated_feedback.status_code == 201
+
+    empty_monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert empty_monitor.status_code == 200
+    empty_payload = empty_monitor.json()
+    assert empty_payload["summary"]["total_records"] == 0
+    assert empty_payload["feedback_summary"]["total_records"] == 0
+    assert empty_payload["scope"]["ignored_non_monitor_records"] == 1
+    assert any(alert["code"] == "no_evaluation_records" for alert in empty_payload["alerts"])
+
+    deterministic = client.post(
+        "/api/v1/experiments/ai-evaluations",
+        headers={"x-actor-role": "operator"},
+        json={
+            "evaluation_type": "answer_relevance",
+            "target_type": "push_copy_draft",
+            "target_id": "judge_target",
+            "score": 0.9,
+            "dimensions": {"answer_relevance": 0.9},
+            "source": "auto_grader",
+            "evaluated_by": "deterministic_ai_grader_v1",
+        },
+    )
+    assert deterministic.status_code == 201
+    model_judge = client.post(
+        "/api/v1/experiments/ai-evaluations",
+        headers={"x-actor-role": "operator"},
+        json={
+            "evaluation_type": "answer_relevance",
+            "target_type": "push_copy_draft",
+            "target_id": "judge_target",
+            "score": 0.4,
+            "dimensions": {"answer_relevance": 0.4},
+            "source": "model_judge_provider",
+        },
+    )
+    assert model_judge.status_code == 201
+
+    monitor = client.get("/api/v1/experiments/ai-quality-monitor", headers={"x-actor-role": "analyst"})
+    assert monitor.status_code == 200
+    payload = monitor.json()
+    assert payload["summary"]["total_records"] == 2
+    assert payload["feedback_summary"]["total_records"] == 0
+    assert payload["judge_readiness"]["deterministic_grader_records"] == 1
+    assert payload["judge_readiness"]["model_judge_records"] == 1
+    assert any(alert["code"] == "model_judge_drift" for alert in payload["alerts"])
+
+
 def test_ai_evaluation_auto_grader_requires_meaningful_prompt_and_response(client):
     missing_prompt = client.post(
         "/api/v1/experiments/ai-evaluations/grade",
