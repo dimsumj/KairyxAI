@@ -24,6 +24,7 @@ from app.api.routers import (
     exports,
     health,
     imports,
+    knowledge,
     mappings,
     onboarding,
     organization_invites,
@@ -407,6 +408,7 @@ def create_app() -> FastAPI:
     app.include_router(organization_invites.router, prefix=settings.api_v1_prefix)
     app.include_router(projects.router, prefix=settings.api_v1_prefix)
     app.include_router(imports.router, prefix=settings.api_v1_prefix)
+    app.include_router(knowledge.router, prefix=settings.api_v1_prefix)
     app.include_router(predictions.router, prefix=settings.api_v1_prefix)
     app.include_router(exports.router, prefix=settings.api_v1_prefix)
     app.include_router(experiments.router, prefix=settings.api_v1_prefix)

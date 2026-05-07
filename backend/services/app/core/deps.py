@@ -16,6 +16,7 @@ from app.application.experiments import ExperimentConfigService
 from app.application.exports import ExportService
 from app.application.health_monitor import HealthMonitorService
 from app.application.imports import ImportService
+from app.application.knowledge import KnowledgeService
 from app.application.mappings import MappingService
 from app.application.predictions import PredictionService
 from app.application.projects import ProjectWorkspaceService
@@ -55,6 +56,12 @@ def get_import_service(
     settings: Settings = Depends(get_settings_dependency),
 ) -> ImportService:
     return ImportService(repository, settings)
+
+
+def get_knowledge_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> KnowledgeService:
+    return KnowledgeService(repository)
 
 
 def get_prediction_service(

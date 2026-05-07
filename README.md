@@ -4,7 +4,7 @@ KairyxAI is an AI-driven operator platform for game growth, retention, and lifec
 
 The product is organized around five operator areas:
 
-- `Data Core` for connectors, mappings, imports, predictions, data quality, and governance
+- `Data Core` for connectors, knowledge documents, mappings, imports, predictions, data quality, and governance
 - `Audience Engine` for guided cohort building, multi-source prediction audience selection, SQL fallback, refresh, comparison, and activation readiness
 - `Action Orchestrator` for provider-aware lifecycle email campaigns, a unified push composer for immediate, one-time scheduled, and repeated Wynn push campaigns, legacy advanced push workflow drafting, shared Workflow Studio scheduling and management, delivery, callback-authenticated Wynn push outcomes, and guardrails
 - `Experiment Hub` for assignment, exposure, outcomes, integrity, and decision support
@@ -89,6 +89,7 @@ This repository already contains a working v1 control plane with:
 - mock-first local development
 - organization- and project-aware operator flows
 - connector-first Data Core onboarding, including a `Connect Data Source` entry point from the main workbench plus an `AI Agents & Models` section in `Data Core -> Connectors` for Ask AI runtime setup
+- tenant/project-scoped knowledge ingestion under `/api/v1/knowledge`, with text/markdown campaign briefs, SOPs, reports, FAQs, and playbooks stored as auditable documents and deterministic chunks; each document preserves provenance, tags, content hash, lifecycle status, pending embedding metadata, and an exportable `knowledge_document.v1` JSON artifact for review
 - BigQuery dataset connectors with tenant-scoped service account setup, dataset validation, table discovery that defaults unresolved counts to `unknown rows`, on-demand exact row counts for a selected table with query-based fallback when table metadata access is blocked, browser-based table imports for external prediction scores and churn lists, and tolerant processing-time schema drift handling that first aligns incoming nested values to the live BigQuery table schema, then coerces or nulls only the mismatched property value, and fails only the affected manifest checkpoint when a schema-load 400 remains unrecoverable
 - step-level import status tooltips for queued, staging, processing, stopping, and BigQuery table-read phases, with completed jobs no longer retaining stale timeout/failure badges after reruns, failure tooltips layering above adjacent controls, failed imports excluded from downstream import-job selectors such as `Import Operations`, and inline disclosure arrows on `Imported Data` rows so operators can expand each import to inspect event totals, estimated user profiles, live processing progress, dedupe and reject stats, source/date range, and failure context without leaving the list
 - cleaner `Connectors` and `Mappings` surfaces that remove persistent instructional copy from the main cards and move optional explanation into contextual `?` hover/focus tooltips so the UI stays minimal and action-first
@@ -103,7 +104,7 @@ This repository already contains a working v1 control plane with:
 
 The remaining work is mostly production hardening, deeper provider-backed execution, and continued frontend productization rather than basic product existence.
 
-Against the target growth-marketing RAG architecture, the current product already covers structured data ingestion, mappings, cohort/action/experiment operations, model profile management, Ask AI handoffs, artifacts, audit history, and secure credential setup. The highest-priority completion gaps are document knowledge ingestion for SOPs and campaign briefs, vector retrieval with citations, retrieval/generation quality evaluation, and a feedback loop that learns from operator approvals and campaign outcomes.
+Against the target growth-marketing RAG architecture, the current product already covers structured data ingestion, knowledge document chunking, mappings, cohort/action/experiment operations, model profile management, Ask AI handoffs, artifacts, audit history, and secure credential setup. The highest-priority completion gaps are vector retrieval with citations, retrieval/generation quality evaluation, a feedback loop that learns from operator approvals and campaign outcomes, and a richer no-code UI for knowledge intake.
 
 ## Who This Repository Is For
 

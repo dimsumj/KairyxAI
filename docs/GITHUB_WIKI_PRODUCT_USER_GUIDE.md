@@ -57,7 +57,7 @@ Across the console, the default presentation is now intentionally minimal: the m
 KairyxAI is already moving toward the target AI growth platform shape: `Data Core` handles connector setup, imports, field mapping, data quality, metadata, and governance; `Audience Engine`, `Action Orchestrator`, and `Experiment Hub` turn retrieved context into cohorts, lifecycle drafts, schedules, experiments, and measurement; `Insight Copilot` provides the prompt-first generation layer with setup handoffs, evidence artifacts, and audit history.
 
 Priority completion TODO:
-1. Add a document knowledge pipeline for SOPs, campaign briefs, historical reports, FAQs, and marketing assets, including chunking, source metadata, and permission tags.
+1. Extend the new knowledge document API into the operator UI so SOPs, campaign briefs, historical reports, FAQs, and marketing assets can be added without raw JSON fields.
 2. Add vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
 3. Add retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
 4. Close the feedback loop from operator approvals, sends, experiment outcomes, and campaign performance back into prompts, retrieval ranking, and playbook suggestions.
@@ -522,6 +522,21 @@ Deployment note:
 Legacy `Google Gemini` connector records are no longer created from this generic connector form. Ask AI runtimes are managed through `AI Agents & Models` instead.
 
 For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connectors -> Campaign Provider Connections` to save tenant-scoped SendGrid, Braze, or Push Provider accounts. SendGrid and Braze provider connections are used by `Action Orchestrator -> Email Campaigns`. Push Provider connections are used by `Action Orchestrator -> Push Notifications` when the Push Composer or the legacy push workflow path should route live push delivery through the configured provider instead of using the simulator. The legacy `Data Core -> Connectors` SendGrid and Braze connector cards remain basic connector records and do not browse campaign assets for the new email campaign builder.
+
+#### Knowledge Documents API
+
+Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. This is currently API-first and is designed for future no-code UI and Ask AI intake flows.
+
+| Endpoint | Purpose | Notes |
+| --- | --- | --- |
+| `POST /api/v1/knowledge/documents` | Create a tenant/project-scoped knowledge document from text or markdown content. | Saves document metadata, provenance, normalized tags, content hash, an ingestion job, and deterministic chunks. |
+| `GET /api/v1/knowledge/documents` | List active knowledge documents. | Add `include_archived=true` to include archived records. |
+| `GET /api/v1/knowledge/documents/{document_id}` | Read one document summary. | Add `include_chunks=true` when a client needs chunks with the document response. |
+| `GET /api/v1/knowledge/documents/{document_id}/chunks` | List chunks for retrieval/debug review. | Chunks include ordinal, text, summary, content hash, token estimate, tags, visibility, and pending embedding metadata. |
+| `GET /api/v1/knowledge/documents/{document_id}/export` | Export the full setup artifact. | Returns `knowledge_document.v1` with the document and chunks for `.json` download. |
+| `POST /api/v1/knowledge/documents/{document_id}/archive` | Archive the document and its chunks. | Archived knowledge is hidden from the active list and remains auditable/exportable. |
+
+Supported `source_type` values are `markdown`, `text`, `campaign_brief`, `sop`, `report`, `faq`, and `playbook`. Supported `visibility` values are `workspace`, `project`, and `private`. Normal users should not paste secret material into knowledge documents; credentials still belong in secure connector/provider/model-profile setup.
 
 #### Campaign Provider Connections
 
