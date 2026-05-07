@@ -26,6 +26,7 @@ from app.application.copilot import CopilotService
 from app.application.experiments import ExperimentConfigService
 from app.application.copilot_help_catalog import build_help_support_answer
 from app.application.health_monitor import HealthMonitorService
+from app.application.knowledge import KnowledgeService
 from app.application.provider_connections import ProviderConnectionService
 from app.application.secret_refs import redact_secret_values
 from app.application.sql_workspace import SqlWorkspaceService
@@ -377,6 +378,23 @@ GUIDANCE_ONLY_ACTION_TYPES = {
     "record_experiment_decision",
 }
 
+KNOWLEDGE_GROUNDED_INTENTS = {
+    "help_support",
+    "summarize_dashboard",
+    "setup_cohort",
+    "setup_experiment",
+    "run_prediction",
+    "draft_sql_from_prompt",
+    "draft_audience_builder",
+    "setup_email_campaign",
+    "setup_workflow",
+    "setup_operator_flow",
+    "send_push_dispatch",
+    "schedule_email_campaign",
+    "send_email_campaign",
+    "ingest_experiment_outcomes",
+}
+
 
 class CopilotAgentModelAdapter(Protocol):
     def parse_message(
@@ -463,6 +481,7 @@ class ConfiguredCopilotAgentModel:
                 "Keep the message to 2-4 sentences.",
                 "Do not claim actions were executed unless completed_actions says completed.",
                 "Mention missing fields when clarifications are present.",
+                "When payload.knowledge_context has citations, mention the relevant citation ids without inventing sources.",
             ],
             "response_contract": {"assistant_message": "string"},
             "payload": payload,
@@ -606,6 +625,7 @@ class ConfiguredCopilotAgentModel:
                 "Keep push title under 48 characters and push body under 160 characters.",
                 "For email, provide subject and body. Keep the email body short enough for a lifecycle campaign intro.",
                 "Do not invent concrete rewards, balances, or deadlines unless the prompt explicitly provides them.",
+                "Use hint.knowledge_context for brand/playbook guidance when it is present, but do not quote long source text.",
             ],
             "response_contract": {
                 "title": "string",
@@ -971,6 +991,10 @@ def deterministic_agent_parse(message: str, *, ui_context: Dict[str, Any]) -> Di
 
 
 def deterministic_agent_message(payload: Dict[str, Any]) -> str:
+    return append_knowledge_citation_summary(_deterministic_agent_message_body(payload), payload.get("knowledge_context") or {})
+
+
+def _deterministic_agent_message_body(payload: Dict[str, Any]) -> str:
     support_answer = str(payload.get("support_answer") or "").strip()
     if support_answer:
         return support_answer
@@ -1012,6 +1036,7 @@ class CopilotAgentService:
         self.provider_connections = ProviderConnectionService(repository)
         self.sql_workspace = SqlWorkspaceService(repository, settings, self.bigquery_service)
         self.health_monitor = HealthMonitorService(repository, self.bigquery_service)
+        self.knowledge = KnowledgeService(repository)
         self.email_campaigns = EmailCampaignService(repository, settings, self.bigquery_service)
         self.workflows = WorkflowService(repository)
         self.imports = ImportService(repository, settings, self.bigquery_service)
@@ -1110,6 +1135,9 @@ class CopilotAgentService:
             message=message,
         )
         plan = self._build_plan(message=message, parsed=parsed, ui_context=merged_ui_context, context=context)
+        knowledge_context = self._retrieve_knowledge_context(message=message, plan=plan)
+        knowledge_artifacts = artifacts_for_knowledge_context(knowledge_context)
+        model_ui_context = ui_context_with_knowledge(merged_ui_context, knowledge_context)
 
         completed_actions: List[Dict[str, Any]] = []
         pending_confirmations: List[Dict[str, Any]] = []
@@ -1125,7 +1153,7 @@ class CopilotAgentService:
                 plan=plan,
                 context=context,
                 session=session,
-                ui_context=merged_ui_context,
+                ui_context=model_ui_context,
                 model_adapter=model_adapter,
             )
             completed_actions = execution_result["completed_actions"]
@@ -1140,17 +1168,26 @@ class CopilotAgentService:
             "execution_preview": plan["execution_preview"],
             "completed_actions": completed_actions,
             "pending_confirmations": pending_confirmations,
-            "artifacts": artifacts or collect_artifacts_from_actions(completed_actions, pending_confirmations),
+            "artifacts": dedupe_artifacts(
+                [
+                    *knowledge_artifacts,
+                    *(artifacts or collect_artifacts_from_actions(completed_actions, pending_confirmations)),
+                ]
+            ),
         }
         assistant_message = str(plan.get("assistant_message") or "").strip()
         if assistant_message:
-            response_payload["assistant_message"] = assistant_message
+            response_payload["assistant_message"] = append_knowledge_citation_summary(assistant_message, knowledge_context)
         else:
-            response_payload["assistant_message"] = model_adapter.compose_message(
-                {
-                    **response_payload,
-                    "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
-                }
+            response_payload["assistant_message"] = append_knowledge_citation_summary(
+                model_adapter.compose_message(
+                    {
+                        **response_payload,
+                        "knowledge_context": knowledge_context,
+                        "async_status": session_status if session_status in {"waiting_for_prediction", "ready_to_resume"} else "",
+                    }
+                ),
+                knowledge_context,
             )
 
         turn_payload = {
@@ -2409,6 +2446,20 @@ class CopilotAgentService:
             "steps": steps,
         }
 
+    def _retrieve_knowledge_context(self, *, message: str, plan: Dict[str, Any]) -> Dict[str, Any]:
+        if not should_retrieve_knowledge_context(message, plan):
+            return {}
+        if not self.knowledge.list_documents(include_archived=False):
+            return {}
+        try:
+            retrieval = self.knowledge.retrieve(
+                query=build_knowledge_query(message, plan),
+                top_k=3,
+            )
+        except Exception:
+            return {}
+        return compact_knowledge_context(retrieval)
+
     def _execute_plan(
         self,
         *,
@@ -2629,6 +2680,7 @@ class CopilotAgentService:
         if not needs_copy_draft:
             return prepared
         source_message = str(prepared.get("source_message") or session.get("last_user_message") or "").strip()
+        knowledge_context = compact_knowledge_context(ui_context.get("knowledge_context") or {})
         drafted = model_adapter.draft_message_copy(
             source_message,
             session_state=session,
@@ -2638,6 +2690,7 @@ class CopilotAgentService:
                 "schedule_at": prepared.get("schedule_at"),
                 "existing_title": title,
                 "existing_body": body,
+                "knowledge_context": knowledge_context,
             },
         )
         drafted = normalize_message_copy_payload(drafted, channel=channel)
@@ -2655,6 +2708,12 @@ class CopilotAgentService:
             "body": prepared.get("body") or "",
             "source_message": source_message,
         }
+        if knowledge_context.get("citations"):
+            prepared["copy_draft"]["citations"] = list(knowledge_context.get("citations") or [])
+            prepared["knowledge_context"] = {
+                "retrieval_id": str(knowledge_context.get("retrieval_id") or ""),
+                "citation_count": int(knowledge_context.get("citation_count") or len(knowledge_context.get("citations") or [])),
+            }
         prepared["needs_operator_copy_approval"] = True
         prepared.pop("needs_copy_draft", None)
         return prepared
@@ -4314,6 +4373,138 @@ def build_summary_next_steps(alerts: List[Dict[str, Any]], blocked_imports: List
     return steps
 
 
+def should_retrieve_knowledge_context(message: str, plan: Dict[str, Any]) -> bool:
+    intent = str(plan.get("intent") or "").strip()
+    if intent in KNOWLEDGE_GROUNDED_INTENTS:
+        return True
+    lowered = str(message or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "brief",
+            "campaign idea",
+            "copy",
+            "diagnostic",
+            "evidence",
+            "faq",
+            "playbook",
+            "recommend",
+            "report",
+            "sop",
+            "strategy",
+        )
+    )
+
+
+def build_knowledge_query(message: str, plan: Dict[str, Any]) -> str:
+    slots = dict(plan.get("slots") or {})
+    parts = [
+        str(message or ""),
+        str(plan.get("intent") or ""),
+        str(slots.get("campaign_name") or ""),
+        str(slots.get("cohort_name") or slots.get("name") or ""),
+        str(slots.get("template_hint") or slots.get("template_id") or ""),
+    ]
+    compact = re.sub(r"\s+", " ", " ".join(part for part in parts if part).strip())
+    return compact[:500].strip() or str(plan.get("intent") or "growth marketing")
+
+
+def compact_knowledge_context(value: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    citations = []
+    for citation in list(value.get("citations") or [])[:3]:
+        if not isinstance(citation, dict):
+            continue
+        citation_id = str(citation.get("citation_id") or "").strip()
+        citation_label = str(citation.get("citation") or citation_id).strip()
+        if not citation_id or not citation_label:
+            continue
+        citations.append(
+            {
+                "citation_id": citation_id,
+                "citation": citation_label,
+                "document_id": str(citation.get("document_id") or ""),
+                "chunk_id": str(citation.get("chunk_id") or ""),
+                "document_title": str(citation.get("document_title") or citation.get("heading") or ""),
+                "source_name": str(citation.get("source_name") or ""),
+                "source_type": str(citation.get("source_type") or ""),
+                "snippet": compact_text(str(citation.get("snippet") or citation.get("summary") or citation.get("text") or ""), max_length=320),
+                "match_terms": list(citation.get("match_terms") or [])[:12],
+                "score": citation.get("score"),
+                "feedback_boost": citation.get("feedback_boost"),
+            }
+        )
+    if not citations:
+        return {}
+    retrieval_id = str(value.get("retrieval_id") or "").strip()
+    sections = [
+        {
+            "citation_id": item["citation_id"],
+            "citation": item["citation"],
+            "heading": item["document_title"],
+            "text": item["snippet"],
+            "source": {
+                "document_id": item["document_id"],
+                "chunk_id": item["chunk_id"],
+                "source_name": item["source_name"],
+                "source_type": item["source_type"],
+            },
+        }
+        for item in citations
+    ]
+    return {
+        "retrieval_id": retrieval_id,
+        "retrieval_mode": str(value.get("retrieval_mode") or "lexical_v1"),
+        "query": str(value.get("query") or ""),
+        "citation_count": len(citations),
+        "citations": citations,
+        "context_pack": {
+            "format": "knowledge_context_pack.v1",
+            "retrieval_id": retrieval_id,
+            "citation_count": len(citations),
+            "sections": sections,
+        },
+    }
+
+
+def compact_text(value: str, *, max_length: int) -> str:
+    compact = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(compact) <= max_length:
+        return compact
+    return f"{compact[: max_length - 1].rstrip()}..."
+
+
+def ui_context_with_knowledge(ui_context: Dict[str, Any], knowledge_context: Dict[str, Any]) -> Dict[str, Any]:
+    if not knowledge_context:
+        return dict(ui_context or {})
+    return {
+        **dict(ui_context or {}),
+        "knowledge_context": knowledge_context,
+    }
+
+
+def artifacts_for_knowledge_context(knowledge_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    artifact = artifact_for_knowledge_retrieval(knowledge_context)
+    return [artifact] if artifact else []
+
+
+def append_knowledge_citation_summary(message: str, knowledge_context: Dict[str, Any]) -> str:
+    citations = list((knowledge_context or {}).get("citations") or [])
+    if not citations:
+        return str(message or "")
+    if "Evidence:" in str(message or ""):
+        return str(message or "")
+    refs = [
+        str(item.get("citation") or item.get("citation_id") or "").strip()
+        for item in citations[:3]
+        if str(item.get("citation") or item.get("citation_id") or "").strip()
+    ]
+    if not refs:
+        return str(message or "")
+    return f"{str(message or '').rstrip()}\n\nEvidence: {', '.join(refs)}."
+
+
 def artifact_for_cohort(cohort: Dict[str, Any]) -> Dict[str, Any]:
     cohort_id = str(cohort.get("cohort_id") or "")
     return {
@@ -4367,6 +4558,30 @@ def artifact_for_provider_connection(connection: Dict[str, Any]) -> Dict[str, An
         "api_path": f"/api/v1/provider-connections/{quote(connection_id)}" if connection_id else "",
         "focus": {"provider_connection_id": connection_id},
         "status": str(connection.get("status") or ""),
+    }
+
+
+def artifact_for_knowledge_retrieval(retrieval: Dict[str, Any]) -> Dict[str, Any]:
+    context = compact_knowledge_context(retrieval)
+    if not context:
+        return {}
+    retrieval_id = str(context.get("retrieval_id") or "")
+    citation_count = int(context.get("citation_count") or 0)
+    return {
+        "resource_type": "knowledge_retrieval",
+        "resource_id": retrieval_id,
+        "label": "Knowledge Evidence Pack",
+        "module_id": "data-core",
+        "page_id": "connectors",
+        "api_path": f"/api/v1/knowledge/retrievals/{quote(retrieval_id)}" if retrieval_id else "",
+        "focus": {
+            "retrieval_id": retrieval_id,
+            "citation_count": citation_count,
+            "citations": list(context.get("citations") or []),
+            "context_pack": context.get("context_pack") or {},
+        },
+        "status": "completed",
+        "status_detail": f"{citation_count} cited knowledge source(s)",
     }
 
 

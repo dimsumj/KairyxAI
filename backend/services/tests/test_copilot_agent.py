@@ -622,6 +622,53 @@ def test_copilot_agent_prompt_actions_cover_manual_operator_flows_as_guidance_ha
     assert_guidance_handoff(outcomes_payload, "ingest_experiment_outcomes")
 
 
+def test_copilot_agent_grounds_push_copy_handoff_with_knowledge_citations(client):
+    headers = _headers("operator", actor_id="agent_grounded_push")
+    push_provider_connection_id = _create_push_provider_connection(client, headers, name="Agent Grounded Push")
+    document = client.post(
+        "/api/v1/knowledge/documents",
+        headers=headers,
+        json={
+            "title": "VIP Winback Playbook",
+            "source_type": "playbook",
+            "source_name": "Lifecycle Marketing",
+            "tags": ["vip", "winback", "push"],
+            "content": (
+                "VIP players respond best to status-benefit push copy. "
+                "Use concise reminders about returning to the game, premium access, "
+                "and weekend evening windows without inventing rewards."
+            ),
+        },
+    )
+    assert document.status_code == 201, document.text
+    session_id = _create_session(client, headers, title="Grounded Push Copy Session")
+
+    response = client.post(
+        f"/api/v1/copilot/agent/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "message": (
+                "Prepare a single push through the connected push channel for VIP players. "
+                "Draft the title and body from our VIP winback playbook to call them back to the game."
+            ),
+            "ui_context": {},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    action = next(item for item in payload["completed_actions"] if item["action_type"] == "send_push_dispatch")
+    evidence_artifact = next(item for item in payload["artifacts"] if item["resource_type"] == "knowledge_retrieval")
+
+    assert action["status"] == "prepared"
+    assert action["parameters"]["provider_connection_id"] == push_provider_connection_id
+    assert action["parameters"]["copy_draft"]["channel"] == "push"
+    assert action["parameters"]["copy_draft"]["citations"][0]["citation_id"] == "C1"
+    assert action["parameters"]["knowledge_context"]["retrieval_id"] == evidence_artifact["resource_id"]
+    assert evidence_artifact["focus"]["citation_count"] >= 1
+    assert evidence_artifact["focus"]["citations"][0]["document_title"] == "VIP Winback Playbook"
+    assert "Evidence: [C1]" in payload["assistant_message"]
+
+
 def test_copilot_agent_drafts_email_copy_into_campaign_for_approval(client, monkeypatch):
     headers = _headers("operator", actor_id="agent_operator")
     provider_connection_id = _create_sendgrid_provider_connection(client, headers, name="Agent Copy SendGrid")

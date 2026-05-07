@@ -410,8 +410,8 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
    - Delivered API-first tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks
    - Preserve source metadata, permissions, content hash, lifecycle state, and exportable setup payloads as the UI layer matures
 2. `Retrieval And Citations`
-   - Delivered lexical knowledge evidence packs; next, give Ask AI a semantic retrieval path over knowledge chunks and structured artifacts
-   - Return cited evidence packs for recommendations, copy drafts, cohort ideas, workflow setup, diagnostics, and experiment guidance
+   - Delivered lexical knowledge evidence packs and Ask AI citation attachment for relevant setup, diagnostics, audience, workflow, experiment, and copy-drafting turns
+   - Next, give Ask AI a semantic retrieval and reranking path over knowledge chunks and structured artifacts
 3. `Evaluation And Monitoring`
    - Delivered AI/RAG evaluation telemetry records and summaries for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion
    - Add operator-visible diagnostics for stale sources, missing evidence, and unsupported prompts

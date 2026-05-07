@@ -58,7 +58,7 @@ KairyxAI is already moving toward the target AI growth platform shape: `Data Cor
 
 Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
-2. Add semantic/vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
+2. Expand the delivered Ask AI lexical evidence attachments into semantic/vector retrieval and reranking over knowledge documents plus structured artifacts.
 3. Expand the new AI evaluation API into automated retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
 4. Expand the new AI feedback API and retrieval-ranking boosts into automatic prompt context, semantic reranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
@@ -525,7 +525,7 @@ For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connecto
 
 #### Knowledge Documents API
 
-Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. This is currently API-first and is designed for future no-code UI and Ask AI intake flows.
+Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. Knowledge document management is still API-first and designed for a future no-code intake UI, while Ask AI already consumes retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts.
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
@@ -1533,7 +1533,8 @@ The `Insight Copilot` page is now an AI Command Center with starter prompts. Its
 | `Open Secure Setup` | Conditional button | Appears when a requested field is sensitive, such as API keys, tokens, or BigQuery service account JSON. Enter those values in the secure dialog instead of chat. | `service_account_json` | The secure endpoint receives the value, the agent merges it into pending setup slots, and the transcript does not contain the secret. |
 | Prepared handoff card | Conditional action card | Review the next steps and sanitized values for a live action that Ask AI prepared but did not execute. | `Schedule a single push in half an hour and draft copy to call players back` | The card shows drafted copy, schedule values, module next steps, and an `Open Module` button instead of a confirmation button. |
 | `Open Module` | Button | Opens the relevant module and preloads the prepared values when the target UI supports it. | None | Push handoffs load drafted title/body and schedule into `Push Notifications`; email handoffs load drafted subject/body into `Email Campaigns`; workflow handoffs open `Workflow Studio`; mapping, cohort, and experiment handoffs open their review surfaces. |
-| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, or workflow in the right module. | `cohort_...` | The console navigates to the linked resource view or applies the returned builder draft into `Audience Engine`. |
+| Inline artifact card | Conditional resource card | Opens the created or updated prediction job, guided builder draft, cohort, experiment, connector, provider connection, saved query, email campaign, workflow, or knowledge evidence pack in the right module. | `cohort_...` | The console navigates to the linked resource view, applies the returned builder draft into `Audience Engine`, or shows the cited knowledge evidence pack as a review artifact. |
+| Knowledge evidence pack | Artifact card | Appears when Ask AI finds matching SOPs, playbooks, campaign briefs, reports, FAQs, or prior knowledge for a prompt. | `Draft VIP winback push copy from our playbook` | The assistant cites `[C1]` style sources, the copy/setup handoff carries citation metadata, and the evidence pack can be exported through the knowledge retrieval API. |
 | `Continue` on artifact card | Conditional button | Appears when the agent is waiting for a background prediction to complete before it can finish the remaining setup steps. | None | Sends the stored resume message and continues the pending prediction-backed flow after completion. |
 | `Open Ask AI` on `Insight Copilot` | Button | Opens the same global assistant from the AI Command Center. | None | You keep the same session and return to the same drawer experience. |
 | AI starter prompt buttons | Button | Send the prewritten prompt to the global assistant from the current module. | `Summarize Health` | The drawer opens and Ask AI starts the requested workflow. |

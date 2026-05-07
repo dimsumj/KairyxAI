@@ -43,7 +43,7 @@ Delivered feedback-loop acceptance criteria:
 Remaining acceptance criteria:
 1. Add a no-code operator UI and Ask AI intake flow for knowledge documents.
 2. Add semantic embedding materialization, vector retrieval, and reranking over the stored chunks.
-3. Wire cited knowledge context into Ask AI answers, copy drafting, diagnostics, and setup handoff cards.
+3. Broaden the delivered Ask AI lexical citations into richer module-specific handoff cards and structured product-artifact retrieval.
 
 ---
 
