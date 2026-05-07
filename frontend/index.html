@@ -751,6 +751,133 @@
             </div>
         </section>
 
+        <section id="knowledge-library" class="page">
+            <h1>Knowledge Library</h1>
+
+            <div class="ai-starter-panel" data-ai-command-center="data-core">
+                <div>
+                    <h2>Ask AI For Knowledge</h2>
+                </div>
+                <div class="ai-starter-actions">
+                    <button type="button" data-agent-starter-message="Review the knowledge library and suggest the highest-value playbooks, SOPs, reports, or campaign briefs to add next.">Plan Sources</button>
+                    <button type="button" data-agent-starter-message="Use the current knowledge library to summarize winback playbook guidance and cite the evidence.">Summarize Guidance</button>
+                    <button type="button" data-agent-starter-message="Inspect gaps in the knowledge evidence for push, email, cohort, and experiment setup.">Find Gaps</button>
+                </div>
+            </div>
+
+            <div id="knowledge-intake-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Add Knowledge</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show knowledge intake help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Upload text or markdown playbooks, briefs, SOPs, reports, and FAQs for Ask AI retrieval. Structured metadata exports as .json artifacts instead of showing raw JSON.</span>
+                        </span>
+                    </h2>
+                    <div class="inline-actions">
+                        <button id="knowledge-document-save-btn" type="button">Add Source</button>
+                        <button id="knowledge-document-reset-btn" type="button" class="secondary-button">Reset</button>
+                        <span id="knowledge-document-status" class="subtle"></span>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="knowledge-source-file-input">Source File</label>
+                        <input type="file" id="knowledge-source-file-input" accept=".txt,.md,.markdown,text/plain,text/markdown">
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-source-type-select">Source Type</label>
+                        <select id="knowledge-source-type-select">
+                            <option value="playbook" selected>Playbook</option>
+                            <option value="campaign_brief">Campaign Brief</option>
+                            <option value="sop">SOP</option>
+                            <option value="report">Report</option>
+                            <option value="faq">FAQ</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="text">Plain Text</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-title-input">Title</label>
+                        <input type="text" id="knowledge-title-input" placeholder="Auto-filled from file name">
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-source-name-input">Source Name</label>
+                        <input type="text" id="knowledge-source-name-input" placeholder="Lifecycle Marketing">
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-source-uri-input">Source URL</label>
+                        <input type="url" id="knowledge-source-uri-input" placeholder="https://...">
+                    </div>
+                    <div class="form-group">
+                        <label>Topics</label>
+                        <div class="segmented-control knowledge-topic-control" id="knowledge-topic-control">
+                            <label><input type="checkbox" value="winback"> Winback</label>
+                            <label><input type="checkbox" value="vip"> VIP</label>
+                            <label><input type="checkbox" value="push"> Push</label>
+                            <label><input type="checkbox" value="email"> Email</label>
+                            <label><input type="checkbox" value="cohort"> Cohort</label>
+                            <label><input type="checkbox" value="experiment"> Experiment</label>
+                        </div>
+                    </div>
+                </div>
+                <details id="knowledge-advanced-intake-panel" class="advanced-panel" style="margin-top: 1rem;">
+                    <summary>Advanced Text Fallback</summary>
+                    <div class="form-group">
+                        <label for="knowledge-manual-content-input">Plain Text Content</label>
+                        <textarea id="knowledge-manual-content-input" rows="7" placeholder="Paste text only when a source file is not available."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-custom-tags-input">Additional Tags</label>
+                        <input type="text" id="knowledge-custom-tags-input" placeholder="comma,separated,tags">
+                    </div>
+                </details>
+            </div>
+
+            <div id="knowledge-retrieval-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2 class="section-title-with-help">
+                        <span>Evidence Check</span>
+                        <span class="inline-help">
+                            <button type="button" class="inline-help-button" aria-label="Show evidence check help">?</button>
+                            <span class="inline-help-source" aria-hidden="true">Run a cited retrieval preview before relying on a source in Ask AI. Export the evidence pack as .json when you need to inspect the full setup file.</span>
+                        </span>
+                    </h2>
+                    <div class="inline-actions">
+                        <button id="knowledge-retrieval-run-btn" type="button">Check Evidence</button>
+                        <button id="knowledge-retrieval-export-btn" type="button" class="secondary-button" disabled>Export .json</button>
+                        <span id="knowledge-retrieval-status" class="subtle"></span>
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="knowledge-retrieval-query-input">Question</label>
+                        <input type="text" id="knowledge-retrieval-query-input" placeholder="What should VIP winback push copy avoid?">
+                    </div>
+                    <div class="form-group">
+                        <label for="knowledge-retrieval-top-k-select">Sources</label>
+                        <select id="knowledge-retrieval-top-k-select">
+                            <option value="3" selected>Top 3</option>
+                            <option value="5">Top 5</option>
+                            <option value="8">Top 8</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="knowledge-retrieval-results" class="knowledge-evidence-list"></div>
+            </div>
+
+            <div id="knowledge-document-section" class="card split-card">
+                <div class="module-section-header">
+                    <h2>Sources</h2>
+                    <div class="inline-actions">
+                        <button id="knowledge-document-refresh-btn" type="button">Refresh</button>
+                        <span id="knowledge-document-list-status" class="subtle"></span>
+                    </div>
+                </div>
+                <div id="knowledge-document-list"></div>
+            </div>
+        </section>
+
         <section id="data-sandbox" class="page">
             <h1>Mapping Sandbox</h1>
             <div class="ai-starter-panel" data-ai-command-center="data-core">

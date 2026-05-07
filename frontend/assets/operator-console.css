@@ -947,6 +947,12 @@
             color: var(--text-secondary);
         }
 
+        .table-badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
         .list-empty {
             padding: 1rem;
             border: 1px dashed var(--border-color);
@@ -3674,6 +3680,91 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 0.55rem;
+}
+
+.advanced-panel {
+    padding: 0.9rem 1rem 1rem;
+    border: 1px dashed var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--white) 86%, var(--bg-color) 14%);
+}
+
+.advanced-panel > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--main-text);
+}
+
+.advanced-panel > .form-group:first-of-type {
+    margin-top: 1rem;
+}
+
+.knowledge-topic-control {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+}
+
+.knowledge-topic-control label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: auto;
+    margin: 0;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--white) 90%, var(--bg-color) 10%);
+    font-size: 0.85rem;
+    line-height: 1;
+}
+
+.knowledge-topic-control input {
+    width: auto;
+    margin: 0;
+}
+
+.knowledge-document-grid,
+.knowledge-evidence-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.knowledge-document-card,
+.knowledge-evidence-card {
+    display: grid;
+    gap: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    background: color-mix(in srgb, var(--white) 92%, var(--bg-color) 8%);
+    min-width: 0;
+}
+
+.knowledge-document-card h3 {
+    margin: 0.5rem 0 0;
+    font-size: 1rem;
+}
+
+.knowledge-document-card p,
+.knowledge-evidence-card p {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.knowledge-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.knowledge-evidence-card .metric-line {
+    align-items: flex-start;
+    padding-top: 0;
 }
 
 .copilot-manual-tools-panel:not([open]) #copilot-query-section,

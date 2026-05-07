@@ -205,6 +205,145 @@ assert_ai_first_operator_ui() {
   }"
 }
 
+assert_knowledge_library_ui() {
+  log_step "Checking no-code Knowledge Library UI"
+  run_pw run-code "async (page) => {
+    const dataCoreModuleLink = page.locator('[data-module=\"data-core\"]');
+    const knowledgeLink = page.locator('[data-item=\"data-core-knowledge\"]');
+    if (await dataCoreModuleLink.count() === 0 || await knowledgeLink.count() === 0) {
+      throw new Error('Missing Data Core -> Knowledge navigation');
+    }
+    const dataCoreActive = await dataCoreModuleLink.first().evaluate((element) => element.classList.contains('active'));
+    const dataCoreExpanded = (await dataCoreModuleLink.first().getAttribute('aria-expanded')) === 'true';
+    if (!dataCoreActive || !dataCoreExpanded) {
+      await dataCoreModuleLink.first().click();
+      await page.waitForTimeout(300);
+    }
+    await knowledgeLink.first().click();
+    await page.waitForTimeout(700);
+
+    const requiredSelectors = [
+      '#knowledge-library',
+      '#knowledge-library [data-ai-command-center=\"data-core\"] [data-agent-starter-message]',
+      '#knowledge-source-file-input',
+      '#knowledge-source-type-select',
+      '#knowledge-title-input',
+      '#knowledge-document-save-btn',
+      '#knowledge-retrieval-query-input',
+      '#knowledge-retrieval-run-btn',
+      '#knowledge-retrieval-export-btn',
+      '#knowledge-document-list',
+    ];
+    for (const selector of requiredSelectors) {
+      if (await page.locator(selector).count() === 0) {
+        throw new Error('Missing Knowledge Library control: ' + selector);
+      }
+    }
+
+    const unsupportedTypeValues = await page.locator('#knowledge-source-type-select option').evaluateAll((options) => options
+      .map((option) => option.value)
+      .filter((value) => !['playbook', 'campaign_brief', 'sop', 'report', 'faq', 'markdown', 'text'].includes(value)));
+    if (unsupportedTypeValues.length > 0) {
+      throw new Error('Knowledge Library exposes unsupported source_type values: ' + unsupportedTypeValues.join(', '));
+    }
+
+    const exportDisabled = await page.locator('#knowledge-retrieval-export-btn').isDisabled();
+    if (!exportDisabled) {
+      throw new Error('Evidence export should stay disabled until an evidence check runs');
+    }
+
+    const advancedOpen = await page.locator('#knowledge-advanced-intake-panel').evaluate((element) => element.open);
+    if (advancedOpen) {
+      throw new Error('Manual knowledge text fallback should be collapsed by default');
+    }
+
+    const visibleJsonEditors = await page.locator('#knowledge-library textarea, #knowledge-library .json-output').evaluateAll((elements) => elements
+      .filter((element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      })
+      .map((element) => element.id || element.className));
+    if (visibleJsonEditors.length > 0) {
+      throw new Error('Knowledge Library should not expose primary JSON/text editors: ' + visibleJsonEditors.join(', '));
+    }
+
+    const sourceTitle = 'Smoke Winback Playbook ' + Date.now();
+    await page.locator('#knowledge-source-file-input').setInputFiles({
+      name: sourceTitle + '.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('VIP winback push copy should avoid heavy discounts. Weekend rewards and a clear return path perform best for returning players.'),
+    });
+    await page.locator('#knowledge-source-type-select').selectOption('playbook');
+    await page.locator('#knowledge-title-input').fill(sourceTitle);
+    await page.locator('#knowledge-source-name-input').fill('Lifecycle Smoke');
+    await page.locator('#knowledge-source-uri-input').fill('https://example.com/kairyx-smoke-playbook');
+    await page.locator('#knowledge-topic-control input[value=\"winback\"]').check();
+    await page.locator('#knowledge-topic-control input[value=\"push\"]').check();
+    await page.locator('#knowledge-document-save-btn').click();
+    await page.waitForFunction((title) => {
+      const status = document.getElementById('knowledge-document-status')?.textContent || '';
+      const list = document.getElementById('knowledge-document-list')?.textContent || '';
+      return status.includes('Added') && list.includes(title);
+    }, sourceTitle, { timeout: 7000 });
+
+    const sourceCardState = await page.locator('.knowledge-document-card').evaluateAll((cards, title) => {
+      const card = cards.find((item) => (item.textContent || '').includes(title));
+      return {
+        found: Boolean(card),
+        hasExport: Boolean(card?.querySelector('[data-knowledge-document-action=\"export\"]')),
+        hasArchive: Boolean(card?.querySelector('[data-knowledge-document-action=\"archive\"]')),
+      };
+    }, sourceTitle);
+    if (!sourceCardState.found || !sourceCardState.hasExport || !sourceCardState.hasArchive) {
+      throw new Error('Added knowledge source did not render export/archive actions');
+    }
+
+    await page.locator('#knowledge-retrieval-query-input').fill('What should VIP winback push copy avoid?');
+    await page.locator('#knowledge-retrieval-top-k-select').selectOption('3');
+    await page.locator('#knowledge-retrieval-run-btn').click();
+    await page.waitForFunction(() => {
+      const button = document.getElementById('knowledge-retrieval-export-btn');
+      const results = document.getElementById('knowledge-retrieval-results')?.textContent || '';
+      return Boolean(button && !button.disabled && results.includes('Smoke Winback Playbook'));
+    }, { timeout: 7000 });
+
+    const evidenceText = await page.locator('#knowledge-retrieval-results').textContent() || '';
+    if (!evidenceText.includes('heavy discounts') && !evidenceText.includes('discounts')) {
+      throw new Error('Evidence check did not render the uploaded playbook snippet');
+    }
+
+    await page.locator('#knowledge-document-refresh-btn').click();
+    await page.waitForFunction(() => {
+      const button = document.getElementById('knowledge-retrieval-export-btn');
+      return Boolean(button && button.disabled);
+    }, { timeout: 7000 });
+    if (!(await page.locator('#knowledge-retrieval-export-btn').isDisabled())) {
+      throw new Error('Evidence export should reset after refreshing sources');
+    }
+
+    await page.locator('#knowledge-retrieval-query-input').fill('What should VIP winback push copy avoid?');
+    await page.locator('#knowledge-retrieval-run-btn').click();
+    await page.waitForFunction(() => {
+      const button = document.getElementById('knowledge-retrieval-export-btn');
+      return Boolean(button && !button.disabled);
+    }, { timeout: 7000 });
+
+    await page.locator('#knowledge-retrieval-query-input').fill('What should VIP winback email emphasize?');
+    await page.waitForTimeout(150);
+    if (!(await page.locator('#knowledge-retrieval-export-btn').isDisabled())) {
+      throw new Error('Evidence export should reset after the question changes');
+    }
+
+    return {
+      starterCount: await page.locator('#knowledge-library [data-ai-command-center=\"data-core\"] [data-agent-starter-message]').count(),
+      exportResetAfterEdit: await page.locator('#knowledge-retrieval-export-btn').isDisabled(),
+      sourceType: await page.locator('#knowledge-source-type-select').inputValue(),
+      sourceTitle,
+    };
+  }"
+}
+
 assert_audience_builder_ui() {
   log_step "Checking guided audience builder UI"
   run_pw run-code "async (page) => {
@@ -351,9 +490,8 @@ assert_bigquery_connector_ui() {
     return {
       title: await page.locator('#add-connector-form-container h2').textContent() || '',
       typeValue: await typeSelect.inputValue(),
-      modeValue: await modeSelect.inputValue(),
-      uploadStyle,
-      pasteStyle,
+      uploadInputCount: await uploadInput.count(),
+      pasteTextareaCount: await pasteTextarea.count(),
     };
   }"
 }
@@ -659,6 +797,7 @@ assert_base_url_ready
 open_and_wait
 assert_auth_shell
 assert_ai_first_operator_ui
+assert_knowledge_library_ui
 assert_module "data-core" "#import-detail-output"
 assert_bigquery_connector_ui
 assert_module "audience-engine" "#audience-cohort-list"

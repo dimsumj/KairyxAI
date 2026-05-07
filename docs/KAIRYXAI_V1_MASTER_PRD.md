@@ -28,7 +28,7 @@ Upgrade growth operations into an AI-native growth marketing RAG platform where 
 KairyxAI is now specified as a prompt-first growth marketing operating system, not a code-first analytics console. `Ask AI` is the primary entry point for Data Core setup, audience drafting, campaign/workflow preparation, experiment planning, diagnostics, and growth insight synthesis. Manual controls remain available only where they support review, compact selection, advanced debugging, export, or secure credential entry.
 
 ### Current Shipped Baseline To Preserve
-- `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles; knowledge documents and cited retrieval evidence packs
+- `Data Core`: connector setup for Amplitude, Adjust, Appsflyer, Google/BigQuery paths; import jobs; guided mappings; field-quality and mapping diagnostics; SQL workspace as an advanced fallback; prediction jobs; local churn model readiness; backend-managed AI runtime profiles; no-code knowledge document intake; cited retrieval evidence packs; `.json` artifact export
 - `Audience Engine`: guided cohort builder; SQL/rule/list cohort support behind marketer-first flows; prediction-backed audience creation; cohort versions, members, refresh, metrics, and AI-drafted builder-state artifacts
 - `Action Orchestrator`: provider connections for SendGrid, Braze, webhook, simulator, and push provider paths; email campaign drafts; push notification drafts; Workflow Studio; scheduled/sent/archived workflow management; JSON artifacts exported through buttons instead of primary text fields
 - `Experiment Hub`: experiment config, assignment, exposure, outcome, summary, integrity checks, decision logging, AI/RAG evaluation telemetry, deterministic auto-grading, AI feedback records, and feedback-learning profiles with Ask AI handoffs for setup and diagnostics
@@ -37,8 +37,8 @@ KairyxAI is now specified as a prompt-first growth marketing operating system, n
 
 ### Priority Roadmap
 1. `PRD Regeneration Baseline`: keep all current features and planned gaps aligned across the master PRD and module PRDs before additional implementation.
-2. `Knowledge Ingestion`: add first-class growth knowledge resources for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
-3. `Retrieval And Citations`: expand the delivered knowledge retrieval evidence-pack API into Ask AI retrieval over knowledge chunks and structured product artifacts, including query planning, semantic/vector retrieval, optional rerank metadata, and citation-backed context packs.
+2. `Knowledge Ingestion`: delivered first-class growth knowledge resources and no-code `Data Core -> Knowledge` intake for campaign briefs, SOPs, product docs, historical reports, FAQs, and reusable playbooks, with chunking, provenance, tenant/project scope, lifecycle, and export support.
+3. `Retrieval And Citations`: expand delivered hybrid knowledge retrieval into provider-grade embedding/vector storage and structured product-artifact retrieval, while preserving query planning, rerank metadata, and citation-backed context packs.
 4. `Evaluation And Monitoring`: expand the delivered AI/RAG evaluation telemetry and deterministic grading APIs into monitoring views, model-judge/offline evals, and alerting for retrieval quality, answer relevance, citation coverage, campaign-copy usefulness, and prompt-to-artifact completion rates.
 5. `Feedback Loop`: expand delivered feedback records, retrieval-ranking boosts, and prompt-context profiles into trained learning from approvals, edits, sends, workflow results, experiment outcomes, and operator ratings.
 6. `No-Code Console Hardening`: continue removing raw JSON/code text fields from primary operator surfaces, replacing them with guided controls, artifact cards, and `Export .json` buttons for inspectable setup payloads.
@@ -407,7 +407,7 @@ Insight detection -> AI explanation -> audience generation -> action trigger -> 
 
 ### 13.1 P0 Finish-Up
 1. `Knowledge Ingestion`
-   - Delivered API-first tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks
+   - Delivered tenant/project-scoped knowledge documents and chunks for SOPs, campaign briefs, product docs, historical reports, FAQs, and reusable playbooks, including the no-code `Data Core -> Knowledge` source intake and export-only review path
    - Preserve source metadata, permissions, content hash, lifecycle state, and exportable setup payloads as the UI layer matures
 2. `Retrieval And Citations`
    - Delivered lexical knowledge evidence packs, local semantic-vector metadata, `hybrid_v1` semantic/reranked retrieval, and Ask AI citation attachment for relevant setup, diagnostics, audience, workflow, experiment, and copy-drafting turns

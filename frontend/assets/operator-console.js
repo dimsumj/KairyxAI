@@ -216,6 +216,7 @@ export function initializeOperatorConsole() {
                     `,
                     items: [
                         { id: 'data-core-connectors', label: 'Connectors', pageId: 'connectors' },
+                        { id: 'data-core-knowledge', label: 'Knowledge', pageId: 'knowledge-library' },
                         { id: 'data-core-churn-rescue', label: 'Churn Rescue', pageId: 'operator-hub' },
                         { id: 'data-core-imports', label: 'Imports', pageId: 'player-cohorts' },
                         { id: 'data-core-mappings', label: 'Mappings', pageId: 'data-sandbox' },
@@ -2456,6 +2457,9 @@ export function initializeOperatorConsole() {
                     loadAiModelProfileWorkspace({ preserveSelection: true });
                     loadProviderConnectionWorkspace({ preserveSelection: true });
                 }
+                if (pageId === 'knowledge-library') {
+                    loadKnowledgeLibrary();
+                }
                 if (pageId === 'data-sandbox') {
                     loadDataSandboxMappingControls();
                 }
@@ -3135,6 +3139,26 @@ export function initializeOperatorConsole() {
             const aiModelProfileSaveBtn = document.getElementById('ai-model-profile-save-btn');
             const aiModelProfileCancelBtn = document.getElementById('ai-model-profile-cancel-btn');
             const aiModelProfileList = document.getElementById('ai-model-profile-list');
+            const knowledgeSourceFileInput = document.getElementById('knowledge-source-file-input');
+            const knowledgeSourceTypeSelect = document.getElementById('knowledge-source-type-select');
+            const knowledgeTitleInput = document.getElementById('knowledge-title-input');
+            const knowledgeSourceNameInput = document.getElementById('knowledge-source-name-input');
+            const knowledgeSourceUriInput = document.getElementById('knowledge-source-uri-input');
+            const knowledgeTopicControl = document.getElementById('knowledge-topic-control');
+            const knowledgeManualContentInput = document.getElementById('knowledge-manual-content-input');
+            const knowledgeCustomTagsInput = document.getElementById('knowledge-custom-tags-input');
+            const knowledgeDocumentSaveBtn = document.getElementById('knowledge-document-save-btn');
+            const knowledgeDocumentResetBtn = document.getElementById('knowledge-document-reset-btn');
+            const knowledgeDocumentStatus = document.getElementById('knowledge-document-status');
+            const knowledgeDocumentRefreshBtn = document.getElementById('knowledge-document-refresh-btn');
+            const knowledgeDocumentListStatus = document.getElementById('knowledge-document-list-status');
+            const knowledgeDocumentList = document.getElementById('knowledge-document-list');
+            const knowledgeRetrievalQueryInput = document.getElementById('knowledge-retrieval-query-input');
+            const knowledgeRetrievalTopKSelect = document.getElementById('knowledge-retrieval-top-k-select');
+            const knowledgeRetrievalRunBtn = document.getElementById('knowledge-retrieval-run-btn');
+            const knowledgeRetrievalExportBtn = document.getElementById('knowledge-retrieval-export-btn');
+            const knowledgeRetrievalStatus = document.getElementById('knowledge-retrieval-status');
+            const knowledgeRetrievalResults = document.getElementById('knowledge-retrieval-results');
 
             // Default to the current origin so the backend-served frontend works on any port
             // or host. Allow an explicit override for split frontend/backend setups.
@@ -3168,6 +3192,8 @@ export function initializeOperatorConsole() {
             let backendMode = 'unknown';
             let cachedConnectors = [];
             let connectorListRenderRequestId = 0;
+            let cachedKnowledgeDocuments = [];
+            let latestKnowledgeRetrievalExport = null;
             let cachedProviderConnections = [];
             let cachedAgentModelProfiles = [];
             let selectedAiModelProfileId = null;
@@ -6709,6 +6735,321 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     connectorListDiv.innerHTML = `<p style="color: var(--red);">${error.message}</p>`;
+                }
+            }
+
+            function formatKnowledgeSourceType(value = '') {
+                const labels = {
+                    playbook: 'Playbook',
+                    campaign_brief: 'Campaign Brief',
+                    sop: 'SOP',
+                    report: 'Report',
+                    faq: 'FAQ',
+                    markdown: 'Markdown',
+                    text: 'Plain Text',
+                };
+                const normalized = String(value || '').trim().toLowerCase();
+                return labels[normalized] || normalized.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) || 'Source';
+            }
+
+            function getSelectedKnowledgeTags() {
+                const selectedTags = Array.from(knowledgeTopicControl?.querySelectorAll('input[type="checkbox"]:checked') || [])
+                    .map((input) => String(input.value || '').trim())
+                    .filter(Boolean);
+                const customTags = String(knowledgeCustomTagsInput?.value || '')
+                    .split(',')
+                    .map((tag) => tag.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, ''))
+                    .filter(Boolean);
+                return Array.from(new Set([...selectedTags, ...customTags]));
+            }
+
+            function inferKnowledgeTitleFromFile(file) {
+                const filename = String(file?.name || '').trim();
+                if (!filename) {
+                    return '';
+                }
+                return filename
+                    .replace(/\.[^.]+$/, '')
+                    .replace(/[_-]+/g, ' ')
+                    .replace(/\b\w/g, (char) => char.toUpperCase());
+            }
+
+            function syncKnowledgeTitleFromFile() {
+                if (!knowledgeTitleInput || knowledgeTitleInput.value.trim()) {
+                    return;
+                }
+                const title = inferKnowledgeTitleFromFile(knowledgeSourceFileInput?.files?.[0] || null);
+                if (title) {
+                    knowledgeTitleInput.value = title;
+                }
+            }
+
+            function resetKnowledgeIntakeForm() {
+                if (knowledgeSourceFileInput) {
+                    knowledgeSourceFileInput.value = '';
+                }
+                if (knowledgeSourceTypeSelect) {
+                    knowledgeSourceTypeSelect.value = 'playbook';
+                }
+                if (knowledgeTitleInput) {
+                    knowledgeTitleInput.value = '';
+                }
+                if (knowledgeSourceNameInput) {
+                    knowledgeSourceNameInput.value = '';
+                }
+                if (knowledgeSourceUriInput) {
+                    knowledgeSourceUriInput.value = '';
+                }
+                Array.from(knowledgeTopicControl?.querySelectorAll('input[type="checkbox"]') || []).forEach((input) => {
+                    input.checked = false;
+                });
+                if (knowledgeManualContentInput) {
+                    knowledgeManualContentInput.value = '';
+                }
+                if (knowledgeCustomTagsInput) {
+                    knowledgeCustomTagsInput.value = '';
+                }
+                setInlineStatus(knowledgeDocumentStatus, '');
+            }
+
+            async function buildKnowledgeDocumentRequestBody() {
+                const file = knowledgeSourceFileInput?.files?.[0] || null;
+                const fileContent = await readConnectorFileAsText(file);
+                const fallbackContent = String(knowledgeManualContentInput?.value || '').trim();
+                const content = String(fileContent || fallbackContent || '').trim();
+                if (!content) {
+                    throw new Error('Upload a text or markdown source file, or use Advanced Text Fallback.');
+                }
+                const sourceType = String(knowledgeSourceTypeSelect?.value || 'playbook').trim() || 'playbook';
+                const title = String(knowledgeTitleInput?.value || inferKnowledgeTitleFromFile(file) || '').trim();
+                if (!title) {
+                    throw new Error('Title is required.');
+                }
+                const sourceUri = String(knowledgeSourceUriInput?.value || '').trim();
+                const sourceName = String(knowledgeSourceNameInput?.value || formatKnowledgeSourceType(sourceType)).trim();
+                return {
+                    title,
+                    content,
+                    source_type: sourceType,
+                    source_name: sourceName,
+                    source_uri: sourceUri || null,
+                    source_id: sourceUri || file?.name || title,
+                    tags: getSelectedKnowledgeTags(),
+                    visibility: 'workspace',
+                    provenance: {
+                        intake_mode: file ? 'file_upload' : 'manual_text_fallback',
+                        file_name: file?.name || '',
+                        operator_console: true,
+                    },
+                    metadata: {
+                        ui_surface: 'data_core_knowledge_library',
+                    },
+                };
+            }
+
+            async function saveKnowledgeDocument() {
+                if (knowledgeDocumentSaveBtn) {
+                    knowledgeDocumentSaveBtn.disabled = true;
+                }
+                setInlineStatus(knowledgeDocumentStatus, 'Adding source...');
+                try {
+                    const body = await buildKnowledgeDocumentRequestBody();
+                    const documentPayload = await apiRequest('/knowledge/documents', {
+                        method: 'POST',
+                        body,
+                    });
+                    resetKnowledgeIntakeForm();
+                    setInlineStatus(knowledgeDocumentStatus, `Added ${documentPayload.title}.`);
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                    await loadKnowledgeLibrary();
+                    return documentPayload;
+                } catch (error) {
+                    setInlineStatus(knowledgeDocumentStatus, error.message || 'Failed to add source.', true);
+                    return null;
+                } finally {
+                    if (knowledgeDocumentSaveBtn) {
+                        knowledgeDocumentSaveBtn.disabled = false;
+                    }
+                }
+            }
+
+            function renderKnowledgeDocuments(items = cachedKnowledgeDocuments) {
+                if (!knowledgeDocumentList) {
+                    return;
+                }
+                const documents = Array.isArray(items) ? items : [];
+                if (!documents.length) {
+                    knowledgeDocumentList.innerHTML = '<div class="list-empty">No knowledge sources yet.</div>';
+                    return;
+                }
+                knowledgeDocumentList.innerHTML = `
+                    <div class="knowledge-document-grid">
+                        ${documents.map((item) => {
+                            const tags = (item.tags || []).slice(0, 5).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join('');
+                            return `
+                                <article class="knowledge-document-card">
+                                    <div>
+                                        <div class="table-badge-row">
+                                            <span class="pill">${escapeHtml(formatKnowledgeSourceType(item.source_type))}</span>
+                                            <span class="pill">${escapeHtml(item.status || 'active')}</span>
+                                        </div>
+                                        <h3>${escapeHtml(item.title || item.document_id || 'Knowledge Source')}</h3>
+                                        <p class="subtle">${escapeHtml(item.source_name || item.source_uri || item.document_id || '')}</p>
+                                    </div>
+                                    <div class="knowledge-card-meta">
+                                        <span>${Number(item.chunk_count || 0)} chunks</span>
+                                        <span>${Number(item.character_count || 0).toLocaleString()} chars</span>
+                                        <span>${escapeHtml(formatDateTime(item.updated_at || item.created_at))}</span>
+                                    </div>
+                                    ${tags ? `<div class="table-badge-row">${tags}</div>` : ''}
+                                    <div class="inline-actions">
+                                        <button type="button" data-knowledge-document-action="export" data-document-id="${escapeHtml(item.document_id)}">Export .json</button>
+                                        <button type="button" class="secondary-button" data-knowledge-document-action="archive" data-document-id="${escapeHtml(item.document_id)}">Archive</button>
+                                    </div>
+                                </article>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            async function loadKnowledgeLibrary() {
+                if (!knowledgeDocumentList) {
+                    return [];
+                }
+                if (latestKnowledgeRetrievalExport) {
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                }
+                setInlineStatus(knowledgeDocumentListStatus, 'Loading sources...');
+                try {
+                    const payload = await apiRequest('/knowledge/documents');
+                    cachedKnowledgeDocuments = Array.isArray(payload?.items) ? payload.items : [];
+                    renderKnowledgeDocuments(cachedKnowledgeDocuments);
+                    setInlineStatus(knowledgeDocumentListStatus, `${cachedKnowledgeDocuments.length} source${cachedKnowledgeDocuments.length === 1 ? '' : 's'}.`);
+                    return cachedKnowledgeDocuments;
+                } catch (error) {
+                    cachedKnowledgeDocuments = [];
+                    renderKnowledgeDocuments([]);
+                    setInlineStatus(knowledgeDocumentListStatus, error.message || 'Failed to load sources.', true);
+                    return [];
+                }
+            }
+
+            async function exportKnowledgeDocument(documentId) {
+                const normalizedId = String(documentId || '').trim();
+                if (!normalizedId) {
+                    return;
+                }
+                const payload = await apiRequest(`/knowledge/documents/${encodeURIComponent(normalizedId)}/export`);
+                downloadJsonPayload(payload, `knowledge-document-${normalizedId}.json`);
+            }
+
+            async function archiveKnowledgeDocument(documentId) {
+                const normalizedId = String(documentId || '').trim();
+                if (!normalizedId) {
+                    return;
+                }
+                if (!confirm('Archive this knowledge source?')) {
+                    return;
+                }
+                setInlineStatus(knowledgeDocumentListStatus, 'Archiving source...');
+                try {
+                    await apiRequest(`/knowledge/documents/${encodeURIComponent(normalizedId)}/archive`, { method: 'POST' });
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                    await loadKnowledgeLibrary();
+                } catch (error) {
+                    setInlineStatus(knowledgeDocumentListStatus, error.message || 'Failed to archive source.', true);
+                }
+            }
+
+            function resetKnowledgeRetrievalPreview(message = '') {
+                latestKnowledgeRetrievalExport = null;
+                if (knowledgeRetrievalExportBtn) {
+                    knowledgeRetrievalExportBtn.disabled = true;
+                }
+                renderKnowledgeRetrieval(null);
+                if (message) {
+                    setInlineStatus(knowledgeRetrievalStatus, message);
+                }
+            }
+
+            function renderKnowledgeRetrieval(payload = null) {
+                if (!knowledgeRetrievalResults) {
+                    return;
+                }
+                const citations = Array.isArray(payload?.citations) ? payload.citations : [];
+                if (!citations.length) {
+                    knowledgeRetrievalResults.innerHTML = '<div class="list-empty">No cited evidence yet.</div>';
+                    return;
+                }
+                knowledgeRetrievalResults.innerHTML = citations.map((citation) => `
+                    <article class="knowledge-evidence-card">
+                        <div class="metric-line">
+                            <span>${escapeHtml(citation.citation_id || `C${citation.rank || ''}`)}</span>
+                            <strong>${escapeHtml(citation.document_title || citation.source_name || 'Knowledge Source')}</strong>
+                        </div>
+                        <p>${escapeHtml(citation.snippet || citation.summary || citation.text || '')}</p>
+                        <div class="table-badge-row">
+                            <span class="pill">${escapeHtml(formatKnowledgeSourceType(citation.source_type))}</span>
+                            <span class="pill">Score ${Number(citation.score || 0).toFixed(2)}</span>
+                        </div>
+                    </article>
+                `).join('');
+            }
+
+            async function runKnowledgeRetrieval() {
+                const query = String(knowledgeRetrievalQueryInput?.value || '').trim();
+                if (!query) {
+                    setInlineStatus(knowledgeRetrievalStatus, 'Question is required.', true);
+                    return null;
+                }
+                if (knowledgeRetrievalRunBtn) {
+                    knowledgeRetrievalRunBtn.disabled = true;
+                }
+                if (knowledgeRetrievalExportBtn) {
+                    knowledgeRetrievalExportBtn.disabled = true;
+                }
+                latestKnowledgeRetrievalExport = null;
+                setInlineStatus(knowledgeRetrievalStatus, 'Checking evidence...');
+                try {
+                    const payload = await apiRequest('/knowledge/retrievals', {
+                        method: 'POST',
+                        body: {
+                            query,
+                            top_k: Number(knowledgeRetrievalTopKSelect?.value || 3),
+                            retrieval_mode: 'hybrid_v1',
+                        },
+                    });
+                    latestKnowledgeRetrievalExport = payload;
+                    renderKnowledgeRetrieval(payload);
+                    if (knowledgeRetrievalExportBtn) {
+                        knowledgeRetrievalExportBtn.disabled = false;
+                    }
+                    setInlineStatus(knowledgeRetrievalStatus, `${payload.result_count || 0} cited source${Number(payload.result_count || 0) === 1 ? '' : 's'}.`);
+                    return payload;
+                } catch (error) {
+                    renderKnowledgeRetrieval(null);
+                    setInlineStatus(knowledgeRetrievalStatus, error.message || 'Evidence check failed.', true);
+                    return null;
+                } finally {
+                    if (knowledgeRetrievalRunBtn) {
+                        knowledgeRetrievalRunBtn.disabled = false;
+                    }
+                }
+            }
+
+            async function exportLatestKnowledgeRetrieval() {
+                const retrievalId = String(latestKnowledgeRetrievalExport?.retrieval_id || '').trim();
+                if (!retrievalId) {
+                    setInlineStatus(knowledgeRetrievalStatus, 'Run an evidence check first.', true);
+                    return;
+                }
+                try {
+                    const payload = await apiRequest(`/knowledge/retrievals/${encodeURIComponent(retrievalId)}/export`);
+                    downloadJsonPayload(payload, `knowledge-evidence-${retrievalId}.json`);
+                    setInlineStatus(knowledgeRetrievalStatus, 'Evidence pack exported.');
+                } catch (error) {
+                    setInlineStatus(knowledgeRetrievalStatus, error.message || 'Failed to export evidence pack.', true);
                 }
             }
 
@@ -16452,6 +16793,42 @@ export function initializeOperatorConsole() {
             addProviderConnectionBtn.addEventListener('click', () => {
                 setProviderConnectionFormVisible(true, { providerType: 'sendgrid' });
                 setInlineStatus(providerConnectionStatus, 'Creating a new SendGrid provider connection.');
+            });
+            knowledgeSourceFileInput?.addEventListener('change', syncKnowledgeTitleFromFile);
+            knowledgeDocumentSaveBtn?.addEventListener('click', saveKnowledgeDocument);
+            knowledgeDocumentResetBtn?.addEventListener('click', resetKnowledgeIntakeForm);
+            knowledgeDocumentRefreshBtn?.addEventListener('click', loadKnowledgeLibrary);
+            knowledgeRetrievalRunBtn?.addEventListener('click', runKnowledgeRetrieval);
+            knowledgeRetrievalExportBtn?.addEventListener('click', exportLatestKnowledgeRetrieval);
+            knowledgeRetrievalQueryInput?.addEventListener('input', () => {
+                if (latestKnowledgeRetrievalExport) {
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                }
+            });
+            knowledgeRetrievalTopKSelect?.addEventListener('change', () => {
+                if (latestKnowledgeRetrievalExport) {
+                    resetKnowledgeRetrievalPreview('Evidence check needs refresh.');
+                }
+            });
+            knowledgeDocumentList?.addEventListener('click', async (event) => {
+                const button = event.target instanceof Element ? event.target.closest('[data-knowledge-document-action]') : null;
+                if (!button) {
+                    return;
+                }
+                const documentId = button.getAttribute('data-document-id') || '';
+                const action = button.getAttribute('data-knowledge-document-action') || '';
+                if (action === 'export') {
+                    try {
+                        await exportKnowledgeDocument(documentId);
+                        setInlineStatus(knowledgeDocumentListStatus, 'Source exported.');
+                    } catch (error) {
+                        setInlineStatus(knowledgeDocumentListStatus, error.message || 'Failed to export source.', true);
+                    }
+                    return;
+                }
+                if (action === 'archive') {
+                    await archiveKnowledgeDocument(documentId);
+                }
             });
             providerConnectionSaveBtn.addEventListener('click', async () => {
                 try {

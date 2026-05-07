@@ -9,13 +9,13 @@ Current capabilities to preserve:
 - connector management for event, attribution, Google, and BigQuery-style sources
 - secure BigQuery credential setup through file upload or secret references, not browser-side service-account JSON paste fields
 - import jobs, raw shard storage, standardized/unified processing, mapping memory, guided mapping controls, and reprocess flows
-- API-first knowledge document ingestion and retrieval through `/api/v1/knowledge`, with deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, local semantic-vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, and persisted `knowledge_evidence_pack.v1` retrieval artifacts
+- no-code knowledge document ingestion and retrieval through `Data Core -> Knowledge` plus `/api/v1/knowledge`, with file-first text/markdown intake, deterministic chunks, provenance, tags, content hashes, archive lifecycle, lexical top-K citations, local semantic-vector metadata, `hybrid_v1` semantic retrieval/reranking, feedback-influenced ranking boosts, exportable `knowledge_document.v1` artifacts, and persisted/exportable `knowledge_evidence_pack.v1` retrieval artifacts
 - SQL workspace and query-to-cohort behavior as analyst/advanced paths
 - local churn prediction readiness, retraining, source-first prediction audiences, prediction job metadata, and paginated prediction-result reads
 - backend-managed Ask AI runtime profiles surfaced from the Connectors area without exposing browser-side vendor credential calls
 
-### Future Knowledge Ingestion Scope
-Data Core will also become the control-plane owner for growth knowledge assets used by the Copilot RAG loop. This includes marketing SOPs, campaign briefs, lifecycle playbooks, product docs, historical analysis reports, FAQs, creative notes, and other operator-approved reference material.
+### Knowledge Ingestion Scope
+Data Core is the control-plane owner for growth knowledge assets used by the Copilot RAG loop. This includes marketing SOPs, campaign briefs, lifecycle playbooks, product docs, historical analysis reports, FAQs, creative notes, and other operator-approved reference material.
 
 Planned resource model:
 - `knowledge_source`: logical source grouping, owner, visibility, tags, freshness policy, and ingestion configuration
@@ -46,10 +46,15 @@ Delivered feedback-loop acceptance criteria:
 1. Retrieval ranking applies bounded positive or negative feedback scores from Experiment Hub AI feedback records.
 2. Feedback boosts are exposed as ranking signals on cited chunks so operators can audit why a source moved up.
 
+Delivered no-code operator acceptance criteria:
+1. `Data Core -> Knowledge` provides file-first source intake for text and markdown knowledge documents.
+2. The primary UI uses selectors, topic chips, evidence checks, source cards, and `Export .json` buttons rather than raw JSON/code text fields.
+3. Manual text paste remains available only behind a collapsed `Advanced Text Fallback` panel.
+4. Module-level Ask AI starters can plan sources, summarize guidance with citations, and inspect coverage gaps.
+
 Remaining acceptance criteria:
-1. Add a no-code operator UI and Ask AI intake flow for knowledge documents.
-2. Broaden local semantic retrieval into provider-grade embedding/vector storage and structured product-artifact retrieval.
-3. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
+1. Broaden local semantic retrieval into provider-grade embedding/vector storage and structured product-artifact retrieval.
+2. Broaden the delivered Ask AI citations into richer module-specific handoff cards.
 
 ---
 
@@ -1032,13 +1037,15 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 
 ### 6.2 Remaining Gaps
 
-#### Gap-D0 Growth Knowledge Ingestion Does Not Yet Exist
+#### Gap-D0 Growth Knowledge Ingestion Is First-Slice Complete
 - Current state:
   - Data Core owns structured ingestion and mapping for event/warehouse data
-  - Product knowledge, SOPs, reports, briefs, and playbooks are not yet first-class Data Core resources
+  - Product knowledge, SOPs, reports, briefs, FAQs, and playbooks are now first-class Data Core resources
+  - `Data Core -> Knowledge` gives operators file-first source intake, evidence checks, source cards, archive controls, and `Export .json` artifact review without primary JSON/code text fields
+  - Ask AI can retrieve cited `hybrid_v1` evidence packs from active knowledge chunks
 - Remaining work:
-  - Add tenant/project-scoped knowledge documents, chunks, ingestion jobs, provenance, lifecycle, and export support
-  - Keep embedding/vector metadata attachable without forcing a storage migration in the first implementation pass
+  - Move beyond deterministic local semantic vectors into provider-grade embedding/vector storage
+  - Add structured product-artifact retrieval alongside uploaded documents
 
 #### Gap-D1 Manifest-Driven Processing Is Not Yet the Default Path
 - Current state:
@@ -1101,9 +1108,9 @@ Establish a minimum viable governance and access-control baseline in v1 to satis
 ### 6.4 V1 Backlog
 
 #### P0 Finish-Up
-1. `Growth Knowledge Ingestion`
-   - Add first-class knowledge document and chunk resources for RAG context
-   - Preserve provenance, lifecycle, permissions, content hashes, and `.json` export support
+1. `Provider-Grade Knowledge Retrieval`
+   - Extend first-class knowledge documents and chunks into managed embedding/vector stores
+   - Preserve provenance, lifecycle, permissions, content hashes, and `.json` export support across provider-backed indexes
 2. `Manifest-Driven Default Path`
    - Make `raw shard -> manifest -> standardized -> unified` the default processing semantic
    - Reduce the degree to which application-layer job orchestration dominates the main path

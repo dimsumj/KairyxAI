@@ -47,21 +47,21 @@ Across the console, the default presentation is now intentionally minimal: the m
 4. Go to `Data Core -> Connectors` and create at least one data connector. If you want Ask AI to use Gemini, LM Studio, Ollama, or another OpenAI-compatible runtime, also save an entry under `AI Agents & Models`.
 5. Go to `Data Core -> Imports` and run an import.
 6. Go to `Audience Engine` and create or refresh a cohort.
-7. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
-8. Go to `Experiment Hub` and save the linked experiment config.
-9. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and prepare workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and prepare live actions as module handoffs without sending, publishing, deleting, or ingesting directly from chat. Structured payloads and diagnostics are reviewed through `Export .json` artifacts instead of raw JSON text fields; open advanced manual panels only for narrow SQL/member-list or legacy direct tools.
-10. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
+7. Go to `Data Core -> Knowledge` to upload playbooks, SOPs, reports, FAQs, or campaign briefs, then run `Check Evidence` before relying on the source in Ask AI.
+8. Go to `Data Core -> Connectors`, click `Connect Campaign Provider`, save a SendGrid, Braze, or Push Provider connection, then go to `Action Orchestrator` to either draft an email campaign in `Email Campaigns`, use the unified `Push Composer` in `Push Notifications`, or manage the resulting schedules in `Workflow Studio`.
+9. Go to `Experiment Hub` and save the linked experiment config.
+10. Use the global `Ask AI` bubble or the module-level starter prompts as the primary way to create, configure, and prepare workflows. Ask AI can summarize health, set up connectors and providers, fix mappings, draft cohorts and SQL, build campaigns and workflows, configure experiments, inspect diagnostics, and prepare live actions as module handoffs without sending, publishing, deleting, or ingesting directly from chat. Structured payloads and diagnostics are reviewed through `Export .json` artifacts instead of raw JSON text fields; open advanced manual panels only for narrow SQL/member-list or legacy direct tools.
+11. Go to `Settings` if you want to manage login state, review application startup status, switch organizations or projects, create or delete projects, manage organization members, or review the lighter placeholder profile, notification, and billing layouts.
 
 ### 2.3 Fit To The Target Growth-Marketing RAG Architecture
 
 KairyxAI is already moving toward the target AI growth platform shape: `Data Core` handles connector setup, imports, field mapping, data quality, metadata, and governance; `Audience Engine`, `Action Orchestrator`, and `Experiment Hub` turn retrieved context into cohorts, lifecycle drafts, schedules, experiments, and measurement; `Insight Copilot` provides the prompt-first generation layer with setup handoffs, evidence artifacts, and audit history.
 
 Priority completion TODO:
-1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
-2. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
-3. Expand the delivered deterministic AI auto-grader into model-judge evaluation, offline eval runs, recall probes, and monitoring alerts.
-4. Expand delivered feedback-learning profiles into trained optimization, richer semantic reranking, and structured playbook suggestions.
-5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
+1. Expand the delivered local `hybrid_v1` semantic retrieval and reranking into provider-grade embedding/vector stores plus structured artifact retrieval.
+2. Expand the delivered deterministic AI auto-grader into model-judge evaluation, offline eval runs, recall probes, and monitoring alerts.
+3. Expand delivered feedback-learning profiles into trained optimization, richer semantic reranking, and structured playbook suggestions.
+4. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
 ### 2.4 Deployment Surface Notes
 
@@ -525,7 +525,16 @@ For lifecycle email campaigns and Wynn push delivery, use `Data Core -> Connecto
 
 #### Knowledge Documents API
 
-Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/knowledge`. Knowledge document management is still API-first and designed for a future no-code intake UI, while Ask AI already consumes `hybrid_v1` retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts.
+Data Core now owns the RAG knowledge-ingestion slice through `Data Core -> Knowledge` and `/api/v1/knowledge`. Operators can upload text or markdown playbooks, campaign briefs, SOPs, reports, and FAQs from the console, run cited evidence checks, and export full setup artifacts with `Export .json` buttons instead of reading raw JSON/code fields. Ask AI consumes `hybrid_v1` retrieval evidence packs for relevant setup, diagnostics, strategy, and copy-drafting prompts.
+
+| Console control | Type | How to use it | Expected result |
+| --- | --- | --- | --- |
+| `Plan Sources`, `Summarize Guidance`, `Find Gaps` | Ask AI starter prompts | Open the Knowledge page and choose a prompt to review source coverage or cite guidance. | The global Ask AI session opens with the selected knowledge task. |
+| `Source File` | File upload | Upload a `.txt`, `.md`, or `.markdown` source instead of pasting JSON or code. | The title can auto-fill from the file name, and `Add Source` creates chunks for retrieval. |
+| `Source Type` and `Topics` | Selectors | Classify the source as a playbook, campaign brief, SOP, report, FAQ, markdown, or plain text, then tag growth topics such as winback, push, email, cohort, or experiment. | Retrieval and later Ask AI handoffs can filter and cite the source with operator-readable metadata. |
+| `Advanced Text Fallback` | Collapsed fallback | Paste plain text only when no source file is available. | The fallback remains out of the primary UI and is stored as normal knowledge content. |
+| `Check Evidence` | Button | Enter a marketer-readable question and run a retrieval preview. | The page shows cited snippets and scores without exposing a JSON output field. |
+| `Export .json` | Button | Export a knowledge document or evidence pack when an operator needs the full setup file. | A `knowledge_document.v1` or `knowledge_evidence_pack.v1` file downloads locally. |
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
