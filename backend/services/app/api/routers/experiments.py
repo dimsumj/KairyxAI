@@ -3,6 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.schemas.experiments import (
+    AIFeedbackExportResponse,
+    AIFeedbackListResponse,
+    AIFeedbackRequest,
+    AIFeedbackResponse,
+    AIFeedbackSummaryResponse,
     AIEvaluationExportResponse,
     AIEvaluationListResponse,
     AIEvaluationRequest,
@@ -16,10 +21,11 @@ from app.api.schemas.experiments import (
     ExperimentOptimizerRunRequest,
     ExperimentOutcomeIngestRequest,
 )
+from app.application.ai_feedback import AIFeedbackService
 from app.application.ai_evaluations import AIEvaluationService
 from app.application.experiments import ExperimentConfigService
 from app.core.governance import build_audited_response, ensure_permission, get_governance_context
-from app.core.deps import get_ai_evaluation_service, get_experiment_service
+from app.core.deps import get_ai_evaluation_service, get_ai_feedback_service, get_experiment_service
 
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
@@ -47,6 +53,118 @@ def post_experiment_config(request: ExperimentLifecycleRequest, http_request: Re
 @router.get("/summary")
 def get_experiment_summary(experiment_id: str, service: ExperimentConfigService = Depends(get_experiment_service)):
     return service.get_summary(experiment_id)
+
+
+@router.get("/ai-feedback", response_model=AIFeedbackListResponse)
+def list_ai_feedback(
+    http_request: Request,
+    feedback_type: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    limit: int = 100,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.read")
+    payload = {
+        "items": service.list_feedback(
+            feedback_type=feedback_type,
+            target_type=target_type,
+            target_id=target_id,
+            limit=limit,
+        )
+    }
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_read",
+        resource_type="ai_feedback_record",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.post("/ai-feedback", response_model=AIFeedbackResponse, status_code=201)
+def record_ai_feedback(
+    request: AIFeedbackRequest,
+    http_request: Request,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.write")
+    try:
+        payload = service.record_feedback(**request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_recorded",
+        resource_type="ai_feedback_record",
+        resource_id=payload["feedback_id"],
+        payload=payload,
+    )
+
+
+@router.get("/ai-feedback/summary", response_model=AIFeedbackSummaryResponse)
+def summarize_ai_feedback(
+    http_request: Request,
+    target_type: str | None = None,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.read")
+    payload = service.summarize(target_type=target_type)
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_summarized",
+        resource_type="ai_feedback_record",
+        resource_id=None,
+        payload=payload,
+    )
+
+
+@router.get("/ai-feedback/{feedback_id}", response_model=AIFeedbackResponse)
+def get_ai_feedback(
+    feedback_id: str,
+    http_request: Request,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.read")
+    payload = service.get_feedback(feedback_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"AI feedback '{feedback_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_record_read",
+        resource_type="ai_feedback_record",
+        resource_id=feedback_id,
+        payload=payload,
+    )
+
+
+@router.get("/ai-feedback/{feedback_id}/export", response_model=AIFeedbackExportResponse)
+def export_ai_feedback(
+    feedback_id: str,
+    http_request: Request,
+    service: AIFeedbackService = Depends(get_ai_feedback_service),
+):
+    context = get_governance_context(http_request)
+    ensure_permission(context, "experiments.feedback.read")
+    payload = service.export_feedback(feedback_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"AI feedback '{feedback_id}' not found.")
+    return build_audited_response(
+        service.repository,
+        context,
+        action_type="ai_feedback_exported",
+        resource_type="ai_feedback_record",
+        resource_id=feedback_id,
+        payload=payload,
+    )
 
 
 @router.get("/ai-evaluations", response_model=AIEvaluationListResponse)

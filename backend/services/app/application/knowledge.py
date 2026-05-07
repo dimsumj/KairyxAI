@@ -7,6 +7,8 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, Dict
 
+from app.application.ai_feedback import AI_FEEDBACK_RESOURCE_TYPE
+
 
 KNOWLEDGE_DOCUMENT_RESOURCE_TYPE = "knowledge_document"
 KNOWLEDGE_CHUNK_RESOURCE_TYPE = "knowledge_chunk"
@@ -251,6 +253,7 @@ class KnowledgeService:
         query_terms = _query_terms(normalized_query)
         if not query_terms:
             raise ValueError("query must include at least one searchable term.")
+        feedback_boosts = self._feedback_boosts()
         scored = [
             match
             for chunk in self.repository.list_resources(KNOWLEDGE_CHUNK_RESOURCE_TYPE)
@@ -262,6 +265,7 @@ class KnowledgeService:
                 source_types=normalized_source_types,
                 document_ids=normalized_document_ids,
                 include_archived=include_archived,
+                feedback_boosts=feedback_boosts,
             ))
         ]
         ranked = sorted(
@@ -352,6 +356,21 @@ class KnowledgeService:
                 }
             },
         }
+
+    def _feedback_boosts(self) -> Dict[str, Dict[str, float]]:
+        boosts = {"chunks": {}, "documents": {}}
+        for record in self.repository.list_resources(AI_FEEDBACK_RESOURCE_TYPE):
+            payload = dict(record.get("payload") or {})
+            target_type = str(payload.get("target_type") or "")
+            target_id = str(payload.get("target_id") or "")
+            if not target_id:
+                continue
+            weight = float(payload.get("weight") or 0.0)
+            if target_type == "knowledge_chunk":
+                boosts["chunks"][target_id] = _clamp_feedback_boost(boosts["chunks"].get(target_id, 0.0) + weight)
+            elif target_type == "knowledge_document":
+                boosts["documents"][target_id] = _clamp_feedback_boost(boosts["documents"].get(target_id, 0.0) + weight)
+        return boosts
 
     def _persist_chunks(
         self,
@@ -555,6 +574,10 @@ def _estimate_tokens(value: str) -> int:
     return max(1, len(value) // 4)
 
 
+def _clamp_feedback_boost(value: float) -> float:
+    return round(max(-3.0, min(3.0, float(value))), 4)
+
+
 def _query_terms(value: str) -> list[str]:
     terms: list[str] = []
     seen: set[str] = set()
@@ -575,6 +598,7 @@ def _score_chunk(
     source_types: list[str],
     document_ids: list[str],
     include_archived: bool,
+    feedback_boosts: Dict[str, Dict[str, float]],
 ) -> Dict[str, Any] | None:
     if not include_archived and chunk.get("status") == "archived":
         return None
@@ -598,22 +622,27 @@ def _score_chunk(
         ]
     ).lower()
     match_terms: list[str] = []
-    score = 0.0
+    lexical_score = 0.0
     for term in query_terms:
         frequency = text_tokens.get(term, 0)
         metadata_hit = term in metadata_text
         if frequency or metadata_hit:
             match_terms.append(term)
-            score += min(float(frequency), 5.0)
+            lexical_score += min(float(frequency), 5.0)
             if metadata_hit:
-                score += 0.75
+                lexical_score += 0.75
     normalized_query = re.sub(r"\s+", " ", query.lower()).strip()
     normalized_text = re.sub(r"\s+", " ", text.lower()).strip()
     if normalized_query and normalized_query in normalized_text:
-        score += 5.0
-    if score <= 0:
+        lexical_score += 5.0
+    if lexical_score <= 0:
         return None
-    score = round(score / max(float(len(query_terms)), 1.0), 4)
+    lexical_score = round(lexical_score / max(float(len(query_terms)), 1.0), 4)
+    feedback_boost = _clamp_feedback_boost(
+        float(feedback_boosts.get("chunks", {}).get(str(chunk.get("chunk_id") or ""), 0.0))
+        + float(feedback_boosts.get("documents", {}).get(str(chunk.get("document_id") or ""), 0.0))
+    )
+    score = round(max(0.0, lexical_score + feedback_boost), 4)
     return {
         "chunk_id": chunk.get("chunk_id"),
         "document_id": chunk.get("document_id"),
@@ -623,6 +652,11 @@ def _score_chunk(
         "source_type": chunk.get("source_type") or "markdown",
         "ordinal": int(chunk.get("ordinal") or 0),
         "score": score,
+        "feedback_boost": feedback_boost,
+        "ranking_signals": {
+            "lexical_score": lexical_score,
+            "feedback_boost": feedback_boost,
+        },
         "match_terms": match_terms,
         "snippet": _snippet(text, match_terms),
         "text": text,

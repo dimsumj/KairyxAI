@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.application.audit import AuditService
 from app.application.agent_model_profiles import AgentModelProfileService
+from app.application.ai_feedback import AIFeedbackService
 from app.application.ai_evaluations import AIEvaluationService
 from app.application.braze_provider import BrazeProviderService
 from app.application.cohorts import CohortService
@@ -89,6 +90,12 @@ def get_ai_evaluation_service(
     repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
 ) -> AIEvaluationService:
     return AIEvaluationService(repository)
+
+
+def get_ai_feedback_service(
+    repository: SqlAlchemyControlPlaneRepository = Depends(get_repository),
+) -> AIFeedbackService:
+    return AIFeedbackService(repository)
 
 
 def get_cohort_service(

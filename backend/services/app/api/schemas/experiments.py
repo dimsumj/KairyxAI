@@ -172,3 +172,88 @@ class AIEvaluationExportResponse(BaseModel):
     masked_fields: List[str] = Field(default_factory=list)
     format: str
     evaluation: AIEvaluationResponse
+
+
+class AIFeedbackRequest(BaseModel):
+    feedback_type: str
+    target_type: str
+    target_id: str | None = None
+    sentiment: str | None = None
+    weight: float | None = Field(default=None, ge=-1, le=1)
+    rating: float | None = Field(default=None, ge=0, le=1)
+    citation_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    related_evaluation_id: str | None = None
+    change_summary: str | None = None
+    outcome_metrics: Dict[str, Any] = Field(default_factory=dict)
+    comments: str | None = None
+    source: str = "operator"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    recorded_by: str | None = None
+
+
+class AIFeedbackResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    feedback_id: str
+    feedback_type: str
+    target_type: str
+    target_id: str = ""
+    sentiment: str = "neutral"
+    weight: float = 0.0
+    rating: float | None = None
+    citation_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    related_evaluation_id: str = ""
+    change_summary: str = ""
+    outcome_metrics: Dict[str, float] = Field(default_factory=dict)
+    comments: str = ""
+    source: str = "operator"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    recorded_by: str = "system"
+    status: str = "recorded"
+    recorded_at: str = ""
+    export: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    created_by: str = "system"
+    updated_by: str = "system"
+
+
+class AIFeedbackListResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    items: List[AIFeedbackResponse] = Field(default_factory=list)
+
+
+class AIFeedbackSummaryResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    total_records: int = 0
+    positive_rate: float = 0.0
+    negative_rate: float = 0.0
+    sentiment_counts: Dict[str, int] = Field(default_factory=dict)
+    feedback_type_counts: Dict[str, int] = Field(default_factory=dict)
+    target_counts: Dict[str, int] = Field(default_factory=dict)
+    target_weight_scores: Dict[str, float] = Field(default_factory=dict)
+    metric_averages: Dict[str, float] = Field(default_factory=dict)
+    latest_recorded_at: str = ""
+
+
+class AIFeedbackExportResponse(BaseModel):
+    tenant_id: str | None = None
+    project_id: str | None = None
+    correlation_id: str = ""
+    audit_id: int | None = None
+    masked_fields: List[str] = Field(default_factory=list)
+    format: str
+    feedback: AIFeedbackResponse

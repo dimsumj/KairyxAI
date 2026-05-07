@@ -60,7 +60,7 @@ Priority completion TODO:
 1. Extend the knowledge document and retrieval APIs into the operator UI so SOPs, campaign briefs, historical reports, FAQs, marketing assets, and evidence packs can be managed without raw JSON fields.
 2. Add semantic/vector retrieval and reranking over those documents plus structured artifacts, then surface citations inside Ask AI answers and handoff cards.
 3. Expand the new AI evaluation API into automated retrieval and generation evaluation: recall, answer relevance, citation coverage, hallucination checks, and campaign-copy approval quality.
-4. Close the feedback loop from operator approvals, sends, experiment outcomes, and campaign performance back into prompts, retrieval ranking, and playbook suggestions.
+4. Expand the new AI feedback API and retrieval-ranking boosts into automatic prompt context, semantic reranking, and playbook suggestions.
 5. Continue removing manual configuration surfaces so marketers prompt for setup, copy, targeting, schedules, and diagnostics while engineering-oriented JSON remains available only as exported files.
 
 ### 2.4 Deployment Surface Notes
@@ -535,7 +535,7 @@ Data Core now owns the first RAG knowledge-ingestion slice through `/api/v1/know
 | `GET /api/v1/knowledge/documents/{document_id}/chunks` | List chunks for retrieval/debug review. | Chunks include ordinal, text, summary, content hash, token estimate, tags, visibility, and pending embedding metadata. |
 | `GET /api/v1/knowledge/documents/{document_id}/export` | Export the full setup artifact. | Returns `knowledge_document.v1` with the document and chunks for `.json` download. |
 | `POST /api/v1/knowledge/documents/{document_id}/archive` | Archive the document and its chunks. | Archived knowledge is hidden from the active list and remains auditable/exportable. |
-| `POST /api/v1/knowledge/retrievals` | Run a tenant/project-scoped retrieval over knowledge chunks. | Returns ranked citations, snippets, full cited text, a context pack, and an export descriptor. |
+| `POST /api/v1/knowledge/retrievals` | Run a tenant/project-scoped retrieval over knowledge chunks. | Returns ranked citations, snippets, full cited text, feedback boost/ranking signals, a context pack, and an export descriptor. |
 | `GET /api/v1/knowledge/retrievals` | List recent retrieval evidence packs. | Retrieval records are scoped like documents and preserve query, filters, citations, and context-pack metadata. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}` | Read one retrieval evidence pack. | Use this to reopen cited context for Ask AI, diagnostics, or review. |
 | `GET /api/v1/knowledge/retrievals/{retrieval_id}/export` | Export the evidence pack. | Returns `knowledge_evidence_pack.v1` for `.json` download instead of exposing a raw JSON text area. |
@@ -1469,6 +1469,18 @@ Experiment Hub owns AI quality telemetry for retrieval, citations, generated cop
 | `GET /api/v1/experiments/ai-evaluations/summary` | Summarize AI/RAG quality. | Returns total records, score average, positive/negative/edited rates, outcome counts, target counts, and dimension averages. |
 | `GET /api/v1/experiments/ai-evaluations/{evaluation_id}` | Read one evaluation record. | Records include normalized outcome, score, citations, artifacts, summaries, comments, and metadata. |
 | `GET /api/v1/experiments/ai-evaluations/{evaluation_id}/export` | Export the evaluation artifact. | Returns `ai_evaluation_record.v1` for `.json` download instead of a raw JSON text area. |
+
+### 6.4 AI Feedback Loop API
+
+Experiment Hub also stores feedback signals from operator approvals, edits, ratings, retrieval clicks, sends, workflow results, and experiment outcomes. Feedback on a knowledge chunk or document feeds back into Data Core retrieval ranking as a bounded boost, and each retrieval citation exposes the feedback boost in its ranking signals.
+
+| Endpoint | Purpose | Notes |
+| --- | --- | --- |
+| `POST /api/v1/experiments/ai-feedback` | Record one feedback event. | Supported feedback types are `operator_approval`, `operator_edit`, `rating`, `retrieval_click`, `send_result`, `workflow_result`, and `experiment_outcome`. |
+| `GET /api/v1/experiments/ai-feedback` | List feedback events. | Optional filters include feedback type, target type, target id, and limit. |
+| `GET /api/v1/experiments/ai-feedback/summary` | Summarize feedback signals. | Returns positive/negative rates, feedback-type counts, target weight scores, and outcome metric averages. |
+| `GET /api/v1/experiments/ai-feedback/{feedback_id}` | Read one feedback record. | Records include sentiment, weight, rating, target, citations, artifacts, change summary, outcome metrics, and comments. |
+| `GET /api/v1/experiments/ai-feedback/{feedback_id}/export` | Export the feedback artifact. | Returns `ai_feedback_record.v1` for `.json` download instead of a raw JSON text area. |
 
 ---
 

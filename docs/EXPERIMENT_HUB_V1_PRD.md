@@ -11,12 +11,13 @@ Current capabilities to preserve:
 - integration with Audience Engine, Action Orchestrator, and Insight Copilot
 - experiment recommendations that stay recommendation-only until reviewed in the owning module
 - AI/RAG evaluation records and summaries for retrieval quality, citation coverage, answer relevance, campaign-copy usefulness, and prompt-to-artifact completion
+- AI feedback records for operator approvals, edits, ratings, sends, workflow results, and experiment outcomes, with feedback scores available to Data Core retrieval ranking
 
 ### Future Growth RAG Plan
 Experiment Hub should become the evaluation and feedback backbone for AI-generated growth work:
 - store and expose experiment decisions as retrievable evidence for future campaign, cohort, copy, and workflow suggestions
 - expand the delivered evaluation telemetry API into automated evaluation runs for retrieval quality, citation coverage, answer relevance, and AI-generated copy usefulness
-- connect send outcomes, cohort performance, and experiment conclusions back to Copilot feedback loops
+- expand delivered feedback records and deterministic retrieval boosts into stronger prompt-context and ranking signals
 - cite experiment evidence when Ask AI recommends rollout, stopping, iteration, or audience/copy changes
 
 Delivered evaluation-registry acceptance criteria:
@@ -24,6 +25,12 @@ Delivered evaluation-registry acceptance criteria:
 2. Records normalize supported evaluation types, outcomes, scores, citations, artifacts, dimensions, and operator comments.
 3. Summaries expose average score, positive/negative/edited rates, outcome counts, target-type counts, and dimension averages.
 4. Evaluation records are auditable and exportable as `.json` artifacts instead of relying on raw JSON text fields.
+
+Delivered feedback-loop acceptance criteria:
+1. Tenant/project-scoped feedback records can be created, listed, summarized, read, and exported.
+2. Feedback captures approvals, edits, ratings, clicks, sends, workflow results, experiment outcomes, citations, artifacts, and outcome metrics.
+3. Positive or negative feedback on knowledge chunks/documents changes future lexical retrieval ranking through bounded deterministic boosts.
+4. Feedback records remain auditable and exportable as `.json` artifacts instead of raw JSON text fields.
 
 Remaining acceptance criteria:
 1. Experiment decisions and outcome summaries are available as structured, retrievable evidence.
@@ -151,6 +158,7 @@ Provide a reusable experimentation framework for strategy and audience decisions
 - `experiment_summary`
 - `experiment_decision_log`
 - `ai_evaluation_record`
+- `ai_feedback_record`
 
 ---
 
@@ -167,6 +175,10 @@ Provide a reusable experimentation framework for strategy and audience decisions
 - `GET /experiments/ai-evaluations`
 - `GET /experiments/ai-evaluations/summary`
 - `GET /experiments/ai-evaluations/{id}/export`
+- `POST /experiments/ai-feedback`
+- `GET /experiments/ai-feedback`
+- `GET /experiments/ai-feedback/summary`
+- `GET /experiments/ai-feedback/{id}/export`
 
 ---
 
@@ -215,6 +227,14 @@ Provide a reusable experimentation framework for strategy and audience decisions
 - Remaining work:
   - Add automated/offline evaluation runs for retrieval/generation/campaign-copy quality
   - Make experiment decisions and integrity warnings retrievable as cited evidence for future Ask AI recommendations
+
+#### Gap-E0b Feedback Loop Is Lightweight But Active
+- Current state:
+  - Feedback records capture operator approval, edit, rating, send, workflow, retrieval-click, and experiment-outcome signals
+  - Feedback for knowledge chunks and documents influences deterministic retrieval ranking through bounded boosts
+- Remaining work:
+  - Feed feedback summaries into Ask AI prompt context automatically
+  - Replace deterministic boosts with evaluated semantic reranking once vector retrieval is available
 
 #### Gap-E1 Outcome robustness still depends on Action and provider maturity
 - Current state:

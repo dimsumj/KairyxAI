@@ -79,6 +79,8 @@ class KnowledgeCitationResponse(BaseModel):
     source_type: str = "markdown"
     ordinal: int
     match_terms: list[str] = Field(default_factory=list)
+    feedback_boost: float = 0.0
+    ranking_signals: Dict[str, Any] = Field(default_factory=dict)
     snippet: str = ""
     text: str = ""
     summary: str = ""
