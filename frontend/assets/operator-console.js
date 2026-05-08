@@ -11221,6 +11221,9 @@ export function initializeOperatorConsole() {
             const pushDispatchSendNowBtn = document.getElementById('push-dispatch-send-now-btn');
             const pushDispatchClearBtn = document.getElementById('push-dispatch-clear-btn');
             const workflowStudioList = document.getElementById('workflow-studio-list');
+            const workflowStudioItemsPerPageSelect = document.getElementById('workflow-studio-items-per-page');
+            const workflowStudioPaginationSummary = document.getElementById('workflow-studio-pagination-summary');
+            const workflowStudioPaginationControls = document.getElementById('workflow-studio-pagination-controls');
             const workflowStudioStatus = document.getElementById('workflow-studio-status');
             const workflowStudioSelectedLabel = document.getElementById('workflow-studio-selected-label');
             const workflowStudioEmailScheduleGroup = document.getElementById('workflow-studio-email-schedule-group');
@@ -11334,6 +11337,8 @@ export function initializeOperatorConsole() {
             let selectedWorkflowStudioType = 'scheduled';
             let selectedWorkflowStudioResourceType = null;
             let selectedWorkflowStudioResourceId = null;
+            let workflowStudioCurrentPage = 1;
+            let workflowStudioItemsPerPage = 25;
             let selectedTemplateId = null;
             let cachedSavedQueries = [];
             let copilotAgentSessionId = null;
@@ -15164,8 +15169,61 @@ export function initializeOperatorConsole() {
                 `;
             }
 
+            function syncWorkflowStudioPaginationSummary(totalItems, startIndex, endIndex) {
+                if (!workflowStudioPaginationSummary) return;
+                if (totalItems <= 0) {
+                    workflowStudioPaginationSummary.textContent = 'Showing 0 items';
+                    return;
+                }
+                workflowStudioPaginationSummary.textContent = `Showing ${startIndex}-${endIndex} of ${totalItems}`;
+            }
+
+            function renderWorkflowStudioPaginationControls(totalItems) {
+                if (!workflowStudioPaginationControls) return;
+                workflowStudioPaginationControls.innerHTML = '';
+                const totalPages = Math.ceil(totalItems / workflowStudioItemsPerPage);
+                if (totalPages <= 1) {
+                    return;
+                }
+
+                const prevButton = document.createElement('button');
+                prevButton.type = 'button';
+                prevButton.textContent = 'Previous';
+                prevButton.disabled = workflowStudioCurrentPage === 1;
+                prevButton.addEventListener('click', () => {
+                    if (workflowStudioCurrentPage > 1) {
+                        workflowStudioCurrentPage -= 1;
+                        renderWorkflowStudioList();
+                    }
+                });
+
+                const pageInfo = document.createElement('span');
+                pageInfo.textContent = `Page ${workflowStudioCurrentPage} of ${totalPages}`;
+
+                const nextButton = document.createElement('button');
+                nextButton.type = 'button';
+                nextButton.textContent = 'Next';
+                nextButton.disabled = workflowStudioCurrentPage === totalPages;
+                nextButton.addEventListener('click', () => {
+                    if (workflowStudioCurrentPage < totalPages) {
+                        workflowStudioCurrentPage += 1;
+                        renderWorkflowStudioList();
+                    }
+                });
+
+                workflowStudioPaginationControls.appendChild(prevButton);
+                workflowStudioPaginationControls.appendChild(pageInfo);
+                workflowStudioPaginationControls.appendChild(nextButton);
+            }
+
             function renderWorkflowStudioList() {
                 const items = getFilteredWorkflowStudioItems();
+                const totalItems = items.length;
+                const totalPages = Math.max(1, Math.ceil(totalItems / workflowStudioItemsPerPage));
+                workflowStudioCurrentPage = Math.min(workflowStudioCurrentPage, totalPages);
+                const startIndex = totalItems > 0 ? ((workflowStudioCurrentPage - 1) * workflowStudioItemsPerPage) + 1 : 0;
+                const endIndex = totalItems > 0 ? Math.min(startIndex + workflowStudioItemsPerPage - 1, totalItems) : 0;
+                const paginatedItems = items.slice(startIndex > 0 ? startIndex - 1 : 0, endIndex);
                 syncWorkflowStudioFilterButtons();
                 renderSimpleTable(
                     workflowStudioList,
@@ -15180,7 +15238,7 @@ export function initializeOperatorConsole() {
                         { label: 'Total Results', render: (item) => escapeHtml(formatWorkflowStudioTotalResults(item)) },
                         { label: 'Actions', render: (item) => renderWorkflowStudioActions(item) },
                     ],
-                    items,
+                    paginatedItems,
                     selectedWorkflowStudioType === 'sent'
                         ? 'No sent email or push items yet.'
                         : selectedWorkflowStudioType === 'archived'
@@ -15189,6 +15247,8 @@ export function initializeOperatorConsole() {
                                 ? 'No email or push items yet.'
                                 : 'No scheduled email or push items yet.',
                 );
+                syncWorkflowStudioPaginationSummary(totalItems, startIndex, endIndex);
+                renderWorkflowStudioPaginationControls(totalItems);
                 bindWorkflowStudioActionButtons(workflowStudioList);
             }
 
@@ -17637,8 +17697,15 @@ export function initializeOperatorConsole() {
             document.querySelectorAll('[data-workflow-studio-filter]').forEach((button) => {
                 button.addEventListener('click', () => {
                     selectedWorkflowStudioType = String(button.dataset.workflowStudioFilter || 'all').trim().toLowerCase() || 'all';
+                    workflowStudioCurrentPage = 1;
                     renderWorkflowStudioList();
                 });
+            });
+            workflowStudioItemsPerPageSelect?.addEventListener('change', () => {
+                const requestedPageSize = Number(workflowStudioItemsPerPageSelect.value || 25);
+                workflowStudioItemsPerPage = [10, 25, 100].includes(requestedPageSize) ? requestedPageSize : 25;
+                workflowStudioCurrentPage = 1;
+                renderWorkflowStudioList();
             });
             document.getElementById('orchestrator-run-due-btn').addEventListener('click', runDueWorkflows);
             document.getElementById('orchestrator-kill-on-btn').addEventListener('click', () => setKillSwitch(true));

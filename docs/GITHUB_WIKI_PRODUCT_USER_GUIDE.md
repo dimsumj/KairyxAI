@@ -1282,6 +1282,7 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 | --- | --- | --- | --- | --- |
 | `Refresh` | Button | Reloads email campaigns, push workflows, direct push dispatches, and the selected detail panel. | None | The studio list and detail state refresh. |
 | `Scheduled` / `Sent` / `Archived` / `All` | Filter buttons | Narrow the studio table by operational state. | `Scheduled` | Scheduled email campaigns and unsent published push workflows remain visible, while direct one-time push dispatches and completed one-time scheduled push workflows appear in `Sent` and `All`. |
+| `Show 10 / 25 / 100 items` | Select | Changes how many Workflow Studio rows render per page. | `25` | The current filter view repaginates and resets to page 1. |
 | `Name` | Table column | Read-only. Shows the resource name plus the underlying id. | `daily_churn_rescue_push` | Operators can identify the exact campaign or workflow record. |
 | `Channel` | Table column | Read-only. Shows whether the row is `Email` or `Push`. | `Push` | Operators can see the delivery channel without scanning provider details. |
 | `Provider` | Table column | Read-only. Shows SendGrid, Braze, Push Provider, simulator, or workflow channel fallback. | `Push Provider` | The delivery target is visible from the list. |
@@ -1312,6 +1313,7 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 
 Workflow Studio behavior:
 - Archived workflows remain visible in the `Archived` filter and in historical detail views, but they are excluded from due-run execution, resume, publish, and test-run actions.
+- Workflow Studio history is paginated client-side, with `10`, `25`, and `100` item page sizes plus previous/next controls.
 - Push workflow totals come from `runtime_summary.totals` and count live runs separately from sandbox test runs.
 - Direct push dispatches are historical records, so they appear in `Sent` and `All`, expose `View` plus manual `Archive`, and do not support edit or rerun actions.
 - Direct push dispatches and completed one-time scheduled push workflows move into `Archived` only when an operator archives them.
