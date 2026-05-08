@@ -254,16 +254,57 @@ class PushDispatchService:
 
     def _to_response(self, record: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(record.get("payload") or {})
+        push_dispatch_id = str(payload.get("push_dispatch_id") or record.get("resource_id") or "").strip()
+        raw_user_ids = payload.get("user_ids")
+        user_ids = raw_user_ids if isinstance(raw_user_ids, list) else []
+        user_ids = [str(item).strip() for item in user_ids if str(item or "").strip()]
+        legacy_user_id = str(payload.get("user_id") or "").strip()
+        if legacy_user_id and legacy_user_id not in user_ids:
+            user_ids = [legacy_user_id, *user_ids]
+        provider = str(payload.get("provider") or payload.get("provider_backend") or "").strip()
+        if not provider:
+            provider = "simulator" if bool(payload.get("simulated")) else "unknown"
+        provider_mode = str(payload.get("provider_mode") or "").strip()
+        if not provider_mode:
+            provider_mode = "simulator" if provider == "simulator" else "live"
+        payload["push_dispatch_id"] = push_dispatch_id
+        payload["name"] = str(payload.get("name") or record.get("name") or push_dispatch_id or "Push Dispatch")
+        payload["status"] = str(payload.get("status") or record.get("status") or "unknown")
+        payload["channel"] = str(payload.get("channel") or "push_notification")
+        payload["user_ids"] = user_ids
+        payload["user_id"] = legacy_user_id or (user_ids[0] if len(user_ids) == 1 else None)
+        payload["audience_mode"] = str(
+            payload.get("audience_mode")
+            or (self._AUDIENCE_EXPLICIT if user_ids else self._AUDIENCE_ALL_PLAYERS)
+        )
+        payload["provider"] = provider
+        payload["provider_mode"] = provider_mode
+        payload["provider_backend"] = str(payload.get("provider_backend") or provider)
+        if not isinstance(payload.get("data"), dict):
+            payload["data"] = {}
+        if not isinstance(payload.get("provider_options"), dict):
+            payload["provider_options"] = {}
+        payload["send_attempts"] = self._safe_int(payload.get("send_attempts"))
+        payload["callback_count"] = self._safe_int(payload.get("callback_count"))
+        if not isinstance(payload.get("result_summary"), dict):
+            payload["result_summary"] = {}
         payload["callback_summary"] = self._build_callback_summary(payload)
-        payload.setdefault("created_at", record.get("created_at"))
-        payload.setdefault("updated_at", record.get("updated_at"))
-        payload.setdefault("archived_at", payload.get("archived_at"))
-        payload.setdefault("tenant_id", record.get("tenant_id"))
-        payload.setdefault("project_id", record.get("project_id"))
-        payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")
-        payload.setdefault("updated_by", record.get("updated_by") or payload.get("updated_by") or "system")
-        payload.setdefault("correlation_id", record.get("correlation_id") or payload.get("correlation_id") or "")
+        payload["created_at"] = payload.get("created_at") or record.get("created_at")
+        payload["updated_at"] = payload.get("updated_at") or record.get("updated_at")
+        payload["archived_at"] = payload.get("archived_at")
+        payload["tenant_id"] = payload.get("tenant_id") or record.get("tenant_id")
+        payload["project_id"] = payload.get("project_id") or record.get("project_id")
+        payload["created_by"] = payload.get("created_by") or record.get("created_by") or "system"
+        payload["updated_by"] = payload.get("updated_by") or record.get("updated_by") or "system"
+        payload["correlation_id"] = payload.get("correlation_id") or record.get("correlation_id") or ""
         return redact_secret_values(payload)
+
+    @staticmethod
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _build_callback_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         provider_request_id = str(payload.get("provider_request_id") or "").strip()

@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core import db as db_module
+from app.infrastructure.repositories.sqlalchemy_control_plane import SqlAlchemyControlPlaneRepository
 from app.main import create_app
 
 
@@ -183,6 +184,39 @@ def test_completed_push_dispatch_can_be_archived(client: TestClient, monkeypatch
     detail = client.get(f"/api/v1/push-dispatches/{dispatch_id}", headers=_headers())
     assert detail.status_code == 200, detail.text
     assert detail.json()["status"] == "archived"
+
+
+def test_legacy_push_dispatch_missing_response_fields_can_be_archived(client: TestClient):
+    dispatch_id = "pd_legacy_archive"
+    with db_module.session_scope() as session:
+        repository = SqlAlchemyControlPlaneRepository(session)
+        repository.upsert_resource(
+            "push_dispatch",
+            dispatch_id,
+            status="sent",
+            name="legacy_archive",
+            payload={
+                "push_dispatch_id": dispatch_id,
+                "name": "legacy_archive",
+                "status": "sent",
+                "body": "Legacy reward copy.",
+            },
+        )
+
+    archive = client.post(f"/api/v1/push-dispatches/{dispatch_id}/archive", headers=_headers())
+    assert archive.status_code == 200, archive.text
+    payload = archive.json()
+    assert payload["status"] == "archived"
+    assert payload["push_dispatch_id"] == dispatch_id
+    assert payload["audience_mode"] == "provider_broadcast_all_players"
+    assert payload["provider"] == "unknown"
+    assert payload["provider_backend"] == "unknown"
+    assert payload["provider_mode"] == "live"
+    assert payload["user_ids"] == []
+    assert payload["data"] == {}
+    assert payload["provider_options"] == {}
+    assert payload["send_attempts"] == 0
+    assert payload["archived_at"]
 
 
 def test_send_now_single_user_push_uses_simulator_without_provider_connection(client: TestClient):
