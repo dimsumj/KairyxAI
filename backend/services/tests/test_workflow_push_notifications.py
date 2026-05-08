@@ -523,7 +523,7 @@ def test_push_workflow_retries_5xx_with_stable_provider_request_id(client: TestC
     assert delivery["provider_response"]["campaign_id"] == "PUSH_NOTIFICATION.cid_retry"
 
 
-def test_provider_campaign_one_time_schedule_runs_once_and_archives(client: TestClient, monkeypatch):
+def test_provider_campaign_one_time_schedule_runs_once_then_can_be_archived(client: TestClient, monkeypatch):
     captured_requests: list[dict] = []
 
     def fake_post(url, headers=None, json=None, timeout=None):
@@ -568,7 +568,7 @@ def test_provider_campaign_one_time_schedule_runs_once_and_archives(client: Test
 
     workflow = client.get(f"/api/v1/workflows/{workflow_id}", headers=_headers())
     assert workflow.status_code == 200
-    assert workflow.json()["status"] == "archived"
+    assert workflow.json()["status"] == "sent"
 
     deliveries = client.get(f"/api/v1/workflows/{workflow_id}/deliveries", headers=_headers())
     assert deliveries.status_code == 200
@@ -589,6 +589,10 @@ def test_provider_campaign_one_time_schedule_runs_once_and_archives(client: Test
     assert second_run.status_code == 200, second_run.text
     assert second_run.json()["items"] == []
     assert len(captured_requests) == 1
+
+    archive = client.post(f"/api/v1/workflows/{workflow_id}/archive", headers=_headers())
+    assert archive.status_code == 200, archive.text
+    assert archive.json()["status"] == "archived"
 
 
 def test_provider_campaign_daily_workflow_sends_multi_user_campaign_once_per_run(client: TestClient, monkeypatch):

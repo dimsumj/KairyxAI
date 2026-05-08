@@ -33,6 +33,21 @@ def get_push_dispatch(
     return dispatch
 
 
+@router.post("/{push_dispatch_id}/archive", response_model=PushDispatchResponse)
+def archive_push_dispatch(
+    push_dispatch_id: str,
+    request: Request,
+    service: PushDispatchService = Depends(get_push_dispatch_service),
+):
+    ensure_permission(get_governance_context(request), "push_dispatches.execute")
+    try:
+        return service.archive_dispatch(push_dispatch_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Push dispatch '{push_dispatch_id}' not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @router.post("/send-now", response_model=PushDispatchResponse, status_code=status.HTTP_201_CREATED)
 def send_push_dispatch_now(
     payload: PushDispatchSendRequest,

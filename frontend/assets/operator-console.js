@@ -3207,6 +3207,7 @@ export function initializeOperatorConsole() {
             let cachedPredictionJobs = [];
             let cachedCohorts = [];
             let cachedWorkflows = [];
+            let cachedPushDispatches = [];
             let cachedPredictionModelReadiness = null;
             let cachedPredictionModelTrainingStatus = {};
             let cachedExportJobs = [];
@@ -12559,6 +12560,10 @@ export function initializeOperatorConsole() {
                 return (cachedWorkflows || []).find((item) => item.workflow_id === workflowId) || null;
             }
 
+            function findPushDispatch(pushDispatchId) {
+                return (cachedPushDispatches || []).find((item) => item.push_dispatch_id === pushDispatchId) || null;
+            }
+
             async function refreshProviderConnectionsState() {
                 if (shouldBlockProtectedAppData()) {
                     return getProviderConnections();
@@ -12586,6 +12591,15 @@ export function initializeOperatorConsole() {
                 const payload = await apiRequest('/workflows');
                 cachedWorkflows = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
                 return cachedWorkflows;
+            }
+
+            async function refreshPushDispatchesState() {
+                if (shouldBlockProtectedAppData()) {
+                    return cachedPushDispatches;
+                }
+                const payload = await apiRequest('/push-dispatches');
+                cachedPushDispatches = latestByCreatedAt(Array.isArray(payload.items) ? payload.items : []);
+                return cachedPushDispatches;
             }
 
             function ensureSelectOption(select, value, label) {
@@ -15005,7 +15019,19 @@ export function initializeOperatorConsole() {
                     total_results: (item.runtime_summary || {}).totals || {},
                     resource: item,
                 }));
-                return [...emailItems, ...workflowItems].sort((left, right) => {
+                const pushDispatchItems = (cachedPushDispatches || []).map((item) => ({
+                    studio_type: 'push_dispatch',
+                    studio_id: item.push_dispatch_id,
+                    name: item.name || item.campaign_name || item.push_dispatch_id,
+                    provider: item.provider || (findProviderConnection(item.provider_connection_id) || {}).provider || 'push_notification',
+                    status: item.status || 'sent',
+                    last_run_at: item.last_send_completed_at || item.last_send_started_at || item.updated_at || item.created_at || null,
+                    next_run_at: null,
+                    last_results: item.result_summary || {},
+                    total_results: item.result_summary || {},
+                    resource: item,
+                }));
+                return [...emailItems, ...workflowItems, ...pushDispatchItems].sort((left, right) => {
                     const leftTime = parseIsoDate(left.last_run_at || left.next_run_at || left.resource.updated_at || left.resource.created_at).getTime();
                     const rightTime = parseIsoDate(right.last_run_at || right.next_run_at || right.resource.updated_at || right.resource.created_at).getTime();
                     return rightTime - leftTime;
@@ -15021,7 +15047,13 @@ export function initializeOperatorConsole() {
                 if (filter === 'sent') {
                     return items.filter((item) => {
                         const status = String(item.status || '').toLowerCase();
-                        return ['sent', 'sent_with_errors', 'failed'].includes(status) || Boolean(item.last_run_at);
+                        if (item.studio_type === 'email_campaign') {
+                            return ['sent', 'sent_with_errors', 'failed', 'cancelled'].includes(status);
+                        }
+                        if (item.studio_type === 'push_dispatch') {
+                            return ['sent', 'failed'].includes(status);
+                        }
+                        return ['sent', 'sent_with_errors', 'failed'].includes(status);
                     });
                 }
                 if (filter === 'archived') {
@@ -15054,6 +15086,10 @@ export function initializeOperatorConsole() {
                     const summary = item.last_results || {};
                     return `sent ${summary.sent_count || 0} · failed ${summary.failed_count || 0}`;
                 }
+                if (item.studio_type === 'push_dispatch') {
+                    const resource = item.resource || {};
+                    return `accepted ${resource.provider_accepted ? 1 : 0} · attempts ${resource.send_attempts || 0}`;
+                }
                 const summary = item.last_results || {};
                 return `ok ${summary.success || 0} · fail ${summary.failures || 0}`;
             }
@@ -15062,6 +15098,10 @@ export function initializeOperatorConsole() {
                 if (item.studio_type === 'email_campaign') {
                     const summary = item.total_results || {};
                     return `sent ${summary.sent_count || 0}`;
+                }
+                if (item.studio_type === 'push_dispatch') {
+                    const resource = item.resource || {};
+                    return `callbacks ${resource.callback_count || 0} · attempts ${resource.send_attempts || 0}`;
                 }
                 const totals = item.total_results || {};
                 return `runs ${totals.runs || 0} · success ${totals.success || 0}`;
@@ -15073,10 +15113,10 @@ export function initializeOperatorConsole() {
 
             function renderWorkflowStudioActions(item) {
                 const status = String(item.status || '').toLowerCase();
-                const visibleButtons = [
-                    renderWorkflowStudioActionButton(item, 'view', 'View'),
-                    renderWorkflowStudioActionButton(item, 'edit', 'Edit'),
-                ];
+                const visibleButtons = [renderWorkflowStudioActionButton(item, 'view', 'View')];
+                if (item.studio_type !== 'push_dispatch') {
+                    visibleButtons.push(renderWorkflowStudioActionButton(item, 'edit', 'Edit'));
+                }
                 if (item.studio_type === 'email_campaign') {
                     const moreButtons = [
                         status !== 'scheduled' ? renderWorkflowStudioActionButton(item, 'schedule', 'Schedule') : '',
@@ -15094,14 +15134,25 @@ export function initializeOperatorConsole() {
                         </div>
                     `;
                 }
+                if (item.studio_type === 'push_dispatch') {
+                    const moreButtons = [
+                        status !== 'archived' ? renderWorkflowStudioActionButton(item, 'archive', 'Archive') : '',
+                    ];
+                    return `
+                        <div class="table-actions">
+                            ${visibleButtons.join('')}
+                            ${renderTableActionMenu(moreButtons)}
+                        </div>
+                    `;
+                }
                 const moreButtons = [
                     status === 'draft' ? renderWorkflowStudioActionButton(item, 'publish', 'Publish') : '',
                     status === 'published' ? renderWorkflowStudioActionButton(item, 'pause', 'Pause') : '',
                     status === 'paused' ? renderWorkflowStudioActionButton(item, 'resume', 'Resume') : '',
-                    status !== 'archived' ? renderWorkflowStudioActionButton(item, 'test-run', 'Test Run') : '',
+                    ['draft', 'published', 'paused'].includes(status) ? renderWorkflowStudioActionButton(item, 'test-run', 'Test Run') : '',
                     status === 'draft'
                         ? renderWorkflowStudioActionButton(item, 'delete', 'Delete')
-                        : status !== 'archived'
+                        : ['sent', 'sent_with_errors', 'failed'].includes(status)
                             ? renderWorkflowStudioActionButton(item, 'archive', 'Archive')
                             : '',
                 ];
@@ -15158,7 +15209,11 @@ export function initializeOperatorConsole() {
                 }
                 workflowStudioActions.innerHTML = renderWorkflowStudioActions({
                     studio_type: resourceType,
-                    studio_id: resourceType === 'workflow' ? resource.workflow_id : resource.email_campaign_id,
+                    studio_id: resourceType === 'workflow'
+                        ? resource.workflow_id
+                        : resourceType === 'push_dispatch'
+                            ? resource.push_dispatch_id
+                            : resource.email_campaign_id,
                     status: resource.status,
                     resource,
                 });
@@ -15187,6 +15242,16 @@ export function initializeOperatorConsole() {
                     await loadWorkflowDetail(resourceId);
                     return;
                 }
+                if (resourceType === 'push_dispatch') {
+                    const dispatch = findPushDispatch(resourceId) || await apiRequest(`/push-dispatches/${encodeURIComponent(resourceId)}`);
+                    if (workflowStudioSelectedLabel) {
+                        workflowStudioSelectedLabel.textContent = `${dispatch.name || dispatch.push_dispatch_id} · ${String(dispatch.status || 'sent').replace(/[_-]+/g, ' ')}`;
+                    }
+                    renderJsonOutput(workflowStudioDetailOutput, dispatch, '');
+                    renderWorkflowStudioDetailActions('push_dispatch', dispatch);
+                    await loadWorkflowDetail(null);
+                    return;
+                }
                 const campaign = await apiRequest(`/email-campaigns/${encodeURIComponent(resourceId)}`);
                 if (workflowStudioSelectedLabel) {
                     workflowStudioSelectedLabel.textContent = `${campaign.name || campaign.email_campaign_id} · ${formatEmailCampaignStatusLabel(campaign.status)}`;
@@ -15200,6 +15265,14 @@ export function initializeOperatorConsole() {
                 if (!resourceType || !resourceId || !action) return;
                 if (action === 'view') {
                     await loadWorkflowStudioSelection(resourceType, resourceId);
+                    return;
+                }
+                if (resourceType === 'push_dispatch') {
+                    if (action === 'archive') {
+                        await apiRequest(`/push-dispatches/${encodeURIComponent(resourceId)}/archive`, { method: 'POST' });
+                        await loadActionOrchestrator();
+                        await loadWorkflowStudioSelection('push_dispatch', resourceId);
+                    }
                     return;
                 }
                 if (resourceType === 'workflow') {
@@ -15410,6 +15483,8 @@ export function initializeOperatorConsole() {
                         dispatchStatusMessage,
                         dispatchFailed,
                     );
+                    await loadActionOrchestrator();
+                    await loadWorkflowStudioSelection('push_dispatch', response.push_dispatch_id);
                 } catch (error) {
                     renderJsonOutput(pushDispatchOutput, { error: error.message }, 'Failed to send push.');
                     setInlineStatus(pushDispatchStatus, error.message || 'Failed to send push.', true);
@@ -15637,8 +15712,9 @@ export function initializeOperatorConsole() {
 
             async function loadActionOrchestrator() {
                 try {
-                    const [workflows, cohorts] = await Promise.all([
+                    const [workflows, , cohorts] = await Promise.all([
                         refreshWorkflowsState(),
+                        refreshPushDispatchesState(),
                         refreshCohortsState(),
                         refreshProviderConnectionsState(),
                         refreshExportJobsState(),
@@ -15672,6 +15748,14 @@ export function initializeOperatorConsole() {
                         return;
                     }
                     if (
+                        selectedWorkflowStudioResourceType === 'push_dispatch'
+                        && selectedWorkflowStudioResourceId
+                        && cachedPushDispatches.some((item) => item.push_dispatch_id === selectedWorkflowStudioResourceId)
+                    ) {
+                        await loadWorkflowStudioSelection('push_dispatch', selectedWorkflowStudioResourceId);
+                        return;
+                    }
+                    if (
                         selectedWorkflowStudioResourceType === 'email_campaign'
                         && selectedWorkflowStudioResourceId
                         && cachedEmailCampaigns.some((item) => item.email_campaign_id === selectedWorkflowStudioResourceId)
@@ -15693,6 +15777,7 @@ export function initializeOperatorConsole() {
                         setInlineStatus(workflowCreateStatus, getWorkspaceResolutionMessage(error.payload || authSessionState));
                         setInlineStatus(pushDispatchStatus, getWorkspaceResolutionMessage(error.payload || authSessionState), true);
                         cachedWorkflows = [];
+                        cachedPushDispatches = [];
                         populateWorkflowCohortSelect([]);
                         populatePushDispatchProviderSelect();
                         populateWorkflowPushProviderSelect();

@@ -30,6 +30,37 @@ class PushDispatchService:
         record = self.repository.get_resource(self._RESOURCE_TYPE, push_dispatch_id)
         return self._to_response(record) if record else None
 
+    def archive_dispatch(self, push_dispatch_id: str) -> Dict[str, Any]:
+        record = self.repository.get_resource(self._RESOURCE_TYPE, push_dispatch_id)
+        if record is None:
+            raise KeyError(push_dispatch_id)
+        payload = dict(record.get("payload") or {})
+        status = str(payload.get("status") or "").strip().lower()
+        if status == "archived":
+            raise ValueError("Push dispatch is already archived.")
+        if status not in {"sent", "failed"}:
+            raise ValueError("Only completed push dispatches can be archived.")
+        archived_at = datetime.utcnow().isoformat()
+        payload["status"] = "archived"
+        payload["archived_at"] = archived_at
+        saved = self.repository.upsert_resource(
+            self._RESOURCE_TYPE,
+            push_dispatch_id,
+            status="archived",
+            name=payload.get("name"),
+            payload=payload,
+            tenant_id=payload.get("tenant_id"),
+            project_id=payload.get("project_id"),
+        )
+        archive_payload = {
+            "push_dispatch_id": push_dispatch_id,
+            "status": "archived",
+            "archived_at": archived_at,
+        }
+        self.repository.record_resource_event(self._RESOURCE_TYPE, push_dispatch_id, event_type="push_dispatch_archived", payload=archive_payload)
+        self.repository.record_action("push_dispatch_archived", self._RESOURCE_TYPE, push_dispatch_id, archive_payload)
+        return self._to_response(saved)
+
     def send_now(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized = self._normalize_payload(payload or {})
         push_dispatch_id = f"pd_{uuid.uuid4().hex[:20]}"
@@ -226,6 +257,7 @@ class PushDispatchService:
         payload["callback_summary"] = self._build_callback_summary(payload)
         payload.setdefault("created_at", record.get("created_at"))
         payload.setdefault("updated_at", record.get("updated_at"))
+        payload.setdefault("archived_at", payload.get("archived_at"))
         payload.setdefault("tenant_id", record.get("tenant_id"))
         payload.setdefault("project_id", record.get("project_id"))
         payload.setdefault("created_by", record.get("created_by") or payload.get("created_by") or "system")

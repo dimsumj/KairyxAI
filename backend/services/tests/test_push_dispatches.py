@@ -144,6 +144,47 @@ def test_send_now_single_user_push_uses_wynn_provider_connection(client: TestCli
     assert detail_response.json()["provider_campaign_id"] == "PUSH_NOTIFICATION.cid_42"
 
 
+def test_completed_push_dispatch_can_be_archived(client: TestClient, monkeypatch):
+    provider_connection_id = _create_wynn_provider_connection(client)
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        return _DummyResponse(
+            202,
+            {
+                "accepted": True,
+                "campaign_id": "PUSH_NOTIFICATION.cid_archive",
+                "duplicate": False,
+                "scheduled_at": None,
+            },
+        )
+
+    monkeypatch.setattr("engagement_channels.requests.post", fake_post)
+
+    response = client.post(
+        "/api/v1/push-dispatches/send-now",
+        headers=_headers(),
+        json={
+            "name": "archive_me",
+            "user_id": "player_123",
+            "provider_connection_id": provider_connection_id,
+            "campaign_name": "archive_me_push",
+            "title": "We miss you",
+            "body": "A reward is waiting.",
+        },
+    )
+    assert response.status_code == 201, response.text
+    dispatch_id = response.json()["push_dispatch_id"]
+
+    archive = client.post(f"/api/v1/push-dispatches/{dispatch_id}/archive", headers=_headers())
+    assert archive.status_code == 200, archive.text
+    assert archive.json()["status"] == "archived"
+    assert archive.json()["archived_at"]
+
+    detail = client.get(f"/api/v1/push-dispatches/{dispatch_id}", headers=_headers())
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["status"] == "archived"
+
+
 def test_send_now_single_user_push_uses_simulator_without_provider_connection(client: TestClient):
     response = client.post(
         "/api/v1/push-dispatches/send-now",

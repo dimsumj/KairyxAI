@@ -49,6 +49,7 @@ class PushDispatchResponse(BaseModel):
     callback_count: int = 0
     last_callback_at: str | None = None
     last_provider_event: str | None = None
+    archived_at: str | None = None
     callback_summary: Dict[str, Any] = Field(default_factory=dict)
     result_summary: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: str | None = None

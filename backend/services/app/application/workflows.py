@@ -590,7 +590,11 @@ class WorkflowService:
                 confirmation_token=tokens.get(workflow["workflow_id"]),
             )
             if trigger_type == "one_time_schedule":
-                self._finalize_one_time_workflow(workflow["workflow_id"], completed_at=resolved_time.isoformat())
+                self._finalize_one_time_workflow(
+                    workflow["workflow_id"],
+                    completed_at=resolved_time.isoformat(),
+                    run_result=run_result,
+                )
             runs.append(run_result)
         return {"reference_time": resolved_time.isoformat(), "items": runs}
 
@@ -2344,20 +2348,27 @@ class WorkflowService:
         self.repository.record_action("workflow_execution_completed", "workflow", workflow["workflow_id"], summary)
         return summary
 
-    def _finalize_one_time_workflow(self, workflow_id: str, *, completed_at: str) -> None:
+    def _finalize_one_time_workflow(self, workflow_id: str, *, completed_at: str, run_result: Dict[str, Any]) -> None:
         record = self.repository.get_resource("workflow", workflow_id)
         if record is None:
             return
         payload = dict(record.get("payload") or {})
-        payload["status"] = "archived"
-        payload["archived_at"] = completed_at
-        payload["archived_reason"] = "one_time_schedule_completed"
-        self.repository.upsert_resource("workflow", workflow_id, status="archived", name=payload.get("name"), payload=payload)
+        success_count = int(run_result.get("success") or 0)
+        failure_count = int(run_result.get("failures") or 0)
+        completion_status = "sent"
+        if success_count > 0 and failure_count > 0:
+            completion_status = "sent_with_errors"
+        elif success_count <= 0 and failure_count > 0:
+            completion_status = "failed"
+        payload["status"] = completion_status
+        payload["completed_at"] = completed_at
+        payload["completion_reason"] = "one_time_schedule_completed"
+        self.repository.upsert_resource("workflow", workflow_id, status=completion_status, name=payload.get("name"), payload=payload)
         self.repository.record_resource_event(
             "workflow",
             workflow_id,
-            event_type="workflow_archived",
-            payload={"status": "archived", "archived_at": completed_at, "reason": "one_time_schedule_completed"},
+            event_type="workflow_completed",
+            payload={"status": completion_status, "completed_at": completed_at, "reason": "one_time_schedule_completed"},
         )
 
     def _require_active_cohort(self, cohort_id: str) -> Dict[str, Any]:

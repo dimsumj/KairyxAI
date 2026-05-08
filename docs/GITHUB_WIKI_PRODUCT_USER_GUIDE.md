@@ -1158,7 +1158,7 @@ Use the main composer when KairyxAI should create a push dispatch or push workfl
 | `Deep Link Token (optional)` | Text box | Optional override for the provider connection default deep link token. | `campaign-default-token` | The outbound payload includes `deep_link_token`. |
 | `Advanced Delivery Controls` | Disclosure | Optional workflow guardrails such as global limit, channel limit, cooldown hours, quiet hours, daily budget limit, and blacklist ids. | `Global Daily Limit = 5`, `Quiet Hours = 22 -> 7` | When a value is filled, Kairyx stores it on the workflow. When a field is left blank, that guardrail is disabled. |
 | Push payload options | Internal artifact | Ask AI and provider setup can prepare data, provider options, and Wynn filters without a raw JSON editor. | `min VIP level 5 on iOS` | Wynn applies the prepared filters when it resolves campaign recipients. |
-| `Send Now` / `Run Cohort Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode and audience. | None | Immediate direct sends create a one-time dispatch. Immediate cohort sends create a draft workflow and execute it immediately. Scheduled and repeated sends create and publish workflows. |
+| `Send Now` / `Run Cohort Now` / `Schedule Once` / `Create Repeated Workflow` | Button | Primary action changes with the selected mode and audience. | None | Immediate direct sends create a one-time dispatch that appears in `Workflow Studio -> Sent` and `All`. One-time scheduled sends create published workflows that move to `Sent` after they run. Repeated sends stay scheduled until you pause them. |
 | `Clear` | Button | Clears the composer. | None | The composer resets to a new single send. |
 
 Push Composer behavior:
@@ -1169,6 +1169,7 @@ Push Composer behavior:
 - Immediate sends use `POST /api/v1/push-dispatches/send-now`.
 - Immediate cohort sends use a draft workflow plus `test-run` so they are auditable in `Workflow Studio`.
 - `Schedule once` and `Repeated send` create and publish workflows that later appear in `Workflow Studio`.
+- Completed one-time scheduled push workflows do not auto-archive anymore. They move into `Sent` and remain there until an operator archives them manually.
 - Live Wynn sends require both `Title` and `Body`.
 - Advanced delivery controls are optional. Leaving a limit or quiet-hours field blank means no cap or quiet-hours block is applied for that workflow.
 - Provider options and Wynn filters are structured internally and can be prepared by Ask AI from marketer-readable prompts.
@@ -1275,12 +1276,12 @@ Legacy workflow behavior:
 
 ### 5.3 Workflow Studio
 
-Use this section to schedule email campaigns, manage push workflows, and review a unified operational summary. The table merges both resource types and adds a selected-item panel so operators can edit, schedule, archive, or inspect the current record without switching pages.
+Use this section to schedule email campaigns, manage push workflows, and review a unified operational summary. The table merges email campaigns, push workflows, and direct one-time push dispatches, then adds a selected-item panel so operators can edit, schedule, archive, or inspect the current record without switching pages.
 
 | Control | Type | How to use it | Sample input | Expected result |
 | --- | --- | --- | --- | --- |
-| `Refresh` | Button | Reloads email campaigns, push workflows, and the selected detail panel. | None | The studio list and detail state refresh. |
-| `Scheduled` / `Sent` / `Archived` / `All` | Filter buttons | Narrow the studio table by operational state. | `Scheduled` | Scheduled email campaigns and published push workflows remain visible. |
+| `Refresh` | Button | Reloads email campaigns, push workflows, direct push dispatches, and the selected detail panel. | None | The studio list and detail state refresh. |
+| `Scheduled` / `Sent` / `Archived` / `All` | Filter buttons | Narrow the studio table by operational state. | `Scheduled` | Scheduled email campaigns and unsent published push workflows remain visible, while direct one-time push dispatches and completed one-time scheduled push workflows appear in `Sent` and `All`. |
 | `Name` | Table column | Read-only. Shows the resource name plus the underlying id. | `daily_churn_rescue_push` | Operators can identify the exact campaign or workflow record. |
 | `Channel` | Table column | Read-only. Shows whether the row is `Email` or `Push`. | `Push` | Operators can see the delivery channel without scanning provider details. |
 | `Provider` | Table column | Read-only. Shows SendGrid, Braze, Push Provider, simulator, or workflow channel fallback. | `Push Provider` | The delivery target is visible from the list. |
@@ -1306,10 +1307,16 @@ Use this section to schedule email campaigns, manage push workflows, and review 
 | Push item `Test Run` | More action | Runs the workflow in sandbox mode. | None | Test-run output appears in the runtime output panel and `last_test_run_at` updates after refresh. |
 | Push item `Archive` | More action | Archives a non-draft workflow so it remains visible but cannot run again. | None | Workflow status becomes `archived`. |
 | Push item `Delete` | More action | Deletes a draft workflow only. | None | Draft workflow is removed. |
+| Direct push item `View` | Row or detail button | Loads the selected one-time push dispatch into the detail panel. | None | Dispatch payload and provider response appear in the detail panel. |
+| Direct push item `Archive` | More action | Archives a completed one-time push dispatch from `Sent` or `All`. | None | The dispatch moves into `Archived`. |
 
 Workflow Studio behavior:
 - Archived workflows remain visible in the `Archived` filter and in historical detail views, but they are excluded from due-run execution, resume, publish, and test-run actions.
 - Push workflow totals come from `runtime_summary.totals` and count live runs separately from sandbox test runs.
+- Direct push dispatches are historical records, so they appear in `Sent` and `All`, expose `View` plus manual `Archive`, and do not support edit or rerun actions.
+- Direct push dispatches and completed one-time scheduled push workflows move into `Archived` only when an operator archives them.
+- Unsent scheduled push workflows do not show an `Archive` action.
+- Published recurring push workflows stay in `Scheduled` even after a successful run. They only leave that filter when they are paused, changed into another state, or archived through a later lifecycle change.
 - Email campaign totals reuse the campaign `result_summary`.
 
 ### 5.4 Runtime Controls
